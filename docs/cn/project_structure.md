@@ -38,8 +38,10 @@ workspace/<project>/
 ├── literature/                 Retrieval, paper cards, queues, synthesis
 ├── ideation/                   T4 candidates, selection, hypotheses, audits
 ├── drafts/                     Survey/manuscript sections, claims, reviews
-├── external_executor/          T5 handoff and executor return contract
-├── experiments/                Ingested run evidence and claim mappings
+├── external_executor/          T5 handoff、executor 输出和 T8 交接报告
+│   ├── report/                 T5-REBOOST 过程报告和诊断文件
+│   └── expr/                   初始化为空的材料/部署区域
+├── experiments/                可选/legacy 摄取后的运行证据和 claim mapping
 ├── submission/                 Final bundle, compile report, fingerprints
 └── _runtime/                   Logs, traces, event JSONL, Skill sessions/workflow state
 ```
@@ -50,8 +52,8 @@ workspace/<project>/
 | --- | --- | --- |
 | `project.yaml`、`user_seeds/`、`user_inputs/` | 人工引导式输入 | 范围、约束、提供的材料 |
 | `literature/`、`ideation/`、`drafts/` | 验证后的 ResearchOS | 可审计的研究构件 |
-| `external_executor/` | ResearchOS + 选定的外部执行器 | 交接和协议约束的返回文件 |
-| `experiments/` | 结果摄取和审计工具 | 观察到的结果，而非模型猜测 |
+| `external_executor/` | ResearchOS + 选定的外部执行器 | 交接文件、executor 输出，以及必需的 T8 交接报告 `executor_research_report.md` |
+| `experiments/` | 结果摄取和审计工具 | 可选/legacy 的观察结果，而非模型猜测 |
 | `_runtime/` | 仅运行时 | 操作状态；请勿编辑以更改研究结论 |
 
 ### T4 Ideation Artifact
@@ -60,7 +62,7 @@ workspace/<project>/
 
 当用户选择完整 Candidate 后，`hypothesis_brief.yaml`、`selected/hypothesis_lineage.json`、`selected/t45_search_targets.json` 和 `selected/pre_novelty_brief.md` 描述的是 Pre-Novelty 研究方案。它们保存谱系并限定 T4.5 的定向审计范围，但不授权 T5 执行。只有 T4.5 audit 明确通过后，系统才会创建或更新正式的 `hypotheses.md`、`exp_plan.yaml`、`contribution_hypothesis_map.yaml`、`validation_map.yaml`、`kill_criteria.yaml` 与 `post_novelty_formalization.json`。
 
-`literature/deep_read_notes/`、`literature/shallow_read_notes/` 和 `literature/bridge_notes/` 是唯一的 live Paper Note 根目录。deep 与 Bridge note 可以提供受已读范围约束的 full/partial-reading evidence；shallow note 只能用于 abstract-level recall。旧 `paper_notes*` 目录只由显式的 workspace migration layer 处理：迁移会记录报告，绝不把旧路径当作第二套 live source。发生同名内容冲突的旧 note 会保留在 `literature/note_migration_conflicts/` 供人工复核，而不是悄悄复制到证据根目录中造成重复。
+`literature/deep_read_notes/`、`literature/shallow_read_notes/` 和 `literature/bridge_notes/` 是唯一的 live Paper Note 根目录。deep 与 Bridge note 可以提供受已读范围约束的 full/partial-reading evidence；shallow note 只能用于 abstract-level recall。`literature/cross_domain_catalogs/` 不是第四个 Paper Note 根，而是独立的 B1/B2 检索目录，保存 bridge context、metadata 和 abstract-level idea fuel，不能单独支持机制或 citation claim。旧 workspace 中与 `bridge_notes/` 同置的 catalog 会非破坏性迁移到新目录，旧路径仅作为读取回退。旧 `paper_notes*` 目录只由显式的 workspace migration layer 处理：迁移会记录报告，绝不把旧路径当作第二套 live source。发生同名内容冲突的旧 note 会保留在 `literature/note_migration_conflicts/` 供人工复核，而不是悄悄复制到证据根目录中造成重复。
 
 `ideation/t4_target_profile.json` 记录研究者确认的 Publication Orientation。`ideation/final_cards/portfolio_cards.json` 只为最终 Portfolio Candidate 保存不改变科学内容、且与 profile 对齐的 Impact Translation。Candidate Dossier 与 Population snapshot 仍是科学事实来源；final card 必须原样回显其中的 thesis、contribution IDs 与 hypothesis IDs。
 

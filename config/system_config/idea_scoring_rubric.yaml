@@ -1,29 +1,46 @@
-schema_version: "1.0.0"
+schema_version: "2.0.0"
 agent_role: IdeaScoringAgent
 blind_scoring: true
 dimensions:
   research_value:
     range: [1, 5]
-    meaning: Scientific importance of the problem and opportunity.
+    meaning: Importance of the research problem and what would change if the thesis survives testing.
   mechanism_integrity:
     range: [1, 5]
-    meaning: Coherence and falsifiability of the proposed mechanism chain.
+    meaning: Internal coherence of the mechanism, hypotheses, competing explanation, and causal logic.
   contribution_distinctiveness:
     range: [1, 5]
-    meaning: Internal-corpus contribution readiness, not proof of external novelty.
-  evidence_calibration:
-    range: [1, 5]
-    meaning: Honesty and traceability of evidence permissions, not evidence volume.
-  validation_tractability:
-    range: [1, 5]
-    meaning: Feasibility of discriminating validation under project constraints.
+    meaning: Difference from the current T4 population, not proof of external novelty.
 overall_readiness:
   range: [1, 5]
-  meaning: Calibrated synthesis of the five dimensions; it cannot override an evidence hard failure.
+  meaning: Runtime-derived ranking summary of exactly the three core dimensions; never a gate.
+  derived: true
+diagnostics:
+  evidence_calibration:
+    meaning: Optional qualitative observation about stated evidence boundaries. Never a score or gate.
+  validation_feasibility:
+    meaning: Optional qualitative observation about a proposed test. Never a score or gate.
+  profile_fit:
+    meaning: Optional qualitative publication-orientation fit. It never changes core-score validity.
+  scientific_upside:
+    values: [low, medium, high]
+    meaning: Optional preservation and evolution signal, not a formal score.
+  evolution_potential:
+    values: [low, medium, high]
+    meaning: Optional mutation or crossover guidance, not a formal score.
 required_output_fields:
+  - scores.research_value
+  - scores.mechanism_integrity
+  - scores.contribution_distinctiveness
+optional_diagnostics:
   - rationales
   - dominant_strength
   - dominant_bottleneck
   - preserve_genes
   - modify_genes
   - recommended_operators
+  - evidence_calibration
+  - validation_feasibility
+  - profile_fit
+  - scientific_upside
+  - evolution_potential

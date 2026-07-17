@@ -15,10 +15,12 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import shutil
 from typing import Any
 
 import yaml
 
+from .bridge_catalog import migrate_legacy_bridge_catalogs
 from .environment import write_runtime_environment
 
 
@@ -34,6 +36,7 @@ STANDARD_WORKSPACE_DIRS = [
     "literature/deep_read_notes",
     "literature/shallow_read_notes",
     "literature/bridge_notes",
+    "literature/cross_domain_catalogs",
     "resources",
     "resources/repos",
     "resources/datasets",
@@ -43,7 +46,8 @@ STANDARD_WORKSPACE_DIRS = [
     "ideation/_mechanism_tuples",
     "novelty",
     "external_executor",
-    "external_executor/workdir",
+    "external_executor/report",
+    "external_executor/expr",
     "external_executor/raw_results",
     "external_executor/configs",
     "external_executor/logs",
@@ -115,6 +119,86 @@ class WorkspaceInitResult:
     project_file: Path | None
 
 
+def merge_workspace_artifact(
+    source: Path,
+    destination: Path,
+    *,
+    preserve_existing_files: bool,
+) -> dict[str, Any]:
+    """Merge one source artifact into a workspace without treating empty dirs as data.
+
+    Workspace initialization always creates standard directories.  A normal
+    ``copytree`` guarded by ``destination.exists()`` therefore mistakes an
+    empty ``literature/deep_read_notes/`` directory for a completed import.
+    This helper merges file-by-file, so source paper notes are transferred into
+    an existing empty root.  Resume imports preserve a target's existing files
+    (including edits made after a prior run); fresh ``run --from`` imports may
+    refresh an existing same-name file from the declared source.  Type
+    conflicts are never deleted or overwritten automatically.
+    """
+
+    source = Path(source)
+    destination = Path(destination)
+    result: dict[str, Any] = {
+        "source": str(source),
+        "destination": str(destination),
+        "kind": "directory" if source.is_dir() else "file",
+        "copied_files": 0,
+        "updated_files": 0,
+        "preserved_files": 0,
+        "type_conflicts": [],
+        "missing": not source.exists(),
+    }
+    if not source.exists():
+        return result
+
+    if source.is_file():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            if destination.is_dir():
+                result["type_conflicts"].append(
+                    {"source": source.name, "destination": str(destination), "reason": "file_to_directory"}
+                )
+            elif preserve_existing_files:
+                result["preserved_files"] = 1
+            else:
+                shutil.copy2(source, destination)
+                result["updated_files"] = 1
+            return result
+        shutil.copy2(source, destination)
+        result["copied_files"] = 1
+        return result
+
+    if destination.exists() and not destination.is_dir():
+        result["type_conflicts"].append(
+            {"source": str(source), "destination": str(destination), "reason": "directory_to_file"}
+        )
+        return result
+    destination.mkdir(parents=True, exist_ok=True)
+    for source_file in sorted((path for path in source.rglob("*") if path.is_file()), key=lambda path: path.as_posix()):
+        relative = source_file.relative_to(source)
+        destination_file = destination / relative
+        destination_file.parent.mkdir(parents=True, exist_ok=True)
+        if destination_file.exists():
+            if destination_file.is_dir():
+                result["type_conflicts"].append(
+                    {
+                        "source": relative.as_posix(),
+                        "destination": destination_file.as_posix(),
+                        "reason": "file_to_directory",
+                    }
+                )
+            elif preserve_existing_files:
+                result["preserved_files"] += 1
+            else:
+                shutil.copy2(source_file, destination_file)
+                result["updated_files"] += 1
+            continue
+        shutil.copy2(source_file, destination_file)
+        result["copied_files"] += 1
+    return result
+
+
 def initialize_workspace(
     workspace_dir: Path,
     *,
@@ -135,6 +219,10 @@ def initialize_workspace(
     workspace_dir = workspace_dir.resolve()
     workspace_dir.mkdir(parents=True, exist_ok=True)
     migrate_workspace_note_directories(workspace_dir, runtime_dir_name=runtime_dir_name)
+    # Catalogs were historically colocated with Bridge paper notes. Preserve
+    # old data, but make the new conceptually separate root available before
+    # any task, single-task runner, or Skill reads the workspace.
+    migrate_legacy_bridge_catalogs(workspace_dir)
     created_dirs: list[str] = []
 
     for rel_dir in build_standard_workspace_dirs(runtime_dir_name):
@@ -169,13 +257,16 @@ def migrate_workspace_note_directories(
     *,
     runtime_dir_name: str = "_runtime",
 ) -> dict[str, Any]:
-    """Move legacy note directories and update active artifact references.
+    """Map legacy note directories and update active artifact references.
 
     The old names describe implementation history rather than evidence level.
     New workspaces use ``deep_read_notes``, ``shallow_read_notes``, and
-    ``bridge_notes``. Existing audit traces are deliberately left unchanged:
-    they record what happened at the time. Current artifacts, executor packs,
-    and resume inputs are rewritten so an old workspace remains resumable.
+    ``bridge_notes`` for actual notes; Cross-domain retrieval catalogs live in
+    ``cross_domain_catalogs``. Migration is deliberately non-destructive: legacy
+    files stay where they are, while canonical roots receive copied or indexed
+    equivalents. Existing audit traces are deliberately left unchanged: they
+    record what happened at the time. Current artifacts, executor packs, and
+    resume inputs are rewritten so an old workspace remains resumable.
     """
 
     workspace_dir = workspace_dir.resolve()
@@ -191,22 +282,35 @@ def migrate_workspace_note_directories(
                 conflicts.append({"legacy": legacy_rel, "canonical": canonical_rel, "reason": "path_type_conflict"})
                 continue
             moved.extend(_merge_legacy_note_directory(workspace_dir, legacy, canonical, legacy_rel, canonical_rel, conflicts))
-            _remove_empty_directories(legacy)
             continue
-        canonical.parent.mkdir(parents=True, exist_ok=True)
-        legacy.rename(canonical)
-        moved.append({"from": legacy_rel, "to": canonical_rel})
+        if not legacy.is_dir():
+            conflicts.append({"legacy": legacy_rel, "canonical": canonical_rel, "reason": "legacy_not_directory"})
+            continue
+        canonical.mkdir(parents=True, exist_ok=True)
+        moved.extend(_merge_legacy_note_directory(workspace_dir, legacy, canonical, legacy_rel, canonical_rel, conflicts))
 
     changed_files: list[str] = []
-    replacements = tuple(LEGACY_NOTE_DIRECTORY_MIGRATIONS.items())
-    identifier_replacements = tuple(LEGACY_NOTE_IDENTIFIER_MIGRATIONS.items())
-    text_replacements = tuple(LEGACY_NOTE_TEXT_MIGRATIONS.items())
     for path in workspace_dir.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in _MIGRATABLE_TEXT_SUFFIXES:
             continue
         try:
             relative = path.relative_to(workspace_dir)
         except ValueError:
+            continue
+        relative_posix = relative.as_posix()
+        if any(
+            relative_posix == legacy_rel or relative_posix.startswith(f"{legacy_rel}/")
+            for legacy_rel in LEGACY_NOTE_DIRECTORY_MIGRATIONS
+        ):
+            continue
+        if relative_posix in {
+            "literature/literature_manifest.json",
+            "literature/_literature_contract_migration_report.json",
+        }:
+            # These contract files intentionally record legacy aliases as
+            # aliases.  Rewriting their JSON keys from paper_notes to
+            # deep_read_notes makes the canonical manifest oscillate on every
+            # refresh and breaks resume fingerprints.
             continue
         if relative.parts and relative.parts[0] == runtime_dir_name:
             # Resume snapshots are active inputs and must follow moved paths;
@@ -220,13 +324,7 @@ def migrate_workspace_note_directories(
             original = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        updated = original
-        for legacy_rel, canonical_rel in replacements:
-            updated = updated.replace(legacy_rel, canonical_rel)
-        for legacy_key, canonical_key in identifier_replacements:
-            updated = updated.replace(legacy_key, canonical_key)
-        for legacy_text, canonical_text in text_replacements:
-            updated = updated.replace(legacy_text, canonical_text)
+        updated = _apply_legacy_note_text_migrations(original)
         if updated != original:
             path.write_text(updated, encoding="utf-8")
             changed_files.append(relative.as_posix())
@@ -257,12 +355,13 @@ def _merge_legacy_note_directory(
     canonical_rel: str,
     conflicts: list[dict[str, str]],
 ) -> list[dict[str, str]]:
-    """Merge an old note root without making it a live evidence root.
+    """Copy an old note root without making it a live evidence root.
 
     Identical files collapse into the canonical copy.  A same-name file with
     different content is preserved outside the three official note roots for a
     human to resolve; silently renaming it inside a live root would make one
-    paper appear twice in T3/T4.
+    paper appear twice in T3/T4.  The legacy source file is never deleted or
+    moved; migration reports are mappings, not destructive moves.
     """
 
     moved: list[dict[str, str]] = []
@@ -272,16 +371,35 @@ def _merge_legacy_note_directory(
         destination = canonical / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         if not destination.exists():
-            source.rename(destination)
-            moved.append({"from": f"{legacy_rel}/{relative.as_posix()}", "to": f"{canonical_rel}/{relative.as_posix()}"})
+            shutil.copy2(source, destination)
+            moved.append(
+                {
+                    "from": f"{legacy_rel}/{relative.as_posix()}",
+                    "to": f"{canonical_rel}/{relative.as_posix()}",
+                    "status": "copied",
+                }
+            )
             continue
-        try:
-            identical = source.read_bytes() == destination.read_bytes()
-        except OSError:
-            identical = False
-        if identical:
-            source.unlink()
-            moved.append({"from": f"{legacy_rel}/{relative.as_posix()}", "to": f"{canonical_rel}/{relative.as_posix()}", "status": "deduplicated"})
+        if _legacy_note_files_equivalent(source, destination):
+            moved.append(
+                {
+                    "from": f"{legacy_rel}/{relative.as_posix()}",
+                    "to": f"{canonical_rel}/{relative.as_posix()}",
+                    "status": "deduplicated_legacy_preserved",
+                }
+            )
+            continue
+        preserved = _existing_preserved_legacy_conflict(conflict_root, relative, source)
+        if preserved is not None:
+            conflicts.append(
+                {
+                    "legacy": f"{legacy_rel}/{relative.as_posix()}",
+                    "canonical": f"{canonical_rel}/{relative.as_posix()}",
+                    "preserved_at": preserved.relative_to(workspace_dir).as_posix(),
+                    "reason": "different_file_content",
+                    "status": "legacy_conflict_already_preserved",
+                }
+            )
             continue
         preserved = conflict_root / relative
         preserved.parent.mkdir(parents=True, exist_ok=True)
@@ -289,30 +407,79 @@ def _merge_legacy_note_directory(
         while preserved.exists():
             preserved = conflict_root / relative.with_name(f"{relative.stem}.legacy-{suffix}{relative.suffix}")
             suffix += 1
-        source.rename(preserved)
+        shutil.copy2(source, preserved)
         conflicts.append(
             {
                 "legacy": f"{legacy_rel}/{relative.as_posix()}",
                 "canonical": f"{canonical_rel}/{relative.as_posix()}",
                 "preserved_at": preserved.relative_to(workspace_dir).as_posix(),
                 "reason": "different_file_content",
+                "status": "legacy_preserved",
             }
         )
     return moved
 
 
-def _remove_empty_directories(root: Path) -> None:
-    """Remove an emptied legacy tree from leaves upward without touching files."""
+def _apply_legacy_note_text_migrations(text: str) -> str:
+    updated = text
+    for legacy_rel, canonical_rel in LEGACY_NOTE_DIRECTORY_MIGRATIONS.items():
+        updated = updated.replace(legacy_rel, canonical_rel)
+    for legacy_key, canonical_key in LEGACY_NOTE_IDENTIFIER_MIGRATIONS.items():
+        updated = updated.replace(legacy_key, canonical_key)
+    for legacy_text, canonical_text in LEGACY_NOTE_TEXT_MIGRATIONS.items():
+        updated = updated.replace(legacy_text, canonical_text)
+    return updated
 
-    for directory in sorted((path for path in root.rglob("*") if path.is_dir()), key=lambda path: len(path.parts), reverse=True):
-        try:
-            directory.rmdir()
-        except OSError:
-            pass
+
+def _legacy_note_files_equivalent(source: Path, destination: Path) -> bool:
+    """Return true when a legacy source already maps to its canonical file.
+
+    During the first migration a legacy note is copied into the canonical root
+    and then active canonical artifacts have their embedded legacy paths
+    rewritten.  On the next manifest refresh, raw byte comparison would see the
+    still-preserved legacy source and the normalized canonical file as
+    different, creating an endless stream of conflict copies.  Compare the
+    normalized legacy text as well so migration remains idempotent without
+    deleting the original old directory.
+    """
+
     try:
-        root.rmdir()
+        source_bytes = source.read_bytes()
+        destination_bytes = destination.read_bytes()
     except OSError:
-        pass
+        return False
+    if source_bytes == destination_bytes:
+        return True
+    if source.suffix.lower() not in _MIGRATABLE_TEXT_SUFFIXES:
+        return False
+    try:
+        source_text = source_bytes.decode("utf-8")
+        destination_text = destination_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return _apply_legacy_note_text_migrations(source_text) == destination_text
+
+
+def _existing_preserved_legacy_conflict(conflict_root: Path, relative: Path, source: Path) -> Path | None:
+    """Find an already-preserved conflict copy with identical legacy bytes."""
+
+    target = conflict_root / relative
+    candidates = [target]
+    if target.parent.is_dir():
+        candidates.extend(sorted(target.parent.glob(f"{relative.stem}.legacy-*{relative.suffix}")))
+    try:
+        source_bytes = source.read_bytes()
+    except OSError:
+        return None
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        try:
+            if candidate.read_bytes() == source_bytes:
+                return candidate
+        except OSError:
+            continue
+    return None
 
 
 def write_project_stub(
@@ -335,7 +502,7 @@ def write_project_stub(
         "status": "draft",
         "notes": (
             "该文件是由 runtime 初始化生成的最小模板。"
-            "后续 T1/T7.5 等 agent 落地后，可在此基础上补业务字段。"
+            "后续 T1 等 agent 落地后，可在此基础上补业务字段。"
         ),
     }
     project_path.write_text(
@@ -373,7 +540,7 @@ def create_directory_guides(workspace_dir: Path, *, runtime_dir_name: str = "_ru
             "purpose": "论文检索、验证、阅读笔记、综合和引用库。",
             "produced_by": "T2, T3, T3.5.",
             "consumed_by": "T3, T3.5, T4, T4.5, T5-HANDOFF, T8.",
-            "key_files": "papers_raw.jsonl, papers_verified.jsonl, deep_read_notes/, shallow_read_notes/, bridge_notes/, synthesis.md, related_work.bib, baseline_map.json.",
+            "key_files": "papers_raw.jsonl, papers_verified.jsonl, deep_read_notes/, shallow_read_notes/, bridge_notes/, cross_domain_catalogs/, synthesis.md, related_work.bib, baseline_map.json.",
             "human_editable": "Only for corrections with provenance.",
             "agent_editable": "Scout/Reader and synthesis tools.",
             "do_not_put": "External executor code, final paper bundle.",
@@ -386,13 +553,13 @@ def create_directory_guides(workspace_dir: Path, *, runtime_dir_name: str = "_ru
             "key_files": "baseline_candidates.jsonl, datasets_verified.jsonl, benchmarks.jsonl, reproducibility_matrix.csv, resource_search_log.md.",
             "human_editable": "Yes, when adding known repos/datasets.",
             "agent_editable": "Resource mining tools may append structured candidates.",
-            "do_not_put": "Downloaded datasets or cloned repos; use external_executor/workdir or configured caches.",
+            "do_not_put": "Downloaded datasets or cloned repos; use external_executor/expr for deployed runnable method/baseline code or configured caches.",
             "validation": "Candidates should include provenance, license/access notes, and runnability status.",
         },
         "ideation": {
             "purpose": "研究假设、实验计划、风险、新颖性预审输入和候选 idea 记录。",
             "produced_by": "T4, T4.5.",
-            "consumed_by": "T4.5, T5-HANDOFF, T7-POST-NOVELTY, T8.",
+            "consumed_by": "T4.5, T5-HANDOFF, T8.",
             "key_files": "hypotheses.md, exp_plan.yaml, risks.md, idea_scorecard.yaml, novelty_audit.md.",
             "human_editable": "Only for explicit corrections or gate decisions.",
             "agent_editable": "Ideation and novelty auditor agents.",
@@ -400,9 +567,9 @@ def create_directory_guides(workspace_dir: Path, *, runtime_dir_name: str = "_ru
             "validation": "exp_plan.yaml must stay parseable and tied to hypotheses.",
         },
         "novelty": {
-            "purpose": "实验后 novelty/collision 复核和 required baseline 结构化要求。",
-            "produced_by": "T5-HANDOFF, T7-POST-NOVELTY, legacy T6.",
-            "consumed_by": "T5-HANDOFF, T7-AUDIT, T7-CLAIMS, T7.5, T8.",
+            "purpose": "T4.5/legacy novelty/collision 复核和 required baseline 结构化要求。",
+            "produced_by": "T5-HANDOFF, legacy T6, legacy post-experiment checks.",
+            "consumed_by": "T5-HANDOFF, external executor, T8.",
             "key_files": "required_baselines.json, post_experiment_novelty_check.json, post_experiment_collision_cases.md.",
             "human_editable": "Review notes only; structured files should keep schema.",
             "agent_editable": "Novelty and experimenter agents.",
@@ -412,17 +579,17 @@ def create_directory_guides(workspace_dir: Path, *, runtime_dir_name: str = "_ru
         "external_executor": {
             "purpose": "ResearchOS 与 Codex/Claude/manual 外部实验执行器的边界目录。",
             "produced_by": "T5-REBOOST-GATE, T5-HANDOFF, T5-SPECIALIZE-EXECUTOR-SKILLS, T5-EXPR-MATERIAL-GATE, T5-EXECUTOR-GATE, external executor, T5-DRY-RUN.",
-            "consumed_by": "T5-EXTERNAL-WAIT, T7-INGEST, T7-AUDIT, T7-POST-NOVELTY, T7-CLAIMS.",
-            "key_files": "AGENTS.md, CLAUDE.md, handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt, skills/, expr/, result_pack.json, executor_status.json, run_manifest.json.",
+            "consumed_by": "T5-EXTERNAL-WAIT, T8.",
+            "key_files": "AGENTS.md, CLAUDE.md, handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt, report/, skills/, expr/, executor_research_report.md, result_pack.json, executor_status.json, run_manifest.json.",
             "human_editable": "Place experiment materials under expr/ and manual executor outputs only; skills/ is generated and customized by ResearchOS before execution.",
             "agent_editable": "ResearchOS customizes skills/ during T5; external executor may write only paths allowed by allowed_paths.txt.",
             "do_not_put": "Final paper text, API keys, unrelated notebooks, ResearchOS source edits.",
             "validation": "Every metric must trace to raw result, config, log, run id, and sha256.",
         },
         "experiments": {
-            "purpose": "ResearchOS 摄取和审计后的实验结果、证据索引和公平性审计。",
-            "produced_by": "T7-INGEST, T7-AUDIT, T7-CLAIMS, legacy T7.",
-            "consumed_by": "T7.5, T8, T9.",
+            "purpose": "旧内部实验或可选归档的结果、证据索引和公平性审计；当前主链优先使用 external_executor/。",
+            "produced_by": "Legacy internal experiment modes or optional archival tools.",
+            "consumed_by": "T8, T9, old workspace inspection.",
             "key_files": "results_summary.json, evidence_index.json, integrity_audit.json, experiment_fairness_review.md, iteration_log.md.",
             "human_editable": "Only review notes; do not hand-edit audited metrics without provenance.",
             "agent_editable": "Experimenter audit/ingest tools.",
@@ -430,9 +597,9 @@ def create_directory_guides(workspace_dir: Path, *, runtime_dir_name: str = "_ru
             "validation": "Results must preserve mock_only/evidence_grade and artifact hashes.",
         },
         "evaluation": {
-            "purpose": "PI 对实验结果是否足够进入写作的决策。",
-            "produced_by": "T7.5.",
-            "consumed_by": "T7.5 human gate, T8.",
+            "purpose": "旧 PI 实验评估决策归档；当前主链不再要求此目录。",
+            "produced_by": "Legacy PI evaluation mode.",
+            "consumed_by": "Old workspace inspection; current T8 may read it only as optional context.",
             "key_files": "evaluation_decision.md.",
             "human_editable": "Gate decisions are persisted separately; manual notes are allowed.",
             "agent_editable": "PIAgent.",
@@ -484,8 +651,8 @@ def _workspace_dirs_requiring_guides(workspace_dir: Path, *, runtime_dir_name: s
     """Return standard and known dynamic artifact directories that need guides.
 
     The generator deliberately avoids recursively writing guides inside places
-    that may contain external code or datasets, such as `external_executor/workdir`
-    and `resources/repos`. Dynamic ResearchOS-owned artifact shards like
+    that may contain external code or datasets, such as `external_executor/expr`,
+    legacy `external_executor/workdir`, and `resources/repos`. Dynamic ResearchOS-owned artifact shards like
     `experiments/runs/<run_id>` and `drafts/review_rounds/<round>_sections`
     are still covered because users routinely inspect them during resume/debug.
     """
@@ -493,6 +660,7 @@ def _workspace_dirs_requiring_guides(workspace_dir: Path, *, runtime_dir_name: s
     guide_dirs: set[str] = {".", runtime_dir_name, *build_standard_workspace_dirs(runtime_dir_name)}
     prune_rel_dirs = {
         "external_executor/workdir",
+        "external_executor/expr",
         "resources/repos",
         "resources/datasets",
         "user_seeds/pdfs",
@@ -595,8 +763,8 @@ def _describe_key_file(item: str) -> str:
         "user_seeds": "用户提供的论文、想法、约束和外部资源入口。",
         "literature": "T2/T3/T3.5 生成的文献检索、笔记和综合材料。",
         "ideation": "T4/T4.5 生成的候选 idea、假设、实验计划和 novelty 审计输入。",
-        "external_executor": "T5 handoff、外部执行器 prompt、result pack 和运行证据边界。",
-        "experiments": "T7 摄取/审计后的标准化实验结果和 evidence index。",
+        "external_executor": "T5 handoff、外部执行器控制说明、T8 核心报告和运行证据边界。",
+        "experiments": "旧内部实验或可选归档的标准化实验结果和 evidence index。",
         "drafts": "T8 写作资源、章节草稿、审计、result-to-claim 和 paper.tex。",
         "submission": "T9 投稿 bundle、编译报告和最终 PDF。",
         "_runtime": "runtime 日志、trace、人机交互记录和 resume 快照。",
@@ -622,24 +790,26 @@ def _describe_key_file(item: str) -> str:
         "idea_scorecard.yaml": "候选 idea 的证据链、风险和选择记录。",
         "novelty_audit.md": "T4.5 新颖性预审报告。",
         "required_baselines.json": "实验后必须覆盖或说明的 baseline 要求。",
-        "post_experiment_novelty_check.json": "T7 后基于实现/结果的 novelty 复核。",
+        "post_experiment_novelty_check.json": "基于实现/结果的 legacy novelty 复核。",
         "post_experiment_collision_cases.md": "实验后潜在撞车/claim 降级说明。",
         "AGENTS.md": "外部执行器给 Codex/agent 的工作约束。",
         "CLAUDE.md": "外部执行器给 Claude Code 的工作约束。",
         "skills": "T5 编译出的项目特化外部执行器 skill suite。",
+        "report": "T5-REBOOST 的过程报告和候选 handoff 诊断文件；不作为执行器输入。",
         "expr": "用户手动放置 baseline model、dataset、权重和实验材料的位置。",
         "handoff_pack.json": "T5 编译的实验任务、协议、证据契约和 allowed paths。",
         "expected_outputs_schema.json": "外部执行器必须写回的 result pack/status/manifest schema。",
         "allowed_paths.txt": "外部执行器可读写路径边界。",
-        "result_pack.json": "外部执行器写回的核心结果包，T7 只从这里摄取实验结果。",
+        "executor_research_report.md": "T5 直接交给 T8 的核心外部执行研究报告。",
+        "result_pack.json": "外部执行器写回的支持性结果包，供 T8 需要时回查。",
         "executor_status.json": "外部执行器状态、accepted/mock/dry-run 标记。",
         "run_manifest.json": "运行记录、raw/config/log 路径和 provenance。",
-        "results_summary.json": "T7 标准化后的实验结果摘要。",
+        "results_summary.json": "旧内部实验链标准化后的实验结果摘要。",
         "evidence_index.json": "指标、raw result、config、log、hash 的证据索引。",
         "integrity_audit.json": "实验诚信和 provenance 审计。",
         "experiment_fairness_review.md": "baseline、公平性和 claim 边界审阅。",
         "iteration_log.md": "实验迭代与决策日志。",
-        "evaluation_decision.md": "T7.5 PI 对是否进入写作或回退的决策。",
+        "evaluation_decision.md": "旧 PI 评估模式对是否进入写作或回退的决策。",
         "paper_state.json": "T8 逐章节写作共享状态和事实源。",
         "sections": "T8 每个 section 的独立 LaTeX 草稿。",
         "section_outlines": "T8 每个 section 的局部大纲。",
@@ -659,7 +829,7 @@ def _describe_key_file(item: str) -> str:
         "pilot_plan.yaml": "legacy T5 pilot 的旧试点实验计划；新主链不读取。",
         "pilot_results.json": "legacy T5 pilot 的旧试点结果；若要进入新写作链，需通过外部结果摄取重新标准化。",
         "motivation_validation.md": "legacy pilot 对动机是否成立的旧判断记录。",
-        "pilot_code": "legacy pilot 代码目录；新实验实现应放在 external_executor/workdir 并产出 result_pack。",
+        "pilot_code": "legacy pilot 代码目录；新实验实现应部署到 external_executor/expr 并产出 result_pack。",
         "smoke_test_passed.marker": "legacy pilot 烟测通过标记。",
         "docker_digests.txt": "legacy pilot 记录的 Docker 镜像 digest。",
         "experiment_audit.json": "legacy pilot 多次改代码时的修改审计。",
@@ -821,20 +991,42 @@ def _default_dir_guide(rel_dir: str, *, runtime_dir_name: str) -> dict[str, str]
         }
     if normalized.startswith("external_executor/workdir"):
         return {
-            "purpose": "Sandboxed working directory for real external executor implementation and experiment runs.",
-            "produced_by": "Codex CLI, Claude Code, or manual external executor.",
-            "consumed_by": "External executor only; ResearchOS consumes result_pack/raw/config/log files, not arbitrary workdir state.",
-            "key_files": "Executor-owned repos, scripts, notebooks, temporary run files.",
+            "purpose": "Legacy external executor workdir kept only for old workspaces; current deployments use external_executor/expr.",
+            "produced_by": "Legacy Codex CLI, Claude Code, or manual external executor runs.",
+            "consumed_by": "Legacy recovery only; current ResearchOS consumes result_pack/raw/config/log files and deployed assets under external_executor/expr.",
+            "key_files": "Legacy executor-owned repos, scripts, notebooks, temporary run files.",
             "human_editable": "Yes when running manual mode.",
             "agent_editable": "External executor only, subject to allowed_paths.txt.",
             "do_not_put": "ResearchOS source edits, final paper text, or secrets.",
             "validation": "Publishable evidence must be copied into result_pack-linked raw_results/configs/logs with hashes.",
         }
+    if normalized == "external_executor/report":
+        return {
+            "purpose": "ResearchOS T5 process reports plus executor selection/capability control receipts.",
+            "produced_by": "T5-REBOOST-GATE, T5-SPECIALIZE-EXECUTOR-SKILLS, and T5-EXECUTOR-GATE.",
+            "consumed_by": "ResearchOS validation/resume and external executor Skill preflight where explicitly referenced.",
+            "key_files": "reboost_report.json, reboost_validation_report.json, skill_specialization_report.json, skill_specialization_execution.json, executor_selection.json, executor_capabilities.json.",
+            "human_editable": "No; rerun T5-REBOOST or repair upstream sources instead.",
+            "agent_editable": "ResearchOS T5 publication/gate tools only.",
+            "do_not_put": "Executor prompts, raw results, code, datasets, or manuscript text.",
+            "validation": "Reports must point back to their source artifacts; executor_selection/capabilities are written by T5-EXECUTOR-GATE.",
+        }
+    if normalized == "external_executor/expr":
+        return {
+            "purpose": "Formal deployment and material area for baseline/model/data notes and later executable experiment assets.",
+            "produced_by": "init-workspace creates the directory; user and later external execution phases populate it.",
+            "consumed_by": "T5 material gate, executor Skill phases, experiment run validators, and external executor workflows.",
+            "key_files": "User material notes, deployed code/config subdirectories, baseline_reproduction/, implementation/.",
+            "human_editable": "Yes for placing approved material before executor selection.",
+            "agent_editable": "Only later external executor phases authorized by allowed_paths.txt; T5-REBOOST does not populate this directory.",
+            "do_not_put": "T5 reboost reports, ResearchOS source edits, secrets, or raw run evidence.",
+            "validation": "Execution code/config must remain under this directory when required by executor Skill contracts.",
+        }
     if normalized.startswith("external_executor/raw_results"):
         return {
             "purpose": "Raw metric/result files emitted by the external executor.",
             "produced_by": "External executor or mock dry-run.",
-            "consumed_by": "T5-EXTERNAL-WAIT, T7-INGEST, T7-AUDIT.",
+            "consumed_by": "T5-EXTERNAL-WAIT, T8, and external-executor handoff validation.",
             "key_files": "JSON/CSV raw results referenced by result_pack metrics.",
             "human_editable": "No after result_pack is written unless rerunning executor.",
             "agent_editable": "External executor only.",
@@ -845,7 +1037,7 @@ def _default_dir_guide(rel_dir: str, *, runtime_dir_name: str) -> dict[str, str]
         return {
             "purpose": "Configuration files used by external experiment runs.",
             "produced_by": "External executor.",
-            "consumed_by": "T7-AUDIT and result provenance checks.",
+            "consumed_by": "T8 and result provenance checks when needed.",
             "key_files": "YAML/JSON configs referenced by run_manifest.",
             "human_editable": "Only before executor run; after run they are evidence.",
             "agent_editable": "External executor only.",
@@ -856,7 +1048,7 @@ def _default_dir_guide(rel_dir: str, *, runtime_dir_name: str) -> dict[str, str]
         return {
             "purpose": "Execution logs for external experiment runs.",
             "produced_by": "External executor.",
-            "consumed_by": "T7-AUDIT and debugging.",
+            "consumed_by": "T8 and debugging when needed.",
             "key_files": "*.log referenced by run_manifest.",
             "human_editable": "No after run completion.",
             "agent_editable": "External executor only.",
@@ -867,7 +1059,7 @@ def _default_dir_guide(rel_dir: str, *, runtime_dir_name: str) -> dict[str, str]
         return {
             "purpose": "External executor code patches or implementation diffs.",
             "produced_by": "External executor.",
-            "consumed_by": "T7-AUDIT, human debugging, future replication.",
+            "consumed_by": "T8, human debugging, future replication.",
             "key_files": "*.patch or patch metadata.",
             "human_editable": "Only when manually documenting external implementation changes.",
             "agent_editable": "External executor only.",
@@ -876,9 +1068,9 @@ def _default_dir_guide(rel_dir: str, *, runtime_dir_name: str) -> dict[str, str]
         }
     if normalized.startswith("experiments/runs/"):
         return {
-            "purpose": "One normalized experiment run or run-family directory after external result ingestion.",
-            "produced_by": "T7-INGEST/T7-AUDIT or legacy experiment modes.",
-            "consumed_by": "T7-CLAIMS, T7.5, T8 methodology/experiments writing, and debugging.",
+            "purpose": "One normalized experiment run or run-family directory kept for legacy or optional archived results.",
+            "produced_by": "Legacy experiment modes or optional archival tools.",
+            "consumed_by": "T8 methodology/experiments writing and debugging when explicitly relevant.",
             "key_files": "Run-specific metrics, copied configs, logs, provenance, or audit notes.",
             "human_editable": "No; change the source result_pack or external executor artifacts and re-ingest.",
             "agent_editable": "Experimenter tools only.",
@@ -887,9 +1079,9 @@ def _default_dir_guide(rel_dir: str, *, runtime_dir_name: str) -> dict[str, str]
         }
     if normalized.startswith("experiments/runs"):
         return {
-            "purpose": "Normalized run records after ResearchOS ingests external results.",
-            "produced_by": "T7-INGEST/T7-AUDIT or legacy experiment modes.",
-            "consumed_by": "T7-CLAIMS, T7.5, T8.",
+            "purpose": "Normalized run records kept for legacy or optional archived results.",
+            "produced_by": "Legacy experiment modes or optional archival tools.",
+            "consumed_by": "T8 when explicitly relevant.",
             "key_files": "Run-level normalized records.",
             "human_editable": "No; edit source result_pack and re-ingest instead.",
             "agent_editable": "Experimenter tools.",
@@ -898,8 +1090,8 @@ def _default_dir_guide(rel_dir: str, *, runtime_dir_name: str) -> dict[str, str]
         }
     if normalized.startswith("experiments/configs"):
         return {
-            "purpose": "Normalized or copied experiment configs used for audit and writing.",
-            "produced_by": "T7-INGEST/T7-AUDIT.",
+            "purpose": "Normalized or copied experiment configs used for legacy audit and writing support.",
+            "produced_by": "Legacy experiment modes or optional archival tools.",
             "consumed_by": "T8 methodology/experiments sections.",
             "key_files": "Config snapshots tied to run records.",
             "human_editable": "No after ingestion.",
@@ -909,8 +1101,8 @@ def _default_dir_guide(rel_dir: str, *, runtime_dir_name: str) -> dict[str, str]
         }
     if normalized.startswith("experiments/logs"):
         return {
-            "purpose": "Normalized experiment logs after ingestion.",
-            "produced_by": "T7-INGEST/T7-AUDIT.",
+            "purpose": "Normalized experiment logs kept for legacy or optional archived results.",
+            "produced_by": "Legacy experiment modes or optional archival tools.",
             "consumed_by": "T8 and debugging.",
             "key_files": "Logs linked to run records.",
             "human_editable": "No after ingestion.",
@@ -935,11 +1127,11 @@ def _default_dir_guide(rel_dir: str, *, runtime_dir_name: str) -> dict[str, str]
             return {
                 "purpose": "Legacy internal-pilot experiment area kept only for explicit legacy T5 run-task compatibility; the main workflow now uses external_executor/ and experiments/.",
                 "produced_by": "Legacy T5 pilot mode only when explicitly run with legacy compatibility.",
-                "consumed_by": "Legacy T6/T7 compatibility paths and old workspace inspection; current main chain does not consume it.",
+                "consumed_by": "Legacy T6 compatibility paths and old workspace inspection; current main chain does not consume it.",
                 "key_files": "pilot_plan.yaml, pilot_results.json, motivation_validation.md, pilot_code/, smoke_test_passed.marker, docker_digests.txt, experiment_audit.json",
                 "human_editable": "Normally no; use external_executor/ for new experiment execution.",
                 "agent_editable": "Only legacy ExperimenterAgent pilot mode.",
-                "do_not_put": "New external executor outputs, result_pack.json, paper drafts, or current T7 evidence.",
+                "do_not_put": "New external executor outputs, result_pack.json, executor_research_report.md, or paper drafts.",
                 "validation": "If present, files are legacy evidence only and must not be treated as current external executor evidence unless re-ingested.",
             }
         if normalized.startswith("reviews"):
@@ -1197,6 +1389,8 @@ def render_workspace_tree(runtime_dir_name: str = "_runtime") -> str:
             "|-- ideation/",
             "|-- novelty/",
             "|-- external_executor/",
+            "|   |-- report/",
+            "|   |-- expr/",
             "|   |-- workdir/",
             "|   |-- raw_results/",
             "|   |-- configs/",

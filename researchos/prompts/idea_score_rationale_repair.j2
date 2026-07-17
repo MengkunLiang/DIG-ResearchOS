@@ -1,0 +1,8 @@
+Return exactly one JSON object with this shape and no Markdown:
+{"repairs": [{"candidate_id": "...", "rationales": {"requested_core_dimension": "candidate-specific rationale"}}]}
+
+You are repairing only named core-score rationale fields in existing independent scores. Return exactly one repair object for every entry in `repairs_required`. Include exactly the requested `core_rationale_keys`; do not include unrequested keys or any numerical score.
+
+Each rationale must be a candidate-specific Chinese explanation grounded only in the supplied Candidate summary. Explain the named formal dimension rather than auditing evidence, asserting external novelty, promising feasibility, or writing generic praise. Never invent a source, dataset, metric, result, citation, or stronger evidence status. If a requested explanation cannot be responsibly supplied, omit that key so the runtime retains the original score with a visible diagnostic warning.
+
+{{ payload_json }}

@@ -10,7 +10,7 @@ from __future__ import annotations
   专用契约方便测试与 smoke run。
 """
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 OPTIONAL_SEED_SURVEY_INPUTS: dict[str, str] = {
@@ -19,6 +19,45 @@ OPTIONAL_SEED_SURVEY_INPUTS: dict[str, str] = {
     "seed_constraints": "user_seeds/seed_constraints.md",
     "seed_external_resources": "user_seeds/seed_external_resources.jsonl",
 }
+
+# Bridge catalogs are a durable T2 retrieval track, not a deep-reading-note
+# requirement.  Explicitly listing their plan/index keeps single-task copies
+# and debug workspaces from losing Cross-domain context while preserving the
+# separate `bridge_notes` directory for canonical notes when they exist.
+CROSS_DOMAIN_CATALOG_INPUTS: dict[str, str] = {
+    "bridge_domain_plan": "literature/bridge_domain_plan.json",
+    "bridge_catalog_index": "literature/cross_domain_catalogs/index.json",
+    "cross_domain_catalogs_dir": "literature/cross_domain_catalogs",
+}
+
+LITERATURE_MANIFEST_INPUT: dict[str, str] = {
+    "literature_manifest": "literature/literature_manifest.json",
+}
+
+EXTERNAL_EXECUTOR_T8_INPUTS: dict[str, str] = {
+    "executor_research_report": "external_executor/executor_research_report.md",
+    "external_executor_dir": "external_executor",
+}
+
+# ``run --from`` / ``resume --from`` must transfer more than the immediate
+# state-machine node's files for a literature-dependent public stage.  A
+# public re-entry such as ``--from-task T3.6`` resolves to the first survey
+# gate, whose narrow input list intentionally does not contain every note
+# root.  Copying only that list used to leave an initialized-but-empty
+# ``deep_read_notes/`` directory in the target; later T3.6/T4/T5/T8 tasks then
+# appeared ready while having no paper corpus to read.  The entire literature
+# tree is the auditable, workspace-local source of truth for these downstream
+# stages.  It includes the three canonical note roots, paper queues, BibTeX,
+# synthesis, and the independent Cross-domain catalog without conflating their
+# evidence permissions.
+LITERATURE_IMPORT_ROOT = "literature"
+LITERATURE_DEPENDENT_IMPORT_PREFIXES: tuple[str, ...] = (
+    "T3.5",
+    "T3.6",
+    "T4",
+    "T5",
+    "T8",
+)
 
 
 TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
@@ -92,8 +131,17 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "access_audit": "literature/access_audit.md",
             "search_log": "literature/search_log.md",
             "missing_areas": "literature/missing_areas.md",
+            "bridge_catalog_index": "literature/cross_domain_catalogs/index.json",
+            "cross_domain_catalogs_dir": "literature/cross_domain_catalogs",
         },
         "required_inputs": ["project"],
+        # A Cross-domain catalog is materialized only when T1 supplied an
+        # actual bridge lane.  It must not turn a normal, bridge-free T2 run
+        # (or an older workspace being resumed) into a missing-output error.
+        # When a plan contains bridge domains, Scout validates the catalog
+        # semantically after finalization; see
+        # ``validate_active_bridge_catalogs``.
+        "optional_outputs": ["bridge_catalog_index", "cross_domain_catalogs_dir"],
         "schemas": {
             "papers_raw": "papers_raw",
             "papers_dedup": "papers_dedup",
@@ -108,6 +156,8 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "inputs": {
             "search_log": "literature/search_log.md",
             "missing_areas": "literature/missing_areas.md",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
+            "bridge_notes_dir": "literature/bridge_notes",
             "domain_map": "literature/domain_map.json",
             "access_audit": "literature/access_audit.md",
             "deep_read_queue": "literature/deep_read_queue.jsonl",
@@ -132,6 +182,10 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "seed_outline_profile": "user_seeds/seed_outline_profile.json",
             "seed_constraints": "user_seeds/seed_constraints.md",
             "seed_external_resources": "user_seeds/seed_external_resources.jsonl",
+            # These are independent retrieval/context inputs.  They are not
+            # T3 reading outputs and must never be mistaken for a requirement
+            # that Cross-domain papers have been deep-read.
+            **CROSS_DOMAIN_CATALOG_INPUTS,
         },
         "outputs": {
             "deep_read_notes_dir": "literature/deep_read_notes",
@@ -154,6 +208,8 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "bridge_notes_dir": "literature/bridge_notes",
             "shallow_read_notes_dir": "literature/shallow_read_notes",
             "metadata_triage_report": "literature/metadata_triage.md",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
+            **LITERATURE_MANIFEST_INPUT,
         },
         "outputs": {
             "synthesis": "literature/synthesis.md",
@@ -171,6 +227,8 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "domain_map": "literature/domain_map.json",
             "comparison_table": "literature/comparison_table.csv",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
+            **LITERATURE_MANIFEST_INPUT,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"survey_decision": "drafts/survey/decision.json"},
@@ -178,6 +236,16 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "schemas": {},
     },
     "T3.6-TEMPLATE-GATE": {
+        "inputs": {
+            "project": "project.yaml",
+            "survey_decision": "drafts/survey/decision.json",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
+        },
+        "outputs": {"writing_template": "drafts/survey/writing_template.json"},
+        "required_inputs": ["project", "survey_decision"],
+        "schemas": {},
+    },
+    "T3.6-CCF-TEMPLATE-GATE": {
         "inputs": {
             "project": "project.yaml",
             "survey_decision": "drafts/survey/decision.json",
@@ -196,9 +264,12 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "comparison_table": "literature/comparison_table.csv",
             "deep_read_notes_dir": "literature/deep_read_notes",
             "bridge_notes_dir": "literature/bridge_notes",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             "shallow_read_notes_dir": "literature/shallow_read_notes",
             "related_work_bib": "literature/related_work.bib",
             "writing_template": "drafts/survey/writing_template.json",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
+            **LITERATURE_MANIFEST_INPUT,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"survey_plan": "drafts/survey/survey_plan.json"},
@@ -231,6 +302,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "survey_plan": "drafts/survey/survey_plan.json",
             "deep_read_notes_dir": "literature/deep_read_notes",
             "shallow_read_notes_dir": "literature/shallow_read_notes",
+            **LITERATURE_MANIFEST_INPUT,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"corpus_decision": "drafts/survey/corpus_decision.json"},
@@ -244,9 +316,16 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "corpus_decision": "drafts/survey/corpus_decision.json",
             "domain_map": "literature/domain_map.json",
             "papers_verified": "literature/papers_verified.jsonl",
+            "bridge_notes_dir": "literature/bridge_notes",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
+            **LITERATURE_MANIFEST_INPUT,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
-        "outputs": {"survey_expansion": "drafts/survey/survey_expansion.json"},
+        "outputs": {
+            "survey_expansion": "drafts/survey/survey_expansion.json",
+            "survey_supplement_search_log": "literature/survey_supplement/search_log.jsonl",
+            "survey_supplement_papers": "literature/survey_supplement/papers_retrieved.jsonl",
+        },
         "required_inputs": ["project", "survey_plan", "corpus_decision"],
         "schemas": {},
     },
@@ -261,6 +340,8 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "domain_map": "literature/domain_map.json",
             "comparison_table": "literature/comparison_table.csv",
             "related_work_bib": "literature/related_work.bib",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
+            **LITERATURE_MANIFEST_INPUT,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {
@@ -278,6 +359,8 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "deep_read_notes_dir": "literature/deep_read_notes",
             "shallow_read_notes_dir": "literature/shallow_read_notes",
             "bridge_notes_dir": "literature/bridge_notes",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
+            **LITERATURE_MANIFEST_INPUT,
         },
         "outputs": {
             "survey_visual_manifest": "drafts/survey/figures/survey_visual_manifest.json",
@@ -295,6 +378,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "survey_visual_manifest": "drafts/survey/figures/survey_visual_manifest.json",
             "comparison_table": "literature/comparison_table.csv",
             "related_work_bib": "literature/related_work.bib",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/background.tex"},
@@ -311,6 +395,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "survey_visual_manifest": "drafts/survey/figures/survey_visual_manifest.json",
             "domain_map": "literature/domain_map.json",
             "related_work_bib": "literature/related_work.bib",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/taxonomy.tex"},
@@ -330,6 +415,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "deep_read_notes_dir": "literature/deep_read_notes",
             "shallow_read_notes_dir": "literature/shallow_read_notes",
             "related_work_bib": "literature/related_work.bib",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/theme_1.tex"},
@@ -350,6 +436,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "deep_read_notes_dir": "literature/deep_read_notes",
             "shallow_read_notes_dir": "literature/shallow_read_notes",
             "related_work_bib": "literature/related_work.bib",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/theme_2.tex"},
@@ -370,6 +457,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "deep_read_notes_dir": "literature/deep_read_notes",
             "shallow_read_notes_dir": "literature/shallow_read_notes",
             "related_work_bib": "literature/related_work.bib",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/theme_3.tex"},
@@ -390,6 +478,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "deep_read_notes_dir": "literature/deep_read_notes",
             "shallow_read_notes_dir": "literature/shallow_read_notes",
             "related_work_bib": "literature/related_work.bib",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/theme_4.tex"},
@@ -406,6 +495,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "survey_visual_manifest": "drafts/survey/figures/survey_visual_manifest.json",
             "related_work_bib": "literature/related_work.bib",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/comparison.tex"},
@@ -421,6 +511,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "domain_map": "literature/domain_map.json",
             "related_work_bib": "literature/related_work.bib",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/challenges.tex"},
@@ -435,6 +526,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "domain_map": "literature/domain_map.json",
             "related_work_bib": "literature/related_work.bib",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/future.tex"},
@@ -452,6 +544,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "challenges_section": "drafts/survey/sections/challenges.tex",
             "future_section": "drafts/survey/sections/future.tex",
             "related_work_bib": "literature/related_work.bib",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/introduction.tex"},
@@ -474,6 +567,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "section_outline": "drafts/survey/section_outlines/conclusion.md",
             "challenges_section": "drafts/survey/sections/challenges.tex",
             "future_section": "drafts/survey/sections/future.tex",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/conclusion.tex"},
@@ -491,6 +585,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "challenges_section": "drafts/survey/sections/challenges.tex",
             "future_section": "drafts/survey/sections/future.tex",
             "conclusion_section": "drafts/survey/sections/conclusion.tex",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/abstract.tex"},
@@ -514,6 +609,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "sections_dir": "drafts/survey/sections",
             "survey_plan": "drafts/survey/survey_plan.json",
             "related_work_bib": "literature/related_work.bib",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {
@@ -537,6 +633,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "domain_map": "literature/domain_map.json",
             "comparison_table": "literature/comparison_table.csv",
             "related_work_bib": "literature/related_work.bib",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {
@@ -583,6 +680,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "survey_tex": "drafts/survey/survey.tex",
             "survey_audit_json": "drafts/survey/survey_audit.json",
             "survey_compile_report": "drafts/survey/survey_compile_report.json",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {
@@ -611,6 +709,11 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "survey_insights": "ideation/survey_insights.json",
             "seed_ideas": "user_seeds/seed_ideas.md",
             "seed_constraints": "user_seeds/seed_constraints.md",
+            "deep_read_notes_dir": "literature/deep_read_notes",
+            "shallow_read_notes_dir": "literature/shallow_read_notes",
+            "bridge_notes_dir": "literature/bridge_notes",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
+            **LITERATURE_MANIFEST_INPUT,
         },
         "outputs": {
             "evidence_index": "ideation/evidence/evidence_index.jsonl",
@@ -620,6 +723,10 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "pass1_forward_candidates": "ideation/_pass1_forward_candidates.json",
             "pass2_grounding_review": "ideation/_pass2_grounding_review.json",
             "candidate_directions": "ideation/_candidate_directions.json",
+            # Gate1 is not allowed to render a legacy/piecemeal explanation.
+            # The completed LLM-authored Portfolio Card deck is a native T4
+            # output and an explicit Gate1 input.
+            "final_portfolio_cards": "ideation/final_cards/portfolio_cards.json",
             "gate1_candidate_cards": "ideation/_gate1_candidate_cards.md",
             "gate1_selection_brief": "ideation/_gate1_selection_brief.md",
             "bridge_coverage_review": "ideation/bridge_coverage_review.json",
@@ -653,6 +760,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
     "T4-GATE1": {
         "inputs": {
             "candidate_directions": "ideation/_candidate_directions.json",
+            "final_portfolio_cards": "ideation/final_cards/portfolio_cards.json",
             "gate1_candidate_cards": "ideation/_gate1_candidate_cards.md",
             "gate1_selection_brief": "ideation/_gate1_selection_brief.md",
             "pass1_forward_candidates": "ideation/_pass1_forward_candidates.json",
@@ -665,6 +773,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "optional_outputs": ["gate1_user_selection"],
         "required_inputs": [
             "candidate_directions",
+            "final_portfolio_cards",
             "gate1_candidate_cards",
             "gate1_selection_brief",
             "pass1_forward_candidates",
@@ -683,7 +792,9 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "idea_scorecard": "ideation/idea_scorecard.yaml",
             "deep_read_notes_dir": "literature/deep_read_notes",
             "bridge_notes_dir": "literature/bridge_notes",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             "shallow_read_notes_dir": "literature/shallow_read_notes",
+            **LITERATURE_MANIFEST_INPUT,
         },
         "outputs": {
             "novelty_audit": "ideation/novelty_audit.md",
@@ -737,19 +848,17 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "comparison_table": "literature/comparison_table.csv",
             "deep_read_notes_dir": "literature/deep_read_notes",
             "bridge_notes_dir": "literature/bridge_notes",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             "shallow_read_notes_dir": "literature/shallow_read_notes",
             "notes_manifest": "literature/notes_manifest.json",
+            **LITERATURE_MANIFEST_INPUT,
         },
         "outputs": {
             "handoff_pack": "external_executor/handoff_pack.json",
-            "executor_prompt": "external_executor/executor_prompt.md",
             "expected_outputs_schema": "external_executor/expected_outputs_schema.json",
             "allowed_paths": "external_executor/allowed_paths.txt",
-            "executor_selection": "external_executor/executor_selection.json",
+            "executor_selection": "external_executor/report/executor_selection.json",
             "input_manifest": "external_executor/input_manifest.json",
-            "codex_prompt": "external_executor/codex_prompt.md",
-            "claude_code_prompt": "external_executor/claude_code_prompt.md",
-            "manual_instructions": "external_executor/manual_instructions.md",
             "agents_md": "external_executor/AGENTS.md",
             "claude_md": "external_executor/CLAUDE.md",
             "external_readme": "external_executor/README.md",
@@ -781,26 +890,20 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "comparison_table": "literature/comparison_table.csv",
             "deep_read_notes_dir": "literature/deep_read_notes",
             "bridge_notes_dir": "literature/bridge_notes",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
             "shallow_read_notes_dir": "literature/shallow_read_notes",
+            **LITERATURE_MANIFEST_INPUT,
             "notes_manifest": "literature/notes_manifest.json",
         },
         "outputs": {
             "handoff_pack": "external_executor/handoff_pack.json",
-            "reboost_report": "external_executor/reboost_report.json",
-            "executor_prompt": "external_executor/executor_prompt.md",
+            "reboost_report": "external_executor/report/reboost_report.json",
+            "reboost_validation_report": "external_executor/report/reboost_validation_report.json",
+            "paper_card_evidence_index": "external_executor/paper_card_evidence_index.json",
             "expected_outputs_schema": "external_executor/expected_outputs_schema.json",
             "allowed_paths": "external_executor/allowed_paths.txt",
-            "executor_selection": "external_executor/executor_selection.json",
-            "input_manifest": "external_executor/input_manifest.json",
-            "codex_prompt": "external_executor/codex_prompt.md",
-            "claude_code_prompt": "external_executor/claude_code_prompt.md",
-            "manual_instructions": "external_executor/manual_instructions.md",
             "agents_md": "external_executor/AGENTS.md",
             "claude_md": "external_executor/CLAUDE.md",
-            "external_readme": "external_executor/README.md",
-            "dir_guide": "external_executor/_DIR_GUIDE.md",
-            "job_state": "external_executor/job_state.json",
-            "expr_dir": "external_executor/expr",
         },
         "required_inputs": ["project", "hypotheses", "exp_plan", "novelty_audit", "synthesis"],
         "schemas": {},
@@ -812,6 +915,10 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "expected_outputs_schema": "external_executor/expected_outputs_schema.json",
             "allowed_paths": "external_executor/allowed_paths.txt",
             "agents_md": "external_executor/AGENTS.md",
+            # Optional in practice (not listed in required_inputs), but
+            # declared here so single-task runs and project Skill
+            # specialization retain the Cross-domain information layer.
+            **CROSS_DOMAIN_CATALOG_INPUTS,
         },
         "optional_inputs": [
             "ideation/hypotheses.md",
@@ -824,9 +931,13 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "literature/synthesis_workbench.json",
             "literature/domain_map.json",
             "literature/comparison_table.csv",
+            "literature/bridge_domain_plan.json",
+            "literature/cross_domain_catalogs/index.json",
+            "literature/cross_domain_catalogs",
             "literature/deep_read_notes",
             "literature/bridge_notes",
             "literature/shallow_read_notes",
+            "literature/literature_manifest.json",
             "literature/notes_manifest.json",
         ],
         "repository_inputs": {
@@ -839,8 +950,8 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "project_skill_context": "external_executor/project_skill_context.yaml",
             "project_skill_context_schema": "external_executor/schemas/project_skill_context.schema.json",
             "skills_dir": "external_executor/skills",
-            "skill_specialization_report": "external_executor/skill_specialization_report.json",
-            "skill_specialization_execution": "external_executor/skill_specialization_execution.json",
+            "skill_specialization_report": "external_executor/report/skill_specialization_report.json",
+            "skill_specialization_execution": "external_executor/report/skill_specialization_execution.json",
         },
         "required_inputs": [
             "project",
@@ -874,11 +985,11 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "skills_dir": "external_executor/skills",
             "project_skill_context": "external_executor/project_skill_context.yaml",
             "project_skill_context_schema": "external_executor/schemas/project_skill_context.schema.json",
-            "skill_specialization_report": "external_executor/skill_specialization_report.json",
-            "skill_specialization_execution": "external_executor/skill_specialization_execution.json",
+            "skill_specialization_report": "external_executor/report/skill_specialization_report.json",
+            "skill_specialization_execution": "external_executor/report/skill_specialization_execution.json",
         },
         "outputs": {
-            "executor_selection": "external_executor/executor_selection.json",
+            "executor_selection": "external_executor/report/executor_selection.json",
         },
         "required_inputs": [
             "handoff_pack",
@@ -895,12 +1006,14 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
     },
     "T5-EXTERNAL-WAIT": {
         "inputs": {
-            "executor_selection": "external_executor/executor_selection.json",
+            "executor_selection": "external_executor/report/executor_selection.json",
             "handoff_pack": "external_executor/handoff_pack.json",
             "expected_outputs_schema": "external_executor/expected_outputs_schema.json",
             "allowed_paths": "external_executor/allowed_paths.txt",
             "result_pack": "external_executor/result_pack.json",
             "executor_status": "external_executor/executor_status.json",
+            "executor_research_report": "external_executor/executor_research_report.md",
+            "external_executor_dir": "external_executor",
         },
         "outputs": {
             "wait_acceptance_report": "external_executor/wait_acceptance_report.json",
@@ -910,7 +1023,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
     },
     "T5-DRY-RUN": {
         "inputs": {
-            "executor_selection": "external_executor/executor_selection.json",
+            "executor_selection": "external_executor/report/executor_selection.json",
             "handoff_pack": "external_executor/handoff_pack.json",
             "expected_outputs_schema": "external_executor/expected_outputs_schema.json",
         },
@@ -924,87 +1037,6 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "logs_dir": "external_executor/logs",
         },
         "required_inputs": ["executor_selection", "handoff_pack", "expected_outputs_schema"],
-        "schemas": {},
-    },
-    "T7-INGEST": {
-        "inputs": {
-            "result_pack": "external_executor/result_pack.json",
-            "executor_status": "external_executor/executor_status.json",
-            "handoff_pack": "external_executor/handoff_pack.json",
-        },
-        "outputs": {
-            "results_summary": "experiments/results_summary.json",
-            "run_records": "experiments/run_records.jsonl",
-            "evidence_index": "experiments/evidence_index.json",
-            "ingest_report": "experiments/ingest_report.json",
-        },
-        "required_inputs": ["result_pack", "executor_status", "handoff_pack"],
-        "schemas": {},
-    },
-    "T7-AUDIT": {
-        "inputs": {
-            "results_summary": "experiments/results_summary.json",
-            "evidence_index": "experiments/evidence_index.json",
-            "run_records": "experiments/run_records.jsonl",
-            "exp_plan": "ideation/exp_plan.yaml",
-            "novelty_audit": "ideation/novelty_audit.md",
-            "deep_read_notes_dir": "literature/deep_read_notes",
-            "bridge_notes_dir": "literature/bridge_notes",
-            "shallow_read_notes_dir": "literature/shallow_read_notes",
-        },
-        "outputs": {
-            "integrity_audit": "experiments/integrity_audit.json",
-            "result_audit": "experiments/result_audit.json",
-            "experiment_fairness_review": "experiments/experiment_fairness_review.md",
-            "method_audit": "experiments/method_audit.json",
-            "framework_figure_audit": "experiments/framework_figure_audit.json",
-            "method_writing_resources": "drafts/method_writing_resources.json",
-        },
-        "required_inputs": ["results_summary", "evidence_index", "run_records"],
-        "schemas": {},
-    },
-    "T7-POST-NOVELTY": {
-        "inputs": {
-            "hypotheses": "ideation/hypotheses.md",
-            "exp_plan": "ideation/exp_plan.yaml",
-            "novelty_audit": "ideation/novelty_audit.md",
-            "required_baselines": "novelty/required_baselines.json",
-            "result_pack": "external_executor/result_pack.json",
-            "results_summary": "experiments/results_summary.json",
-            "integrity_audit": "experiments/integrity_audit.json",
-            "patch_log": "external_executor/patches/patch_log.jsonl",
-            "repo_snapshot": "external_executor/repo_snapshot.json",
-        },
-        "outputs": {
-            "post_experiment_novelty_check": "novelty/post_experiment_novelty_check.json",
-            "post_experiment_collision_cases": "novelty/post_experiment_collision_cases.md",
-        },
-        "required_inputs": ["results_summary", "integrity_audit", "novelty_audit"],
-        "schemas": {},
-    },
-    "T7-CLAIMS": {
-        "inputs": {
-            "results_summary": "experiments/results_summary.json",
-            "integrity_audit": "experiments/integrity_audit.json",
-            "evidence_index": "experiments/evidence_index.json",
-            "exp_plan": "ideation/exp_plan.yaml",
-            "hypotheses": "ideation/hypotheses.md",
-            "novelty_audit": "ideation/novelty_audit.md",
-            "deep_read_notes_dir": "literature/deep_read_notes",
-            "bridge_notes_dir": "literature/bridge_notes",
-            "shallow_read_notes_dir": "literature/shallow_read_notes",
-        },
-        "outputs": {
-            "experimental_claims": "experiments/experimental_claims.json",
-            "result_to_claim": "drafts/result_to_claim.json",
-            "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
-            "iteration_log": "experiments/iteration_log.md",
-            "must_not_claim": "drafts/must_not_claim.md",
-            "claim_support_matrix": "drafts/claim_support_matrix.csv",
-            "limitations_from_experiments": "drafts/limitations_from_experiments.md",
-            "figure_table_evidence_map": "drafts/figure_table_evidence_map.json",
-        },
-        "required_inputs": ["results_summary", "integrity_audit", "evidence_index"],
         "schemas": {},
     },
     "T5": {
@@ -1053,54 +1085,6 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         ],
         "schemas": {},
     },
-    "T7": {
-        "inputs": {
-            "project": "project.yaml",
-            "hypotheses": "ideation/hypotheses.md",
-            "exp_plan": "ideation/exp_plan.yaml",
-            "risks": "ideation/risks.md",
-            "novelty_audit": "ideation/novelty_audit.md",
-            "idea_scorecard": "ideation/idea_scorecard.yaml",
-            "synthesis": "literature/synthesis.md",
-            "comparison_table": "literature/comparison_table.csv",
-            "pilot_results": "pilot/pilot_results.json",
-            "pilot_code": "pilot/pilot_code",
-            "novelty_report": "novelty/novelty_report.md",
-            "must_add_baselines": "novelty/must_add_baselines.md",
-        },
-        "outputs": {
-            "results_summary": "experiments/results_summary.json",
-            "runs_dir": "experiments/runs",
-            "configs_dir": "experiments/configs",
-            "iteration_log": "experiments/iteration_log.md",
-        },
-        "required_inputs": [
-            "project",
-            "hypotheses",
-            "exp_plan",
-            "novelty_audit",
-            "synthesis",
-        ],
-        "schemas": {
-            "results_summary": "results_summary",
-        },
-    },
-    "T7.5": {
-        "inputs": {
-            "results_summary": "experiments/results_summary.json",
-            "iteration_log": "experiments/iteration_log.md",
-            "integrity_audit": "experiments/integrity_audit.json",
-            "experimental_claims": "experiments/experimental_claims.json",
-            "result_to_claim": "drafts/result_to_claim.json",
-            "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
-            "exp_plan": "ideation/exp_plan.yaml",
-        },
-        "outputs": {
-            "evaluation_decision": "evaluation/evaluation_decision.md",
-        },
-        "required_inputs": ["results_summary", "integrity_audit", "result_to_claim", "experiment_evidence_pack"],
-        "schemas": {},
-    },
     "T8": {
         "inputs": {
             "project": "project.yaml",
@@ -1108,9 +1092,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "synthesis": "literature/synthesis.md",
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "domain_map": "literature/domain_map.json",
-            "results_summary": "experiments/results_summary.json",
-            "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
-            "result_to_claim": "drafts/result_to_claim.json",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "paper_claim_audit": "drafts/paper_claim_audit.md",
             "related_work_bib": "literature/related_work.bib",
             "hypotheses": "ideation/hypotheses.md",
@@ -1120,6 +1102,8 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "deep_read_notes_dir": "literature/deep_read_notes",
             "bridge_notes_dir": "literature/bridge_notes",
             "shallow_read_notes_dir": "literature/shallow_read_notes",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
+            **LITERATURE_MANIFEST_INPUT,
         },
         "outputs": {
             "writing_style": "drafts/writing_style.json",
@@ -1148,7 +1132,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "related_work_bib",
             "hypotheses",
             "idea_scorecard",
-            "results_summary",
+            "executor_research_report",
         ],
         "schemas": {},
     },
@@ -1162,14 +1146,21 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "required_inputs": ["project"],
         "schemas": {},
     },
+    "T8-CCF-TEMPLATE-GATE": {
+        "inputs": {
+            "project": "project.yaml",
+        },
+        "outputs": {
+            "writing_style": "drafts/writing_style.json",
+        },
+        "required_inputs": ["project"],
+        "schemas": {},
+    },
     "T8-RESOURCE": {
         "inputs": {
             "project": "project.yaml",
             "writing_style": "drafts/writing_style.json",
-            "results_summary": "experiments/results_summary.json",
-            "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
-            "result_to_claim": "drafts/result_to_claim.json",
-            "integrity_audit": "experiments/integrity_audit.json",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "synthesis": "literature/synthesis.md",
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "domain_map": "literature/domain_map.json",
@@ -1183,14 +1174,14 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "deep_read_notes_dir": "literature/deep_read_notes",
             "bridge_notes_dir": "literature/bridge_notes",
             "shallow_read_notes_dir": "literature/shallow_read_notes",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
+            **LITERATURE_MANIFEST_INPUT,
         },
         "outputs": {
             "manuscript_resource_index": "drafts/manuscript_resource_index.json",
             "section_plan": "drafts/section_plan.json",
             "evidence_plan": "drafts/evidence_plan.json",
             "figure_table_plan": "drafts/figure_table_plan.json",
-            "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
-            "result_to_claim": "drafts/result_to_claim.json",
             "cdr_claim_ledger": "drafts/cdr_claim_ledger.json",
             "claim_ledger": "drafts/claim_ledger.json",
             "figure_registry": "drafts/figure_registry.json",
@@ -1199,7 +1190,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "required_inputs": [
             "project",
             "writing_style",
-            "results_summary",
+            "executor_research_report",
             "synthesis",
             "synthesis_workbench",
             "domain_map",
@@ -1213,10 +1204,11 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "inputs": {
             "project": "project.yaml",
             "writing_style": "drafts/writing_style.json",
-            "results_summary": "experiments/results_summary.json",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
             "result_to_claim": "drafts/result_to_claim.json",
             "synthesis": "literature/synthesis.md",
+            **LITERATURE_MANIFEST_INPUT,
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "domain_map": "literature/domain_map.json",
             "related_work_bib": "literature/related_work.bib",
@@ -1230,6 +1222,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "claim_ledger": "drafts/claim_ledger.json",
             "figure_registry": "drafts/figure_registry.json",
             "alignment_matrix": "drafts/alignment_matrix.json",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
         },
         "outputs": {
             "outline": "drafts/outline.md",
@@ -1238,7 +1231,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "required_inputs": [
             "project",
             "writing_style",
-            "results_summary",
+            "executor_research_report",
             "synthesis",
             "synthesis_workbench",
             "domain_map",
@@ -1260,11 +1253,11 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "inputs": {
             "project": "project.yaml",
             "writing_style": "drafts/writing_style.json",
-            "results_summary": "experiments/results_summary.json",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
             "result_to_claim": "drafts/result_to_claim.json",
-            "integrity_audit": "experiments/integrity_audit.json",
             "synthesis": "literature/synthesis.md",
+            **LITERATURE_MANIFEST_INPUT,
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "domain_map": "literature/domain_map.json",
             "related_work_bib": "literature/related_work.bib",
@@ -1280,6 +1273,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "figure_registry": "drafts/figure_registry.json",
             "alignment_matrix": "drafts/alignment_matrix.json",
             "ablations": "experiments/ablations.csv",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
         },
         "outputs": {
             "paper_state": "drafts/paper_state.json",
@@ -1288,7 +1282,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "required_inputs": [
             "project",
             "writing_style",
-            "results_summary",
+            "executor_research_report",
             "synthesis",
             "synthesis_workbench",
             "domain_map",
@@ -1317,7 +1311,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "idea_scorecard": "ideation/idea_scorecard.yaml",
             "novelty_audit": "ideation/novelty_audit.md",
             "design_rationale_tuples_dir": "ideation/_design_rationale_tuples",
-            "results_summary": "experiments/results_summary.json",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
             "result_to_claim": "drafts/result_to_claim.json",
             "configs_dir": "experiments/configs",
@@ -1348,10 +1342,9 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "project": "project.yaml",
             "paper_state": "drafts/paper_state.json",
             "section_outline": "drafts/section_outlines/experiments.md",
-            "results_summary": "experiments/results_summary.json",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
             "result_to_claim": "drafts/result_to_claim.json",
-            "integrity_audit": "experiments/integrity_audit.json",
             "ablations": "experiments/ablations.csv",
             "exp_plan": "ideation/exp_plan.yaml",
             "seed_ensemble_summary": "experiments/seed_ensemble_summary.json",
@@ -1371,7 +1364,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "project",
             "paper_state",
             "section_outline",
-            "results_summary",
+            "executor_research_report",
             "exp_plan",
             "figure_table_plan",
             "alignment_matrix",
@@ -1384,6 +1377,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "paper_state": "drafts/paper_state.json",
             "section_outline": "drafts/section_outlines/related_work.md",
             "synthesis": "literature/synthesis.md",
+            **LITERATURE_MANIFEST_INPUT,
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "domain_map": "literature/domain_map.json",
             "related_work_bib": "literature/related_work.bib",
@@ -1395,6 +1389,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "claim_ledger": "drafts/claim_ledger.json",
             "figure_registry": "drafts/figure_registry.json",
             "alignment_matrix": "drafts/alignment_matrix.json",
+            **CROSS_DOMAIN_CATALOG_INPUTS,
         },
         "outputs": {"section": "drafts/sections/related_work.tex"},
         "required_inputs": [
@@ -1415,7 +1410,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "project": "project.yaml",
             "paper_state": "drafts/paper_state.json",
             "section_outline": "drafts/section_outlines/analysis.md",
-            "results_summary": "experiments/results_summary.json",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
             "result_to_claim": "drafts/result_to_claim.json",
             "ablations": "experiments/ablations.csv",
@@ -1437,7 +1432,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "section_outline",
             "methodology_section",
             "experiments_section",
-            "results_summary",
+            "executor_research_report",
             "alignment_matrix",
         ],
         "schemas": {},
@@ -1448,8 +1443,9 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "paper_state": "drafts/paper_state.json",
             "section_outline": "drafts/section_outlines/introduction.md",
             "synthesis": "literature/synthesis.md",
+            **LITERATURE_MANIFEST_INPUT,
             "hypotheses": "ideation/hypotheses.md",
-            "results_summary": "experiments/results_summary.json",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
             "result_to_claim": "drafts/result_to_claim.json",
             "methodology_section": "drafts/sections/methodology.tex",
@@ -1475,7 +1471,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "analysis_section",
             "synthesis",
             "hypotheses",
-            "results_summary",
+            "executor_research_report",
             "alignment_matrix",
         ],
         "schemas": {},
@@ -1489,7 +1485,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "experiments_section": "drafts/sections/experiments.tex",
             "risks": "ideation/risks.md",
             "novelty_audit": "ideation/novelty_audit.md",
-            "results_summary": "experiments/results_summary.json",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
             "result_to_claim": "drafts/result_to_claim.json",
             "iteration_log": "experiments/iteration_log.md",
@@ -1507,7 +1503,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "experiments_section",
             "risks",
             "novelty_audit",
-            "results_summary",
+            "executor_research_report",
             "alignment_matrix",
         ],
         "schemas": {},
@@ -1544,11 +1540,11 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
     "T8-SECTIONS": {
         "inputs": {
             "project": "project.yaml",
-            "results_summary": "experiments/results_summary.json",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
             "result_to_claim": "drafts/result_to_claim.json",
-            "integrity_audit": "experiments/integrity_audit.json",
             "synthesis": "literature/synthesis.md",
+            **LITERATURE_MANIFEST_INPUT,
             "related_work_bib": "literature/related_work.bib",
             "hypotheses": "ideation/hypotheses.md",
             "outline": "drafts/outline.md",
@@ -1564,7 +1560,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         },
         "required_inputs": [
             "project",
-            "results_summary",
+            "executor_research_report",
             "synthesis",
             "related_work_bib",
             "hypotheses",
@@ -1580,11 +1576,11 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
     "T8-DRAFT": {
         "inputs": {
             "project": "project.yaml",
-            "results_summary": "experiments/results_summary.json",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
             "result_to_claim": "drafts/result_to_claim.json",
-            "integrity_audit": "experiments/integrity_audit.json",
             "synthesis": "literature/synthesis.md",
+            **LITERATURE_MANIFEST_INPUT,
             "related_work_bib": "literature/related_work.bib",
             "hypotheses": "ideation/hypotheses.md",
             "novelty_audit": "ideation/novelty_audit.md",
@@ -1608,18 +1604,19 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "paper_claim_audit": "drafts/paper_claim_audit.md",
             "paper_claim_audit_json": "drafts/paper_claim_audit.json",
         },
-        "required_inputs": ["project", "results_summary", "outline", "paper_state", "sections_dir"],
+        "required_inputs": ["project", "executor_research_report", "outline", "paper_state", "sections_dir"],
         "schemas": {},
     },
     "T8-SELF-CHECK": {
         "inputs": {
             "project": "project.yaml",
             "paper": "drafts/paper.tex",
-            "results_summary": "experiments/results_summary.json",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
             "result_to_claim": "drafts/result_to_claim.json",
             "paper_claim_audit": "drafts/paper_claim_audit.md",
             "synthesis": "literature/synthesis.md",
+            **LITERATURE_MANIFEST_INPUT,
             "related_work_bib": "literature/related_work.bib",
             "ablations": "experiments/ablations.csv",
             "manuscript_resource_index": "drafts/manuscript_resource_index.json",
@@ -1637,18 +1634,19 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "outputs": {
             "self_check": "drafts/self_check.md",
         },
-        "required_inputs": ["project", "paper", "results_summary", "related_work_bib"],
+        "required_inputs": ["project", "paper", "executor_research_report", "related_work_bib"],
         "schemas": {},
     },
     "T8-REVIEW-1": {
         "inputs": {
             "project": "project.yaml",
             "paper": "drafts/paper.tex",
-            "results_summary": "experiments/results_summary.json",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
             "result_to_claim": "drafts/result_to_claim.json",
             "paper_claim_audit": "drafts/paper_claim_audit.md",
             "related_work_bib": "literature/related_work.bib",
+            **LITERATURE_MANIFEST_INPUT,
             "manuscript_audit": "drafts/manuscript_audit.md",
             "craft_audit": "drafts/craft_audit.md",
             "self_check": "drafts/self_check.md",
@@ -1659,7 +1657,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "review_report": "drafts/review_rounds/round_1.md",
             "section_review_dir": "drafts/review_rounds/round_1_sections",
         },
-        "required_inputs": ["project", "paper", "results_summary"],
+        "required_inputs": ["project", "paper", "executor_research_report"],
         "schemas": {},
     },
     "T8-REVISE-1": {
@@ -1669,11 +1667,12 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "paper_state": "drafts/paper_state.json",
             "review_report": "drafts/review_rounds/round_1.md",
             "section_review_dir": "drafts/review_rounds/round_1_sections",
-            "results_summary": "experiments/results_summary.json",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
             "result_to_claim": "drafts/result_to_claim.json",
             "paper_claim_audit": "drafts/paper_claim_audit.md",
             "synthesis": "literature/synthesis.md",
+            **LITERATURE_MANIFEST_INPUT,
             "related_work_bib": "literature/related_work.bib",
             "ablations": "experiments/ablations.csv",
             "sections_dir": "drafts/sections",
@@ -1703,11 +1702,12 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "inputs": {
             "project": "project.yaml",
             "paper": "drafts/paper.tex",
-            "results_summary": "experiments/results_summary.json",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
             "result_to_claim": "drafts/result_to_claim.json",
             "paper_claim_audit": "drafts/paper_claim_audit.md",
             "related_work_bib": "literature/related_work.bib",
+            **LITERATURE_MANIFEST_INPUT,
             "manuscript_audit": "drafts/manuscript_audit.md",
             "craft_audit": "drafts/craft_audit.md",
             "previous_review": "drafts/review_rounds/round_1.md",
@@ -1729,11 +1729,12 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "review_report": "drafts/review_rounds/round_2.md",
             "section_review_dir": "drafts/review_rounds/round_2_sections",
             "previous_review": "drafts/review_rounds/round_1.md",
-            "results_summary": "experiments/results_summary.json",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
             "result_to_claim": "drafts/result_to_claim.json",
             "paper_claim_audit": "drafts/paper_claim_audit.md",
             "synthesis": "literature/synthesis.md",
+            **LITERATURE_MANIFEST_INPUT,
             "related_work_bib": "literature/related_work.bib",
             "ablations": "experiments/ablations.csv",
             "sections_dir": "drafts/sections",
@@ -1763,9 +1764,9 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "inputs": {
             "project": "project.yaml",
             "paper": "drafts/paper.tex",
+            **EXTERNAL_EXECUTOR_T8_INPUTS,
             "result_to_claim": "drafts/result_to_claim.json",
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
-            "integrity_audit": "experiments/integrity_audit.json",
             "post_experiment_novelty_check": "novelty/post_experiment_novelty_check.json",
             "must_not_claim": "drafts/must_not_claim.md",
             "claim_ledger": "drafts/claim_ledger.json",
@@ -1813,6 +1814,45 @@ def get_task_io(task_id: str) -> dict[str, object]:
     if task_id not in TASK_IO_CONTRACTS:
         raise KeyError(f"Unknown task I/O contract: {task_id}")
     return TASK_IO_CONTRACTS[task_id]
+
+
+def task_import_paths(task_id: str) -> list[str]:
+    """Return the non-overlapping artifact roots needed for a workspace import.
+
+    Ordinary task execution should continue to use the narrow ``inputs`` map:
+    it accurately documents what one state-machine node consumes.  Importing a
+    workspace is different.  It prepares a new or resumed project for the
+    *whole downstream public stage*, so a T3.6/T4/T5/T8 re-entry needs the
+    complete literature evidence substrate even when the first node does not
+    directly open every note directory.
+
+    ``literature`` deliberately subsumes individual declared literature paths
+    in the returned list.  This avoids duplicate copy attempts and, more
+    importantly, prevents an existing empty note directory from suppressing a
+    source directory that contains the actual paper cards.
+    """
+
+    contract = get_task_io(task_id)
+    candidates = [str(path).strip().strip("/") for path in dict(contract.get("inputs") or {}).values()]
+    normalized_task_id = str(task_id or "").strip().upper()
+    if normalized_task_id.startswith(LITERATURE_DEPENDENT_IMPORT_PREFIXES):
+        candidates.append(LITERATURE_IMPORT_ROOT)
+
+    selected: list[str] = []
+    for candidate in candidates:
+        if not candidate or candidate == ".":
+            continue
+        relative = PurePosixPath(candidate)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"Unsafe task import path: {candidate}")
+        # A broader root already owns this artifact; do not copy it again.
+        if any(existing == relative or existing in relative.parents for existing in map(PurePosixPath, selected)):
+            continue
+        # A newly encountered broader root replaces previously selected
+        # children, preserving a concise import receipt.
+        selected = [existing for existing in selected if relative not in PurePosixPath(existing).parents]
+        selected.append(relative.as_posix())
+    return selected
 
 
 def resolve_outputs(workspace: Path, task_id: str) -> dict[str, Path]:

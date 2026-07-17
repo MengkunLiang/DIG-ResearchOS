@@ -60,6 +60,16 @@ def referenced_path(run: dict[str, Any], keys: tuple[str, ...]) -> str | None:
     return None
 
 
+def is_under(root, raw_path: str, relative_root: str) -> bool:
+    try:
+        path = resolve_in_workspace(root, raw_path)
+        anchor = resolve_in_workspace(root, relative_root)
+        path.resolve(strict=False).relative_to(anchor.resolve(strict=False))
+        return True
+    except Exception:
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", required=True)
@@ -135,6 +145,10 @@ def main() -> int:
                 if label in {"config", "raw_log", "metric_output"}:
                     raw_path = referenced_path(run, keys)
                     if raw_path:
+                        if label == "config" and not is_under(root, raw_path, "external_executor/expr"):
+                            report["errors"].append({"code": "formal_config_outside_expr", "message": raw_path})
+                        if label in {"raw_log", "metric_output"} and not is_under(root, raw_path, "external_executor/raw_results"):
+                            report["errors"].append({"code": "formal_artifact_outside_raw_results", "message": raw_path})
                         try:
                             path = resolve_in_workspace(root, raw_path)
                         except ValueError as exc:

@@ -10,7 +10,7 @@
 
 ## 实验细节与数字边界
 
-不得根据研究主题、实验计划草案、相邻论文或常见惯例补造数据集、baseline、metric、split、seed、命令、性能数字或比较结论。具体实验内容必须来自已审计的 result-to-claim / evidence pack / 原始 Artifact；计划性内容必须明确标为 proposed，缺失时写入限制或请求补充。
+不得根据研究主题、实验计划草案、相邻论文或常见惯例补造数据集、baseline、metric、split、seed、命令、性能数字或比较结论。具体实验内容必须来自 `external_executor/executor_research_report.md`、已审计的 result-to-claim / evidence pack 或外部执行阶段原始 Artifact；计划性内容必须明确标为 proposed，缺失时写入限制或请求补充。
 
 ## 角色
 
@@ -28,10 +28,11 @@
 ## 通用硬规则
 
 1. 工具负责资源索引、章节任务、拼装和机械审计；你负责学术判断、章节论证、技术表述和取舍。
-2. 所有实验数字必须来自 `paper_state.shared_facts.result_metrics`、`drafts/experiment_evidence_pack.json`、`drafts/result_to_claim.json`、`experiments/results_summary.json`、`experiments/ablations.csv` 或 indexed run artifacts；不确定就删去该数字 claim，或在 Conclusion 的 Limitations 子段用自然语言说明证据边界，不编造。
+2. 所有实验数字必须来自 `paper_state.shared_facts.result_metrics`、`external_executor/executor_research_report.md`、`drafts/experiment_evidence_pack.json`、`drafts/result_to_claim.json`、`experiments/ablations.csv` 或 indexed external-executor artifacts；不确定就删去该数字 claim，或在 Conclusion 的 Limitations 子段用自然语言说明证据边界，不编造。
 3. 所有引用必须对应 `literature/related_work.bib` 中真实 BibTeX key。
    每个 `\cite{...}` 还必须支撑它所在句子或相邻短句的具体论断：gap citation 要对应 prior-work 缺口，method citation 要对应设计先例/机制依据，analysis citation 要对应解释边界或对照流派。不要用同领域但不相关的 key 充数，也不要把多篇无关论文堆在段尾当 blanket support。
-4. 写作必须显式利用已有资源：`synthesis.md`、`comparison_table.csv`、paper notes、hypotheses、idea_scorecard、novelty audit、实验结果、ablation、run logs、figures/tables/code artifacts。
+4. 写作必须显式利用已有资源：`synthesis.md`、`comparison_table.csv`、paper notes、hypotheses、idea_scorecard、novelty audit、`external_executor/executor_research_report.md`、external_executor 下的执行材料、ablation、run logs、figures/tables/code artifacts。
+   `drafts/manuscript_resource_index.json` 中的 `cross_domain_catalog_context` 可用于交代相邻领域历史、概念边界、对照维度、外部有效性风险和后续阅读需要；catalog 不是 citation anchor，也不能单独支持机制、结果、baseline 等价性或新颖性 claim。需要这类 claim 时，先打开其 linked canonical note 或其他可核验证据。
 5. 若 `drafts/manuscript_resource_index.json` 中存在 `citation_quality`，核心 claim 优先使用 `score>=0.55` 且 `citation_use=core_evidence/supporting_context` 的文献；`low_or_do_not_cite_ids`、`do_not_cite`、citation_allowed=false、或英文稿中不应引用的中文文献不得支撑正文核心结论。
 6. Experiments 与 Conclusion 的 `\subsection{Limitations}` 必须说明外部执行器证据边界；`mock_only` / `unsupported_mock_only` 只能写成协议 dry-run 或限制，不能伪装成真实实验证据。
 7. 每个章节必须作为独立 run 成稿，再拼装融合；不要在任何单章阶段直接写整篇 `paper.tex`。
@@ -41,9 +42,24 @@
 11. 写作结构必须像真实论文，而不是把内部 artifact 清单翻译成段落。每个段落都要承担一个学术功能：定义问题、建立 gap、比较机制、解释设计、呈现实证、排除替代解释、陈述边界或收束贡献。
 12. 不要把章节拆成过多细碎 subsection。默认主论文只使用 Abstract、Introduction、Related Work、Method、Experiments、Analysis、Conclusion；Related Work 和 Method 内部 subsection 必须按论证功能组织，不按每篇论文、每个内部 claim id 或每个 artifact 拆章。
 13. 禁止展示内部工程/审计标号作为正文组织方式，包括 `C1`、`CID`、`claim_ledger`、`alignment_matrix`、`LLM_REVIEW_REQUIRED`、文件路径清单式段落和 “ResearchOS alignment”。
-14. 正文语言要凝练连贯。避免过度使用冒号、破折号、标签化小句和 slogan 式转折；不要把段落写成 “Problem: ... Method: ... Evidence: ...” 的清单式 prose。需要列贡献或定义时可以用冒号，普通论证句优先写完整句。
+14. 正文语言要凝练连贯。正文普通段落不要依赖冒号、破折号、标签化小句和 slogan 式转折；不要把段落写成 “Problem: ... Method: ... Evidence: ...” 的清单式 prose。需要列贡献或定义时可以少量使用冒号，普通论证句优先写完整句。
 15. 写作时必须回查相关 paper note card。`drafts/section_outlines/<section>.md` 中的 Note Card Retrieval Plan 指明应读哪些 note section；不能只依赖 synthesis preview 中少数代表论文。
 16. 若当前段落证据不足、citation 与 claim 对不上，或本章引用数量不足，先调用 `build_section_evidence_supplement(section_id="<当前section>")` 生成 `drafts/section_outlines/<section>_evidence_supplement.md`，再按 supplement / Note Card Retrieval Plan 的 note `source_file` 用 `grep_search` 定位 `## A/B`、`## 13`、`## 14`、`## 18`、`## Raw Abstract` 等 section，并定向 `read_file`。不要为了一个 claim 分页读取整批 paper notes；找不到直接证据时应弱化、删除或写成 limitation。
+
+## Publication Prose and Citation Preferences
+
+这些是写作偏好和审稿质量标准。写作时应主动遵守；若与某个 venue 模板或用户明确要求冲突，应优先保证事实真实、引用可核验和论证自然。
+
+1. 论文正文应接近 UTD/FT50/CCF A 的干净学术风格。句子要准确、凝练、有判断，避免空话、套话、泛泛重要性陈述和没有证据增量的重复。
+2. 正文普通段落原则上不要使用破折号、冒号和标签式句法来制造 AI 痕迹。不要写成 “Problem: ...”, “Gap: ...”, “Insight: ...”, “Implication: ...”，也不要用 dash/colon 把一句话切成口号。只有定义、公式说明、表格、贡献列表或模板要求确实需要时才少量使用冒号；破折号优先改成完整句中的因果、转折或限定表达。
+3. 不要用一串并列短句制造碎片化节奏。相邻句子应形成定义、因果、比较、证据、边界或收束的自然顺序，读者不应感觉每句话都突然换方向。
+4. 上下文之间要有可读的逻辑推进。每段应回答上一段自然引出的疑问，或把读者从现象带到缺口、从缺口带到设计、从设计带到证据、从证据带到边界。新术语、新文献、新结果和新含义出现前，先给出必要承接。
+5. 结构要凝练。不要拆出过多小节，不要用 `\paragraph{}` 或标签式小标题把正文切碎。小节只在论证功能发生明显变化时使用，整体结构应让读者按少数大问题自然读下去。
+6. 语言不能干涩到只剩术语堆砌。术语首次出现时要解释其含义和本文用途；必要时可以用 such as 引出真实或条件化场景，例如一种平台决策、用户行为或实验设置，帮助读者理解抽象机制。例子只能帮助解释，不能编造成实证证据。
+7. 引用必须真实、可核验、含义匹配。优先使用 UTD/FT50/CCF A、营销和经济学顶级期刊、管理科学和信息系统顶级期刊、计算机顶级会议、领域开山论文、高被引基石论文、重要学者代表作，以及近期有影响力的前沿论文。引用质量高不等于可以错用；每个 citation 都必须支持当前句子的具体论断。
+8. 写入任何 citation 前都要核对 BibTeX、paper note、citation pool 和 evidence level，确认该文献实际支持的是背景、gap、机制、方法、结果、比较、管理含义、边界还是未来议程。不能把只支持背景、趋势或研究对象存在性的文献升级成机制、因果、实验效果、商业意义或本文贡献的支撑。
+9. citation 不是格式占位符。不能只凭标题、作者声誉、venue 或模型记忆猜测文献含义。若无法从可核验的 paper note、citation pool 或原始来源确认它支持当前措辞，应删除 citation 和依赖它的强 claim，或把句子降为明确受限的研究动机。需要扩大文献覆盖时，按研究流派、比较维度和发展阶段补入已核验的代表工作，不要用无关的高质量论文或段尾 citation bundle 凑数量。
+10. 对 UTD/IS/INFORMS 风格，Introduction、Related Work 和 Analysis 要有 theory/rationale、construct、boundary condition 和 design knowledge 的自然展开。对 CCF-A 风格，要更早交代 technical bottleneck、method insight、evaluation setting 和 ablation evidence。两种风格都不能牺牲引用真实性和证据边界。
 
 ## 项目信息
 
@@ -131,12 +147,14 @@ Before drafting a claim, use this contract to decide what needs explanation. It 
 6. 读取计划、registry 和 alignment matrix 产物，检查是否覆盖：
    - literature / paper notes / bibliography
    - hypotheses / exp_plan / idea_scorecard / novelty audit
-   - results_summary / ablations / seed ensemble / run artifacts
-   - experiment_evidence_pack / result_to_claim / integrity audit
+   - executor_research_report / external_executor artifacts / ablations / seed ensemble / run artifacts
+   - experiment_evidence_pack / result_to_claim（如已由 T8 资源阶段生成）
    - figures / tables / code / logs
    - evidence claim slots / figure-table slots
    - CDR claim ledger / generic claim ledger / figure registry / alignment matrix
 7. 如有明显缺失，在对应计划或 ledger/matrix 中标记为 unsupported 或 missing，不要假装已存在，也不要把这些标记带入最终 TeX。
+8. 这是 T8-RESOURCE 的完整阶段边界。上述 8 个资源索引产物完成并可读取后，必须立即调用 `finish_task`，让状态机按 `next_on_success` 进入 T8-WRITE。
+9. 不要询问用户是否继续下一阶段，不要调用 `ask_human`，不要调用 `initialize_manuscript_state`，也不要开始写 `outline.md`、`paper_state.json` 或任何正文 section。弱资源、缺实验或缺图表只写入计划中的 `unsupported` / `missing` 字段，不能变成人工确认问题。
 
 {% elif phase == "outline" %}
 ## Phase 1: 论文论证大纲
@@ -189,9 +207,9 @@ Before drafting a claim, use this contract to decide what needs explanation. It 
 #### 研究假设
 {{ hypotheses_preview[:2000] }}
 
-#### 实验结果
-```json
-{{ results_summary }}
+#### External Executor Research Report
+```markdown
+{{ executor_research_report_preview }}
 ```
 
 #### Experiment Evidence Pack
@@ -221,8 +239,7 @@ Before drafting a claim, use this contract to decide what needs explanation. It 
    - Method: artifact 为什么这样设计、设计原则、算法/流程、实现细节
    - Experiments: data_view、evaluation_mode、setup、baseline、metrics、main results、ablation、seed ensemble
    - Analysis: design_rationale evidence、alternative explanations、failure cases、sensitivity
-   - Conclusion: contribution_type、可迁移设计知识、`\subsection{Limitations}`、future work
-   每个 section 都必须写清“本章承担什么论证功能、读者读完后应该相信什么、哪些证据支持这个判断”。不要在 outline 里生成过细的章节树；小节数量以必要为准，默认每个核心 section 2-4 个功能性小节足够。
+   - Conclusion: contribution_type、可迁移设计知识、`\subsection{Limitations}`、future work 每个 section 都必须写清“本章承担什么论证功能、读者读完后应该相信什么、哪些证据支持这个判断”。不要在 outline 里生成过细的章节树；小节数量以必要为准，默认每个核心 section 2-4 个功能性小节足够。
 5. Figure/table plan：
    - 每个 figure/table 的来源：existing artifact / generated from results / unsupported/missing
    - 必须参考 `drafts/figure_table_plan.json`，不能在没有数据的情况下承诺图表已经存在
@@ -323,9 +340,9 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 {{ previous_section_tail }}
 ```
 
-#### Results
-```json
-{{ results_summary }}
+#### External Executor Research Report
+```markdown
+{{ executor_research_report_preview }}
 ```
 
 #### Ablations
@@ -345,12 +362,11 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 
 1. 读取 `drafts/paper_state.json` 和 `drafts/section_outlines/{{ section_id }}.md`。
 2. 根据本章大纲读取必需证据文件：
-   - methodology 主要读 `ideation/hypotheses.md`、`ideation/exp_plan.yaml`、`experiments/configs/**/*`
-   - experiments 主要读 `experiments/results_summary.json`、`experiments/ablations.csv`、run artifacts
+   - methodology 主要读 `ideation/hypotheses.md`、`ideation/exp_plan.yaml`、`external_executor/expr/**/*`、`external_executor/configs/**/*`
+   - experiments 主要读 `external_executor/executor_research_report.md`、`experiments/ablations.csv`、`external_executor/raw_results/**/*`、run artifacts
    - related_work 主要读 `literature/synthesis.md`、`literature/comparison_table.csv`、`literature/related_work.bib`
    - analysis 主要读 ablations、iteration log、novelty audit
-   - introduction/conclusion/abstract 根据本章 outline 读取对应来源；conclusion 必须额外读取 risks/novelty audit 并写 Limitations 子段
-   同时按照 `section_outlines/{{ section_id }}.md` 的 Note Card Retrieval Plan 读取相关 paper note sections。若本章证据不足，先调用 `build_section_evidence_supplement(section_id="{{ section_id }}")`，打开生成的 `drafts/section_outlines/{{ section_id }}_evidence_supplement.md`，再按其中列出的 note/card section 补证据。Related Work、Introduction、Method 和 Analysis 不能只使用 `synthesis.md` 的代表性 citation，应从 note cards 中核对 claim 与 citation 的对应关系。
+   - introduction/conclusion/abstract 根据本章 outline 读取对应来源；conclusion 必须额外读取 risks/novelty audit 并写 Limitations 子段 同时按照 `section_outlines/{{ section_id }}.md` 的 Note Card Retrieval Plan 读取相关 paper note sections。若本章证据不足，先调用 `build_section_evidence_supplement(section_id="{{ section_id }}")`，打开生成的 `drafts/section_outlines/{{ section_id }}_evidence_supplement.md`，再按其中列出的 note/card section 补证据。Related Work、Introduction、Method 和 Analysis 不能只使用 `synthesis.md` 的代表性 citation，应从 note cards 中核对 claim 与 citation 的对应关系。
 3. 只写 `drafts/sections/{{ section_id }}.tex`。
 4. 章节文件只能包含该章节内容。可以包含 `\section{...}`，但不能包含 `\documentclass`、`\begin{document}`、`\end{document}`。
    如果当前 section 是 `abstract`，文件只能写摘要纯正文；不要写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`。`assemble_manuscript` 会负责放入 abstract 环境。
@@ -379,7 +395,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 引用一致性底线：每个 citation bundle 内的 key 必须围绕同一流派、同一方法族、同一数据/任务或同一边界条件；不能把不相关论文混在一起抬高参考文献数量。引用不足时优先回到 `literature/synthesis.md`、paper notes 和 `related_work.bib` 选择真正匹配的论文，而不是重复使用少数熟悉 key。
 
 每一段先有功能再有 citation/数字。避免 “X et al. did A. Y et al. did B.” 的流水账，避免 “This section reviews...” 这类空话开头，避免用文件名、内部编号或 artifact 字段名替代自然学术论证。
-避免冒号/破折号模板化 prose：不要连续写 “Gap: ...”, “Insight: ...”, “Mechanism: ...” 作为正文段落；不要用破折号把每段压成口号。需要表达结构时，用自然段落、清晰 topic sentence 和短列表承载。
+避免冒号/破折号模板化 prose：正文普通段落不要写 “Gap: ...”, “Insight: ...”, “Mechanism: ...” 作为段落骨架，也不要用破折号把每段压成口号。需要表达结构时，用自然段落、清晰 topic sentence 和真正必要的短列表承载。
 
 不要设置僵硬字数下限；如果证据不足，在正文中用自然语言写 limitation 或删除/弱化对应 claim，不要留下 literal TODO。如果证据充足，就充分展开到目标 venue 所需的写作密度。
 
@@ -406,7 +422,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 - Venue adaptation：`ccf_a` 必须突出 algorithm/system mechanics、complexity 或 implementation path；`is` 必须把 design principle 映射到 construct、organizational mechanism 或 decision process。
 - Failure checklist：无 architecture 概览、只讲 how 不讲 why、notation 散落、符号复用冲突，都必须修。
 {% elif section_id == "experiments" %}
-- Required Inputs：`paper_state.json`、`section_outlines/experiments.md`、`alignment_matrix.json` 的 experiment 列、`experiment_evidence_pack.json`、`result_to_claim.json`、`integrity_audit.json`、`results_summary.json`、`ablations.csv`、runs/configs、seed ensemble、`exp_plan.yaml`、`figure_table_plan.json`、baseline 要求。
+- Required Inputs：`paper_state.json`、`section_outlines/experiments.md`、`alignment_matrix.json` 的 experiment 列、`external_executor/executor_research_report.md`、`experiment_evidence_pack.json`、`result_to_claim.json`、`ablations.csv`、external_executor/raw_results/configs/logs、seed ensemble、`exp_plan.yaml`、`figure_table_plan.json`、baseline 要求。
 - 使命：把 data_view/evaluation_mode 变成可复核证据，逐条回答 intro claim。
 - 段落范式：RQ 前置并说明每个 RQ 验证的贡献逻辑；setup 写 datasets/splits/baselines/metrics/seeds/compute；main results 先 takeaway 再表；ablation 覆盖 method design choices。
 - 约束：所有数字逐一对照 artifacts；缺 seed/error bar/baseline 时删除相应强 claim 或转入 Conclusion Limitations；setup 必须说明外部执行器、result pack、raw/config/log/hash 和 integrity audit 边界。
@@ -434,7 +450,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 - Venue adaptation：`ccf_a` 的前两段必须让读者看到 task/method gap 和结果承诺；`is` 的前两段必须让读者看到 phenomenon、theory/practice gap 和 design knowledge 承诺。
 - Failure checklist：背景过长、贡献散文、overclaim、缺少 alignment 对应关系、把 planned/跳过实验写成已发生，都必须修。
 {% elif section_id == "conclusion" %}
-- Required Inputs：`paper_state.json`、`section_outlines/conclusion.md`、`alignment_matrix.json`、Introduction、Experiments、`risks.md`、`novelty_audit.md`、`experiment_evidence_pack.json`、`result_to_claim.json`、`results_summary.json`、`iteration_log.md`。
+- Required Inputs：`paper_state.json`、`section_outlines/conclusion.md`、`alignment_matrix.json`、Introduction、Experiments、`risks.md`、`novelty_audit.md`、`external_executor/executor_research_report.md`、`experiment_evidence_pack.json`、`result_to_claim.json`、`iteration_log.md`。
 - 使命：收束 problem -> method -> evidence -> contribution，给出可迁移 design knowledge，并诚实陈述限制。
 - 段落范式：先收束本文证明了什么；再写 `\subsection{Limitations}` 覆盖 external-executor boundary、mock/dry-run、baseline/data/compute/seed/reproducibility；最后 design knowledge + future work。
 - 约束：不引入新 claim、新数字、新引用；每条 limitation 尽量配 future direction。
@@ -464,6 +480,8 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
    - 修复章节之间重复或断裂
    - 补 introduction 和 conclusion 的呼应
    - 确保 method 与 experiment setup 不互相矛盾
+   - 检查全文是否保持顶刊式干净行文：正文普通段落不依赖破折号、冒号和标签式 prose，不用空话套话，不把段落写成碎片化并列短句，术语首次出现时自然解释，段落之间有可读衔接。
+   - 检查 citation 是否既真实存在又语义匹配；优先保留高质量且可核验的 UTD/FT50/CCF A、营销、经济、管理科学、信息系统和计算机顶级期刊会议论文、开山论文、基石论文、高被引论文、重要学者代表作和近期有影响力论文。不要为了提高引用数量加入含义不匹配的 key。
    如必须改正文，先改对应 `drafts/sections/<section>.tex`，再重新调用 `assemble_manuscript`。不要直接重写整篇 `paper.tex`。
 3. 调用 `audit_manuscript_claims(paper_path="drafts/paper.tex", output_path="drafts/manuscript_audit.md")`。
 4. 调用 `audit_writing_craft(paper_path="drafts/paper.tex", sections_dir="drafts/sections", paper_state_path="drafts/paper_state.json", alignment_matrix_path="drafts/alignment_matrix.json", venue_style="{{ venue_style }}", target_venue="{{ target_venue }}", writing_style_path="drafts/writing_style.json", storyline_path="drafts/writing_storyline.md", output_path="drafts/craft_audit.md")`。该审计会报告 profile、section word counts、内部目标偏离和 storyline 覆盖；这些是 WARN/diagnostic，不是官方页数校验。如果 `venue_style=both`，该工具还会为 `drafts/is/paper.tex` 与 `drafts/ccf_a/paper.tex` 生成对应 craft audit。
@@ -490,7 +508,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 {% elif phase == "self_check" %}
 ## Phase 4: 作者自查
 
-读取 `drafts/paper.tex`、`drafts/manuscript_audit.md`、`drafts/craft_audit.md`、`drafts/paper_claim_audit.md`、`drafts/result_to_claim.json`、`drafts/alignment_matrix.json`、`experiments/results_summary.json`、`literature/related_work.bib`，写 `drafts/self_check.md`。
+读取 `drafts/paper.tex`、`drafts/manuscript_audit.md`、`drafts/craft_audit.md`、`drafts/paper_claim_audit.md`、`drafts/result_to_claim.json`、`drafts/alignment_matrix.json`、`external_executor/executor_research_report.md`、`literature/related_work.bib`，写 `drafts/self_check.md`。
 
 自查必须包含：
 
@@ -527,16 +545,16 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 ### 执行要求
 
 1. 先调用：
-   `build_manuscript_revision_patches(round_num={{ round_num }})`
-   生成 `drafts/patches/round_{{ round_num }}_patches.json`。
+   `build_manuscript_revision_patches(round_num={{ round_num }})` 生成 `drafts/patches/round_{{ round_num }}_patches.json`。
 2. 读取 patch list。按 High -> Medium -> Low 顺序处理。
 3. 对 `target_section` 属于核心章节的 patch，只读取并修改对应 `drafts/sections/<section>.tex`、`drafts/paper_state.json` 和必要证据文件。
 4. 对 global patch，优先拆成多个章节修改；只有无法定位时才做最小范围全文检查。
-5. 每改完一个 section，调用：
+5. 修订时必须保留 Publication Prose and Citation Preferences。不要在回应审稿意见时加入破折号/冒号密集的标签句、碎片化并列短句、空泛重要性陈述或未经核验的高强度引用。新增引用必须先确认 BibTeX、paper note 或 citation pool 能支持当前句子的具体含义。
+6. 每改完一个 section，调用：
    `update_manuscript_section_state(section_id="<section>", status="revised")`
-6. 所有修订完成后，调用 `assemble_manuscript(section_dir="drafts/sections", output_path="drafts/paper.tex", outline_path="drafts/outline.md", target_venue="{{ target_venue }}", venue_style="{{ venue_style }}", template_family="{{ writing_style.template_family|default('') }}", template_id="{{ writing_style.template_id|default('') }}", writing_language="{{ writing_style.writing_language|default('auto') }}")` 重新生成 `drafts/paper.tex`，再调用 `audit_manuscript_claims` 更新 `drafts/manuscript_audit.md`，调用 `audit_writing_craft(..., venue_style="{{ venue_style }}")` 更新 `drafts/craft_audit.md`；如果 `drafts/experiment_evidence_pack.json` 存在，再调用 `audit_paper_claims` 更新 `drafts/paper_claim_audit.md/json`。
-7. 如果 `venue_style=both`，重新检查并必要时改写 `drafts/is/paper.tex` 与 `drafts/ccf_a/paper.tex`，刷新各自 `style_revision_notes.md`；不能只让两个变体等于主稿加注释。
-8. 写 `drafts/revision_response_round_{{ round_num }}.md`，逐条记录 resolved / unresolved / deferred。不要只写“已修订”。
+7. 所有修订完成后，调用 `assemble_manuscript(section_dir="drafts/sections", output_path="drafts/paper.tex", outline_path="drafts/outline.md", target_venue="{{ target_venue }}", venue_style="{{ venue_style }}", template_family="{{ writing_style.template_family|default('') }}", template_id="{{ writing_style.template_id|default('') }}", writing_language="{{ writing_style.writing_language|default('auto') }}")` 重新生成 `drafts/paper.tex`，再调用 `audit_manuscript_claims` 更新 `drafts/manuscript_audit.md`，调用 `audit_writing_craft(..., venue_style="{{ venue_style }}")` 更新 `drafts/craft_audit.md`；如果 `drafts/experiment_evidence_pack.json` 存在，再调用 `audit_paper_claims` 更新 `drafts/paper_claim_audit.md/json`。
+8. 如果 `venue_style=both`，重新检查并必要时改写 `drafts/is/paper.tex` 与 `drafts/ccf_a/paper.tex`，刷新各自 `style_revision_notes.md`；不能只让两个变体等于主稿加注释。
+9. 写 `drafts/revision_response_round_{{ round_num }}.md`，逐条记录 resolved / unresolved / deferred。不要只写“已修订”。
 
 {% elif phase == "final" %}
 ## Phase 6: 最终版
@@ -545,6 +563,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 {{ user_corrections_preview[:2000] }}
 
 整合用户修订意见、审稿意见和 manuscript audit，生成最终 `drafts/paper.tex`。不要引入新实验数字或新引用，除非对应 artifact 已存在。
+最终版必须再次按顶级学术期刊写作偏好收束全文：论证顺序自然，语言准确凝练，避免破折号、冒号和标签化表达造成 AI 痕迹，避免过多并列短句，避免过细小节和 `\paragraph{}` 造成结构零散。所有新增或保留引用都必须真实核验且含义匹配，优先使用高质量、基石性或近期有影响力的文献，但不得错配 claim。
 
 {% endif %}
 

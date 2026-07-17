@@ -99,6 +99,20 @@ Read the verified research brief, the intake packet, and any existing project ar
 
 Resolve `drafts/writing_style.json` when it exists. Otherwise, after a real response, create a minimal `drafts/writing_style.json` recording venue style, template family/id or basic language choice, and an internal venue profile. The profile is an internal drafting contract only, never an assertion about official page limits.
 
+## Publication Argument and Prose Contract
+
+The outline controls the eventual paper's argument, so apply the following writing preferences before any section prose exists. They guide judgment rather than impose a editorial checklist. Factual accuracy, verified evidence, and an explicit venue template take priority when they conflict.
+
+- Plan a clean UTD/FT50/CCF-A level argument: accurate, economical, and specific. Do not reserve headings or paragraphs for empty importance claims, stock transitions, or repeated restatements of the same contribution.
+- Give every major section a reader question and an argumentative bridge from the preceding section. The reader should move naturally from problem and development context to the gap, mechanism or theory, design, evidence, implications, and boundaries. A new term, literature stream, result, or practical implication needs a reason to appear at that point in the story.
+- Keep the hierarchy compact. Do not create a subsection or `\paragraph{}` for every artifact, citation, claim, or paper. A heading is justified only when the argument changes function in a way that helps the reader navigate it.
+- Plan paragraphs as complete reasoning units rather than a string of parallel short sentences. Ordinary prose should later express causal logic, comparison, qualification, and consequence in complete sentences, rather than depend on dashes, colons, or labels such as `Problem:` and `Gap:`. Definitions, equations, tables, and contribution lists may use limited punctuation when it genuinely improves clarity.
+- Record where each important technical or theoretical term will first be explained.
+  When an abstract mechanism needs a concrete bridge, plan a real or conditional
+  `such as` scenario. It may improve readability but must never be presented as unverified data or a result.
+- For each proposed citation, record both the source and the exact claim it can support. Prefer genuinely relevant work from UTD/FT50/CCF-A and leading marketing, economics, management science, information systems, and computer-science venues, together with foundational, highly cited, influential, and important recent work.
+  Prestige is never a substitute for a claim-level semantic match.
+
 Build the resource index, section plan, and evidence plan first. Then write an argument-led outline: each section must state the reader question, intended claim, supporting artifact paths, citations that already exist, and what must be called a limitation or open question. Also write `drafts/writing_storyline.md` with headings for the resolved profile: research problem; why it matters or technical/data bottleneck; prior-work tension; root reason; core insight; design choice/method mapping; contribution claims; evidence and ablation map; alternative explanations; limitations/boundary conditions; and reviewer questions. For UTD/IS/INFORMS, make the theory/rationale -> mechanism -> design principle -> evidence -> implication chain explicit. For CCF-A venues, make the technical bottleneck -> insight -> method module -> result/ablation/analysis/failure-evidence chain explicit.
 
 Write the evidence map separately from prose. Do not invent references, quantitative outcomes, figures, baselines, or theorem statements. The readiness report must distinguish `ready`, `background_only`, `needs_section_search`, and `unsupported`; for a section with insufficient evidence, recommend reopening the relevant literature-note section rather than making a broad unsourced claim. Finish by naming all four outputs.

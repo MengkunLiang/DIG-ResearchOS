@@ -3,6 +3,17 @@
 ### 段落
 - 一段一个核心论点，以 topic sentence 领起。
 - 段落间有因果、对比或递进关系，不能只是材料并列堆砌。
+- 段落内部不要堆太多并列短句。优先把定义、因果、边界和例子组织成一条可读的论证链，使读者能自然从上一句走到下一句。
+- 段落之间不能靠 However / Moreover / Furthermore 硬切换。过渡应来自论证本身，例如前一段留下的机制疑问、证据边界、替代解释或研究缺口。
+
+### 顶刊行文偏好
+- 以下要求是写作与审稿的编辑标准。若证据、venue 模板或用户明确要求产生冲突，应优先保证事实真实、引用可核验和论证自然。
+- 目标行文应接近 UTD/FT50/CCF A 论文的干净风格，准确、克制、信息密度高，不用空话、套话或泛泛重要性陈述填充篇幅。
+- 正文普通段落原则上不要使用破折号、冒号和标签式表达来制造 AI 痕迹。避免 “Problem: ...”, “Gap: ...”, “Insight: ...” 这类模板句，也避免用破折号制造口号式转折。只有定义、公式说明、表格、贡献列表或模板要求确实需要时才少量使用冒号；破折号优先改成完整句中的因果、转折或限定表达。
+- 不要把文章拆成过多小节或 `\paragraph{}` 碎片。结构应服务论证，而不是把每个 artifact、claim 或术语都变成标题。
+- 术语首次出现时要自然解释。必要时可以用 such as 引出真实或条件化的现实场景，让抽象机制更可读；例子只能帮助解释，不能伪造成数据或结果。
+- 语言不能干涩到只剩术语堆砌。每个技术或理论概念都应回答它在本文中解决什么问题、改变什么判断、受到什么边界限制。
+- 段落之间必须有自然衔接。不要让新术语、新文献、新结果或新管理含义突然出现；先用前文问题、机制疑问、证据边界或研究缺口把读者带过去。
 
 ### Claim 强度 = Evidence 强度
 - `invention`：可用 introduce / first to，但必须有证据链。
@@ -18,10 +29,7 @@
 - 主动语态优先。
 
 ### 禁用 AI 套话
-不要使用：delve into / it is worth noting / plays a crucial|pivotal|vital role /
-in the realm of / rich tapestry / a testament to / shed light on / pave the way /
-With the rapid development|advancement of / in today's fast-paced|ever-evolving /
-段首连续 3 次以上 Furthermore。
+不要使用：delve into / it is worth noting / plays a crucial|pivotal|vital role / in the realm of / rich tapestry / a testament to / shed light on / pave the way / With the rapid development|advancement of / in today's fast-paced|ever-evolving / 段首连续 3 次以上 Furthermore。
 
 ### 句式克制
 - 正文 prose 不要反复使用 “标签: 解释” 的模板句。只有 contribution bullets、表格、定义列表等必要位置才用冒号。
@@ -33,6 +41,11 @@ With the rapid development|advancement of / in today's fast-paced|ever-evolving 
 - citation key 必须存在于 `paper_state.shared_facts.bib_keys`。
 - 引用支撑具体 claim；不要一句话堆 5 个以上引用而不区分。
 - 引用前核对该 key 的标题、paper note 或 citation pool 用途；论文主题、方法族、数据/场景和证据类型必须与当前句子的 gap、定位、设计选择、边界或解释 claim 对应。不能用同领域但不相关的文献填充引用数量。
+- 把 citation 当作一次可追溯的学术判断，而不是格式标记。写入前先确认原始记录或可核验 note 实际说明了什么，再选择与该证据强度相称的动词和限定语；不能仅凭标题、作者声誉、venue 或模型记忆推断其含义。无法完成这一核对时，删去 citation 和依赖它的强 claim，或把论断降为有明确边界的研究动机。
+- 优先使用高质量、可核验且真正相关的文献，例如 UTD/FT50/CCF A、营销和经济学顶级期刊、管理科学与信息系统顶级期刊、领域开山论文、高被引基石论文、重要学者的代表作，以及近期有影响力的前沿论文。高质量引用不能替代语义匹配；如果一篇顶刊论文只支持背景，就不能拿来支撑机制、因果或实验 claim。
+- 每个引用都要核验含义。写作前应确认该文献实际研究了什么、证明或讨论了什么、证据层级是什么，以及它能支撑当前句子的哪一部分。无法核验含义时，不要引用。
+- 引用的质量和含义同等重要。优先选好期刊、好会议、开山论文、基石论文、高被引论文、重要学者代表作和近期有影响力论文，但只有当它们与当前句子的 gap、机制、方法、比较、边界或现实含义严格匹配时才使用。若只能支持背景、趋势或对象存在性，就把句子写成相应的低强度表述。
+- 文献覆盖应由问题、流派、证据边界和发展脉络决定，而不是用固定数量的 citation 填满段落。需要更广覆盖时，优先补入已核验、能够承担不同历史阶段或比较维度的代表文献；不要用无关高质量论文制造“全面”的表象。
 - Abstract 不写正式引用。不要在 Abstract 使用 `\cite{}` / `\citep{}` / `\citet{}` / `\parencite{}` 等命令，也不要写作者-年份或数字引用；具体 prior work citation 放到 Introduction 或 Related Work。
 
 ### 数字

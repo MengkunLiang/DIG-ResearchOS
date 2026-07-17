@@ -38,17 +38,12 @@ T1 Project initialization
  -> T5-EXECUTOR-GATE external executor selection
     -> mock_dry_run: T5-DRY-RUN external-executor protocol dry run
     -> codex_cli / claude_code_window / manual: T5-EXTERNAL-WAIT waits for external results
- -> T7-INGEST external-result ingestion
- -> T7-AUDIT research-integrity audit
- -> T7-POST-NOVELTY post-experiment novelty/collision review
- -> T7-CLAIMS result-to-claim mapping and evidence pack
- -> T7.5 PI evaluation
- -> Human Gate
+ -> T8-STYLE-GATE after `external_executor/executor_research_report.md` is available
  -> T8 resource indexing, section writing, assembly audit, review, and revision
  -> T9 submission-package construction, compilation, repair, and closeout
 ```
 
-The current main chain has deprecated the default semantics of “ResearchOS itself implementing and running long experiments internally during T5–T7”. ResearchOS is responsible for research protocol, executor selection, handoff prompts, file contracts, result ingestion, integrity audit, post-experiment novelty review, result-to-claim mapping, and the writing–evidence closed loop; Codex CLI, Claude Code window, human external executors, or mock dry-run are responsible for implementing and running experiments in isolated paths. The normal entry is `T5-REBOOST-GATE`, which executes `research-reboost` through the configured model and validates the handoff. The separate `T5-SPECIALIZE-EXECUTOR-SKILLS` task then runs the repository `project-skill-specialization` Skill, atomically publishes the project-specific Suite, validates it independently, and records its input fingerprint before executor selection. `T5-HANDOFF` remains a legacy-compatible protocol compiler. The legacy `T5` Pilot, `T6` post-pilot novelty review, and legacy `T7` internal full experiment are kept as `LEGACY-T5-PILOT` / `LEGACY-T6-NOVELTY` / `LEGACY-T7-FULL` compatibility entry points; ordinary `run-task T5/T6/T7` will report “retired” and suggest the new entry points, and old `next_task: T7` recovery semantics are safely mapped to `T5-REBOOST-GATE`.
+The current main chain has deprecated the default semantics of “ResearchOS itself implementing and running long experiments internally during T5–T7”. ResearchOS is responsible for research protocol, executor selection, AGENTS/CLAUDE control instructions, file contracts, and the writing–evidence closed loop; Codex CLI, Claude Code window, human external executors, or mock dry-run are responsible for implementing and running experiments in isolated paths. The normal entry is `T5-REBOOST-GATE`, which executes `research-reboost` through the configured model and validates the handoff. The separate `T5-SPECIALIZE-EXECUTOR-SKILLS` task then runs the repository `project-skill-specialization` Skill, atomically publishes the project-specific Suite, validates it independently, and records its input fingerprint before executor selection. `T5-HANDOFF` remains a legacy-compatible protocol compiler. The T5-to-T8 interface is the required file `external_executor/executor_research_report.md`; other `external_executor/` files remain optional context for T8. The old T7/T7.5 nodes have been removed from the main state machine, and ordinary `run-task T7` / `run-task LEGACY-T7-FULL` now fail with a removal message.
 
 Where:
 
@@ -90,12 +85,6 @@ T1
  -> T5-EXECUTOR-GATE
     -> mock_dry_run: T5-DRY-RUN
     -> claude_code_window/codex_cli/manual: T5-EXTERNAL-WAIT
- -> T7-INGEST
- -> T7-AUDIT
- -> T7-POST-NOVELTY
- -> T7-CLAIMS
- -> T7.5
- -> human gate
  -> T8-STYLE-GATE
  -> T8-RESOURCE
  -> T8-WRITE
@@ -121,13 +110,12 @@ T1
 A few points that are easiest to misremember:
 
 - `HELLO` is an explicitly run smoke task, not the main chain starting point; the main chain’s `initial_state` is `T1`
-- The current main chain only automatically transitions to `T5-REBOOST-GATE` when the `Final Gate Verdict` at `T4.5` is explicitly one of the pass enumerations, such as `pass_to_experiment` / `pass_with_required_baselines`; `return_to_T4_reframe`, `drop_due_to_collision`, `reject`, `collision`, `fail`, missing verdict, or unrecognized verdict all lead to `T4.5-HUMAN-REVIEW`, where the user chooses to continue the external experiment chain, reframe back to T4, or end the project. The system no longer auto-rejects, auto-backtracks, or auto-approves, avoiding T4.5–T4 dead loops and preventing the model from making value judgments on the user’s behalf when novelty is uncertain. The old internal experiment stages are preserved as legacy compatibility entry points, but the main chain and ordinary `run-task T7` no longer enter the old internal full experiment.
+- The current main chain only automatically transitions to `T5-REBOOST-GATE` when the `Final Gate Verdict` at `T4.5` is explicitly one of the pass enumerations, such as `pass_to_experiment` / `pass_with_required_baselines`; `return_to_T4_reframe`, `drop_due_to_collision`, `reject`, `collision`, `fail`, missing verdict, or unrecognized verdict all lead to `T4.5-HUMAN-REVIEW`, where the user chooses to continue the external experiment chain, reframe back to T4, or end the project. The system no longer auto-rejects, auto-backtracks, or auto-approves, avoiding T4.5–T4 dead loops and preventing the model from making value judgments on the user’s behalf when novelty is uncertain. T7/T7.5 are no longer main-chain nodes.
 - `T8` is not a single node, but a multi-node chain composed of style confirmation, resource indexing, alignment matrix, outline, per-section writing, assembly, self-check, review, and revision; any `next_task: T8` / `next_task: T8-WRITE` from old reports or gates will be safely mapped by the state machine to `T8-STYLE-GATE`, and will only directly enter `T8-RESOURCE` if a valid `drafts/writing_style.json` already exists.
 - Gate1 presents a Rich Portfolio backed by `_gate1_candidate_cards.md`, `_gate1_selection_brief.md`, and the native Population snapshots. Candidate cards explain the mechanism, practical implication, score rationale, paper-reading-note dependencies, risks, and recommended action; `_candidate_directions.json` and Pass1/Pass2 JSON remain compatibility projections. After a complete selection, T4 writes `_gate1_user_selection.json`, `hypothesis_brief.yaml`, lineage, and T4.5 search targets. T4.5 audits novelty/collisions before any formal hypotheses or experiment plan are created; a passing T4.5 formalization then updates the formal bundle and T5 authority.
 - `T8-REVIEW` is not the current real state name; the current real state names are:
   - `T8-REVIEW-1`
   - `T8-REVIEW-2`
-- `T7.5` has been integrated into the main chain and is no longer just “planned in the design”
 - `T9` is not just packaging; it is now “build bundle -> compile -> on failure repair and retry -> on success verify”
 
 ---
@@ -155,7 +143,7 @@ Its characteristics:
 - advances the entire state machine
 - enters and resumes from human gates
 - automatically jumps from one task to the next
-- fully embodies the chain `T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-EXECUTOR-GATE -> T5-DRY-RUN/T5-EXTERNAL-WAIT -> T7-INGEST -> T7-AUDIT -> T7-POST-NOVELTY -> T7-CLAIMS -> T7.5 -> ask_human -> T8`
+- fully embodies the chain `T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-EXECUTOR-GATE -> T5-DRY-RUN/T5-EXTERNAL-WAIT -> T8-STYLE-GATE -> T8`
 
 ### 3.2 Resume Full Pipeline
 
@@ -225,7 +213,7 @@ researchos run \
 
 This will copy `project.yaml`, `user_seeds/seed_papers.jsonl`, `user_seeds/pdfs/`, seed constraints/ideas/external resources, and `literature/bridge_domain_plan.json` according to the `T2` input contract, then initialize `state.yaml` with `current_task: T2`. Old T2 outputs such as `papers_raw.jsonl`, `papers_verified.jsonl`, `deep_read_queue.jsonl` will not be copied.
 
-The recommended debug entry for the new writing chain is `T8-STYLE-GATE`; if a valid `drafts/writing_style.json` already exists, you can also run `T8-RESOURCE` directly. If you still use the old command `researchos run-task T8 --workspace ...`, the single-task runner will treat it as `T8-STYLE-GATE` to prevent bypassing style confirmation, resource indexing, and section planning.
+The recommended debug entry for the new writing chain is `T8-STYLE-GATE`; if a valid `drafts/writing_style.json` already exists, you can also run `T8-RESOURCE` directly. `researchos run-task T8 --workspace ...` remains an alias for `T8-STYLE-GATE`, so it cannot bypass style confirmation. Actual downstream node names are not aliases: after their declared inputs validate, `researchos run-task T8-WRITE --workspace ...` is the targeted recovery entry for a missing or interrupted outline/storyline, and it does not return to the style Gate.
 
 ### 3.5 Key Differences
 
@@ -235,7 +223,7 @@ The recommended debug entry for the new writing chain is `T8-STYLE-GATE`; if a v
 | Handles human gate? | Yes | Only executes the current task, does not advance |
 | Suitable for reproducing a single-stage bug? | Moderate | Best |
 | Suitable for full delivery? | Best | Not suitable |
-| Suitable for testing `T7.5 -> ask_human -> T8`? | Yes | No |
+| Suitable for testing `T5 external execution -> T8`? | Yes | No |
 
 ---
 
@@ -272,7 +260,7 @@ Where:
 
 `init-workspace`, `run`, `resume`, and `run-task` idempotently refresh the standard directory tree and generate a `_DIR_GUIDE.md` for the workspace root and each standard subdirectory. These guides are not paper content; they are directory protocol documentation; currently they use two tables: a directory protocol table that explains which stage generates the directory, which stage consumes it, human/agent editable scope, prohibited content, and validation rules; and a key file table that lists core files/subdirectories and their purposes.
 
-New workspaces by default only create directories of the current main chain. Legacy `pilot/`, top-level `reviews/`, and workspace-local `skills/` are no longer created by default; if an old workspace already contains these directories, the runtime will supplement a legacy/optional guide, but will not delete or move existing artifacts. Subtrees such as `external_executor/workdir`, `resources/repos`, and PDF/figure that may contain external code or assets will not be recursively polluted. Existing custom `_DIR_GUIDE.md` files are preserved; only ResearchOS-generated guides are refreshed.
+New workspaces by default only create directories of the current main chain. Legacy `pilot/`, top-level `reviews/`, workspace-local `skills/`, and `external_executor/workdir` are no longer created by default; if an old workspace already contains these directories, the runtime will supplement a legacy/optional guide, but will not delete or move existing artifacts. Subtrees such as `external_executor/expr`, legacy `external_executor/workdir`, `resources/repos`, and PDF/figure that may contain external code or assets will not be recursively polluted. Existing custom `_DIR_GUIDE.md` files are preserved; only ResearchOS-generated guides are refreshed.
 
 ### 4.1 What is the Task I/O Contract?
 
@@ -292,8 +280,7 @@ Because these stages explicitly read existing artifacts, for example:
 
 - `T3` reads existing `deep_read_notes/`
 - `T3.6` reads existing `survey_plan.json`, `survey_state.json`, `sections/*.tex`, `survey_audit.json`, and compilation logs, and continues writing/compiling section by section
-- the external experiment chain reads existing handoff/result_pack/ingest/audit/result-to-claim artifacts and fills gaps; only legacy `T5/T7` compatibility nodes read existing code and internal result directories
-- `T7.5` reads existing `evaluation_decision.md`
+- the external experiment chain reads existing handoff/result_pack/status/manifest artifacts and the required `external_executor/executor_research_report.md`; T8 then reads that report plus optional `external_executor/` context
 - `T9` reads existing `submission/bundle/` and compilation traces
 
 Therefore, the resume semantics of ResearchOS are essentially:
@@ -317,22 +304,16 @@ Therefore, the resume semantics of ResearchOS are essentially:
 | `T4` | `IdeationAgent` + internal evolution controller | - | Pre-run confirmation, Evidence Routing, asymmetric P0, role-separated scoring, P0->P1 evolution, and Gate1-compatible projection; after a complete selection, compile Pre-Novelty material only | `evidence/`, `populations/P0.json`, `populations/P1.json`, `genomes/`, `families/`, `scoring/`, `evolution/`, `candidates/`, `archive/`, retained Pass1/Pass2/Gate1 projections, `hypothesis_brief.yaml`, `selected/t45_search_targets.json` |
 | `T4-GATE1` | runtime gate | - | State-machine-level decision panel for Portfolio selection, parallel tracks, continued Evolution, focus, Crossover, component composition, inspection, Route regeneration, rollback, and pause; source versions remain preserved | `ideation/human_directives/`, `human_compositions/`, `_gate1_user_selection.json` |
 | `T4.5` | `NoveltyAuditorAgent` | - | Audit the selected Pre-Novelty idea for novelty/collisions; a non-pass verdict goes to the human gate, while a pass compiles the formal hypothesis and execution bundle | `novelty_audit.md`, collision records, `hypotheses.md`, `exp_plan.yaml`, Contribution-Hypothesis Mapping, Validation Map, Kill Criteria, formalization manifest |
-| `T5-REBOOST-GATE` | `SkillAgent(research-reboost)` | `reboost` | Use the configured model to compile and validate a source-bounded experiment handoff; does not run real experiments or publish the executor Skill Suite | `external_executor/handoff_pack.json`, `reboost_report.json`, `AGENTS.md`, `CLAUDE.md`, prompts, schema |
-| `T5-SPECIALIZE-EXECUTOR-SKILLS` | `ProjectSkillSpecializationAgent` | `build` | Run the repository project-specialization Skill, atomically publish the 13 project-specific executor Skills, independently validate them, and record the input fingerprint for resume | `project_skill_context.yaml`, `skill_specialization_report.json`, `skills/`, `skill_specialization_execution.json` |
+| `T5-REBOOST-GATE` | `SkillAgent(research-reboost)` | `reboost` | Use the configured model to compile and validate a source-bounded experiment handoff; does not run real experiments, choose an executor, publish the executor Skill Suite, or write executor-specific prompts | `external_executor/handoff_pack.json`, `external_executor/report/reboost_report.json`, `external_executor/report/reboost_validation_report.json`, `paper_card_evidence_index.json`, `expected_outputs_schema.json`, `allowed_paths.txt`, `AGENTS.md`, `CLAUDE.md` |
+| `T5-SPECIALIZE-EXECUTOR-SKILLS` | `ProjectSkillSpecializationAgent` | `build` | Run the repository project-specialization Skill, atomically publish the 13 complete project-specific executor Skill directories, independently validate them, and record the input fingerprint for resume | `project_skill_context.yaml`, `schemas/project_skill_context.schema.json`, `skills/`, `report/skill_specialization_report.json`, `report/skill_specialization_execution.json` |
 | `T5-HANDOFF` | `ExperimenterAgent` | `handoff` | Legacy-compatible protocol compiler; retains the same external-executor contract for an older workspace or explicit recovery path | `external_executor/handoff_pack.json` and the external-executor control files |
-| `T5-EXECUTOR-GATE` | `ExperimenterAgent` | `executor_gate` | State-machine-level immediate gate; user selects mock/Claude Code/Codex CLI/manual, and deterministically patches the executor instruction file | `external_executor/executor_selection.json` |
-| `T5-EXTERNAL-WAIT` | `ExperimenterAgent` | `external_wait` | No-LLM wait/resume boundary; checks if the external executor has written back a result pack/status, if missing then PAUSED, continues after resume | `external_executor/wait_acceptance_report.json` |
-| `T5-DRY-RUN` | `ExperimenterAgent` | `dry_run` | Run through the result_pack/status/manifest/raw/config/log file protocol with a mock executor; explicitly `mock_only=true` | `external_executor/result_pack.json`, `executor_status.json`, `run_manifest.json`, `heartbeat.json`, `raw_results/`, `configs/`, `logs/` |
-| `T7-INGEST` | `ExperimenterAgent` | `result_ingest` | Ingest external result pack, normalize into ResearchOS downstream-readable results | `experiments/results_summary.json`, `run_records.jsonl`, `evidence_index.json`, `ingest_report.json` |
-| `T7-AUDIT` | `ExperimenterAgent` | `integrity_audit` | Audit provenance, hash, metric source, mock_only, run_manifest, and required baseline coverage; does not trust the executor summary | `experiments/integrity_audit.json`, `experiments/experiment_fairness_review.md` |
-| `T7-POST-NOVELTY` | `ExperimenterAgent` | `post_novelty` | Re-evaluate novelty/collision and claim downgrade boundaries based on implementation/result state and required baseline coverage | `novelty/post_experiment_novelty_check.json`, `novelty/post_experiment_collision_cases.md` |
-| `T7-CLAIMS` | `ExperimenterAgent` | `result_to_claim` | Convert audited experiment numbers into conservative claim mappings, and generate T8 evidence pack, must-not-claim, and support matrix | `experiments/experimental_claims.json`, `drafts/result_to_claim.json`, `drafts/experiment_evidence_pack.json`, `drafts/must_not_claim.md`, `drafts/claim_support_matrix.csv`, `experiments/iteration_log.md` |
+| `T5-EXECUTOR-GATE` | `ExperimenterAgent` | `executor_gate` | State-machine-level immediate gate; user selects mock/Claude Code/Codex CLI/manual, writes executor control receipts, and deterministically patches AGENTS/CLAUDE | `external_executor/report/executor_selection.json`, `external_executor/report/executor_capabilities.json` |
+| `T5-EXTERNAL-WAIT` | `ExperimenterAgent` | `external_wait` | No-LLM wait/resume boundary; checks whether the external executor has written the required T8 report plus supporting result pack/status/manifest files | `external_executor/wait_acceptance_report.json`; required downstream input `external_executor/executor_research_report.md` |
+| `T5-DRY-RUN` | `ExperimenterAgent` | `dry_run` | Run through the result_pack/status/manifest/raw/config/log file protocol with a mock executor; explicitly `mock_only=true`; does not synthesize empirical T8 claims | `external_executor/result_pack.json`, `executor_status.json`, `run_manifest.json`, `heartbeat.json`, `raw_results/`, `configs/`, `logs/` |
 | `LEGACY-T5-PILOT` | `ExperimenterAgent` | `pilot` | Legacy compatibility node: explicit old internal small-scale experiment | `pilot_plan.yaml`, `pilot_code/`, `pilot_results.json`, `motivation_validation.md` |
 | `LEGACY-T6-NOVELTY` | `NoveltyAgent` | - | Legacy compatibility node: incremental novelty review based on Pilot | `novelty_report.md`, `collision_cases.md`, `must_add_baselines.md` |
-| `LEGACY-T7-FULL` | `ExperimenterAgent` | `full` | Legacy compatibility node: old internal full experiment; ordinary `run-task T7` no longer enters here | `results_summary.json`, `runs/`, `configs/`, `iteration_log.md`, `ablations.csv` |
-| `T7.5` | `PIAgent` | `evaluate` | Assess whether the external experiment audit/result-to-claim is sufficient to write the paper | `evaluation_decision.md` |
 | `T8-STYLE-GATE` | runtime gate | `style_gate` | State-machine-level immediate gate, confirm IS/CCF-A/both writing style, language, and LaTeX template, and record human interaction provenance | `drafts/writing_style.json` |
-| `T8-RESOURCE` | `WriterAgent` | `resource_index` | Index writing resources, consume Pre-T5 materials and external experiment evidence pack/result-to-claim, and generate section/evidence/figure-table plan and alignment matrix seed | `drafts/manuscript_resource_index.json`, `drafts/section_plan.json`, `drafts/evidence_plan.json`, `drafts/figure_table_plan.json`, `drafts/alignment_matrix.json` |
+| `T8-RESOURCE` | `WriterAgent` | `resource_index` | Index writing resources, consume Pre-T5 materials plus `external_executor/executor_research_report.md` and supporting external executor artifacts, and generate section/evidence/figure-table plan and alignment matrix seed | `drafts/manuscript_resource_index.json`, `drafts/section_plan.json`, `drafts/evidence_plan.json`, `drafts/figure_table_plan.json`, `drafts/alignment_matrix.json` |
 | `T8-WRITE` | `WriterAgent` | `outline` | Write argument outline based on resource index and alignment matrix | `drafts/outline.md` |
 | `T8-SECTION-PLAN` | `WriterAgent` | `section_plan` | Initialize per-section shared state and per-chapter assignment sheets | `drafts/paper_state.json`, `drafts/section_outlines/*.md` |
 | `T8-SEC-METHOD` | `WriterAgent` | `section_draft` | Write only the Method chapter | `drafts/sections/methodology.tex` |
@@ -433,7 +414,7 @@ The T2/T3/T3.5/T4/T4.5/T8 items emphasized in `/mnt/data/reference/updataPreT5.m
 | T3.5 contribution space synthesis | `reader.j2` synthesize mode changed to LLM analysis first, then passing `LLMInsights` to `build_synthesis_workbench`; `literature_synthesis.py` generates `contribution_space` and `cross_paper_tensions` | Implemented |
 | T3.5 adjacent/theory bridge transfer | `build_synthesis_workbench` reads `domain_map.json`, outputs `citation_graph_context`, `domain_map_bucket_summary`, `adjacent_transfers`, and `bridge_transfer_drafts`; `synthesis.md` must include a “transferable mechanisms from adjacent domains” section or explain insufficient adjacent coverage in the corpus | Implemented |
 | T3.5 no hardcoded knowledge | `build_synthesis_workbench` only structures evidence and LLM insights; method families, common assumptions, trends, and research questions are supplied by the LLM, with `LLM_REVIEW_REQUIRED` written where missing; tool hints are not treated as the final synthesis | Implemented |
-| T4 native multi-route formation, with Pass 1/Pass 2 compatibility | The default controller runs Evidence Routing, Opportunity Map, multi-route P0 formation, independent scoring, O0 offspring, union re-scoring, and P1/Portfolio selection. It projects the retained Pass 1/Pass 2 Gate1 artifacts for the existing state machine; `researchos/prompts/ideation.j2` is a legacy-only fallback, never the default T4 path. | Implemented |
+| T4 native multi-route formation, with Pass 1/Pass 2 compatibility | The default controller runs Evidence Routing, Opportunity Map, multi-route P0 formation, independent scoring, O0 offspring, and P1/Portfolio selection. It union-rescores only when an admitted Child changes the Population; otherwise it retains the existing independently obtained Parent reports with an explicit reuse receipt, without inventing a score or issuing another provider call. An initial Route may submit an explicitly conjectural minimal `IdeaSeed` and enrich it later; a Route/score/Child-local failure writes a diagnostic, repairs or degrades locally, and cannot cancel other Candidates. It projects the retained Pass 1/Pass 2 Gate1 artifacts for the existing state machine; `researchos/prompts/ideation.j2` is explicit Legacy-only, never the default native path, and cannot overwrite native artifacts. | Implemented |
 | T4 four constraint routes remain supplements | `mechanism_challenge`, `reverse_operation`, `subgroup_failure`, and `gap_exploration` are explicit coverage routes in the native population. They can surface a useful boundary, counterfactual, or failure mode but do not replace evidence-routed Literature and informed-brainstorm mainlines; `_candidate_directions.json` distinguishes `mainline/supplement/bridge/not_supported_by_current_evidence`. | Implemented |
 | T4 provenance no longer a gate | `supporting_papers`, `closest_baselines`, `from_synthesis_section` are optional documentation fields; `prior_art: none` is legal and indicates high novelty/high risk, not scored down for lacking baselines | Implemented |
 | T4 anti-incrementalism gate | `ideation.py` validates `design_rationale`, `contribution_type`, `contribution_character`, `contribution_strength` for selected / hypothesis-linked ideas; `routine` cannot pass as a selected idea | Implemented |
@@ -441,7 +422,7 @@ The T2/T3/T3.5/T4/T4.5/T8 items emphasized in `/mnt/data/reference/updataPreT5.m
 | T4 soft novelty/concentration diagnostics | `ideation_tools.py` provides `analyze_idea_concentration` and `compute_idea_novelty_signal`; `idea_scorecard.yaml` must record `counterfactual_check`, `nearest_prior_work`, `novelty_signal`; Gate1 brief must display concentration hints, Origin distribution, and Novelty-Utility spectrum. Field presence is used to prevent skipping review, not gated on merit; when evidence is insufficient, `insufficient_evidence`, `not_computed`, `domain_map_unavailable` are allowed with an explanation, avoiding forced three-class classification | Implemented |
 | T4.5 collision + ambition | `novelty_auditor.j2` requires writing both Collision Axis and Ambition Axis; `mechanism_tools.py` adds `extract_design_rationale_tuple` / `compare_design_rationale_tuples`; `novelty_auditor.py` validates `_design_rationale_tuples/` and routine reframe requirements | Implemented |
 | T4.5 non-pass verdict human decision | `novelty_auditor.j2` requires writing `Final Gate Verdict`; the state machine for T4.5 uses `__parse_from_output__`: only explicit pass enumerations like `pass_to_experiment` / `pass_with_required_baselines` enter `T5-REBOOST-GATE`; `return_to_T4_reframe` / `drop_due_to_collision` / `reject` / `collision` / `fail`, missing verdict, and unknown verdicts all enter `T4.5-HUMAN-REVIEW`. This node is an `immediate_gate`, does not start an LLM, does not auto-reject, auto-return to T4, or default to pass; the user reviews `novelty_audit.md`, Gate1 brief, and scorecard, then chooses to continue the external experiment chain, return to T4, or end, and the decision is persisted to `ideation/novelty_human_review.json` | Implemented |
-| T7.5/T8 consuming CDR and new Pre-T5 artifacts | T8-RESOURCE generates `cdr_claim_ledger.json` and `alignment_matrix.json`, and copies `domain_map.json`, `synthesis_workbench.json`, `idea_scorecard.yaml`, `writing_style.json` via task contract; these files are strong prerequisites for single tasks in `T8-RESOURCE`, `T8-WRITE`, `T8-SECTION-PLAN`, and `T8-SEC-RELATED`, preventing silent degradation of Related Work; Related Work consumes `adjacent_transfers`, `bridge_transfer_drafts`, `domain_map.theory_bridge`, `cross_domain_sources`, and `nearest_prior_work`, alignment rows consume `counterfactual` / `novelty_signal`; `audit_writing_craft` will WARN to check whether Related Work visibly uses recent work, adjacent transfers, or cross-paper tension signals; Reviewer adds `CDR Contribution Verdict` | Implemented |
+| T8 consuming CDR and new Pre-T5 artifacts | T8-RESOURCE generates `cdr_claim_ledger.json` and `alignment_matrix.json`, and copies `domain_map.json`, `synthesis_workbench.json`, `idea_scorecard.yaml`, `writing_style.json`, and `external_executor/executor_research_report.md` via task contract; these files are strong prerequisites for single tasks in `T8-RESOURCE`, `T8-WRITE`, `T8-SECTION-PLAN`, and `T8-SEC-RELATED`, preventing silent degradation of Related Work; Related Work consumes `adjacent_transfers`, `bridge_transfer_drafts`, `domain_map.theory_bridge`, `cross_domain_sources`, and `nearest_prior_work`, alignment rows consume `counterfactual` / `novelty_signal`; `audit_writing_craft` will WARN to check whether Related Work visibly uses recent work, adjacent transfers, or cross-paper tension signals; Reviewer adds `CDR Contribution Verdict` | Implemented |
 | T9 compilation validation | T9 generates `compile_report.json`, recording LaTeX build, hash/mtime, error logs, and PDF artifact; not just checking if `paper.pdf` exists | Implemented |
 
 Here, the CDR schema and tool outputs are "structured responsibilities" and "evidence scaffolding", not deterministic academic templates. Areas requiring knowledge, judgment, and writing remain to be completed by the LLM: T3 design rationale judgment, T3.5 method family/tension synthesis, T4 forward generation, T4.5 novelty/ambition interpretation, T8 final paper narrative—none of these can be replaced by hard-coded tools.
@@ -1176,7 +1157,7 @@ The bridge domain is a reinforcement chain independent of the mainline literatur
 5. **Quotas and buckets**: The new queue buckets are `seed`, `mainline_deep`, `bridge_deep`, `mainline_screened`, `bridge_screened`. Deep-read target, hard cap, mainline screened backlog, bridge pool, screened backlog, and must_explore bridge floor are all configured by `agents.reader.modes.read.behavior`; defaults are in the table above. Candidates still must first pass the LLM semantic screen; they cannot be forced to be read solely by bridge_id.
 6. **`triaged_out` semantics**: Records with `triaged_out=true` are coverage/resume backlog, not mandatory T3 reading. They keep `queue_rank`, `target_bucket`, and `triaged_reason` to explain why the candidate was truncated and allow retrieval during later re-check or recovery; Reader, notes manifest, and validators only count non-`triaged_out` and non-legacy `overflow` records toward the completion target.
 7. **T3 bridge note path**: `save_paper_note` writes `bridge_deep` papers that did not pass the core screen into `literature/bridge_notes/{bridge_id}/{id}.md`; papers that passed the core screen are still written into `literature/deep_read_notes/{id}.md`, avoiding duplicate reading of the same paper in mainline and bridge directories. T3 manifest, T3 recovery, T3.5 workbench, and T8 resource index all scan both `deep_read_notes/` and `bridge_notes/` and uniformly filter out `_DIR_GUIDE.md`, README, templates, examples, and empty placeholder files.
-8. **T4 table and escape hatch**: When there is a confirmed bridge and `source!=none`, T4 must inspect `bridge_notes/{bridge_id}/`, `contributed_bridges` in mainline notes, and `synthesis_workbench.bridge_transfer_drafts`. With sufficient evidence, generate candidates with `idea_origin=bridge_synthesis`, `constraint_status=bridge`, `cross_domain_sources=[...]`, and place them in the Gate1 visible pool; without sufficient evidence, do not fabricate ideas, and must write `ideation/bridge_coverage_review.json` with `escape_hatch.status=no_candidate_available`, evidence gaps, and re-evaluation conditions.
+8. **T4 table and escape hatch**: When there is a confirmed bridge and `source!=none`, T4 must inspect retrieval context in `cross_domain_catalogs/{bridge_id}/`, actual read Bridge notes in `bridge_notes/{bridge_id}/`, `contributed_bridges` in mainline notes, and `synthesis_workbench.bridge_transfer_drafts`. A catalog-only track may propose a structural analogy, counterexample, validation question, or reading upgrade, but never masquerades as read mechanism evidence. With sufficient support, generate candidates with `idea_origin=bridge_synthesis`, `constraint_status=bridge`, `cross_domain_sources=[...]`, and place them in the Gate1 visible pool; otherwise write `ideation/bridge_coverage_review.json` with `escape_hatch.status=no_candidate_available`, evidence gaps, and re-evaluation conditions rather than fabricating a confirmed idea.
 9. **Conditional output semantics**: `bridge_coverage_review.json` is a conditional artifact under T4 `optional_outputs`, not an ordinary unconditional output. Runtime basic artifact validation will not demand it when `source=none` or no confirmed bridge exists; `IdeationAgent.validate_outputs()` and the T4 runtime checker will upgrade it to a mandatory audit file when there is a confirmed bridge.
 10. **Gate1 semantics**: Being on the table does not mean entering `hypotheses.md`. `bridge_synthesis` candidates and candidates not recommended by Pass 2 must both be visible in `_candidate_directions.json` and `_gate1_selection_brief.md`; the researcher can select, keep parallel, compose, restructure, defer, or reject. A complete selection creates only the Pre-Novelty brief. A passing T4.5 novelty/collision audit is required before the formal hypothesis and experiment bundle exists.
 
@@ -1937,7 +1918,7 @@ researchos run-task T3.5 --workspace ./workspace/local-test2
 
 ### Resume Semantics
 
-T3.5 does not have complex specialized recovery files like T3/T5/T7, but it is inherently artifact-first:
+T3.5 does not have complex specialized recovery files like T3/T5, but it is inherently artifact-first:
 
 - As long as `deep_read_notes/` and `comparison_table.csv` remain
 - The cost of re-running T3.5 is mainly re-synthesis
@@ -2341,7 +2322,7 @@ This section describes the field-level behavior of the historical Pass1/Pass2 pr
    - `idea_origin` (e.g., `synthesis_gestalt`, `problem_reframing`, `design_rationale_derivation`, `cross_domain_analogy`, `free_reasoning`, `seed_refinement`, `evidence_driven`, `bridge_synthesis`, `mechanism_challenge`)
    - `constraint_status` (`mainline` / `supplement` / `bridge` / `not_supported_by_current_evidence`)
    - `closest_baselines` (can be empty; `prior_art: none` when no close work is a valid high‑novelty signal, but risk must be flagged)
-   - `cross_domain_sources` / `cross_domain_relation` (if using `bridge_transfer_drafts`, `domain_map.theory_bridge`, `bridge_notes/`, or bridge‑domain plan as analogy material, must record the corresponding `bridge_id` array and relationship type; empty arrays when unused; the old singular `cross_domain_source` is only a compatibility alias)
+   - `cross_domain_sources` / `cross_domain_relation` (if using `bridge_transfer_drafts`, `domain_map.theory_bridge`, `cross_domain_catalogs/`, `bridge_notes/`, or bridge‑domain plan as analogy material, must record the corresponding `bridge_id` array and relationship type; empty arrays when unused; the old singular `cross_domain_source` is only a compatibility alias)
    - `counterfactual_check`, `nearest_prior_work`, `novelty_signal` – three soft diagnostic fields; when materials are insufficient, may explicitly write `insufficient_evidence`, `not_computed`, or `domain_map_unavailable`
    - `scores` (seven‑dimensional scoring: novelty/feasibility/impact/evaluability/differentiation/cost/contribution_strength)
    - `minimum_experiment` (minimum viable experiment)
@@ -2549,7 +2530,7 @@ The native Candidate dossier and its versioned Population snapshot record all Ca
   - `seed_alignment`: Alignment with user's original seed (`direct`/`partial`/`none`)
   - `idea_origin`: `free_reasoning` / `seed_refinement` / `evidence_driven` / `bridge_synthesis` / four-type supplement
   - `constraint_status`: `mainline` / `supplement` / `bridge` / `not_supported_by_current_evidence`
-  - `cross_domain_sources`: If the idea uses `bridge_transfer_drafts`, `domain_map.theory_bridge`, `bridge_notes/`, or bridge-domain plan, fill the corresponding `bridge_id` array; otherwise empty array
+  - `cross_domain_sources`: If the idea uses `bridge_transfer_drafts`, `domain_map.theory_bridge`, `cross_domain_catalogs/`, `bridge_notes/`, or bridge-domain plan, fill the corresponding `bridge_id` array; otherwise empty array
   - `cross_domain_relation`: `mechanism_bridge` / `method_transfer` / `evaluation_or_metric_bridge` / `baseline_or_dataset_relevance` / `adjacent_application` / `null`
 - `selection_rationale`: Why it is worth doing
 - `closest_baselines`: Closest existing work and differences
@@ -2577,7 +2558,7 @@ Together, these layers let T4.5, T5, and T8 recover why a Candidate exists, what
 See the "Validator Check Items" section above. Core requirements:
 
 - Evidence Index and Evidence Permission must be complete and fingerprint-bound.
-- Standard mode must complete the full P0 -> P1 transition with independent scoring, valid Evolution Plan, union rescoring, Contract validation, Survival Selection, and Population update.
+- Standard mode must complete the full P0 -> P1 transition with independent scoring, a valid Evolution Plan, Contract validation, Survival Selection, and Population update. Union rescoring is required only when an admitted Child changes the Population; otherwise the actual independent Parent reports are retained with an explicit reuse receipt.
 - The Portfolio presents 1–3 Candidates while the configured Active Population and Archive remain recoverable.
 - Each Gate1 Candidate has a non-template mechanism/prediction/counterfactual/family and a 2–4 Draft Hypothesis bundle; a formal hypothesis and experiment plan require a passing T4.5 audit.
 - Resource checks and executable-plan budget checks run when T4.5 formalizes the plan.
@@ -2703,7 +2684,7 @@ During auditing, it aligns the search results, synthesis, comparison table, and 
 
 T4.5 no longer automatically falls back/fails on `return_to_T4_reframe` or `drop_due_to_collision`. The branch semantics are now:
 
-- `pass_to_experiment` / `pass_with_required_baselines`: enters `T5-REBOOST-GATE`, where `research-reboost` compiles and validates the experimental handoff, publishes the Skill Suite, and then reaches executor selection; the mock dry-run path can automatically go to `T7-INGEST`, while the real Codex/Claude/manual path first goes through `T5-EXTERNAL-WAIT`.
+- `pass_to_experiment` / `pass_with_required_baselines`: enters `T5-REBOOST-GATE`, where `research-reboost` compiles and validates the experimental handoff, publishes the Skill Suite, and then reaches executor selection; the mock dry-run and real Codex/Claude/manual paths now continue directly to `T8-STYLE-GATE` after the external execution boundary.
 - `return_to_T4_reframe`, `drop_due_to_collision`, `reject`, `collision`, `fail`: enters `T4.5-HUMAN-REVIEW`.
 
 `T4.5-HUMAN-REVIEW` is a gate-only node; the `state_machine` directly enters `WAITING_HUMAN` and does not start `NoveltyAuditorAgent` again. The gate displays:
@@ -2715,7 +2696,7 @@ T4.5 no longer automatically falls back/fails on `return_to_T4_reframe` or `drop
 
 The user can choose:
 
-- `continue_to_t7`: accept the risk, continue to the external experiment chain entry `T5-REBOOST-GATE`.
+- `continue_to_t5`: accept the risk, continue to the external experiment chain entry `T5-REBOOST-GATE`.
 - `return_to_t4`: return to T4 to reframe the hypothesis or select another candidate.
 - `stop_project`: end the current project.
 
@@ -2794,25 +2775,24 @@ T6 should not rerun T4.5 from scratch; this logic is now clearly separated.
 | Output | Meaning |
 | --- | --- |
 | `external_executor/handoff_pack.json` | External experiment contract: metrics, seeds, experiment plan, source artifacts, allowed paths, executor outputs |
-| `external_executor/executor_selection.json` | Executor selection placeholder; the actual selection is written by T5-EXECUTOR-GATE |
-| `external_executor/input_manifest.json` | Handoff input and required executor outputs manifest |
-| `external_executor/expected_outputs_schema.json` | Fields that the external executor must write: result/status/manifest/artifact |
+| `external_executor/report/reboost_report.json` | Publication and source-use receipt; points to the handoff and validation report |
+| `external_executor/report/reboost_validation_report.json` | Research-reboost validator findings; successful T5-REBOOST requires `valid=true` |
+| `external_executor/paper_card_evidence_index.json` | Compact Paper Note and Cross-domain catalog index with allowed/prohibited evidence uses |
+| `external_executor/expected_outputs_schema.json` | Fields and files that the external executor must write: T8 report, result/status/manifest/artifact |
 | `external_executor/allowed_paths.txt` | Path whitelist the external executor is allowed to write to |
-| `external_executor/AGENTS.md` | Highest‑priority execution instructions for Codex/generic coding agent |
-| `external_executor/CLAUDE.md` | Execution instructions for the Claude Code window |
-| `external_executor/README.md` / `_DIR_GUIDE.md` | External executor directory instructions |
-| `external_executor/job_state.json` | External executor lifecycle state |
-| `external_executor/executor_prompt.md` | Generic prompt for the current executor |
-| `external_executor/codex_prompt.md` | Execution prompt for Codex CLI/external Codex |
-| `external_executor/claude_code_prompt.md` | Execution prompt for the Claude Code window |
-| `external_executor/manual_instructions.md` | Execution instructions for a human or other external tools |
-| `external_executor/reboost_report.json` / `reboost_validation_report.json` | Source-use receipt, handoff validation result, and any deterministic structural repair |
+| `external_executor/AGENTS.md` | Highest-priority execution instructions for Codex/generic coding agent; execution mode remains `UNSET` until T5-EXECUTOR-GATE |
+| `external_executor/CLAUDE.md` | Execution instructions for the Claude Code window; execution mode remains `UNSET` until T5-EXECUTOR-GATE |
+| `external_executor/report/reboost_llm_candidate_handoff_pack.json` / `external_executor/report/reboost_llm_candidate_validation_report.json` | Diagnostic files written when the model supplies a handoff candidate to the publication tool; not declared downstream inputs |
+
+`external_executor/expr/` is created during workspace initialization and is used later by the material gate and external executor phases. T5-REBOOST does not create the `expr/` directory or write `expr/MATERIALS_CHECKLIST.json` / `expr/README.md`.
+
+`T5-REBOOST-GATE` does not write `external_executor/report/executor_selection.json`, `external_executor/report/executor_capabilities.json`, `input_manifest.json`, `job_state.json`, `executor_events.jsonl`, `executor_prompt.md`, `codex_prompt.md`, `claude_code_prompt.md`, `manual_instructions.md`, or `external_executor/skills/`. Executor-specific prompt files are no longer generated; external executors read `external_executor/AGENTS.md` / `external_executor/CLAUDE.md` plus the JSON/text control files directly. The project-specific Skill Suite is published by `T5-SPECIALIZE-EXECUTOR-SKILLS`.
 
 ### Actual execution process
 
 The `research-reboost` Skill receives its bundled contract and references in the system prompt, so it reads only workspace artifacts. It prepares the semantic handoff candidate from `project.yaml`, the post-novelty formalization bundle, synthesis and comparison artifacts, and all three Paper Note roots. The compiler persists the candidate, validates it, and generates the control files. It does not publish executor Skills: separating semantic handoff compilation from Suite publication makes each artifact set independently resumable and prevents a partial suite from being advertised as ready.
 
-At this point the execution mode is still `UNSET`. `T5-SPECIALIZE-EXECUTOR-SKILLS` next runs the repository-owned `project-skill-specialization` Skill. Its deterministic wrapper performs preflight, builds and atomically publishes all 13 Skills, then the runtime independently validates the context, template integrity, report, and input fingerprint. It writes `external_executor/skill_specialization_execution.json`; without that durable execution receipt, `T5-EXECUTOR-GATE` remains blocked. A `ready` report has complete required context, while `incomplete` preserves explicitly unresolved fields instead of inventing them. A failed rebuild preserves any usable prior Suite and writes a separate failure report. Only after this step does `T5-EXECUTOR-GATE` select an executor and deterministically patch executor-facing files. `T5-HANDOFF` remains available as a legacy-compatible protocol compiler for an older workspace or explicit recovery route; it is not the default T4.5 destination.
+At this point the execution mode is still `UNSET`. `T5-SPECIALIZE-EXECUTOR-SKILLS` next runs the repository-owned `project-skill-specialization` Skill. Its deterministic wrapper performs preflight, builds and atomically publishes all 13 Skills, then the runtime independently validates the context, template integrity, report, and input fingerprint. It writes `external_executor/report/skill_specialization_execution.json`; without that durable execution receipt, `T5-EXECUTOR-GATE` remains blocked. A `ready` report has complete required context, while `incomplete` preserves explicitly unresolved fields instead of inventing them. A failed rebuild preserves any usable prior Suite and writes a separate failure report. Only after this step does `T5-EXECUTOR-GATE` select an executor and deterministically patch executor-facing files. `T5-HANDOFF` remains available as a legacy-compatible protocol compiler for an older workspace or explicit recovery route; it is not the default T4.5 destination.
 
 ### Resume logic
 
@@ -2820,7 +2800,7 @@ If the reboost outputs and their fingerprint are still valid, `resume` preserves
 
 ### T5-SPECIALIZE-EXECUTOR-SKILLS
 
-This is a repository-owned Skill task, not a second handoff prompt. It runs `skills/project-skill-specialization/scripts/preflight_specialization.py`, `run_specialization.py`, and the bounded report reader through the permitted `bash_run` capability. The task adapter rejects a completion that did not call the wrapper in the current run, validates the published artifacts a second time, and records the exact source/template fingerprint in `external_executor/skill_specialization_execution.json`. `ready` and `incomplete` are both valid published states; `failed` or missing artifacts stop before executor selection. The explicit `researchos specialize-executor-skills` command remains available for preview, repair, or validation outside the pipeline, but the pipeline state itself owns the durable execution receipt.
+This is a repository-owned Skill task, not a second handoff prompt. It runs `skills/project-skill-specialization/scripts/preflight_specialization.py`, `run_specialization.py`, and the bounded report reader through the permitted `bash_run` capability. The compiler writes `external_executor/project_skill_context.yaml`, copies the context schema to `external_executor/schemas/project_skill_context.schema.json`, copies each of the 13 template Skill directories into `external_executor/skills/<skill>/`, and replaces only the marked Project-Specific Guidance section in each `SKILL.md`. The copied workspace schema is retained because the task adapter, artifact validator, and `T5-EXECUTOR-GATE` input contract consume it for downstream context validation. The task adapter rejects a completion that did not call the wrapper in the current run, validates the published artifacts a second time, and records the exact source/template fingerprint in `external_executor/report/skill_specialization_execution.json`. `ready` and `incomplete` are both valid published states; `failed` or missing artifacts stop before executor selection. If a failed rebuild finds a previously usable published Suite, that Suite is preserved and diagnostics are written to `external_executor/report/skill_specialization_failure_report.json`; otherwise failure diagnostics are written to `external_executor/report/skill_specialization_report.json`. The explicit `researchos specialize-executor-skills` command remains available for preview, repair, or validation outside the pipeline, but the pipeline state itself owns the durable execution receipt.
 
 ## 6.10 T5-EXECUTOR-GATE / T5-EXTERNAL-WAIT: Executor selection and external wait
 
@@ -2830,16 +2810,17 @@ This is a repository-owned Skill task, not a second handoff prompt. It runs `ski
 - mode: `executor_gate`
 - Type: state machine `immediate_gate`, normal full pipeline does not start an LLM
 
-`T5-EXECUTOR-GATE` is a human control point before starting a real experiment. It displays `handoff_pack.json`, `allowed_paths.txt`, Codex prompt, and Claude prompt, allowing the user to choose.
+`T5-EXECUTOR-GATE` is a human control point before starting a real experiment. It displays `handoff_pack.json`, `allowed_paths.txt`, the specialization report, and Codex resume instructions. Executor-specific prompt files are not generated; Codex/Claude/manual executors read AGENTS/CLAUDE and the referenced control files directly.
 
 - `mock_dry_run`: Enters `T5-DRY-RUN`, only tests the file protocol;
-- `claude_code_window`: Enters `T5-EXTERNAL-WAIT`, the user copies `claude_code_prompt.md` to Claude Code;
-- `codex_cli`: Enters `T5-EXTERNAL-WAIT`, allows real experiments in `external_executor/workdir`;
-- `manual`: Enters `T5-EXTERNAL-WAIT`, results are written back by a human or another executor.
+- `claude_code_window`: Enters `T5-EXTERNAL-WAIT`, the user gives Claude Code the workspace root and `external_executor/CLAUDE.md`;
+- `codex_cli`: Enters `T5-EXTERNAL-WAIT`; Codex starts at the workspace root, while runnable method/baseline assets are deployed under `external_executor/expr`;
+- `manual`: Enters `T5-EXTERNAL-WAIT`, results are written back by a human or another executor;
+- `revise_handoff`: Returns to `T5-REBOOST-GATE` and writes only a deferred selection marker.
 
-After parsing the gate, the runtime writes `external_executor/executor_selection.json`, with fields including `selected_executor`, `real_experiment_allowed`, `requires_user_copy_paste`, `next_state`, `selected_by`, `selected_at`, and fallback. Then the runtime calls a deterministic patch, replacing `dry_run: UNSET`, `mock_only: UNSET`, `real_experiment_allowed: UNSET` in the AGENTS/CLAUDE/prompt with real values, and synchronizes `handoff_pack.executor/execution_mode`.
+After parsing a finalized executor choice, the runtime writes `external_executor/report/executor_selection.json`, with fields including `selected_executor`, `real_experiment_allowed`, `requires_user_copy_paste`, `next_state`, `selected_by`, `selected_at`, and fallback. It also writes `external_executor/report/executor_capabilities.json`. Then the runtime calls a deterministic patch that replaces `dry_run: UNSET`, `mock_only: UNSET`, `real_experiment_allowed: UNSET`, and executor placeholders in AGENTS/CLAUDE/README if present. For current research-reboost handoff packs it appends an executor-selected authority rule under `execution_contract.authority_rules`; only legacy handoff packs receive top-level `executor` and `execution_mode` fields.
 
-Interaction details: When the CLI runs interactively, pressing Enter directly in `T5-EXECUTOR-GATE` selects the default `mock_dry_run`; after selecting `codex_cli`, you must enter `yes` to allow real experiments, otherwise it degrades to `claude_code_window` and writes the degradation reason into `executor_selection.json.notes`. When non-interactive stdin/pipe is closed, it neither defaults to mock nor continues by default; instead, it pauses the project into a state that can be `resume`d, avoiding the hidden error of "advancing the experiment without real user input."
+Interaction details: When the CLI runs interactively, pressing Enter directly in `T5-EXECUTOR-GATE` selects the default `codex_cli`; after selecting `codex_cli`, you must enter `yes` to allow real experiments, otherwise it degrades to `claude_code_window` and writes the degradation reason into `external_executor/report/executor_selection.json.notes`. When non-interactive stdin/pipe is closed, it neither defaults to mock nor continues by default; instead, it pauses the project into a state that can be `resume`d, avoiding the hidden error of "advancing the experiment without real user input."
 
 ### T5-EXTERNAL-WAIT
 
@@ -2847,7 +2828,7 @@ Interaction details: When the CLI runs interactively, pressing Enter directly in
 - mode: `external_wait`
 - Execution method: runtime pre-finalizer, preferentially does not call LLM
 
-`T5-EXTERNAL-WAIT` reads `external_executor/executor_selection.json`, `external_executor/result_pack.json`, `external_executor/executor_status.json`, and `external_executor/run_manifest.json`. If files are missing, `semantics` is incorrect, the executor in result/status/manifest does not match selection, a real executor reuses an old `mock_only/dry_run` result pack, the status/current_state is not `done`/`COMPLETED`, metrics are empty, referenced raw/config/log do not exist, sha256 does not match, the path is not within the `rw` range of `allowed_paths.txt`, or a real execution has no non-empty run/raw result record, the runtime writes `external_executor/wait_rejection_report.md` and throws a recoverable pause, leaving the project state `resume`-able. `PARTIAL_RESULTS_READY` does not pass by default, because partial results entering T7 tend to produce half-baked claims; it is only allowed to pass when a tool parameter or future explicit configuration sets `allow_partial_results=true`, and subsequent claim audit must downgrade accordingly. After an external Codex/Claude/manual executor fixes the results, the user executes `researchos resume`, the runtime re-checks and writes `external_executor/wait_acceptance_report.json`, then enters `T7-INGEST`. This avoids hidden errors such as "results not yet written, evidence not auditable, or accidentally consuming old results after switching from mock to real executor."
+`T5-EXTERNAL-WAIT` reads `external_executor/report/executor_selection.json`, `external_executor/executor_research_report.md`, `external_executor/result_pack.json`, `external_executor/executor_status.json`, and `external_executor/run_manifest.json`. If files are missing, the report is empty, `semantics` is incorrect, the executor in result/status/manifest does not match selection, a real executor reuses an old `mock_only/dry_run` result pack, the status/current_state is not `done`/`COMPLETED`, metrics are empty, referenced raw/config/log do not exist, sha256 does not match, the path is not within the `rw` range of `allowed_paths.txt`, or a real execution has no non-empty run/raw result record, the runtime writes `external_executor/wait_rejection_report.md` and throws a recoverable pause, leaving the project state `resume`-able. After an external Codex/Claude/manual executor fixes the results, the user executes `researchos resume`, the runtime re-checks and writes `external_executor/wait_acceptance_report.json`, then enters `T8-STYLE-GATE`. This avoids hidden errors such as "results not yet written, evidence not auditable, or accidentally consuming old results after switching from mock to real executor."
 
 ## 6.11 T5-DRY-RUN: ExperimenterAgent (dry_run)
 
@@ -2866,7 +2847,7 @@ Interaction details: When the CLI runs interactively, pressing Enter directly in
 | Output | Meaning |
 | --- | --- |
 | `external_executor/result_pack.json` | schema-compatible mock result pack |
-| `external_executor/executor_status.json` | Executor status; `accepted=false`, ResearchOS audit will decide acceptance later |
+| `external_executor/executor_status.json` | Executor status; `accepted=false`, handoff validation/T8 will decide acceptance for writing later |
 | `external_executor/run_manifest.json` | raw/config/log artifact list with sha256 |
 | `external_executor/heartbeat.json` | External executor heartbeat/status file |
 | `external_executor/raw_results/mock_results.json` | Mock raw metrics |
@@ -2877,203 +2858,35 @@ Interaction details: When the CLI runs interactively, pressing Enter directly in
 
 `ExperimenterAgent(dry_run)` only calls `mock_external_dry_run`. The tool reads the metrics and seeds declared in `handoff_pack.json`, generates mock metrics, raw results, config, log, manifest, status, and result pack. Each artifact registers its path, role, kind, sha256, and bytes. The validator checks that result pack/status/run manifest/heartbeat/raw/config/log all exist, checks that the result pack has `semantics=external_executor_result_pack`, and confirms that mock flags are not missing.
 
-## 6.12 T7-INGEST / T7-AUDIT / T7-POST-NOVELTY / T7-CLAIMS: External Experiment Results Closed Loop
+## 6.12 Removed T7/T7.5 Nodes and Current T5-to-T8 Handoff
 
-The new T7 is no longer a single "complete experiment" node, but four mutually separate evidence nodes.
-
-### T7-INGEST: Result Ingestion
-
-- Agent: `ExperimenterAgent`
-- mode: `result_ingest`
-- Tool: `ingest_external_results`
-
-`T7-INGEST` reads `external_executor/result_pack.json`, `executor_status.json`, and `handoff_pack.json`, normalizing the external executor output into ResearchOS downstream-compatible artifacts:
-
-| Output | Meaning |
-| --- | --- |
-| `experiments/results_summary.json` | Downstream T7.5/T8 compatible result summary, containing `source=external_executor`, `dry_run`, `mock_only`, metrics, and experiments |
-| `experiments/run_records.jsonl` | Run record of the original result pack |
-| `experiments/evidence_index.json` | Index of metrics, artifacts, logs, run manifest |
-| `experiments/ingest_report.json` | Ingestion report |
-
-This node does not judge whether results are scientifically credible; it only performs schema and normalization. The validator checks that `results_summary`, `run_records`, `evidence_index`, and `ingest_report` all exist and have correct semantics.
-
-### T7-AUDIT: Experiment Integrity Audit
-
-- Agent: `ExperimenterAgent`
-- mode: `integrity_audit`
-- Tool: `audit_experiment_integrity`
-
-`T7-AUDIT` reads `experiments/results_summary.json` and `experiments/evidence_index.json`, auditing each metric for whether it has a source artifact, whether the source artifact is in the index, whether the artifact still exists, whether the sha256 matches, and whether the run manifest exists and has correct semantics. It also reads required baselines extracted from `novelty/required_baselines.json` or `novelty_audit.md`, generating `required_baseline_coverage`. When required baselines are missing, real results are marked as `fail` or claim block; mock dry-run retains `mock_only` but also records the gap.
-
-Output:
-
-```text
-experiments/integrity_audit.json
-experiments/experiment_fairness_review.md
-```
-
-The `status` field can be `pass`, `mock_only`, or `fail`. `fail` indicates hard errors in provenance, structure, or required baseline coverage; `mock_only` means the protocol is viable but cannot serve as evidence for paper claims. `experiment_fairness_review.md` is an audit scaffold for LLM/human review of baseline fairness, metric relevance, and claim overreach, not a substitute for scientific judgment.
-
-### T7-POST-NOVELTY: Post-Experiment Novelty/Collision Review
-
-- Agent: `ExperimenterAgent`
-- mode: `post_novelty`
-- Tool: `build_post_experiment_novelty_check`
-
-`T7-POST-NOVELTY` sits between `T7-AUDIT` and `T7-CLAIMS`. It reads `ideation/novelty_audit.md`, `novelty/required_baselines.json`, `external_executor/result_pack.json`, `experiments/results_summary.json`, and `experiments/integrity_audit.json`, outputting:
-
-```text
-novelty/post_experiment_novelty_check.json
-novelty/post_experiment_collision_cases.md
-```
-
-The current tool only performs deterministic evidence status review: mock-only, integrity fail, required baseline missing will be entered into `claim_downgrades_required`; it does not automatically reject ideas nor does it assert "already collided" for the LLM. Subsequent T7.5, Writer, and Reviewer must read this artifact and then use LLM/human judgment to decide whether supplementary experiments, claim downgrading, or returning to T4 is needed.
-
-### T7-CLAIMS: Result-to-Claim & Evidence Pack
-
-- Agent: `ExperimenterAgent`
-- mode: `result_to_claim`
-- Tools: `map_results_to_claims`, `build_experiment_evidence_pack`
-
-`T7-CLAIMS` first translates audited metrics into conservative claim mappings, then assembles results, audit, artifact index, and claim mapping into a T8 writing evidence pack.
-
-| Output | Meaning |
-| --- | --- |
-| `experiments/experimental_claims.json` | Mechanical result-to-claim map, not the final scientific judgment |
-| `drafts/result_to_claim.json` | Claim mapping mirror for T8/Reviewer use |
-| `drafts/experiment_evidence_pack.json` | Normalized experimental writing evidence pack |
-| `drafts/must_not_claim.md` | Forbidden wording derived from mock/missing baselines/audit issues |
-| `drafts/claim_support_matrix.csv` | Matrix of claims, metrics, evidence, strength |
-| `drafts/limitations_from_experiments.md` | Limitations list derived from experiment audit |
-| `drafts/figure_table_evidence_map.json` | Mapping of figures/tables to evidence/claims |
-| `experiments/iteration_log.md` | External experiment chain iteration summary |
-
-The core fields of `result_to_claim.json` are `claim_mappings[]` and `claims[]`. Each mapping contains `support_status`, `claim_strength`, `metric_refs`, `evidence_refs`, `allowed_wording`, `forbidden_wording`, and `limitations`. If the source is a mock dry-run, `support_status=unsupported_mock_only` and `claim_strength=unsupported`; the Writer can only write it as a protocol test or limitation, not as an empirical result. When required baselines are missing, strong claims are not allowed; wording such as "outperforms prior work / state-of-the-art / strong empirical advantage" is prohibited.
-
-### Legacy T5/T6/T7 Compatibility Nodes
-
-The legacy `T5`, `T6`, `T7` nodes are retained for state machine migration of existing workspaces and explicit legacy debugging, but ordinary `run-task` no longer silently enters the old internal experiment semantics:
-
-- `researchos run-task T5 --workspace ...`: Reports retired, prompts to use `T5-REBOOST-GATE`.
-- `researchos run-task T6 --workspace ...`: Reports retired, prompts to use the new `T7-POST-NOVELTY`.
-- `researchos run-task T7 --workspace ...`: Reports retired, prompts to use the `T5-REBOOST-GATE` external experiment chain.
-- `researchos run-task LEGACY-T5-PILOT --allow-legacy --workspace ...`: Explicitly runs the old pilot internal experiment.
-- `researchos run-task LEGACY-T6-NOVELTY --allow-legacy --workspace ...`: Explicitly runs the old post-pilot novelty review.
-- `researchos run-task LEGACY-T7-FULL --allow-legacy --workspace ...`: Explicitly runs the old internal complete experiment.
-
-Full `run/resume` does not enter these legacy nodes from T4.5 by default. T4.5 pass routes to `T5-REBOOST-GATE`; the old recommendation `next_task: T7` in T7.5 is safely mapped by the state machine to `T5-REBOOST-GATE`. `T5-HANDOFF` remains an explicit compatibility node rather than a silent fallback. This preserves legacy functionality while preventing manual debugging or the main chain from accidentally falling back into the old design where "ResearchOS itself runs experiments for a long time."
-
----
-
-## 6.13 T7.5: PIAgent (evaluate)
-
-### Role
-
-- Agent: `PIAgent`
-- mode: `evaluate`
-- Code: [researchos/agents/pi.py](../../researchos/agents/pi.py)
-- Prompt: [researchos/prompts/pi.j2](../../researchos/prompts/pi.j2)
-- Output: `evaluation/evaluation_decision.md`
-
-### Current Default Configuration
-
-- LLM connection: the global `api_base` / `api_key` / `model`
-- Main tools:
-  - `read_file`
-  - `write_file`
-  - `list_files`
-  - `finish_task`
-- Runtime characteristics:
-  - This is a typical "decision-making task"
-  - Its value lies not in generating a lot of new content, but in providing the state machine with a clear next step
-
-### Input Files
-
-| Input key | File | Required | Meaning |
-| --- | --- | --- | --- |
-| `results_summary` | `experiments/results_summary.json` | Yes | Summary of results after ingestion of external result pack |
-| `integrity_audit` | `experiments/integrity_audit.json` | Yes | Provenance, hash, mock_only, metric source audit |
-| `experimental_claims` | `experiments/experimental_claims.json` | No but strongly recommended | Mechanical result-to-claim map |
-| `result_to_claim` | `drafts/result_to_claim.json` | Yes | Claim mapping consumable by T8 writing |
-| `experiment_evidence_pack` | `drafts/experiment_evidence_pack.json` | Yes | T8 writing evidence pack |
-| `iteration_log` | `experiments/iteration_log.md` | No but strongly recommended | External experiment chain iteration process |
-| `exp_plan` | `ideation/exp_plan.yaml` | No but strongly recommended | Original experiment plan |
-
-### Output files
-
-| Output key | File | Meaning |
-| --- | --- | --- |
-| `evaluation_decision` | `evaluation/evaluation_decision.md` | Stage evaluation and next-step recommendations from the PI perspective |
-
-### Its role in the full pipeline
-
-The significance of T7.5 is:
-
-- After external executor results have been ingested, audited, and result-to-claim mapping completed
-- Not immediately writing the paper
-- First making judgments from the PI perspective:
-  - Whether the audited evidence is sufficient
-  - Which claims can only be conservatively stated or must be downgraded
-  - Whether to return to the external experiment chain to supplement
-  - Whether to go back to T4 to modify hypotheses
-  - Or whether to proceed to T8
-
-### Actual execution process
-
-After `PIAgent(evaluate)` starts, it reads `experiments/results_summary.json`, `experiments/integrity_audit.json`, `drafts/result_to_claim.json`, `drafts/experiment_evidence_pack.json`, `experiments/iteration_log.md`, and `ideation/exp_plan.yaml`. It aligns the experimental results with the original plan and claim mapping: which hypotheses have audited metric support, which have only mock/dry-run protocol evidence, which claims need conservative wording, and which baselines/seeds/artifacts are still missing. Then it uses `write_file("evaluation/evaluation_decision.md", ...)` to write a decision report that must include `Situation`, `Options`, and at least one `next_task`. Typical next_task can be `T8-STYLE-GATE` or `T8-RESOURCE` (sufficient evidence, enter the writing entry point), `T5-REBOOST-GATE` (return to the external experiment chain with a refreshed source-bounded handoff), `T4` (return to hypothesis refactoring), or `done`. When old reports write `T8` / `T8-WRITE`, they map to `T8-STYLE-GATE`; only when a valid `drafts/writing_style.json` already exists do they directly enter `T8-RESOURCE`. When old reports write `T7`, they safely map to `T5-REBOOST-GATE` to avoid resume mistakenly entering legacy internal experiments. In the full pipeline, the StateMachine parses `next_task` from `evaluation_decision.md` in reverse, then passes the PI recommendation to the human gate; the user can accept the recommendation or select another path in the gate.
-
-### The most critical fields in `evaluation_decision.md`
-
-- `Situation`
-- `Options`
-- `next_task`
-- Judgment of evidence sufficiency for `integrity_audit` / `result_to_claim`
-
-The current state machine supports parsing `next_task` from here.
-
-You can understand this step as:
-
-- `T5-REBOOST-GATE` to `T7-CLAIMS` is responsible for running through the external experiment protocol and evidence chain
-- `T7.5` is responsible for deciding "whether the audited evidence is sufficient to support writing a paper"
-
-### Behavior in the full chain
-
-The full chain does not jump directly from `T7.5 -> T8`, but rather:
+T7 result ingestion, integrity audit, post-experiment novelty review, result-to-claim mapping, and the T7.5 PI decision node have been removed from the current main state machine. The external-executor root Skill now owns the final handoff-input validation after it finishes dispatching child Skills. The main chain is:
 
 ```text
 T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-EXECUTOR-GATE
  -> mock_dry_run: T5-DRY-RUN
  -> external: T5-EXTERNAL-WAIT
- -> T7-INGEST -> T7-AUDIT -> T7-POST-NOVELTY -> T7-CLAIMS
- -> T7.5
- -> ask_human / gate
- -> proceed according to the PI recommendation or the user's explicit choice
+-> T8-STYLE-GATE -> T8-RESOURCE
 ```
 
-### What special thing does the StateMachine do here
+An already persisted extension or legacy Workspace may still contain a completed `T7.5` node with `next_on_success: __parse_from_output__`. A legacy-only `t75_human_review_gate` remains available to present that saved decision. Resume does not reactivate the removed internal executor. Instead, the Runtime reads its saved `evaluation/evaluation_decision.md`: legacy `T5`/`T6`/`T7` recommendations map to the current external-experiment entry, while `T8`/`T8-WRITE` recommendations return through `T8-STYLE-GATE` and `T8-RESOURCE` unless a valid writing-style record is already present.
 
-`T7.5` is one of the few nodes in the current state machine that reverse-parses branches from output files:
+The only required T5-to-T8 evidence interface is:
 
-- First reads `evaluation/evaluation_decision.md`
-- Then extracts `next_task`
-- Then passes this recommended value to the human gate
-
-So it is not a normal "fixed jump to the next state after success".
-
-### Example of running standalone
-
-```bash
-cd ResearchOS
-researchos run-task T7.5 --workspace ./workspace/local-test2
+```text
+external_executor/executor_research_report.md
 ```
 
-### Example of full resume
+Other files under `external_executor/`, including `result_pack.json`, `executor_status.json`, `run_manifest.json`, `raw_results/`, `configs/`, `logs/`, and `expr/`, remain available for T8 as traceable supporting context. They are not a replacement for the report. The current T5 gate defines this interface and validates its presence downstream, but it does not synthesize the report inside ResearchOS. A missing or empty report blocks `T8-RESOURCE` through the task contract/prerequisite check.
 
-```bash
-cd ResearchOS
-researchos resume --workspace ./workspace/local-test2
-```
+The former T7 audit responsibilities are preserved only as handoff validation inside the external-executor root Skill: after all child Skills complete, the root Skill runs its final validation script and records whether the report and supporting external-executor directory are present. It does not write manuscript artifacts and does not approve the paper.
+
+### Legacy command behavior
+
+- `researchos run-task T5 --workspace ...`: reports retired and points to `T5-REBOOST-GATE`.
+- `researchos run-task T6 --workspace ...`: reports retired; the old post-pilot novelty path is no longer part of the main chain.
+- `researchos run-task T7 --workspace ...`: fails with a removal message and points to the T5 external-execution -> T8 path.
+- `researchos run-task LEGACY-T7-FULL --allow-legacy --workspace ...`: fails with a removal message; the old internal full-experiment node is not a supported compatibility entry point.
 
 ---
 
@@ -3154,7 +2967,7 @@ These tools only handle mechanical, repeatable, parseable, and verifiable work; 
 
 `T8-STYLE-GATE` is a state-machine-level immediate gate that does not depend on whether the Writer remembers to call `ask_human`. It reads `target_venue` from `project.yaml` and presents options for IS/UTD, CCF-A, both, Basic Chinese, Basic English, and custom template; after selection, the runtime writes `drafts/writing_style.json`. This JSON must contain `human_interaction_id`, and this id must be findable in `_runtime/human_interactions.jsonl`; this distinguishes between "real user selection" and "default selection fabricated by the model".
 
-Template defaults are fixed: CCF-A defaults to `template_family=ccf, template_id=neurips, writing_language=en`; UTD/Management Science/ISR/INFORMS defaults to `template_family=utd, template_id=informs, writing_language=en`; use `basic_en` or `basic_zh` when only determining Chinese/English without applying a venue. The currently locally compilable CCF entry supports `neurips`, `iclr`, `icml`, and `kdd`. The gate directly presents four conference options; custom input also normalizes `neurips2026/iclr2026/icml2026/kdd2026` to the corresponding `template_id`. INFORMS uses the local official ISRE 2024 template package (`informs4.cls`, `informs2014.bst`, and logo/support files) by default. When ultimately submitting to other INFORMS journals, it can be replaced with the corresponding official journal package.
+Template selection has two levels. The first menu chooses Basic English, Basic Chinese, UTD/INFORMS, CCF / CS conference, or custom. Choosing CCF / CS opens a second menu containing the conference templates actually detected locally. The current directory contains AAAI, ACL, ACM, CIKM, CVPR, ECCV, EMNLP, ICASSP, ICCV, ICDE, ICDM, ICLR, ICME, ICML, ICRA, IEEE, IJCAI, IROS, NAACL, NeurIPS, SIGIR, SIGKDD, SIGMOD, VLDB, WSDM, and WWW. An entry with an official `.tex` source is assembled from that source. A directory containing only a local `.cls`/`.sty` package uses an anonymous writing shell and records a pre-submission notice in `writing_template.json` or `writing_style.json`; it never silently falls back to a generic `article` template. UTD/Management Science/ISR/INFORMS uses `template_family=utd, template_id=informs, writing_language=en` and the local official ISRE 2024 package. Use `basic_en` or `basic_zh` when only selecting language without applying a venue.
 
 The local template support matrix is as follows:
 
@@ -3165,6 +2978,7 @@ The local template support matrix is as follows:
 | `ccf/iclr` | Yes | ICLR 2026 style shell | ICLR 2026 style shell | `iclr2026_conference.sty`, `iclr2026_basic.tex` | Scan and copy style/shell |
 | `ccf/icml` | Yes | ICML native `\icmltitle` / `\twocolumn[...]` | ICML native `\icmltitle` / `\twocolumn[...]` | `icml2026.sty`, `icml2026.bst`, `algorithm*.sty`, `fancyhdr.sty`, `natbib.sty` | Scan and copy style/bst/transitive deps |
 | `ccf/kdd` | Yes | ACM/KDD `acmart` shell | ACM/KDD `acmart` shell | `acmart.cls`, `ACM-Reference-Format.bst` and same-level support | Scan and copy class/bst |
+| Other local `ccf/*` | Yes, second-level conference menu | Direct assembly when a `.tex` entry exists; anonymous shell for class/style-only packages | Same | Copy same-directory class/style/bst plus any needed preamble | Scan and copy referenced support files |
 
 If there is no available manual input in the current environment, the runtime will pause at that run, waiting for the user to resume or preset a valid `drafts/writing_style.json`; the Writer will not forge default choices. Subsequent prompts read `venue_style` from `writing_style.json`. The style only affects length allocation and narrative focus, and does not change the contribution skeleton of the alignment matrix.
 
@@ -3172,13 +2986,13 @@ The current implementation semantics of `venue_style=both` is: resource index, C
 
 ### 6.14.2 T8-RESOURCE: WriterAgent (`resource_index`)
 
-`T8-RESOURCE` inputs include `project.yaml`, `literature/synthesis.md`, `literature/synthesis_workbench.json`, `literature/domain_map.json`, `literature/related_work.bib`, `ideation/hypotheses.md`, `ideation/idea_scorecard.yaml`, `experiments/results_summary.json`, and optional `exp_plan.yaml`, `novelty_audit.md`, `comparison_table.csv`, `ablations.csv`.
+`T8-RESOURCE` inputs include `project.yaml`, `external_executor/executor_research_report.md`, the supporting `external_executor/` directory, `literature/synthesis.md`, `literature/synthesis_workbench.json`, `literature/domain_map.json`, `literature/related_work.bib`, `ideation/hypotheses.md`, `ideation/idea_scorecard.yaml`, and optional `exp_plan.yaml`, `novelty_audit.md`, `comparison_table.csv`, `ablations.csv`.
 
 Among them, `writing_style`, `synthesis_workbench`, `domain_map`, and `idea_scorecard` are strong prerequisites for a single task, no longer just "strongly recommended". `researchos run-task T8-RESOURCE --from <workspace>` copies these artifacts; if missing, the prerequisite check requires completing T8-STYLE-GATE or Pre-T5 artifacts first. This ensures that Related Work and alignment matrix do not lose venue style, `adjacent_transfers`, `nearest_prior_work`, `counterfactual_check`, and `novelty_signal` due to single-stage debugging.
 
 The actual execution order is fixed:
 
-1. Call `build_manuscript_resource_index`, scan literature, paper notes, bib, hypotheses, idea scorecard, novelty audit, results summary, ablations, runs, configs, figures, tables, and code artifacts, write `drafts/manuscript_resource_index.json`. This index simultaneously exposes `citation_ref_by_note_id`, `note_id_by_bib_key`, and `unmapped_note_ids`: the `[note:<id>]` from T3.5 is Markdown provenance; the T8 TeX body must use `\cite{bibkey}` mapping from here; notes that cannot be mapped to a BibTeX key can only serve as provenance/supplementary resource hints, and cannot enter the TeX citation as-is.
+1. Call `build_manuscript_resource_index`, scan literature, paper notes, bib, hypotheses, idea scorecard, novelty audit, `external_executor/executor_research_report.md`, supporting external-executor artifacts, ablations, runs, configs, figures, tables, and code artifacts, write `drafts/manuscript_resource_index.json`. This index simultaneously exposes `citation_ref_by_note_id`, `note_id_by_bib_key`, and `unmapped_note_ids`: the `[note:<id>]` from T3.5 is Markdown provenance; the T8 TeX body must use `\cite{bibkey}` mapping from here; notes that cannot be mapped to a BibTeX key can only serve as provenance/supplementary resource hints, and cannot enter the TeX citation as-is.
 2. Call `plan_manuscript_sections`, write `drafts/section_plan.json`. The current main chain plans 7 chapters: abstract, introduction, related_work, methodology, experiments, analysis, conclusion; the required inputs for Conclusion merge the risks, novelty audit, and iteration log originally needed for Limitations.
 3. Call `plan_manuscript_evidence`, write `drafts/evidence_plan.json` and `drafts/figure_table_plan.json`.
 4. Call `build_manuscript_registries`, write `drafts/cdr_claim_ledger.json`, `drafts/claim_ledger.json`, `drafts/figure_registry.json`.
@@ -3224,7 +3038,7 @@ This chapter first defines artifacts and design rationale, then explains the ove
 
 ### 6.14.6 T8-SEC-EXPERIMENTS: WriterAgent (`section_draft`, `section_id=experiments`)
 
-`T8-SEC-EXPERIMENTS` only writes `drafts/sections/experiments.tex`. Writer reads `alignment_matrix.json`'s experiment column, `results_summary.json`, `ablations.csv`, runs/configs, seed ensemble, `exp_plan.yaml`, and `figure_table_plan.json`.
+`T8-SEC-EXPERIMENTS` only writes `drafts/sections/experiments.tex`. Writer reads `alignment_matrix.json`'s experiment column, `external_executor/executor_research_report.md`, `external_executor/raw_results/`, configs/logs, `ablations.csv`, seed ensemble, `exp_plan.yaml`, and `figure_table_plan.json`.
 
 This chapter should preface RQs and use natural language to explain which contribution logic each RQ validates; then write setup, datasets, baselines, metrics, seeds, compute, main results, and ablations. All numbers must come from result artifacts; if seeds/error bars/baselines are missing, remove or weaken corresponding strong claims, or move them to the Conclusion's Limitations subsection. Do not fabricate, and do not leave literal TODO in the final TeX. After writing, update `paper_state.json`'s `experiments.status`.
 
@@ -3275,13 +3089,13 @@ The Validator requires the existence of `paper.tex`, `manuscript_audit.md`, `cra
 
 ### 6.14.13 T8-SELF-CHECK: WriterAgent (self_check)
 
-`T8-SELF-CHECK` reads `paper.tex`, `manuscript_audit.md`, `craft_audit.md`, `alignment_matrix.json`, `results_summary.json`, and `related_work.bib`, and writes `drafts/self_check.md`.
+`T8-SELF-CHECK` reads `paper.tex`, `manuscript_audit.md`, `craft_audit.md`, `alignment_matrix.json`, `external_executor/executor_research_report.md`, and `related_work.bib`, and writes `drafts/self_check.md`.
 
 The self-check includes argument chain, number audit, citation audit, figure/table audit, reproducibility audit, evidence boundaries of external executor, and revision TODO. FAILs from `craft_audit.md` / `paper_claim_audit.md` must go into High TODO, WARNs into Medium TODO, along with an indication of whether they have already been addressed in the body.
 
 ### 6.14.14 T8-REVIEW-1 / T8-REVIEW-2: ReviewerAgent
 
-The Reviewer first reads `paper_state.json`, `sections/*.tex`, `paper.tex`, `manuscript_audit.md`, `craft_audit.md`, `alignment_matrix.json`, `self_check.md`, `results_summary.json`, and `.bib`. It generates per-chapter reviews for 7 sections: abstract, introduction, related_work, methodology, experiments, analysis, conclusion. There is no separate `limitations.md` review; the Conclusion review must check the Limitations subsection.
+The Reviewer first reads `paper_state.json`, `sections/*.tex`, `paper.tex`, `manuscript_audit.md`, `craft_audit.md`, `alignment_matrix.json`, `self_check.md`, `external_executor/executor_research_report.md`, and `.bib`. It generates per-chapter reviews for 7 sections: abstract, introduction, related_work, methodology, experiments, analysis, conclusion. There is no separate `limitations.md` review; the Conclusion review must check the Limitations subsection.
 
 Each per-chapter review at least includes Section Purpose Check, Evidence And Number Check, Logic And Writing Issues, CDR Alignment Check, Alignment Matrix Check, Writing Craft Check, and Actionable Fixes. The comprehensive `round_N.md` at least includes Overall Evaluation, Major Issues, Minor Issues, Writing Paradigm and Alignment Check, and a CDR Contribution Verdict. In the second round, it also checks whether the High/Medium issues from the previous round have been resolved.
 
@@ -3502,16 +3316,17 @@ Current recovery is no longer limited to only one or two stages, but is connecte
 - T3:
   - `deep_read_queue_pending.jsonl`
 - T5 External Executor:
-  - `external_executor/executor_selection.json`
+  - `external_executor/report/executor_selection.json`
+  - `external_executor/report/executor_capabilities.json`
   - `external_executor/result_pack.json`
   - `external_executor/executor_status.json`
   - `external_executor/run_manifest.json`
   - `external_executor/wait_rejection_report.md`
   - `external_executor/wait_acceptance_report.json`
-- Legacy T5/T7 internal experiment debugging:
+- Legacy T5 internal experiment debugging:
   - `pilot_resume_state.json`
   - `full_resume_state.json`
-- T7.5 / T8 / T9:
+- T8 / T9:
   - Read existing artifacts and fill in missing ones.
 
 ### True meaning
@@ -3533,20 +3348,21 @@ researchos run \
 
 When `--start-task` is omitted, `run --from` starts from `T2` by default. It only copies the prerequisite inputs of the target task, not the old T2 outputs; it will refuse to overwrite if the target workspace already has a `state.yaml`. Single task debugging uses `run-task <TASK> --from <workspace>`.
 
-## 7.2 Budget Extension Gate
+## 7.2 Runtime Recovery Gate
 
-The current system supports asking whether to extend the budget and continue when the budget is hit, instead of immediately stopping.
+The current system no longer treats ordinary ResearchOS step/token counters as user-facing limits. Runtime recovery is used for recoverable provider, environment, validation, tool, and unavailable-human-input interruptions. Old workspaces may still contain persisted bounded-budget recovery records, and those records are interpreted only as compatibility diagnostics unless a developer explicitly enables a bounded override.
 
 Main coverage:
 
-- steps
-- tokens
-- wall_seconds
+- provider/runtime interruptions
+- environment readiness
+- output validation and artifact validation
+- unavailable human input
+- legacy bounded-budget recovery records
 
 This is especially important for:
 
 - T5
-- T7
 - T9
 
 Interaction details:
@@ -3557,9 +3373,9 @@ Interaction details:
 - After a non-empty answer is submitted, it immediately prints a localized acknowledgement equivalent to `Input received; continuing...`, followed by a `-----` divider, so the user knows the runtime has received the input.
 - At the start of each task/agent, it outputs one divider in the style `==== <task_id> | <agent_name> ====`, then shows the task objective, stage, expected artifacts, and visible progress context, making it easy to identify a pipeline switch in a long terminal session.
 - If the model explicitly asks the user for a selection/confirmation/supplement but forgets to call `ask_human`, the runtime automatically bridges it as `ask_human`, and prepends "Why the input pop-up was triggered" to the question; status descriptions or internal plans do not trigger bridging.
-- The waiting time for the budget gate is deducted from the wall-clock budget, preventing "waiting for user input" from consuming the task budget.
-- When `max_steps` is hit at the tail of a loop, it also enters the same extension gate; if the user chooses to stop or cannot provide input, the status is written as `PAUSED`, and this run in history is marked as `INTERRUPTED`, allowing subsequent `researchos resume --workspace ...`.
-- New runs use one provider/model from `config/model_settings.yaml` and do not expose an ordinary step/token/wall budget. Step/token/cost are still recorded; provider timeout/retry, Tool timeout, Docker/TeX-specific timeout, workspace permissions, output validation, and project-level experiment budget checks still take effect. `config/system_config/agent_params.yaml` is a system declaration of tools, permissions, prompts, and behaviour capabilities, not a daily researcher configuration surface.
+- Human-gate waiting time is deducted from active runtime accounting so that waiting for user input does not look like agent work.
+- New runs use one provider/model from `config/model_settings.yaml` and do not impose ordinary ResearchOS step/token caps. Step/token/cost are still recorded for traceability; provider context windows, provider timeout/retry, tool timeout, Docker/TeX-specific timeout, workspace permissions, output validation, and project-level experiment budget checks still take effect. `config/system_config/agent_params.yaml` is a system declaration of tools, permissions, prompts, and behaviour capabilities, not a daily researcher configuration surface.
+- Legacy workspaces may still contain persisted recovery records that mention `max_steps` or `max_tokens`. Current runtime treats these as compatibility diagnostics unless a developer explicitly enables a bounded budget override.
 - If a process crashes abnormally, leaving `state.yaml` in `RUNNING`, `resume` marks the most recent run as `INTERRUPTED`, automatically reverts to `PAUSED`, and continues, avoiding the dead state "Current status is not PAUSED/WAITING_HUMAN, cannot resume".
 - After `resume`, the model's internal context is not restored; instead, `resume_mode` is injected via `_runtime/resume/*.json`, T3 pending queue, existing output files, and task-specific recovery artifacts, so the agent continues from persisted facts.
 - For T8, `resume` first checks `state.yaml.current_task`: if the current task is `T8-SECTION-PLAN` and the state file is already qualified, it deterministically skips; if the current task has advanced to a certain `T8-SEC-*`, it only resumes that single chapter, without rolling back to rewrite the section plan or other chapters.
@@ -3641,14 +3457,7 @@ cd ResearchOS
 researchos run-task T3 --workspace ./workspace/local-test2
 ```
 
-### 8.5 Run Only PI Evaluation
-
-```bash
-cd ResearchOS
-researchos run-task T7.5 --workspace ./workspace/local-test2
-```
-
-### 8.6 Run Only Submission Compilation
+### 8.5 Run Only Submission Compilation
 
 ```bash
 cd ResearchOS
@@ -3709,17 +3518,19 @@ Citation diversity simultaneously checks the number of available BibTeX entries 
 
 ### 11.2 T4: Evolutionary Idea Formation, Rich Gate1, and hypothesis status
 
-T4 is an artifact-first evolutionary workflow behind the unchanged public path `T4 -> T4-GATE1 -> T4 -> T4.5`. The first entry is a Rich pre-run confirmation: it reports the available full/partial and abstract-level paper-reading notes, non-blocking Bridge warnings, the selected mode, estimated work, and whether existing Population snapshots can be rolled back. Standard mode is one complete `P0 -> P1` transition: Evidence Routing -> Opportunity Map -> asymmetric Multi-route Generation -> Idea Genome and Idea Family -> Independent Scoring -> Parent Selection -> Mutation/Crossover plans -> Offspring and union rescoring -> Idea Contract -> Family-level Survival Selection -> Population Update -> Portfolio Selection. This is not a single prompt rewrite, and it does not add a public state-machine node.
+T4 is an artifact-first evolutionary workflow with an action-dependent Gate1 transition. Selecting a ready Candidate follows `T4 -> T4-GATE1 -> T4.5`; focused evolution, re-exploration, route regeneration, or approved composition follows `T4 -> T4-GATE1 -> T4` and then returns to Gate1 with preserved versions; read-only inspection stays at Gate1. The first entry is a Rich pre-run confirmation: it reports the available full/partial and abstract-level paper-reading notes, non-blocking Bridge warnings, the selected mode, estimated work, and whether existing Population snapshots can be rolled back. Standard mode is one complete `P0 -> P1` transition: Evidence Routing -> Opportunity Map -> asymmetric Multi-route Generation -> Idea Genome and Idea Family -> Independent Scoring -> Parent Selection -> Mutation/Crossover plans -> Offspring -> conditional union rescoring -> Idea Contract -> Family-level Survival Selection -> Population Update -> Portfolio Selection. Conditional union rescoring occurs only when an admitted Child changes the Population; if no Child survives, the Controller preserves the independently obtained Parent reports and writes a score-reuse receipt instead of inventing a score or calling the provider again. This is not a single prompt rewrite, and it does not add a public state-machine node.
 
-Before that run starts, the same confirmation asks for a Publication Orientation. ResearchOS reuses `project.yaml`, an existing writing style, and the configurable venue profile to suggest `UTD / Management & IS`, `CCF A / Technical`, or `Hybrid / Cross-disciplinary`; pressing Enter accepts the suggestion, while one natural-language sentence can override it. The confirmed profile is stored in `ideation/t4_target_profile.json` and inside `ideation/t4_run_config.json`, so it participates in the T4 configuration fingerprint and resume logic. It changes Opportunity/Generation/Scoring emphasis and final-card order, never source truth, Evidence Permission, citations, or Candidate lineage.
+Before that run starts, the same confirmation asks for a Publication Orientation. ResearchOS reuses `project.yaml`, an existing writing style, and the configurable venue profile to suggest `UTD / INFORMS` (theory and phenomenon), `CCF / CS` (technical and computational), or `Hybrid / Cross-disciplinary`; pressing Enter accepts the suggestion, while one natural-language sentence can override it. These are configurable internal research lenses rather than claims about a venue's current official review policy. The confirmed profile is stored in `ideation/t4_target_profile.json` and inside `ideation/t4_run_config.json`, so it participates in the T4 configuration fingerprint and resume logic. It changes Opportunity/Generation/Scoring emphasis and final-card order, never source truth, Evidence Permission, citations, or Candidate lineage.
 
 Evidence Routing recalls both mainline and Bridge notes from every allowed reading level. Evidence Permission determines what a recalled note can do: full/partial reading can anchor a bounded mechanism or design rationale; abstract-only material can broaden recall, provide a taxonomy or Bridge lead, suggest a candidate mechanism, and request a reading upgrade, but cannot validate an established mechanism, a strong boundary claim, an executable experiment, or external novelty. The controller stores the Evidence Index, Opportunity Map, Route-specific Evidence Bundles, permission warnings, source paths, reading levels, and fingerprints under `ideation/evidence/`. A Route without enough defensible material is retained as `unsupported`; Cross-domain/Bridge work also writes its escape-hatch decision instead of fabricating a transfer.
 
-Generator, Scorer, and Evolver have separate authority. Generator produces route-scoped Seeds and Candidate prose, never a score or selection. Scorer receives blinded Candidates, returns the five readiness dimensions and diagnosis, but never creates or rewrites an Idea. Evolver receives an explicit Evolution Plan and may create only a Mutation Child or a Compatibility-gated Crossover Child; Parent artifacts remain immutable. All Parent and Child Candidates are union-rescored before Idea Contract validation, Complexity Inflation checks, Family-level Survival Selection, and quality-diversity Population update. P0, every Round artifact, the active P1/P2/... snapshot, and the Archive remain recoverable and fingerprint-bound.
+Evidence constrains certification, not imagination. The Evidence Index is a grounding and calibration substrate, not a closed list of mechanisms that the Generator may mention. In every normal Route, the Generator may introduce a non-obvious hypothesis through general scholarly knowledge, counterfactual reasoning, or structural cross-domain analogy. It must preserve that proposal in `CreativeContext` with its conceptual leap, competing explanation, surprising prediction, research-program potential, origin, and verification/reading upgrade. A parametric or analogy-derived statement stays `conjectural` and verification-required; it never becomes a source, established mechanism, result, available dataset, metric, or novelty conclusion merely because it is useful for discovery.
 
-The five-dimension Core Scientific Score remains shared across projects: Research Value, Mechanism Integrity, Contribution Distinctiveness, Evidence Calibration, and Validation Tractability. Scorer additionally returns a separate `Profile Fit` assessment for the confirmed orientation. Portfolio and Parent selection may use this fit as a configured secondary input, but it never replaces the Core Scientific Score or upgrades weak evidence. T4 prompts are composed from a shared Scientific Constitution, role contract, task mode, compact Target Profile summary, runtime evidence context, output contract, and failure protocol. Workspace text is treated as data, not as instructions.
+Generator, Scorer, and Evolver have separate authority. Generator produces route-scoped Seeds and Candidate prose, never a score or selection. Scorer receives blinded Candidates, returns the five readiness dimensions and diagnosis, but never creates or rewrites an Idea. Evolver receives an explicit Evolution Plan and may create a Mutation Child or a Compatibility-gated Crossover Child; Parent artifacts remain immutable. When a one-plan call cannot produce a substantive Child without a cosmetic rewrite, invented support, or an unresolved crossover conflict, Evolver may return an auditable `no_improvement`, `deferred`, or Crossover `incompatible` outcome with a revisit condition. The Controller preserves the Parent and checkpoints this normal scientific outcome. A successful admitted Child triggers union rescoring before Idea Contract validation, Complexity Inflation checks, Family-level Survival Selection, and quality-diversity Population update. When no Child is admitted, the Controller retains the actual independent Parent reports with an explicit score-reuse receipt; it does not rerun the same scoring request or synthesize a replacement score. P0, every Round artifact, the active P1/P2/... snapshot, and the Archive remain recoverable and fingerprint-bound.
 
-Gate1 starts with a Rich comparison of the 1–3 Candidate Portfolio while keeping 6–8 Active Candidates and the complete Archive available for inspection. The lead card and compact alternatives use LLM-authored, workspace-derived scientific text; the renderer only lays out validated fields. A mature Candidate contains a one-line thesis, Overall Readiness and five explanations, Problem, Core Innovation, Mechanism Chain, 2–4 Contributions, 2–4 Draft Hypotheses, validation snapshot, Evidence Composition, risks, recommendation rationale, lineage, and paths that explain what each file contains. `proposed_not_verified` means a hypothesis is a clear proposal rather than verified evidence. A Candidate with fewer than two or more than four hypotheses, an incomplete mechanism chain, invalid Evidence Permission, or template-filled scientific fields cannot enter Gate1.
+The five-dimension Core Scientific Score remains shared across projects: Research Value, Mechanism Integrity, Contribution Distinctiveness, Evidence Calibration, and Validation Tractability. Scorer additionally separates present `overall_readiness` from `scientific_upside`: the latter judges the potential value of a problem reframing, mechanism, surprising prediction, or research programme if its conjectures survive validation. A `wildcard_recommended` direction may remain human-visible beside mature directions; it is never evidence-certified or selection-ready by that label. Scorer also returns a separate `Profile Fit` assessment for the confirmed orientation. Portfolio and Parent selection may use Profile Fit and scientific upside as configured secondary/preservation inputs, but neither replaces the Core Scientific Score or upgrades weak evidence. T4 prompts are composed from a shared Scientific Constitution, role contract, task mode, compact Target Profile summary, runtime evidence context, output contract, and failure protocol. Workspace text is treated as data, not as instructions.
+
+Gate1 starts with a Rich comparison of the 1–3 Candidate Portfolio while keeping 6–8 Active Candidates and the complete Archive available for inspection. The lead card and compact alternatives use LLM-authored, workspace-derived scientific text; the renderer only lays out validated fields. A Seed can be shown as visibly provisional so that a high-upside research programme is not hidden. It may enter T4.5 when the Gate has a complete LLM Final Card, an independent score, a traceable core thesis, and one or more LLM-authored falsifiable draft hypotheses. Seed maturity, weak evidence, a `revise_before_selection` recommendation, and a single-hypothesis bundle are warnings for T4.5 to audit, not reasons to accept confirmation and then reopen T4. Mature Candidates normally contain a one-line thesis, Overall Readiness and five explanations, Problem, Core Innovation, Mechanism Chain, 2–4 Contributions, 2–4 Draft Hypotheses, validation snapshot, Evidence Composition, risks, recommendation rationale, lineage, and paths that explain what each file contains. `proposed_not_verified` means a hypothesis is a clear proposal rather than verified evidence. A missing Final Card or independent score, an empty thesis, zero hypotheses, invalid Evidence Permission, or template-filled scientific fields remains visible with its limitation but cannot be selected into T4.5.
 
 Only the 1–3 Portfolio Candidates receive a separate LLM-authored Impact Translation in `ideation/final_cards/portfolio_cards.json`. It answers Why It Matters, a representative scenario, the current failure, scientific/technical core, applicable implications with Evidence Status and conditions, and claims that must not be made. The compiler must echo the exact Candidate core thesis, contribution IDs, and hypothesis IDs; a translation that changes them is rejected. This provides readable context without turning the card into marketing copy or changing the scientific Candidate.
 
@@ -3733,7 +3544,7 @@ Selecting one complete Candidate creates `hypothesis_brief.yaml`, selected linea
 
 The formal T4 algorithm is **Evidence-Routed Multi-Route Idea Formation + Population-based Evolution + Independent Scoring + Human-guided Portfolio Selection**. It has three semantic Agents and a deterministic Controller. `IdeaGeneratorAgent` plans opportunities and forms Route-scoped Seeds; it does not score or select. `IdeaScoringAgent` independently scores anonymous Candidate packages and reviews Crossover or Human-composition compatibility; it does not generate or rewrite Candidates. `IdeaEvolverAgent` creates only the Child authorized by an Evolution Plan; it does not choose Parents or survivors. Opportunity Planning, Crossover Review, Pairwise Arbitration, and Final Idea Card compilation are role modes or Controller-scheduled tasks, not extra autonomous agents. The Controller owns Evidence Routing, Population Management, Family construction, Parent Selection, Evolution budgets, Crossover-pair selection, Survival Selection, MMR Portfolio selection, Human-directive application, fingerprints, resume, and rollback.
 
-The evidence substrate is `literature/deep_read_notes/`, `literature/shallow_read_notes/`, `literature/bridge_notes/`, `literature/synthesis_workbench.json`, contribution space, tensions, mechanism clusters, transfer drafts, and researcher-provided constraints. Evidence Routing builds an Evidence Index from all three note roots, then chooses a small, Route-specific bundle of **Anchor**, **Expansion**, and **Bridge** atoms. Deep and partial reading may support a bounded mechanism or design rationale. Shallow/abstract notes are retained for coverage, taxonomy, trend detection, comparison, Bridge discovery, and candidate discovery, but their permission cannot silently become a verified mechanism or a strong Claim. The full index stays addressable for targeted re-checking; initial prompt compactness never deletes or makes a note unavailable.
+The evidence substrate is `literature/deep_read_notes/`, `literature/shallow_read_notes/`, `literature/bridge_notes/`, the independent `literature/cross_domain_catalogs/`, `literature/synthesis_workbench.json`, contribution space, tensions, mechanism clusters, transfer drafts, and researcher-provided constraints. Evidence Routing builds an Evidence Index from three note roots and the separate catalog, then chooses a small, Route-specific bundle of **Anchor**, **Expansion**, and **Bridge** atoms. Deep and partial reading may support a bounded mechanism or design rationale. Catalog-only, shallow, and abstract material remains useful for structural analogy, coverage, taxonomy, trend detection, comparison, Bridge discovery, and candidate discovery, but its permission cannot silently become a verified mechanism or a strong Claim. The full index stays addressable for targeted re-checking; initial prompt compactness never deletes or makes a note unavailable.
 
 The initial Population `P0` is intentionally asymmetric. The configured default budget attempts three Literature Candidates, two to three Informed Brainstorm Candidates, one Candidate from each of Mechanism Challenge, Reverse Operation, Subgroup Failure, and Gap Exploration, and one to two Cross-domain / Bridge Candidates when a confirmed Bridge is available. These are route quotas, not claims that every route must manufacture an idea. A route may write `unsupported` with an evidence-upgrade condition. Bridge work must preserve an explicit escape-hatch decision rather than producing a transfer from keyword similarity alone. The configured Active Population remains larger than the displayed Portfolio: normally six to eight valid Candidates are retained, while the final display contains one to three.
 
@@ -3744,15 +3555,17 @@ For `rounds=1`, T4 must complete the entire lifecycle rather than stopping after
 1. Build the Evidence Index and Opportunity Map, then form multi-route `P0`.
 2. Construct genomes and families, then obtain anonymous **Independent Scoring** on Research Value, Mechanism Integrity, Contribution Distinctiveness, Evidence Calibration, and Validation Tractability. `Profile Fit` is reported separately.
 3. Select Parents from quality, diversity, Family coverage, repairability, and high-upside preservation. The Controller creates two to four diagnosis-driven Mutation plans and, only where a Compatibility Check approves one coherent thesis and Gene Donor Map, zero to two Crossover plans.
-4. `IdeaEvolverAgent` creates plan-bounded Offspring `O0`. A Mutation preserves named strengths while repairing a diagnosed bottleneck. A Crossover synthesizes one thesis and one mechanism chain; it cannot stack modules or concatenate Parent hypotheses.
-5. Score the union of `P0` and `O0` anonymously again. Validate the Idea Contract, inspect Gene Delta and Complexity Inflation, preserve Family coverage, apply Family-level Survival Selection, and write `P1` plus the complete Archive.
-6. Run MMR Portfolio Selection over `P1`, balancing readiness, diversity, and the configured Profile Fit weight. Compile readable Final Idea Cards only for the selected one to three Candidates.
+4. `IdeaEvolverAgent` creates plan-bounded Offspring `O0` when a substantive improvement is defensible. A Mutation preserves named strengths while repairing a diagnosed bottleneck. A Crossover synthesizes one thesis and one mechanism chain; it cannot stack modules or concatenate Parent hypotheses. A one-plan `no_improvement`/`deferred` outcome, or Crossover `incompatible`, is checkpointed with a revisit condition and preserves the Parent rather than manufacturing a cosmetic Child.
+5. If an `O0` Child is admitted, score the changed union of `P0` and `O0` anonymously again. If none is admitted, retain the independently obtained `P0` Parent reports with an explicit score-reuse receipt. In either case, validate the Idea Contract, inspect Gene Delta and Complexity Inflation, preserve Family coverage, apply Family-level Survival Selection, and write `P1` plus the complete Archive.
+6. Run MMR Portfolio Selection over `P1`, balancing current readiness, scientific upside, diversity, and the configured Profile Fit weight. Compile readable Final Idea Cards only for the selected one to three Candidates.
 
 Local optimization means improving one Candidate through its own diagnosed Mutation plan while preserving the rest of the Population as comparators. Global optimization means choosing a Portfolio and next Population across Families, diversity, evidence strength, and project constraints. A locally stronger Child does not automatically survive globally; a high-upside but currently uncertain Family can remain in the Archive or Active Population when its revisit condition is explicit. This distinction prevents a sequence of attractive rewrites from collapsing the research option set too early.
 
 #### Publication Orientation and Final Idea Cards
 
-The pre-run Publication Orientation is `management_is`, `technical_cs`, `hybrid`, or `custom`. It changes the Opportunity and Generation emphasis, the separately reported Profile Fit, MMR Portfolio weighting, and Final Idea Card explanatory order. It never changes the Evidence Index, Evidence Permission, source citation, Candidate Genome, lineage, scientific five-dimensional score, or validation result. A later profile revision preserves the original Population and Core Scientific Score, writes a new fingerprinted snapshot, and recalculates only profile-sensitive presentation and selection fields.
+The pre-run Publication Orientation is `utd_is`, `ccf_cs`, `hybrid`, or `custom`; legacy `management_is` and `technical_cs` remain readable for existing workspaces. `utd_is` emphasizes phenomenon, theoretical tension, explanatory mechanism, identification credibility, boundary conditions, and organizational implications. `ccf_cs` emphasizes a precise computational problem, algorithmic or system mechanism, technical contribution, evaluation discipline, efficiency, robustness, and reproducibility. The profile changes Opportunity and Generation emphasis, the separately reported Profile Fit, MMR Portfolio weighting, and Final Idea Card explanatory order. It never changes the Evidence Index, Evidence Permission, source citation, Candidate Genome, lineage, scientific five-dimensional score, or validation result. A later profile revision preserves the original Population and Core Scientific Score, writes a new fingerprinted snapshot, and recalculates only profile-sensitive presentation and selection fields.
+
+T4 distinguishes semantic recovery from scientific acceptance. When a planner, generator, scorer, or evolver returns one parseable object whose aliases, nesting, or concise researcher-facing prose do not yet meet the typed contract, a bounded `SemanticRepairAgent` first reorganizes it from the attempted response and the supplied evidence. It may map equivalent fields and write only source-bound explanatory prose; it cannot add a paper, citation, dataset, metric, result, score, lineage, Gene Donor Map, or stronger Evidence Permission. The deterministic layer then remains strict for empty or placeholder fields, evidence-policy violations, numeric score range and coverage, Child/Plan correspondence, fingerprints, and canonical IDs. A failed repair remains an explicit, resumable diagnostic rather than a silent scientific substitution.
 
 Each mature Final Idea Card is an LLM-authored explanation of an immutable Candidate. It contains one-sentence core thesis, overall readiness, all five score explanations, research question, core innovation, mechanism chain, two to four one-sentence contributions, two to four one-sentence draft hypotheses, risks, Evidence Composition, the system recommendation rationale, and paths to all relevant artifacts. It may add a profile-oriented explanation of why the work matters, a representative scenario, conditional implications, and claims not to make. The compiler must retain the exact core thesis, contribution IDs, hypothesis IDs, mechanism, and Evidence Status; validation rejects a translation that changes scientific content.
 

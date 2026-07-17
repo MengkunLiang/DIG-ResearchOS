@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from dataclasses import replace
 from datetime import datetime, timezone
 import hashlib
 from io import StringIO
@@ -42,10 +43,19 @@ from .progress import (
     summarize_tool_result,
 )
 from .t2_recovery import finalize_t2_outputs, validate_t2_finalize_manifest
-from .abstract_sweep import run_abstract_sweep, run_abstract_sweep_with_reader
+from .abstract_sweep import (
+    build_sweep_candidates,
+    has_shallow_read_coverage_contract,
+    run_abstract_sweep,
+    run_abstract_sweep_with_reader,
+    validate_abstract_sweep_coverage,
+)
 from .t2_config import get_effective_reader_read_params, load_t2_finalize_config
+from .pdf_acquisition import acquire_retained_pdfs, attach_pdf_acquisition, repair_access_only_evidence_levels
+from .literature_contract import build_literature_manifest, iter_literature_note_cards
 from .t3_recovery import prepare_t3_resume_artifacts
 from .t3_notes_manifest import validate_t3_input_fingerprints
+from .bridge_catalog import iter_bridge_catalog_paths
 from .artifact_fingerprints import validate_t45_fingerprint_report
 from .task_recovery import prepare_generic_resume_artifacts
 from .run_logger import RunLogger
@@ -59,8 +69,22 @@ from ..agents.ideation import (
 from ..ideation.config import load_t4_evolution_settings
 from ..ideation.directives import current_population_context
 from ..ideation.evolution_controller import IdeaEvolutionController
+from ..ideation.final_card_diagnostics import (
+    FinalCardCompilationFailure,
+    classify_final_card_exception,
+    classify_final_card_readiness_error,
+)
+from ..ideation.final_card_readiness import validate_t4_portfolio_final_cards
 from ..ideation.legacy_projection import project_gate1_population
-from ..ideation.llm_roles import LLMFinalIdeaCardCompiler, LLMJsonRoleInvoker, LLMIdeaEvolver, LLMIdeaGenerator, LLMIdeaScorer, T4RoleCallConfig
+from ..ideation.llm_roles import (
+    LLMCandidateEnricher,
+    LLMFinalIdeaCardCompiler,
+    LLMJsonRoleInvoker,
+    LLMIdeaEvolver,
+    LLMIdeaGenerator,
+    LLMIdeaScorer,
+    T4RoleCallConfig,
+)
 from ..ideation.models import EvolutionPhase, HumanCompositionCompatibility
 from ..ideation.prerun import has_current_t4_prerun_confirmation
 from ..ideation.selected_compilation import ensure_t45_pre_novelty_brief, validate_legacy_t45_brief_source
@@ -68,14 +92,17 @@ from ..ideation.state import T4ArtifactStore
 from ..ui.idea_evolution_renderer import render_t4_evolution_phase
 from .trace import NullTraceWriter, TraceWriter
 from ..tools.base import Tool, ToolResult
+from ..tools.filesystem import STRUCTURED_ONLY_WRITE_PATHS
 from ..tools.workspace_policy import WorkspaceAccessPolicy
-from ..tools.external_experiment import validate_external_executor_ready
-from ..tools.external_experiment import AuditPaperClaimsTool
+from ..tools.external_experiment import (
+    AuditPaperClaimsTool,
+    CompileResearchReboostHandoffTool,
+    validate_external_executor_ready,
+)
 from ..tools.human_gate import HumanInputUnavailable, HumanInterface
 from ..tools.paper_save_tools import SavePapersRawTool
 from ..tools.registry import ToolBuildContext, ToolRegistry
 from .agent_params import get_agent_mode_params, get_budget_escalation_policy, get_global_timeout, get_retry_policy
-from ..literature_identity import is_paper_note_file
 from ..tools.scout_progress import ScoutProgressLogger
 from rich.console import Console
 
@@ -447,6 +474,11 @@ class AgentRunner:
             return "retry", 0.0
         if option_id == "wait_20_seconds":
             return "retry", long_cooldown_seconds
+        self._mark_explicit_runtime_pause(
+            ctx,
+            kind="provider",
+            decision=option_id,
+        )
         return "pause", 0.0
 
     async def _wait_before_llm_provider_retry(
@@ -486,7 +518,14 @@ class AgentRunner:
         """执行一次完整 agent run。"""
         self.progress.configure_observability(workspace=ctx.workspace_dir)
         started = time.time()
+        # A recovery signal describes *this* invocation's stop condition.  A
+        # durable recovery directive from a previous human decision remains in
+        # ``ctx.extra["runtime_recovery"]`` and must not be mistaken for a new
+        # failure while the task is retrying.
+        ctx.extra.pop("_runtime_recovery_signal", None)
+        ctx.extra.pop("_runtime_explicit_pause", None)
         eff = resolve_effective_config(self.agent.spec, ctx)
+        eff = self._apply_runtime_recovery_window(eff, ctx)
         dynamic_tool_names = self.tool_registry.dynamic_tool_names_for(self.agent.spec.name)
         if dynamic_tool_names:
             # MCP tools are configured by the workspace owner at startup. They
@@ -605,67 +644,94 @@ class AgentRunner:
         stop_reason = AgentResult.STOP_ERROR
         error_msg: str | None = None
 
-        primary_binding, primary_endpoint = self.llm.resolve(
-            profile=eff.llm_profile,
-            tier=eff.llm_tier,
-            model_override=eff.llm_model_override,
-            endpoint_override=eff.llm_endpoint_override,
-            max_context_override=eff.llm_max_context_override,
-        )[0]
-        # ``max_context`` in routing is an auditable fallback rather than a
-        # claim about a provider's live deployment.  Discover once before
-        # building context-sensitive tools, then resolve again so read_file,
-        # history truncation, and the first model call agree on one capacity.
-        discover_context = getattr(self.llm, "discover_context_window", None)
-        if eff.llm_max_context_override is None and callable(discover_context):
-            discovery = discover_context(primary_binding, primary_endpoint)
-            if inspect.isawaitable(discovery):
-                await discovery
+        try:
             primary_binding, primary_endpoint = self.llm.resolve(
                 profile=eff.llm_profile,
                 tier=eff.llm_tier,
                 model_override=eff.llm_model_override,
                 endpoint_override=eff.llm_endpoint_override,
-                max_context_override=None,
+                max_context_override=eff.llm_max_context_override,
             )[0]
+            # ``max_context`` in routing is an auditable fallback rather than
+            # a claim about a provider's live deployment. Discover once before
+            # building context-sensitive tools, then resolve again so file
+            # reads, history truncation, and the first model call agree.
+            discover_context = getattr(self.llm, "discover_context_window", None)
+            if eff.llm_max_context_override is None and callable(discover_context):
+                discovery = discover_context(primary_binding, primary_endpoint)
+                if inspect.isawaitable(discovery):
+                    await discovery
+                primary_binding, primary_endpoint = self.llm.resolve(
+                    profile=eff.llm_profile,
+                    tier=eff.llm_tier,
+                    model_override=eff.llm_model_override,
+                    endpoint_override=eff.llm_endpoint_override,
+                    max_context_override=None,
+                )[0]
 
-        context_source: str | None = None
-        context_info_getter = getattr(self.llm, "get_context_window_info", None)
-        if callable(context_info_getter):
-            context_info = context_info_getter(
-                primary_binding,
-                primary_endpoint,
-                explicit_override=eff.llm_max_context_override is not None,
-            )
-            source_labels = {
-                "provider_metadata": "服务端元数据",
-                "configured_fallback": "配置回退",
-                "explicit_override": "显式上限",
-            }
-            context_source = str(context_info.source)
-            self.progress.emit(
-                f"[Runtime] 模型上下文：{context_info.max_context:,} tokens "
-                f"（{source_labels.get(context_info.source, context_info.source)}）",
-                verbose_only=True,
-            )
+            context_source: str | None = None
+            context_info_getter = getattr(self.llm, "get_context_window_info", None)
+            if callable(context_info_getter):
+                context_info = context_info_getter(
+                    primary_binding,
+                    primary_endpoint,
+                    explicit_override=eff.llm_max_context_override is not None,
+                )
+                source_labels = {
+                    "provider_metadata": "服务端元数据",
+                    "configured_fallback": "配置回退",
+                    "explicit_override": "显式上限",
+                }
+                context_source = str(context_info.source)
+                self.progress.emit(
+                    f"[Runtime] 模型上下文：{context_info.max_context:,} tokens "
+                    f"（{source_labels.get(context_info.source, context_info.source)}）",
+                    verbose_only=True,
+                )
 
-        policy = self.workspace_policy_factory(ctx, eff)
-        if self._is_t4_ideation_agent(ctx):
-            self._maybe_prepare_t4_context_pack_before_prompt(ctx)
-        build_ctx = ToolBuildContext(
-            policy=policy,
-            human=self.human,
-            skill_dir=Path(ctx.extra["skill_dir"]) if "skill_dir" in ctx.extra else None,
-            task_id=ctx.task_id,
-            run_id=ctx.run_id,
-            llm_model=primary_binding.model,
-            llm_tier=eff.llm_tier,
-            llm_max_context=primary_binding.max_context,
-            llm_context_source=context_source,
-            skill_session_id=str(ctx.extra.get("skill_session_id") or "") or None,
-        )
-        tool_map = self.tool_registry.build(eff.tool_names, build_ctx)
-        tool_schemas = self.tool_registry.to_openai_schemas(tool_map)
+            policy = self.workspace_policy_factory(ctx, eff)
+            if self._is_t4_ideation_agent(ctx):
+                self._maybe_prepare_t4_context_pack_before_prompt(ctx)
+            build_ctx = ToolBuildContext(
+                policy=policy,
+                human=self.human,
+                skill_dir=Path(ctx.extra["skill_dir"]) if "skill_dir" in ctx.extra else None,
+                task_id=ctx.task_id,
+                run_id=ctx.run_id,
+                llm_model=primary_binding.model,
+                llm_tier=eff.llm_tier,
+                llm_max_context=primary_binding.max_context,
+                llm_context_source=context_source,
+                skill_session_id=str(ctx.extra.get("skill_session_id") or "") or None,
+            )
+            tool_map = self.tool_registry.build(eff.tool_names, build_ctx)
+            tool_schemas = self.tool_registry.to_openai_schemas(tool_map)
+        except asyncio.CancelledError:
+            return self._finish_agent_startup_interruption(
+                ctx=ctx,
+                budget=budget,
+                eff=eff,
+                started=started,
+                trace=trace,
+                trace_file=trace_file,
+                run_logger=run_logger,
+                error="Cancelled during agent startup.",
+                exception_type="CancelledError",
+                recovery=False,
+            )
+        except Exception as exc:
+            return self._finish_agent_startup_interruption(
+                ctx=ctx,
+                budget=budget,
+                eff=eff,
+                started=started,
+                trace=trace,
+                trace_file=trace_file,
+                run_logger=run_logger,
+                error=f"Agent startup failed before the task loop: {type(exc).__name__}: {str(exc) or repr(exc)}",
+                exception_type=type(exc).__name__,
+                recovery=True,
+            )
 
         deterministic_pre_finalized = False
         try:
@@ -684,15 +750,47 @@ class AgentRunner:
         # discovered context capacity as the provider-bound tool layer.  This
         # avoids a stale per-agent character cap while keeping a smaller model
         # on a safe, explicit file-reading path.
-        ctx.extra["runtime_context_window"] = primary_binding.max_context
-        self._prepare_t4_execution_mode_before_prompt(ctx)
-        messages: list[Message] = []
-        if not deterministic_pre_finalized:
-            sys_msg = Message.system(self.agent.system_prompt(ctx), step=0)
-            user_msg = Message.user(self.agent.initial_user_message(ctx), step=0)
-            messages = [sys_msg, user_msg]
-            trace.write_message(sys_msg)
-            trace.write_message(user_msg)
+        try:
+            ctx.extra["runtime_context_window"] = primary_binding.max_context
+            self._prepare_t4_execution_mode_before_prompt(ctx)
+            messages: list[Message] = []
+            if not deterministic_pre_finalized:
+                sys_msg = Message.system(self.agent.system_prompt(ctx), step=0)
+                user_msg = Message.user(self.agent.initial_user_message(ctx), step=0)
+                messages = [sys_msg, user_msg]
+                trace.write_message(sys_msg)
+                trace.write_message(user_msg)
+                recovery_note = self._runtime_recovery_prompt(ctx)
+                if recovery_note:
+                    note = Message.user(recovery_note, step=0)
+                    messages.append(note)
+                    trace.write_message(note)
+        except asyncio.CancelledError:
+            return self._finish_agent_startup_interruption(
+                ctx=ctx,
+                budget=budget,
+                eff=eff,
+                started=started,
+                trace=trace,
+                trace_file=trace_file,
+                run_logger=run_logger,
+                error="Cancelled while preparing the agent prompt.",
+                exception_type="CancelledError",
+                recovery=False,
+            )
+        except Exception as exc:
+            return self._finish_agent_startup_interruption(
+                ctx=ctx,
+                budget=budget,
+                eff=eff,
+                started=started,
+                trace=trace,
+                trace_file=trace_file,
+                run_logger=run_logger,
+                error=f"Agent startup failed before the task loop: {type(exc).__name__}: {str(exc) or repr(exc)}",
+                exception_type=type(exc).__name__,
+                recovery=True,
+            )
 
         empty_count = 0
         nudge_count = 0
@@ -720,9 +818,17 @@ class AgentRunner:
                 for hook in self.agent.spec.pre_hooks:
                     await self._run_pre_hook(hook, ctx)
 
+            t5_reboost_pre_finalized = False
+            if not deterministic_pre_finalized:
+                t5_reboost_pre_finalized = await self._maybe_finalize_t5_reboost_before_llm(ctx)
+                if t5_reboost_pre_finalized:
+                    deterministic_pre_finalized = True
+
             t2_pre_finalized = False
             if not deterministic_pre_finalized:
                 t2_pre_finalized = await self._maybe_finalize_t2_before_llm(ctx)
+            if not (deterministic_pre_finalized or t2_pre_finalized):
+                await self._ensure_shared_pdf_acquisition(ctx)
             t3_pre_finalized = False
             if not (deterministic_pre_finalized or t2_pre_finalized):
                 t3_pre_finalized = await self._maybe_finalize_t3_before_llm(ctx)
@@ -749,7 +855,10 @@ class AgentRunner:
                 or t36_section_pre_finalized
                 or t36_visuals_pre_finalized
             ):
-                t36_compile_pre_finalized = await self._maybe_finalize_t36_compile_before_llm(ctx)
+                t36_compile_pre_finalized = await self._maybe_finalize_t36_compile_before_llm(
+                    ctx,
+                    tool_map=tool_map,
+                )
             if not (
                 deterministic_pre_finalized
                 or t2_pre_finalized
@@ -853,6 +962,21 @@ class AgentRunner:
                 or external_wait_pre_finalized
             ):
                 paper_claim_audit_pre_finalized = await self._maybe_finalize_paper_claim_audit_before_llm(ctx, policy)
+            t8_resource_pre_finalized = False
+            if not (
+                deterministic_pre_finalized
+                or t2_pre_finalized
+                or t3_pre_finalized
+                or t36_section_pre_finalized
+                or t36_visuals_pre_finalized
+                or t36_compile_pre_finalized
+                or t4_pre_finalized
+                or t4_gate1_pre_finalized
+                or t45_pre_finalized
+                or external_wait_pre_finalized
+                or paper_claim_audit_pre_finalized
+            ):
+                t8_resource_pre_finalized = await self._maybe_finalize_t8_resource_before_llm(ctx)
             t8_section_plan_pre_finalized = False
             if not (
                 deterministic_pre_finalized
@@ -867,6 +991,7 @@ class AgentRunner:
                 or t45_pre_finalized
                 or external_wait_pre_finalized
                 or paper_claim_audit_pre_finalized
+                or t8_resource_pre_finalized
             ):
                 t8_section_plan_pre_finalized = await self._maybe_finalize_t8_section_plan_before_llm(
                     ctx,
@@ -886,6 +1011,7 @@ class AgentRunner:
                 or t45_pre_finalized
                 or external_wait_pre_finalized
                 or paper_claim_audit_pre_finalized
+                or t8_resource_pre_finalized
                 or t8_section_plan_pre_finalized
             ):
                 t8_manuscript_pre_finalized = await self._maybe_finalize_t8_manuscript_before_llm(ctx)
@@ -900,6 +1026,7 @@ class AgentRunner:
                     or t45_pre_finalized
                     or external_wait_pre_finalized
                     or paper_claim_audit_pre_finalized
+                    or t8_resource_pre_finalized
                     or t8_section_plan_pre_finalized
                     or t8_manuscript_pre_finalized
                 )
@@ -948,6 +1075,17 @@ class AgentRunner:
                         continue
                     stop_reason = AgentResult.STOP_BUDGET
                     error_msg = str(exc)
+                    self._mark_runtime_recovery(
+                        ctx,
+                        kind="budget",
+                        error=error_msg,
+                        details={
+                            "dimension": exc.dimension,
+                            "used": exc.used,
+                            "limit": exc.limit,
+                            "extensions_used": budget_extensions_used,
+                        },
+                    )
                     break
 
                 # 如果上下文太长，这里会按“完整 tool call group”为单位裁掉旧消息，
@@ -1028,6 +1166,15 @@ class AgentRunner:
 
                         stop_reason = AgentResult.STOP_INTERRUPTED
                         error_msg = "模型服务持续不可用；当前进度已保留，可在服务恢复后 resume。"
+                        self._mark_runtime_recovery(
+                            ctx,
+                            kind="provider",
+                            error=error_msg,
+                            details={
+                                "failed_retry_batches": provider_failures_this_request,
+                                "automatic_retry_batches": provider_retry_batches,
+                            },
+                        )
                         self.progress.emit(
                             "[Runtime] 模型服务持续不可用，项目已暂停并保留当前进度。",
                             important=True,
@@ -1108,6 +1255,10 @@ class AgentRunner:
                 if self._looks_like_human_interaction_request(assistant_msg) and not any(
                     tc.name == "ask_human" for tc in assistant_msg.tool_calls
                 ):
+                    if self._maybe_complete_t8_resource_after_spurious_human_prompt(ctx):
+                        stop_reason = AgentResult.STOP_FINISHED
+                        error_msg = None
+                        break
                     if "ask_human" not in tool_map:
                         trace.write_message(assistant_msg)
                         stop_reason = AgentResult.STOP_INTERRUPTED
@@ -1255,6 +1406,7 @@ class AgentRunner:
                 finish_requested = False
                 pause_requested = False
                 pause_reason: str | None = None
+                pause_tool_name: str | None = None
                 for tool_call, tool_msg in zip(assistant_msg.tool_calls, tool_msgs):
                     messages.append(tool_msg)
                     trace.write_message(tool_msg)
@@ -1340,6 +1492,7 @@ class AgentRunner:
                     if self._is_recoverable_tool_pause(tool_call.name, tool_msg):
                         pause_requested = True
                         pause_reason = tool_msg.content or "需要用户输入，但当前输入不可用。"
+                        pause_tool_name = tool_call.name
                 for note in post_tool_runtime_notes:
                     messages.append(note)
                     trace.write_message(note)
@@ -1347,6 +1500,12 @@ class AgentRunner:
                 if pause_requested:
                     stop_reason = AgentResult.STOP_INTERRUPTED
                     error_msg = pause_reason
+                    self._mark_runtime_recovery(
+                        ctx,
+                        kind=("human_input" if pause_tool_name == "ask_human" else "environment"),
+                        error=error_msg,
+                        details={"tool_name": pause_tool_name or "unknown"},
+                    )
                     self.progress.emit(f"[Runtime] 当前任务暂停：{pause_reason}", important=True)
                     break
 
@@ -1365,7 +1524,17 @@ class AgentRunner:
                             success_message="[Scout Agent] T2 确定性收尾成功，继续校验输出",
                         )
                         run_logger.event("FINALIZE_DONE", task=ctx.task_id, mode="t2_finish_finalize")
-                    ok, err = self.agent.validate_outputs(ctx)
+                    # T3's abstract sweep is a deterministic post-read
+                    # operation.  Let the deep-read validator complete this
+                    # turn, then validate the exact shallow-reading manifest
+                    # after the sweep has either fulfilled or blocked the
+                    # requested coverage target.
+                    if ctx.task_id == "T3":
+                        ctx.extra["_t3_pending_abstract_sweep"] = True
+                    try:
+                        ok, err = self.agent.validate_outputs(ctx)
+                    finally:
+                        ctx.extra.pop("_t3_pending_abstract_sweep", None)
                     if ok:
                         self.progress.validation_result(task_id=ctx.task_id, ok=True)
                         run_logger.event("VALIDATION_PASS", task=ctx.task_id, step=budget.steps)
@@ -1428,7 +1597,11 @@ class AgentRunner:
                             messages.append(feedback)
                             trace.write_message(feedback)
                             continue
-                        validation_circuit_limit = 3 if ctx.task_id == "T4" else 2
+                        validation_circuit_limit = (
+                            validation_retry_limit
+                            if ctx.task_id.startswith("T3.6-")
+                            else 3 if ctx.task_id == "T4" else 2
+                        )
                         stop_reason = AgentResult.STOP_INTERRUPTED
                         if repeated_validation_failures >= validation_circuit_limit:
                             error_msg = (
@@ -1445,8 +1618,24 @@ class AgentRunner:
                                 f"Validation failed {validation_fails} times. "
                                 f"Paused for artifact repair/resume. Last reason: {err}"
                             )
+                        self._mark_runtime_recovery(
+                            ctx,
+                            kind="validation",
+                            error=error_msg,
+                            details={
+                                "failure_count": validation_fails,
+                                "retry_limit": validation_retry_limit,
+                                "same_error_count": repeated_validation_failures,
+                                "validator_error": str(err or "unknown validation error"),
+                                "extensions_used": validation_extensions_used,
+                            },
+                        )
                         break
-                    validation_circuit_limit = 3 if ctx.task_id == "T4" else 2
+                    validation_circuit_limit = (
+                        validation_retry_limit
+                        if ctx.task_id.startswith("T3.6-")
+                        else 3 if ctx.task_id == "T4" else 2
+                    )
                     if repeated_validation_failures >= validation_circuit_limit:
                         stop_reason = AgentResult.STOP_INTERRUPTED
                         error_msg = (
@@ -1457,6 +1646,18 @@ class AgentRunner:
                             "[Validation] 同一问题再次出现，已暂停并保留当前结果；"
                             "不会继续重复执行相同修复。",
                             important=True,
+                        )
+                        self._mark_runtime_recovery(
+                            ctx,
+                            kind="validation",
+                            error=error_msg,
+                            details={
+                                "failure_count": validation_fails,
+                                "retry_limit": validation_retry_limit,
+                                "same_error_count": repeated_validation_failures,
+                                "validator_error": str(err or "unknown validation error"),
+                                "extensions_used": validation_extensions_used,
+                            },
                         )
                         break
                     feedback = Message.user(
@@ -1480,6 +1681,17 @@ class AgentRunner:
                         continue
                     stop_reason = AgentResult.STOP_MAX_STEPS
                     error_msg = "Reached maximum allowed steps; paused so you can resume or raise the step budget."
+                    self._mark_runtime_recovery(
+                        ctx,
+                        kind="max_steps",
+                        error=error_msg,
+                        details={
+                            "dimension": "steps",
+                            "used": budget.steps,
+                            "limit": budget.max_steps,
+                            "extensions_used": budget_extensions_used,
+                        },
+                    )
                     break
 
         except asyncio.CancelledError:
@@ -1489,6 +1701,12 @@ class AgentRunner:
         except RecoverableRuntimePause as exc:
             stop_reason = AgentResult.STOP_INTERRUPTED
             error_msg = str(exc)
+            self._mark_runtime_recovery(
+                ctx,
+                kind="runtime",
+                error=error_msg,
+                details={"source": "recoverable_runtime_pause"},
+            )
             run_logger.event("PAUSED", task=ctx.task_id, reason=error_msg)
         except HookExecutionError as exc:
             stop_reason = AgentResult.STOP_ERROR
@@ -1505,6 +1723,14 @@ class AgentRunner:
                 stop_reason=stop_reason,
                 error_msg=error_msg,
             )
+            stop_reason, error_msg = await self._maybe_finalize_t5_reboost_outputs(
+                ctx=ctx,
+                policy=policy,
+                stop_reason=stop_reason,
+                error_msg=error_msg,
+                steps=budget.steps,
+                llm_response_seen=last_model_used is not None,
+            )
             stop_reason, error_msg = self._maybe_finalize_t4_gate1_outputs(
                 ctx=ctx,
                 stop_reason=stop_reason,
@@ -1512,7 +1738,12 @@ class AgentRunner:
             )
             self._refresh_resume_artifacts(ctx)
             self._maybe_refresh_t3_resume_artifacts(ctx, stop_reason)
-            await self._maybe_run_t3_abstract_sweep(ctx, stop_reason, eff)
+            stop_reason, error_msg = await self._maybe_run_t3_abstract_sweep(
+                ctx,
+                stop_reason,
+                error_msg,
+                eff,
+            )
             result = self._build_result(
                 ctx=ctx,
                 budget=budget,
@@ -1564,6 +1795,109 @@ class AgentRunner:
                 ok=result.ok,
                 stop_reason=result.stop_reason,
             )
+        return result
+
+    def _finish_agent_startup_interruption(
+        self,
+        *,
+        ctx: ExecutionContext,
+        budget: BudgetTracker,
+        eff: EffectiveConfig,
+        started: float,
+        trace: TraceWriter | NullTraceWriter,
+        trace_file: Path | None,
+        run_logger: RunLogger,
+        error: str,
+        exception_type: str,
+        recovery: bool,
+    ) -> AgentResult:
+        """Return a durable interruption for failures before the Agent loop.
+
+        Prompt rendering, context discovery, and tool construction used to run
+        before ``AgentRunner.run`` entered its ordinary exception boundary.
+        A Jinja undefined variable could therefore escape as a CLI traceback.
+        Startup is part of one Agent run, so it must produce the same explicit
+        recovery signal, trace closure, and stage-end event as a later failure.
+        """
+
+        stop_reason = AgentResult.STOP_INTERRUPTED
+        if recovery:
+            self._mark_runtime_recovery(
+                ctx,
+                kind="runtime",
+                error=error,
+                details={
+                    "source": "agent_runner_startup",
+                    "exception_type": exception_type,
+                },
+            )
+            run_logger.event(
+                "PAUSED",
+                task=ctx.task_id,
+                reason=error,
+                source="agent_runner_startup",
+                exception_type=exception_type,
+            )
+        else:
+            run_logger.event(
+                "PAUSED",
+                task=ctx.task_id,
+                reason=error,
+                source="agent_runner_startup",
+                exception_type=exception_type,
+            )
+        result = self._build_result(
+            ctx=ctx,
+            budget=budget,
+            stop_reason=stop_reason,
+            error_msg=error,
+            started=started,
+            trace_file=trace_file,
+            eff=eff,
+            last_model_used=None,
+            last_endpoint_used=None,
+        )
+        try:
+            trace.close(result)
+        except Exception:  # pragma: no cover - trace output must not mask recovery
+            self.log.exception("startup_failure_trace_close_failed")
+        try:
+            self.progress.agent_done(
+                task_id=ctx.task_id,
+                agent=self.agent.spec.name,
+                ok=False,
+                stop_reason=result.stop_reason,
+                summary=result.message,
+                artifacts=[
+                    safe_relative(path, ctx.workspace_dir) or str(path)
+                    for path in list(result.outputs_produced.values())
+                ],
+                next_step=next_step_for_task(ctx.task_id, ok=False),
+                trace_file=str(result.trace_file.relative_to(ctx.workspace_dir))
+                if result.trace_file is not None
+                else None,
+                error=result.error,
+                outputs_expected=ctx.outputs_expected,
+                run_id=ctx.run_id,
+            )
+        except Exception:  # pragma: no cover - observability cannot re-raise a startup failure
+            self.log.exception("startup_failure_progress_emit_failed")
+        run_logger.event(
+            "TASK_END",
+            task=ctx.task_id,
+            ok=False,
+            stop_reason=result.stop_reason,
+            error=result.error,
+            steps=result.steps_used,
+            tokens=result.tokens_in + result.tokens_out,
+        )
+        run_logger.event(
+            "RUN_END",
+            run_id=ctx.run_id,
+            task=ctx.task_id,
+            ok=False,
+            stop_reason=result.stop_reason,
+        )
         return result
 
     async def _run_pre_hook(self, hook, ctx: ExecutionContext) -> None:
@@ -1741,9 +2075,15 @@ class AgentRunner:
         if ctx.task_id != "T4":
             return {}
         if ctx.extra.get("t4_evolution_active"):
+            deliverable = str(ctx.extra.get("t4_evolution_current_deliverable") or "T4 阶段产物")
             return {
                 "activity": str(ctx.extra.get("t4_evolution_activity") or "T4 Evolution"),
-                "next_artifact": str(ctx.extra.get("t4_evolution_next_artifact") or "T4 artifact"),
+                # ``next_artifact`` is retained for older event consumers. The
+                # heartbeat renderer receives the clearer present-tense fields
+                # below and no longer calls the current output a "next step".
+                "next_artifact": deliverable,
+                "current_deliverable": deliverable,
+                "following_phase": str(ctx.extra.get("t4_evolution_following_phase") or ""),
                 "artifact_completed": None,
                 "artifact_total": None,
             }
@@ -1759,9 +2099,181 @@ class AgentRunner:
         return {
             "activity": activity,
             "next_artifact": next_artifact,
+            "current_deliverable": next_artifact,
+            "following_phase": "",
             "artifact_completed": int(completed) if isinstance(completed, int) else None,
             "artifact_total": int(total) if isinstance(total, int) else None,
         }
+
+    @staticmethod
+    def _t4_heartbeat_phase_identity(ctx: ExecutionContext, heartbeat: dict[str, object]) -> str:
+        """Return the stable logical phase represented by a T4 heartbeat.
+
+        A provider request is not a T4 phase.  Formation and independent
+        scoring may each use several provider calls, including retries, while
+        remaining one researcher-visible unit of work.  Prefer the explicit
+        controller phase marker.  The fallback only uses stable public
+        deliverable fields, not a candidate-level activity string that can
+        change many times within one phase.
+        """
+
+        explicit = str(ctx.extra.get("t4_heartbeat_phase_key") or "").strip()
+        if explicit:
+            return explicit
+        deliverable = " ".join(
+            str(heartbeat.get("current_deliverable") or heartbeat.get("next_artifact") or "").split()
+        )
+        following = " ".join(str(heartbeat.get("following_phase") or "").split())
+        activity = " ".join(str(heartbeat.get("activity") or "T4").split())
+        return "compat:" + "|".join((deliverable or activity, following))
+
+    @classmethod
+    def _mark_t4_heartbeat_phase(
+        cls,
+        ctx: ExecutionContext,
+        phase_key: str,
+        *,
+        now: float | None = None,
+    ) -> None:
+        """Start a new monotonic clock only when the logical phase changes."""
+
+        if ctx.task_id != "T4":
+            return
+        normalized = " ".join(str(phase_key or "T4").split()) or "T4"
+        current = ctx.extra.get("t4_heartbeat_phase_timer")
+        if isinstance(current, dict) and str(current.get("phase_key") or "") == normalized:
+            return
+        ctx.extra["t4_heartbeat_phase_timer"] = {
+            "phase_key": normalized,
+            "started_monotonic": time.monotonic() if now is None else float(now),
+            "last_elapsed_seconds": 0,
+        }
+
+    @classmethod
+    def _t4_heartbeat_phase_elapsed_seconds(
+        cls,
+        ctx: ExecutionContext,
+        heartbeat: dict[str, object],
+        *,
+        now: float | None = None,
+    ) -> int | None:
+        """Return a monotonic phase elapsed time that survives request retries.
+
+        The value intentionally lives in the execution context rather than a
+        provider-call local.  A retry or a next model call within the same
+        controller phase therefore cannot restart the visible timer.  A new
+        process starts a fresh monotonic clock on resume; completed artifacts,
+        not an elapsed display counter, remain the authoritative resume
+        boundary.
+        """
+
+        if ctx.task_id != "T4":
+            return None
+        phase_key = cls._t4_heartbeat_phase_identity(ctx, heartbeat)
+        cls._mark_t4_heartbeat_phase(ctx, phase_key, now=now)
+        timer = ctx.extra.get("t4_heartbeat_phase_timer")
+        if not isinstance(timer, dict):  # defensive: the marker above writes it
+            return 0
+        current = time.monotonic() if now is None else float(now)
+        try:
+            started = float(timer.get("started_monotonic"))
+        except (TypeError, ValueError):
+            started = current
+            timer["started_monotonic"] = started
+        try:
+            prior = max(0, int(timer.get("last_elapsed_seconds") or 0))
+        except (TypeError, ValueError):
+            prior = 0
+        elapsed = max(prior, int(max(0.0, current - started)))
+        timer["last_elapsed_seconds"] = elapsed
+        return elapsed
+
+    @classmethod
+    def _heartbeat_phase_identity(
+        cls,
+        ctx: ExecutionContext,
+        heartbeat: dict[str, object],
+    ) -> str:
+        """Return the researcher-visible phase that owns one wait clock.
+
+        Provider requests are implementation attempts, not progress phases.  A
+        retry in T4.5, T5, or T8 must therefore continue the elapsed time shown
+        for that task instead of starting again at twelve seconds.  Native T4
+        has more granular, controller-owned phases and retains its established
+        identity rules for compatibility with its evolution telemetry.
+
+        Other stages may set ``heartbeat_phase_key`` when one task intentionally
+        contains several independently visible long phases.  In the usual case
+        the state-machine task ID is the stable phase boundary.
+        """
+
+        if ctx.task_id == "T4":
+            return cls._t4_heartbeat_phase_identity(ctx, heartbeat)
+        explicit = " ".join(str(ctx.extra.get("heartbeat_phase_key") or "").split())
+        if explicit:
+            return explicit
+        mode = " ".join(str(ctx.mode or ctx.extra.get("phase") or "execution").split())
+        return f"{ctx.task_id}:{mode or 'execution'}"
+
+    @classmethod
+    def _mark_heartbeat_phase(
+        cls,
+        ctx: ExecutionContext,
+        phase_key: str,
+        *,
+        now: float | None = None,
+    ) -> None:
+        """Start a clock only when a logical visible phase actually changes."""
+
+        if ctx.task_id == "T4":
+            cls._mark_t4_heartbeat_phase(ctx, phase_key, now=now)
+            return
+        normalized = " ".join(str(phase_key or ctx.task_id).split()) or ctx.task_id
+        current = ctx.extra.get("heartbeat_phase_timer")
+        if isinstance(current, dict) and str(current.get("phase_key") or "") == normalized:
+            return
+        ctx.extra["heartbeat_phase_timer"] = {
+            "phase_key": normalized,
+            "started_monotonic": time.monotonic() if now is None else float(now),
+            "last_elapsed_seconds": 0,
+        }
+
+    @classmethod
+    def _heartbeat_phase_elapsed_seconds(
+        cls,
+        ctx: ExecutionContext,
+        heartbeat: dict[str, object],
+        *,
+        now: float | None = None,
+    ) -> int:
+        """Return a monotonic elapsed time that survives provider retries.
+
+        The timer is deliberately in ``ExecutionContext.extra`` rather than
+        local to ``_await_llm_with_progress``.  This makes every task that uses
+        the common provider wait path, including T4.5, T5 and T8, obey the
+        same retry-safe behavior.  Resume starts a new process-local clock;
+        durable artifacts, not a display counter, are the resume authority.
+        """
+
+        phase_key = cls._heartbeat_phase_identity(ctx, heartbeat)
+        cls._mark_heartbeat_phase(ctx, phase_key, now=now)
+        timer_key = "t4_heartbeat_phase_timer" if ctx.task_id == "T4" else "heartbeat_phase_timer"
+        timer = ctx.extra.get(timer_key)
+        if not isinstance(timer, dict):  # defensive: the marker above writes it
+            return 0
+        current = time.monotonic() if now is None else float(now)
+        try:
+            started = float(timer.get("started_monotonic"))
+        except (TypeError, ValueError):
+            started = current
+            timer["started_monotonic"] = started
+        try:
+            prior = max(0, int(timer.get("last_elapsed_seconds") or 0))
+        except (TypeError, ValueError):
+            prior = 0
+        elapsed = max(prior, int(max(0.0, current - started)))
+        timer["last_elapsed_seconds"] = elapsed
+        return elapsed
 
     def _emit_t4_durable_candidate_recap(self, ctx: ExecutionContext, output_path: str | Path | None) -> None:
         """Backstop candidate-level CLI facts when the model omits progress events.
@@ -1877,16 +2389,21 @@ class AgentRunner:
         ):
             self._refresh_t4_gate1_progress(ctx, active_path=None, announce=False)
         heartbeat = self._t4_heartbeat_context(ctx)
+        # Initialize the logical stage timer before issuing the first provider
+        # request.  The initial submission remains instantaneous in the UI;
+        # later heartbeats report accumulated phase duration, including retries
+        # made by T4.5, T5, and T8.
+        self._heartbeat_phase_elapsed_seconds(ctx, heartbeat)
         self.progress.llm_request_started(task_id=ctx.task_id, step=step, **heartbeat)
         task = asyncio.create_task(self.llm.chat(**kwargs))
-        started = time.monotonic()
+        request_started = time.monotonic()
         timeout = 12.0
         try:
             while True:
                 done, _pending = await asyncio.wait({task}, timeout=timeout)
                 if done:
                     return task.result()
-                elapsed = int(time.monotonic() - started)
+                request_elapsed = int(time.monotonic() - request_started)
                 if (
                     self._is_t4_ideation_agent(ctx)
                     and not self._t4_gate1_user_selection_exists(ctx)
@@ -1894,6 +2411,8 @@ class AgentRunner:
                 ):
                     self._refresh_t4_gate1_progress(ctx, active_path=None, announce=False)
                 heartbeat = self._t4_heartbeat_context(ctx)
+                phase_elapsed = self._heartbeat_phase_elapsed_seconds(ctx, heartbeat)
+                elapsed = phase_elapsed if phase_elapsed is not None else request_elapsed
                 self.progress.llm_waiting(
                     task_id=ctx.task_id,
                     agent=self.agent.spec.name,
@@ -1908,9 +2427,10 @@ class AgentRunner:
                     phase="awaiting_llm",
                     detail=f"模型调用仍在等待，已持续 {elapsed}s。",
                 )
-                # T4 is intentionally visible but should not flood a long
-                # terminal. First heartbeat remains at 12s; later pulses are
-                # every 30s and only report public execution state.
+                # The first heartbeat remains at 12s. T4 uses a 30-second
+                # cadence because concurrent route calls can be active; all
+                # other long stages use 20 seconds. Both rates keep normal UI
+                # visible without turning a provider wait into a tool log.
                 timeout = 30.0 if self._is_t4_ideation_agent(ctx) else 20.0
         except BaseException:
             if not task.done():
@@ -1947,20 +2467,14 @@ class AgentRunner:
             "T4": "生成候选研究假设、实验计划和风险分析",
             "T4.5": "做新颖性预审和 mechanism tuple 审计",
             "T5-REBOOST-GATE": "调用 LLM API 对 Pre-T5 材料做 context re-boost",
-            "T5-HANDOFF": "编译外部实验协议和 handoff prompt",
+            "T5-HANDOFF": "编译外部实验协议和执行器控制说明",
             "T5-SPECIALIZE-EXECUTOR-SKILLS": "生成并校验项目专属 executor Skill Suite",
             "T5-EXPR-MATERIAL-GATE": "等待用户放置外部实验材料并确认继续",
             "T5-EXECUTOR-GATE": "由用户选择 mock、Claude Code、Codex CLI 或人工外部执行器",
-            "T5-EXTERNAL-WAIT": "等待外部执行器写回 result_pack 并在 resume 时校验",
+            "T5-EXTERNAL-WAIT": "等待外部执行器写回 executor_research_report 并在 resume 时校验",
             "T5-DRY-RUN": "跑通 mock 外部执行器文件协议，不执行真实实验",
-            "T7-INGEST": "摄取外部 result pack 并规范化结果证据",
-            "T7-AUDIT": "审计实验 provenance、hash、mock 标记、指标来源、method drift 和 framework figure",
-            "T7-POST-NOVELTY": "基于实现/结果状态复核 novelty 和 claim 降级边界",
-            "T7-CLAIMS": "生成 result-to-claim 和写作 evidence pack",
             "T5": "legacy pilot 实验兼容节点",
             "T6": "legacy pilot 后新颖性复核兼容节点",
-            "T7": "legacy 内部完整实验兼容节点",
-            "T7.5": "评估外部实验证据是否足够进入写作",
             "T8-RESOURCE": "构建写作资源索引、证据计划和图表计划",
             "T8-WRITE": "生成资源驱动的论文总大纲",
             "T8-SECTION-PLAN": "初始化 paper_state 和每章局部大纲",
@@ -2142,6 +2656,157 @@ class AgentRunner:
 
         return stop_reason, error_msg
 
+    def _t5_reboost_artifacts_valid(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
+        if ctx.task_id != "T5-REBOOST-GATE":
+            return False, "not a T5-REBOOST task"
+        try:
+            from ..schemas.validator import validate_task_artifacts
+
+            return validate_task_artifacts(ctx.workspace_dir, ctx.task_id)
+        except Exception as exc:
+            return False, str(exc)
+
+    async def _maybe_finalize_t5_reboost_before_llm(self, ctx: ExecutionContext) -> bool:
+        """Reuse a complete T5 reboost handoff instead of spending another LLM call."""
+
+        if ctx.task_id != "T5-REBOOST-GATE":
+            return False
+        ok, err = self._t5_reboost_artifacts_valid(ctx)
+        if not ok:
+            self.log.info("t5_reboost_prefinalize_skipped", reason=err)
+            return False
+        self.progress.emit(
+            "[Research Reboost] 检测到已有有效 handoff 与 executor 控制文件，跳过重复 LLM 调用。",
+            important=True,
+        )
+        self._record_runtime_completion(
+            ctx,
+            "t5_reboost_resume_prefinalize",
+            {"outputs": [str(path.relative_to(ctx.workspace_dir)) for path in ctx.outputs_expected.values() if path.exists()]},
+            action_type="t5_reboost_prefinalize",
+        )
+        return True
+
+    @staticmethod
+    def _t5_reboost_recovery_allowed(stop_reason: str, error_msg: str | None) -> bool:
+        if stop_reason not in {
+            AgentResult.STOP_INTERRUPTED,
+            AgentResult.STOP_ERROR,
+            AgentResult.STOP_MAX_STEPS,
+            AgentResult.STOP_BUDGET,
+        }:
+            return False
+        lowered = str(error_msg or "").casefold()
+        fatal_markers = (
+            "模型服务配置未通过验证",
+            "invalid_api_key",
+            "invalid api key",
+            "authentication",
+            "unauthorized",
+            "permissiondenied",
+            "permission denied",
+            "human input",
+            "ask_human",
+            "需要用户输入",
+        )
+        return not any(marker in lowered for marker in fatal_markers)
+
+    def _annotate_t5_reboost_recovery_report(
+        self,
+        ctx: ExecutionContext,
+        *,
+        stop_reason: str,
+        error_msg: str | None,
+        steps: int,
+    ) -> None:
+        report_path = ctx.workspace_dir / "external_executor" / "report" / "reboost_report.json"
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            if not isinstance(report, dict):
+                return
+        except Exception:
+            return
+        previous_source = report.get("generation_source")
+        report["generation_source"] = "llm_api_skill_execution_with_deterministic_timeout_recovery"
+        report["llm_runtime_recovery"] = {
+            "used": True,
+            "reason": "llm_skill_execution_did_not_reach_handoff_publication_before_runtime_stop",
+            "previous_generation_source": previous_source,
+            "stop_reason_before_recovery": stop_reason,
+            "error_before_recovery": error_msg,
+            "steps_before_recovery": steps,
+        }
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    async def _maybe_finalize_t5_reboost_outputs(
+        self,
+        *,
+        ctx: ExecutionContext,
+        policy: WorkspaceAccessPolicy,
+        stop_reason: str,
+        error_msg: str | None,
+        steps: int,
+        llm_response_seen: bool,
+    ) -> tuple[str, str | None]:
+        """Close T5-REBOOST when the LLM path times out before calling the compiler.
+
+        The normal path is still: LLM executes the research-reboost Skill and
+        calls ``compile_research_reboost_handoff``.  This fallback only runs
+        after at least one model step has happened and the task would otherwise
+        pause/error without a validated handoff.
+        """
+
+        if ctx.task_id != "T5-REBOOST-GATE":
+            return stop_reason, error_msg
+        if stop_reason == AgentResult.STOP_FINISHED:
+            return stop_reason, error_msg
+        existing_ok, _existing_err = self._t5_reboost_artifacts_valid(ctx)
+        if existing_ok:
+            self._record_runtime_completion(
+                ctx,
+                "t5_reboost_resume_prefinalize",
+                {"outputs": [str(path.relative_to(ctx.workspace_dir)) for path in ctx.outputs_expected.values() if path.exists()]},
+                action_type="t5_reboost_prefinalize",
+            )
+            return AgentResult.STOP_FINISHED, None
+        if not llm_response_seen or steps <= 0 or not self._t5_reboost_recovery_allowed(stop_reason, error_msg):
+            return stop_reason, error_msg
+
+        self.progress.emit(
+            "[Research Reboost] LLM 已执行但未完成 handoff 发布；正在使用同一编译工具做确定性恢复收尾。",
+            important=True,
+        )
+        result = await CompileResearchReboostHandoffTool(policy).execute()
+        if not result.ok:
+            self.log.warning(
+                "t5_reboost_recovery_compile_failed",
+                error=result.error,
+                content=result.content,
+            )
+            return stop_reason, error_msg
+        self._annotate_t5_reboost_recovery_report(
+            ctx,
+            stop_reason=stop_reason,
+            error_msg=error_msg,
+            steps=steps,
+        )
+        ok, err = self._t5_reboost_artifacts_valid(ctx)
+        if not ok:
+            self.log.warning("t5_reboost_recovery_validation_failed", error=err)
+            return stop_reason, error_msg
+        outputs = [str(path.relative_to(ctx.workspace_dir)) for path in ctx.outputs_expected.values() if path.exists()]
+        self._record_runtime_completion(
+            ctx,
+            "t5_reboost_timeout_recovery",
+            {"outputs": outputs},
+            action_type="t5_reboost_timeout_recovery",
+        )
+        self.progress.emit(
+            "[Research Reboost] 确定性恢复收尾已生成有效 handoff，T5-REBOOST 可以完成。",
+            important=True,
+        )
+        return AgentResult.STOP_FINISHED, None
+
     def _refresh_resume_artifacts(self, ctx: ExecutionContext) -> None:
         """在任意退出路径刷新通用恢复快照，避免失败/暂停后仍看到旧进度。"""
 
@@ -2187,8 +2852,9 @@ class AgentRunner:
         self,
         ctx: ExecutionContext,
         stop_reason: str,
+        error_msg: str | None,
         eff: EffectiveConfig,
-    ) -> None:
+    ) -> tuple[str, str | None]:
         """T3 退出后自动运行/恢复 abstract sweep 补读。
 
         finished 路径使用 Reader LLM 生成轻量笔记；max_steps/budget/interrupt
@@ -2196,10 +2862,17 @@ class AgentRunner:
         shallow/backlog 论文不会因为任务被取消而永远没有 abstract note。
         """
 
-        if ctx.task_id != "T3":
-            return
+        # Generic test or extension agents may use a T3-shaped task label to
+        # exercise the runtime. Only the production Reader owns the T3
+        # reading-coverage lifecycle. Applying a literature policy to those
+        # agents made unrelated executions fail after their own validation.
+        if ctx.task_id != "T3" or self.agent.spec.name != "reader":
+            return stop_reason, error_msg
+        if not has_shallow_read_coverage_contract(ctx.workspace_dir):
+            self.log.info("t3_abstract_sweep_skipped_legacy_workspace_without_coverage_contract")
+            return stop_reason, error_msg
         if ctx.extra.get("skip_t3_abstract_sweep"):
-            return
+            return stop_reason, error_msg
         allowed_stop_reasons = {
             AgentResult.STOP_FINISHED,
             AgentResult.STOP_MAX_STEPS,
@@ -2207,13 +2880,13 @@ class AgentRunner:
             AgentResult.STOP_INTERRUPTED,
         }
         if stop_reason not in allowed_stop_reasons:
-            return
+            return stop_reason, error_msg
 
         try:
             mode_params = get_effective_reader_read_params(ctx.workspace_dir)
             sweep_config = mode_params.get("abstract_sweep", {})
             if not sweep_config.get("enabled", False):
-                return
+                return stop_reason, error_msg
 
             if stop_reason == AgentResult.STOP_FINISHED:
                 self.progress.emit(
@@ -2235,7 +2908,13 @@ class AgentRunner:
                         f"生成 {result['notes_generated']} 篇 abstract note",
                         important=True,
                     )
-                return
+                return self._apply_t3_abstract_sweep_outcome(
+                    ctx=ctx,
+                    stop_reason=stop_reason,
+                    error_msg=error_msg,
+                    sweep_config=sweep_config,
+                    result=result,
+                )
 
             abstract_reader_binding = self.llm.resolve(
                 profile=eff.llm_profile,
@@ -2244,6 +2923,8 @@ class AgentRunner:
                 endpoint_override=eff.llm_endpoint_override,
                 max_context_override=eff.llm_max_context_override,
             )[0][0]
+
+            await self._acquire_t3_shallow_candidate_pdfs(ctx, sweep_config)
 
             def _abstract_reader_messages(prompt: str) -> list[dict[str, str]]:
                 return [
@@ -2342,8 +3023,125 @@ class AgentRunner:
                 )
             else:
                 self.progress.emit("[Reader Agent] Abstract sweep 无候选论文", important=True)
-        except Exception:  # pragma: no cover - sweep failure should not fail a completed T3
+            return self._apply_t3_abstract_sweep_outcome(
+                ctx=ctx,
+                stop_reason=stop_reason,
+                error_msg=error_msg,
+                sweep_config=sweep_config,
+                result=result,
+            )
+        except Exception as exc:  # a missing reading manifest must not masquerade as T3 success
             self.log.exception("t3_abstract_sweep_failed")
+            if stop_reason != AgentResult.STOP_FINISHED:
+                return stop_reason, error_msg
+            message = (
+                "T3 深读已保存，但摘要轻读覆盖未能生成，因而不能进入 T3.5。"
+                f"原因：{type(exc).__name__}: {str(exc)[:500]}。"
+                "现有论文笔记未被删除；resume 将只重试摘要轻读与覆盖检查。"
+            )
+            self._mark_runtime_recovery(
+                ctx,
+                kind="literature_coverage",
+                error=message,
+                details={"stage": "T3", "artifact": "literature/shallow_read_manifest.json"},
+            )
+            self.progress.emit(f"[Reader Agent] {message}", important=True)
+            return AgentResult.STOP_INTERRUPTED, message
+
+    async def _acquire_t3_shallow_candidate_pdfs(
+        self,
+        ctx: ExecutionContext,
+        sweep_config: dict[str, Any],
+    ) -> None:
+        """Try access acquisition for the exact shallow-reading candidates only.
+
+        T2 already attempts every retained candidate.  A numeric T3 sweep may
+        responsibly draw a bounded readable refill from ``papers_backlog``;
+        those selected papers deserve the same PDF availability attempt before
+        they are offered for a voluntary full/partial-text upgrade.  Download
+        receipts remain availability facts and never promote evidence level.
+        """
+
+        candidates = build_sweep_candidates(ctx.workspace_dir, sweep_config)
+        if not candidates:
+            return
+        config = load_t2_finalize_config(ctx.workspace_dir)
+        if not config.pdf_acquisition_enabled:
+            return
+        try:
+            manifest = await acquire_retained_pdfs(
+                ctx.workspace_dir,
+                candidates,
+                max_concurrency=config.pdf_acquisition_max_concurrency,
+                retry_terminal_failures=config.pdf_acquisition_retry_terminal_failures,
+                skip_known_books=config.pdf_acquisition_skip_known_books,
+                max_auto_read_pages=config.pdf_acquisition_max_auto_read_pages,
+                source_pool="t3_shallow_read_candidates",
+            )
+            counts = manifest.get("counts") if isinstance(manifest.get("counts"), dict) else {}
+            self.progress.emit(
+                "[Literature] 已检查本轮摘要轻读候选的 PDF 可得性："
+                f"本地可解析 {int(counts.get('available_local') or 0)}/"
+                f"{int(counts.get('total') or len(candidates))}。"
+                "下载成功不代表已读；可读 PDF 将进入升级队列。",
+                important=True,
+            )
+        except Exception as exc:  # access enrichment must not erase abstract coverage
+            self.log.warning(
+                "t3_shallow_pdf_acquisition_failed",
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+    def _apply_t3_abstract_sweep_outcome(
+        self,
+        *,
+        ctx: ExecutionContext,
+        stop_reason: str,
+        error_msg: str | None,
+        sweep_config: dict[str, Any],
+        result: dict[str, Any],
+    ) -> tuple[str, str | None]:
+        """Refresh the shared literature manifest and block T3 on real shallow shortfall."""
+
+        build_literature_manifest(ctx.workspace_dir, write=True)
+        coverage_ok, coverage_error = validate_abstract_sweep_coverage(
+            ctx.workspace_dir,
+            sweep_config,
+            require_manifest=True,
+        )
+        target = result.get("shallow_read_target")
+        actual = result.get("shallow_read_note_count")
+        if coverage_ok:
+            if target not in (None, "all_readable"):
+                self.progress.emit(
+                    f"[Reader Agent] 摘要轻读覆盖已核验：{actual}/{target} 篇真实 ABSTRACT-ONLY 笔记；"
+                    "metadata triage 未计入该数字。",
+                    important=True,
+                )
+            return stop_reason, error_msg
+
+        message = (
+            "T3 已保留深读与已完成的浅读笔记，但不能进入 T3.5。"
+            f"原因：{str(coverage_error or result.get('blocking_reason') or '摘要轻读覆盖未完成')[:1000]} "
+            "请 resume 继续补齐可读 backlog，或在资料不足时进入定向补检。"
+        )
+        self._mark_runtime_recovery(
+            ctx,
+            kind="literature_coverage",
+            error=message,
+            details={
+                "stage": "T3",
+                "manifest": str(result.get("manifest_path") or "literature/shallow_read_manifest.json"),
+                "target": target,
+                "actual": actual,
+                "unfulfilled_target": result.get("unfulfilled_target"),
+                "metadata_triage_count": result.get("metadata_triage_count"),
+            },
+        )
+        self.progress.emit(f"[Reader Agent] {message}", important=True)
+        if stop_reason == AgentResult.STOP_FINISHED:
+            return AgentResult.STOP_INTERRUPTED, message
+        return stop_reason, error_msg
 
     async def _maybe_finalize_t2_before_llm(self, ctx: ExecutionContext) -> bool:
         """T2 续跑时，只有已足够完整的产物或显式恢复场景才跳过 LLM。
@@ -2482,6 +3280,69 @@ class AgentRunner:
             reason="papers_raw_older_than_t2_inputs",
         )
 
+    async def _ensure_shared_pdf_acquisition(self, ctx: ExecutionContext) -> None:
+        """Backfill the shared PDF-access receipt for existing/resumed workspaces.
+
+        T2 normally performs this work.  Older workspaces can resume directly
+        at T3/T3.5/T3.6/T4/T5/T8, though, so waiting for a new T2 run would
+        leave their retained candidates without the same acquisition attempt.
+        This preflight is intentionally non-fatal: unavailable PDFs remain
+        auditable abstract/metadata evidence rather than blocking a valid
+        research workflow.
+        """
+
+        literature_consumers = {
+            "T3", "T3.5", "T3.6-GATE-SURVEY", "T3.6-PLAN", "T3.6-GATE-CORPUS",
+            "T3.6-EXPAND", "T3.6-STATE", "T3.6-VISUALS", "T4", "T4.5", "T5-HANDOFF",
+            "T8", "T8-RESOURCE",
+        }
+        if ctx.task_id not in literature_consumers:
+            return
+        verified_path = ctx.workspace_dir / "literature" / "papers_verified.jsonl"
+        if not verified_path.is_file():
+            return
+        try:
+            records = [
+                value for line in verified_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+                for value in [json.loads(line)]
+                if isinstance(value, dict)
+            ]
+        except (OSError, json.JSONDecodeError):
+            return
+        if not records:
+            return
+        config = load_t2_finalize_config(ctx.workspace_dir)
+        if not config.pdf_acquisition_enabled:
+            return
+        try:
+            records, legacy_evidence_repairs = repair_access_only_evidence_levels(ctx.workspace_dir, records)
+            manifest = await acquire_retained_pdfs(
+                ctx.workspace_dir,
+                records,
+                max_concurrency=config.pdf_acquisition_max_concurrency,
+                retry_terminal_failures=config.pdf_acquisition_retry_terminal_failures,
+                skip_known_books=config.pdf_acquisition_skip_known_books,
+                max_auto_read_pages=config.pdf_acquisition_max_auto_read_pages,
+                source_pool="papers_verified_resume_preflight",
+            )
+            annotated = attach_pdf_acquisition(records, manifest)
+            verified_path.write_text(
+                "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in annotated),
+                encoding="utf-8",
+            )
+            build_literature_manifest(ctx.workspace_dir, write=True)
+            counts = manifest.get("counts") if isinstance(manifest.get("counts"), dict) else {}
+            self.progress.emit(
+                "[Literature] 已检查所有保留候选的 PDF 可得性："
+                f"本地可解析 {int(counts.get('available_local') or 0)}/"
+                f"{int(counts.get('total') or len(records))}；"
+                f"可获得性不等同于已全文阅读；已修正旧版 access→evidence 误标 {legacy_evidence_repairs} 条。",
+                important=True,
+            )
+        except Exception as exc:  # availability enrichment must not strand an old resume
+            self.log.warning("shared_pdf_acquisition_preflight_failed", error=f"{type(exc).__name__}: {exc}")
+
     async def _maybe_finalize_t3_before_llm(self, ctx: ExecutionContext) -> bool:
         """T3 续跑时，已有 deep-read 产物通过校验则直接完成。
 
@@ -2518,7 +3379,16 @@ class AgentRunner:
             self.log.info("t3_resume_prefinalize_skipped", reason=err)
             return False
 
-        ok, err = self.agent.validate_outputs(ctx)
+        # The post-read abstract sweep is deliberately executed in this run's
+        # finalizer.  Validate existing deep evidence here without treating a
+        # missing/stale shallow manifest as a reason to replay every deep-read
+        # LLM action; the finalizer will rebuild it and enforce the numeric
+        # coverage target before T3 can report success.
+        ctx.extra["_t3_pending_abstract_sweep"] = True
+        try:
+            ok, err = self.agent.validate_outputs(ctx)
+        finally:
+            ctx.extra.pop("_t3_pending_abstract_sweep", None)
         if not ok:
             self.log.info("t3_resume_prefinalize_skipped", reason=err)
             return False
@@ -2597,71 +3467,169 @@ class AgentRunner:
         pdf_path = ctx.workspace_dir / "drafts" / "survey" / "figures" / "fig_taxonomy_overview.pdf"
         if not manifest_path.exists() or manifest_path.stat().st_size <= 0:
             return False
-        if not pdf_path.exists() or pdf_path.stat().st_size <= 0:
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return False
+        status = str(manifest.get("status") or "").strip().lower() if isinstance(manifest, dict) else ""
+        if status == "generated" and (not pdf_path.exists() or pdf_path.stat().st_size <= 0):
             return False
         ok, err = self.agent.validate_outputs(ctx)
         if not ok:
             self.log.info("t36_visuals_resume_prefinalize_skipped", reason=err)
             return False
         self.progress.emit(
-            "[Survey Writer Agent] T3.6-VISUALS 检测到已通过 taxonomy-only 契约的 PDF/manifest，跳过重复 LLM 与图生成",
+            "[Survey Writer Agent] T3.6-VISUALS 检测到已通过 taxonomy-only 契约的 visual manifest，跳过重复 LLM 与图生成",
             important=True,
         )
+        outputs = ["drafts/survey/figures/survey_visual_manifest.json"]
+        if status == "generated":
+            outputs.insert(0, "drafts/survey/figures/fig_taxonomy_overview.pdf")
         self._record_runtime_completion(
             ctx,
             "t36_visuals_resume_prefinalize",
-            {
-                "outputs": [
-                    "drafts/survey/figures/fig_taxonomy_overview.pdf",
-                    "drafts/survey/figures/survey_visual_manifest.json",
-                ],
-            },
+            {"outputs": outputs},
             action_type="t36_visuals_resume_prefinalize",
         )
         return True
 
-    async def _maybe_finalize_t36_compile_before_llm(self, ctx: ExecutionContext) -> bool:
-        """T3.6-COMPILE resume: reuse an already valid survey PDF/report.
+    async def _maybe_finalize_t36_compile_before_llm(
+        self,
+        ctx: ExecutionContext,
+        *,
+        tool_map: dict[str, Tool],
+    ) -> bool:
+        """Compile T3.6 deterministically or reuse an already valid PDF.
 
-        Compile validation is deterministic and already checks survey.tex,
-        survey.pdf, survey.log, survey_compile_report.json, current audit, and
-        unresolved LaTeX warnings. If those artifacts validate after manual
-        repair, resume should advance without asking an LLM to recompile the
-        same PDF.
+        T3.6-COMPILE has no remaining scientific-writing decision.  Letting a
+        general Survey Writer loop here creates a surprising failure mode: it
+        can spend many model calls inspecting the document, or try to repair
+        the derived ``survey.tex`` even though its source sections have already
+        been reviewed.  The compilation command, report, and validation are
+        deterministic, so they belong in the runtime rather than in a model
+        tool-choice loop.
+
+        A failed compiler invocation remains truthful: it writes the native
+        compile report and raises a recoverable pause for a human decision.
+        It never fabricates a PDF, edits source prose, or declares success.
         """
 
         if ctx.task_id != "T3.6-COMPILE":
-            return False
-        if not self._is_resume_run(ctx):
             return False
         expected_paths = [
             ctx.workspace_dir / "drafts" / "survey" / "survey.pdf",
             ctx.workspace_dir / "drafts" / "survey" / "survey.log",
             ctx.workspace_dir / "drafts" / "survey" / "survey_compile_report.json",
         ]
-        if any(not path.exists() or path.stat().st_size <= 0 for path in expected_paths):
+        if all(path.exists() and path.stat().st_size > 0 for path in expected_paths):
+            ok, err = self.agent.validate_outputs(ctx)
+            if ok:
+                self.progress.emit(
+                    "[Survey Writer Agent] T3.6-COMPILE 检测到已有 PDF、log 和 compile report 且校验通过，跳过重复编译",
+                    important=True,
+                )
+                self._record_runtime_completion(
+                    ctx,
+                    "t36_compile_resume_prefinalize",
+                    {
+                        "outputs": [
+                            "drafts/survey/survey.pdf",
+                            "drafts/survey/survey.log",
+                            "drafts/survey/survey_compile_report.json",
+                        ],
+                    },
+                    action_type="t36_compile_resume_prefinalize",
+                )
+                return True
+            self.log.info("t36_compile_existing_artifacts_not_reusable", reason=err)
+
+        compiler = tool_map.get("latex_compile")
+        if compiler is None:
+            # Small unit-test agents and third-party integrations may still
+            # provide their own compile loop.  Production SurveyWriter always
+            # exposes this tool through its compile-only tool policy.
             return False
-        ok, err = self.agent.validate_outputs(ctx)
-        if not ok:
-            self.log.info("t36_compile_resume_prefinalize_skipped", reason=err)
-            return False
+
+        tex_path = ctx.workspace_dir / "drafts" / "survey" / "survey.tex"
+        if not tex_path.exists() or tex_path.stat().st_size <= 0:
+            raise RecoverableRuntimePause(
+                "T3.6-COMPILE 无法开始：缺少 drafts/survey/survey.tex。"
+                "请回到拼装或 Review 检查 source sections，现有产物没有被删除。"
+            )
+
+        engine = self._t36_compile_engine(ctx.workspace_dir)
         self.progress.emit(
-            "[Survey Writer Agent] T3.6-COMPILE 检测到已有 PDF、log 和 compile report 且校验通过，跳过重复编译",
+            f"[Survey Compile] 正在以 {engine} 编译已审核的 survey.tex；不会调用模型或改写正文。",
             important=True,
         )
+        result = await compiler.execute(
+            tex_path="drafts/survey/survey.tex",
+            engine=engine,
+            bibtex=True,
+            backend="auto",
+            allow_docker_fallback=True,
+            auto_fit_wide_tables=False,
+        )
+        if not result.ok:
+            detail = " ".join(str(result.content or result.error or "unknown compile failure").split())[:1200]
+            raise RecoverableRuntimePause(
+                "T3.6-COMPILE 的确定性编译未完成。"
+                f"原因：{detail}。已保留 survey.tex、section、audit 和 compile report；"
+                "请在恢复 Gate 中选择重试编译、回到 Review 修复源文件，或暂停检查环境。"
+            )
+
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            raise RecoverableRuntimePause(
+                "T3.6-COMPILE 已执行，但 PDF/report 未通过完整性校验。"
+                f"原因：{str(err or 'unknown validation error')[:1200]}。"
+                "不会自动改写 survey.tex；请在恢复 Gate 中选择重试或回到 Review 修复来源文件。"
+            )
         self._record_runtime_completion(
             ctx,
-            "t36_compile_resume_prefinalize",
+            "t36_compile_deterministic",
             {
                 "outputs": [
                     "drafts/survey/survey.pdf",
                     "drafts/survey/survey.log",
                     "drafts/survey/survey_compile_report.json",
                 ],
+                "engine": engine,
             },
-            action_type="t36_compile_resume_prefinalize",
+            action_type="t36_compile_deterministic",
         )
         return True
+
+    @staticmethod
+    def _t36_compile_engine(workspace_dir: Path) -> str:
+        """Choose the compiler only from persisted T3.6 language state."""
+
+        candidates = (
+            workspace_dir / "drafts" / "survey" / "survey_state.json",
+            workspace_dir / "drafts" / "survey" / "writing_template.json",
+            workspace_dir / "drafts" / "survey" / "survey_plan.json",
+        )
+        language = ""
+        for path in candidates:
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            shared_facts = payload.get("shared_facts")
+            values = (
+                payload.get("writing_language"),
+                payload.get("language"),
+                shared_facts.get("writing_language") if isinstance(shared_facts, dict) else None,
+            )
+            for value in values:
+                if isinstance(value, str) and value.strip():
+                    language = value.strip().casefold()
+                    break
+            if language:
+                break
+        return "xelatex" if language in {"zh", "zh-cn", "chinese", "中文"} else "pdflatex"
 
     def _maybe_prepare_t4_context_pack_before_prompt(self, ctx: ExecutionContext) -> bool:
         """Prepare compact T4 inputs before rendering the ideation prompt."""
@@ -2676,7 +3644,8 @@ class AgentRunner:
             return False
         if not self._t4_gate1_user_selection_exists(ctx):
             gate1_ready, _gate1_err = validate_t4_gate1_ready(ctx.workspace_dir)
-            if gate1_ready:
+            cards_ready, _cards_err = validate_t4_portfolio_final_cards(ctx.workspace_dir)
+            if gate1_ready and cards_ready:
                 backfill = ensure_t4_evidence_pool(ctx.workspace_dir)
                 if backfill.get("changed"):
                     self.progress.emit(
@@ -2689,12 +3658,20 @@ class AgentRunner:
         try:
             pack = prepare_t4_context_pack(ctx.workspace_dir)
         except Exception as exc:
-            self.log.warning("t4_context_pack_prepare_failed", error=str(exc))
-            self.progress.emit(
-                "[Ideation Agent] T4 compact context pack 准备失败；将回退到原始材料读取",
-                important=True,
-            )
-            return False
+            # A compact-pack construction error is a code, path, or artifact
+            # contract defect.  It is not equivalent to an intentionally
+            # sparse evidence set, which ``prepare_t4_context_pack`` already
+            # represents as a valid bounded pack.  Falling back to arbitrary
+            # raw reads here hid that defect and made it look as though T4 had
+            # merely ignored its prepared Cross-domain material.  Propagate it
+            # to the startup boundary, which records a durable recovery gate
+            # with the original exception instead of letting a CLI traceback
+            # escape.
+            raise RuntimeError(
+                "T4 compact context-pack preparation failed; "
+                "the workspace/material contract needs repair before prompt rendering: "
+                f"{type(exc).__name__}: {str(exc) or repr(exc)}"
+            ) from exc
 
         summary = pack.get("note_card_summary") if isinstance(pack.get("note_card_summary"), dict) else {}
         outputs = pack.get("outputs") if isinstance(pack.get("outputs"), list) else []
@@ -2739,8 +3716,9 @@ class AgentRunner:
 
         This is intentionally an internal T4 facade, not a new external state
         machine node. A successful run writes the retained Gate1 artifacts and
-        returns the established ``t4_gate1_ready`` completion mode, preserving
-        the public ``T4 -> T4-GATE1 -> T4 -> T4.5`` transition.
+        returns ``t4_gate1_ready``. Gate1 then routes a selected ready
+        Candidate to T4.5, while evolution requests return to T4 for a new
+        preserved Population.
         """
 
         if not self._is_t4_ideation_agent(ctx) or self._t4_gate1_user_selection_exists(ctx):
@@ -2767,7 +3745,7 @@ class AgentRunner:
             )
 
         async def progress_callback(phase: EvolutionPhase, status: str, payload: dict[str, object]) -> None:
-            self._record_t4_evolution_activity(ctx, phase=phase, status=status)
+            self._record_t4_evolution_activity(ctx, phase=phase, status=status, payload=payload)
             self._render_t4_evolution_phase(phase=phase, status=status, payload=payload)
 
         invoker = LLMJsonRoleInvoker(
@@ -2785,6 +3763,7 @@ class AgentRunner:
             call=role_call,
         )
         generator = LLMIdeaGenerator(invoker)
+        enricher = LLMCandidateEnricher(invoker)
         scorer = LLMIdeaScorer(invoker)
         evolver = LLMIdeaEvolver(invoker)
         final_card_compiler = LLMFinalIdeaCardCompiler(invoker)
@@ -2794,6 +3773,7 @@ class AgentRunner:
             generator=generator,
             scorer=scorer,
             evolver=evolver,
+            enricher=enricher,
             progress_callback=progress_callback,
         )
         ctx.extra["t4_evolution_active"] = True
@@ -2801,7 +3781,85 @@ class AgentRunner:
             operation = ctx.extra.get("t4_operation_request")
             operation_action = str(operation.get("action") or "") if isinstance(operation, dict) else ""
             directive = operation.get("directive") if isinstance(operation, dict) and isinstance(operation.get("directive"), dict) else {}
-            if operation_action == "continue_evolution":
+            # A recoverable Card Compiler failure can happen after a human
+            # operation has already produced a new Population. The durable
+            # checkpoint is written before the first card call and binds that
+            # consumed operation to its output Population. Gate1's structural
+            # projection is intentionally written later, so checking only
+            # structural readiness here would repeat the operation when card
+            # compilation failed before projection.
+            repair_checkpoint, _repair_checkpoint_error = store.current_final_card_repair_checkpoint(
+                operation=operation if isinstance(operation, dict) else None,
+            )
+            structural_gate_ready, _structural_error = validate_t4_gate1_ready(ctx.workspace_dir)
+            cards_ready, _card_error = validate_t4_portfolio_final_cards(ctx.workspace_dir)
+            if not cards_ready:
+                readiness_diagnostic = classify_final_card_readiness_error(_card_error)
+                store.write_json(
+                    "ideation/evolution/diagnostics/final_card_readiness.json",
+                    {
+                        "schema_version": "1.0.0",
+                        "semantics": "t4_final_idea_card_readiness_diagnostic",
+                        "status": "repair_required" if readiness_diagnostic.repair_scheduled else "repair_prerequisite_required",
+                        "failure": readiness_diagnostic.as_dict(),
+                    },
+                )
+            card_only_recovery = repair_checkpoint is not None
+            if card_only_recovery:
+                try:
+                    result = controller.load_active_result_for_final_card_repair()
+                except Exception as exc:
+                    diagnostic = classify_final_card_exception(
+                        exc,
+                        stage="source_reload_for_final_card_repair",
+                    )
+                    store.write_json(
+                        "ideation/evolution/diagnostics/final_card_source_reload.json",
+                        {
+                            "schema_version": "1.0.0",
+                            "semantics": "t4_final_idea_card_compilation_diagnostic",
+                            "status": "repair_prerequisite_required",
+                            "failure": diagnostic.as_dict(),
+                        },
+                    )
+                    raise RecoverableRuntimePause(
+                        "T4 已保留 Candidate Population，但当前 Final Card 修复缺少一致的源数据。"
+                        f"原因类别：{diagnostic.kind.value}；下一步：{diagnostic.recovery_action}。"
+                    ) from exc
+                self.progress.emit(
+                    "T4 · 正在仅修复 Portfolio Idea Card 的 LLM 解释；当前 Candidate、评分、谱系和 Population 不会重新生成。",
+                    important=True,
+                )
+            elif not operation_action and structural_gate_ready and not cards_ready:
+                # Compatibility path for checkpoints created before the
+                # durable receipt was introduced. The receipt is persisted
+                # below before any new final-card call.
+                try:
+                    result = controller.load_active_result_for_final_card_repair()
+                except Exception as exc:
+                    diagnostic = classify_final_card_exception(
+                        exc,
+                        stage="source_reload_for_final_card_repair",
+                    )
+                    store.write_json(
+                        "ideation/evolution/diagnostics/final_card_source_reload.json",
+                        {
+                            "schema_version": "1.0.0",
+                            "semantics": "t4_final_idea_card_compilation_diagnostic",
+                            "status": "repair_prerequisite_required",
+                            "failure": diagnostic.as_dict(),
+                        },
+                    )
+                    raise RecoverableRuntimePause(
+                        "T4 已保留 Candidate Population，但当前 Final Card 修复缺少一致的源数据。"
+                        f"原因类别：{diagnostic.kind.value}；下一步：{diagnostic.recovery_action}。"
+                    ) from exc
+                card_only_recovery = True
+                self.progress.emit(
+                    "T4 · 检测到已保存的 Population，正在仅补齐缺失的 LLM Portfolio Card 解释。",
+                    important=True,
+                )
+            elif operation_action == "continue_evolution":
                 result = await controller.continue_from_active_population(run_config)
             elif operation_action == "focus_candidate":
                 targets = directive.get("target_candidate_ids") if isinstance(directive.get("target_candidate_ids"), list) else []
@@ -2828,8 +3886,13 @@ class AgentRunner:
                         details={"plan_artifact": f"ideation/evolution/plans/round_{T4ArtifactStore(ctx.workspace_dir).read_state().generation + 1}.json"},
                     )
                     ready, error = validate_t4_gate1_ready(ctx.workspace_dir)
-                    if not ready:
-                        raise RecoverableRuntimePause(error or "T4 Gate1 artifacts are unavailable after the Compatibility Check")
+                    cards_ready, cards_error = validate_t4_portfolio_final_cards(ctx.workspace_dir)
+                    if not ready or not cards_ready:
+                        raise RecoverableRuntimePause(
+                            error
+                            or cards_error
+                            or "T4 Gate1 artifacts are unavailable after the Compatibility Check"
+                        )
                     self._record_runtime_completion(
                         ctx,
                         "t4_gate1_ready",
@@ -2887,8 +3950,13 @@ class AgentRunner:
                         details={"route": route},
                     )
                     ready, error = validate_t4_gate1_ready(ctx.workspace_dir)
-                    if not ready:
-                        raise RecoverableRuntimePause(error or "T4 Gate1 artifacts are unavailable after route regeneration")
+                    cards_ready, cards_error = validate_t4_portfolio_final_cards(ctx.workspace_dir)
+                    if not ready or not cards_ready:
+                        raise RecoverableRuntimePause(
+                            error
+                            or cards_error
+                            or "T4 Gate1 artifacts are unavailable after route regeneration"
+                        )
                     self._record_runtime_completion(
                         ctx,
                         "t4_gate1_ready",
@@ -2900,8 +3968,8 @@ class AgentRunner:
                 result = await controller.reprofile_active_population(run_config)
             elif operation_action:
                 raise RecoverableRuntimePause(
-                    "This saved T4 request is not supported by the current workflow. The Candidate Population was not changed. "
-                    "Resume to return to the Idea decision panel and choose an available action."
+                    "保存的 T4 操作不受当前工作流支持，Candidate Population 未被修改。"
+                    "请 resume 回到研究方向决策面板，再选择可用操作。"
                 )
             else:
                 result = await controller.run(run_config)
@@ -2916,19 +3984,174 @@ class AgentRunner:
             portfolio_dossiers = [dossier_by_id[candidate_id] for candidate_id in portfolio_ids if candidate_id in dossier_by_id]
             if len(portfolio_dossiers) != len(portfolio_ids):
                 raise ValueError("T4 Portfolio references a Candidate outside the active Population")
-            final_cards = await final_card_compiler.compile(
-                candidates=portfolio_dossiers,
-                target_profile=run_config.target_profile,
+            # The controller has now persisted and activated the Population.
+            # Record that fact before requesting LLM-authored display prose so
+            # a later resume can prove the requested operation was already
+            # consumed.  This is deliberately independent of the Gate1
+            # projection, which is only compiled after cards are complete.
+            if repair_checkpoint is None:
+                store.write_final_card_repair_checkpoint(
+                    population=result.population,
+                    operation=operation if isinstance(operation, dict) else None,
+                    status="pending_llm_card_compilation",
+                    reason="population_persisted_before_final_card_compilation",
+                )
+                repair_checkpoint, _repair_checkpoint_error = store.current_final_card_repair_checkpoint(
+                    operation=operation if isinstance(operation, dict) else None,
+                )
+            # A prior process can have written complete cards but stopped
+            # before the deterministic Gate1 projection. Validate those cards
+            # and reuse them; no deterministic fallback prose is created.
+            cards_ready, _card_error = validate_t4_portfolio_final_cards(ctx.workspace_dir)
+            # A Gate1 decision must be based on a complete LLM-authored Idea
+            # Card, not a deterministic approximation assembled from title,
+            # scores, or whichever presentation field happened to survive.
+            # ``compile`` already performs one semantic repair for a
+            # parseable response; give the independent Card Compiler one
+            # fresh bounded retry before asking the researcher whether to
+            # continue.  We never manufacture missing card prose locally.
+            ctx.extra["t4_heartbeat_phase_key"] = "final_card_compilation"
+            self._mark_t4_heartbeat_phase(ctx, "final_card_compilation")
+            ctx.extra["t4_evolution_activity"] = "候选卡与决策说明整理（Portfolio Card Compilation）"
+            ctx.extra["t4_evolution_current_deliverable"] = "可比较的完整 Candidate Card 与评分说明"
+            ctx.extra["t4_evolution_following_phase"] = "Gate1 人工比较与选择"
+            self.progress.emit(
+                "T4 · 候选集已完成；正在整理完整 Candidate Card 与决策说明。"
+                "完成后进入 Gate1 人工比较与选择，不会重新生成 Candidate。",
+                important=True,
             )
-            store.write_json(
-                "ideation/final_cards/portfolio_cards.json",
-                {
-                    "schema_version": "1.0.0",
-                    "semantics": "t4_final_idea_card_translations",
-                    "population_id": result.population.population_id,
-                    "target_profile": model_dump(run_config.target_profile, mode="json"),
-                    "cards": [model_dump(card, mode="json") for card in final_cards],
-                },
+            final_cards = []
+            card_errors: list[dict[str, object]] = []
+            if not cards_ready:
+                try:
+                    max_card_attempts = int(self.retry_policy.get("t4_final_card_compiler_attempts", 3))
+                except (TypeError, ValueError):
+                    max_card_attempts = 3
+                max_card_attempts = max(1, min(max_card_attempts, 5))
+                for attempt in range(1, max_card_attempts + 1):
+                    try:
+                        final_cards = await final_card_compiler.compile(
+                            candidates=portfolio_dossiers,
+                            target_profile=run_config.target_profile,
+                        )
+                        break
+                    except BudgetExceeded:
+                        raise
+                    except ValueError as card_error:
+                        failure = (
+                            card_error.diagnostic
+                            if isinstance(card_error, FinalCardCompilationFailure)
+                            else classify_final_card_exception(
+                                card_error,
+                                stage="outer_card_compilation",
+                                candidate_ids=[candidate.candidate_id for candidate in portfolio_dossiers],
+                            )
+                        )
+                        diagnostic = {
+                            "schema_version": "1.0.0",
+                            "semantics": "t4_final_idea_card_compilation_diagnostic",
+                            "attempt": attempt,
+                            "max_attempts": max_card_attempts,
+                            "population_id": result.population.population_id,
+                            "candidate_ids": [candidate.candidate_id for candidate in portfolio_dossiers],
+                            "status": "repair_required" if failure.repair_scheduled else "repair_prerequisite_required",
+                            "failure": failure.as_dict(),
+                        }
+                        store.write_json(
+                            f"ideation/evolution/diagnostics/final_card_compilation_attempt_{attempt}.json",
+                            diagnostic,
+                        )
+                        card_errors.append(diagnostic)
+                        if not failure.repair_scheduled:
+                            break
+                if not final_cards:
+                    repair_scheduled = any(
+                        bool((item.get("failure") or {}).get("repair_scheduled"))
+                        for item in card_errors
+                        if isinstance(item, dict)
+                    )
+                    store.write_json(
+                        "ideation/final_cards/portfolio_cards.json",
+                        {
+                            "schema_version": "1.0.0",
+                            "semantics": "t4_final_idea_card_translations",
+                            "population_id": result.population.population_id,
+                            "target_profile": model_dump(run_config.target_profile, mode="json"),
+                            "cards": [],
+                            "status": "llm_repair_required",
+                            "attempts": card_errors,
+                            "repair": {
+                                "scheduled": repair_scheduled,
+                                "scope": "portfolio_final_card_compiler",
+                                "next_action": (
+                                    "resume_t4_to_retry_final_card_llm"
+                                    if repair_scheduled
+                                    else "resolve_recorded_provider_or_source_prerequisite_then_resume_t4"
+                                ),
+                                "attempts_exhausted": len(card_errors) >= max_card_attempts,
+                                "failure_kinds": [
+                                    str((item.get("failure") or {}).get("kind") or "")
+                                    for item in card_errors
+                                    if isinstance(item, dict)
+                                ],
+                            },
+                        },
+                    )
+                    store.update_final_card_repair_checkpoint(
+                        status="llm_repair_required",
+                        reason="bounded_llm_final_card_compilation_failed",
+                        attempts=card_errors,
+                    )
+                    raise RecoverableRuntimePause(
+                        "T4 的 Portfolio Idea Card 未能由 LLM 完整编译；候选、评分和谱系已保存，"
+                        "但不会用固定模板或残缺字段替代科研解释。"
+                        "已记录每次失败的具体类别和 LLM 修复路径；请 resume 继续定向卡片修复，"
+                        "或先处理诊断中标出的源数据或模型配置前置条件。"
+                    )
+                store.write_json(
+                    "ideation/final_cards/portfolio_cards.json",
+                    {
+                        "schema_version": "1.0.0",
+                        "semantics": "t4_final_idea_card_translations",
+                        "population_id": result.population.population_id,
+                        "target_profile": model_dump(run_config.target_profile, mode="json"),
+                        "cards": [model_dump(card, mode="json") for card in final_cards],
+                        "status": "completed",
+                    },
+                )
+                # A previous resume may have persisted a readiness failure
+                # before the current Population and cards existed.  Preserve
+                # that it happened, but make the durable diagnostic describe
+                # the current resolved state instead of leaving a misleading
+                # ``repair_required`` artifact beside a completed Card file.
+                store.write_json(
+                    "ideation/evolution/diagnostics/final_card_readiness.json",
+                    {
+                        "schema_version": "1.0.0",
+                        "semantics": "t4_final_idea_card_readiness_diagnostic",
+                        "status": "resolved",
+                        "population_id": result.population.population_id,
+                        "resolution": {
+                            "action": "llm_final_card_compilation_completed",
+                            "card_count": len(final_cards),
+                            "prior_compilation_failure_count": len(card_errors),
+                        },
+                    },
+                )
+                store.update_final_card_repair_checkpoint(
+                    status="cards_compiled_projection_pending",
+                    reason="llm_final_card_compilation_completed_projection_pending",
+                    attempts=card_errors,
+                    projection_completed=False,
+                )
+            ctx.extra["t4_heartbeat_phase_key"] = "gate1_projection"
+            self._mark_t4_heartbeat_phase(ctx, "gate1_projection")
+            ctx.extra["t4_evolution_activity"] = "决策页整理（Gate1 Projection）"
+            ctx.extra["t4_evolution_current_deliverable"] = "候选比较卡、选择建议与可恢复的决策页"
+            ctx.extra["t4_evolution_following_phase"] = "Gate1 人工比较与选择"
+            self.progress.emit(
+                "T4 · 正在生成 Gate1 决策页；完成后可查看、比较、推进或优化已保存的 Candidate。",
+                important=True,
             )
             projection = project_gate1_population(
                 ctx.workspace_dir,
@@ -2937,14 +4160,33 @@ class AgentRunner:
                 scores=result.active_scores,
                 route_results=result.route_results,
             )
+            store.update_final_card_repair_checkpoint(
+                status="completed",
+                reason="final_cards_and_gate1_projection_completed",
+                projection_completed=True,
+            )
+            degradations = projection.get("degradations") if isinstance(projection, dict) else []
+            if isinstance(degradations, list) and degradations:
+                self.progress.emit(
+                    "T4 · Cross-domain Bridge 复核暂未返回；已显式标为待审阅，"
+                    "不会阻断现有 Candidate Population 进入 Gate1。",
+                    important=True,
+                )
         except RecoverableRuntimePause:
             raise
         except LLMProviderError:
             raise
         except Exception as exc:
+            self.log.warning("t4_evolution_output_validation_paused", error=str(exc))
+            diagnostic = " ".join(str(exc).split())[:600] or type(exc).__name__
+            self.progress.emit(
+                f"T4 · Gate1 投影遇到需要人工或代码修复的完整性问题：{diagnostic}。"
+                "已保存的 Candidate、评分和演化结果不会被丢弃。",
+                important=True,
+            )
             raise RecoverableRuntimePause(
-                "T4 Evolution 结果没有通过结构与证据边界校验，当前 Population 已保留；"
-                f"resume 会从最后一个完整 artifact 继续。原因：{str(exc)[:500]}"
+                "T4 未能安全完成 Gate1 兼容投影；已完成的候选、评分和演化结果均已保存。"
+                f"具体原因：{diagnostic}。resume 会从上一个未完成的步骤继续，不会重复已通过的步骤。"
             ) from exc
         finally:
             ctx.extra["t4_evolution_active"] = False
@@ -2954,6 +4196,13 @@ class AgentRunner:
             raise RecoverableRuntimePause(
                 "T4 Evolution 已完成，但 Gate1 兼容投影尚未通过校验；"
                 f"已保留 P0/P1 和评分结果，resume 可继续。原因：{error}"
+            )
+        cards_ready, cards_error = validate_t4_portfolio_final_cards(ctx.workspace_dir)
+        if not cards_ready:
+            raise RecoverableRuntimePause(
+                "T4 Population 已完成，但 Portfolio Idea Card 仍缺少完整的 LLM 解释；"
+                "已保留所有 Candidate、评分和谱系，resume 会只重试 Card Compiler。"
+                f"原因：{cards_error}"
             )
         self.progress.emit(
             "T4 已完成一轮 Idea Evolution。P1、评分、谱系和完整 Archive 已保存；接下来请选择一个完整 Candidate，或保留多个并行推进。",
@@ -3330,29 +4579,104 @@ class AgentRunner:
         *,
         phase: EvolutionPhase,
         status: str,
+        payload: dict[str, object] | None = None,
     ) -> None:
+        # This callback is the controller-owned boundary for a logical T4
+        # phase.  Do not reset the heartbeat clock for route-level status
+        # updates or provider retries inside the same phase.
+        ctx.extra["t4_heartbeat_phase_key"] = f"evolution:{phase.value}"
+        self._mark_t4_heartbeat_phase(ctx, f"evolution:{phase.value}")
         labels = {
-            EvolutionPhase.EVIDENCE_ROUTING: "Evidence Routing",
-            EvolutionPhase.OPPORTUNITY_MAP: "Opportunity Map",
-            EvolutionPhase.FORMATION: "Multi-route Generation",
-            EvolutionPhase.GENOME_FAMILY: "Idea Genome & Family",
-            EvolutionPhase.SCORING: "Independent Scoring",
-            EvolutionPhase.EVOLUTION_PLANNING: "Evolution Planning",
-            EvolutionPhase.OFFSPRING: "Offspring & Rescoring",
-            EvolutionPhase.SURVIVAL: "Survival & Portfolio",
+            EvolutionPhase.EVIDENCE_ROUTING: "证据整理（Evidence Routing）",
+            EvolutionPhase.OPPORTUNITY_MAP: "研究机会探索（Opportunity Map）",
+            EvolutionPhase.FORMATION: "多视角 Idea 发散（Multi-route Generation）",
+            EvolutionPhase.GENOME_FAMILY: "候选谱系与差异整理（Idea Genome / Family）",
+            EvolutionPhase.SCORING: "独立评估：成熟度与科学上行空间",
+            EvolutionPhase.EVOLUTION_PLANNING: "演化意图规划（Evolution Planning）",
+            EvolutionPhase.OFFSPRING: "Child 探索与独立复评",
+            EvolutionPhase.SURVIVAL: "保留多样性与高潜力方向（Survival Selection）",
         }
+        if phase == EvolutionPhase.FORMATION and status in {"route_started", "route_completed", "route_reused"}:
+            details = payload or {}
+            try:
+                completed = max(0, int(details.get("completed_routes") or 0))
+            except (TypeError, ValueError):
+                completed = 0
+            try:
+                total = max(0, int(details.get("total_routes") or 0))
+            except (TypeError, ValueError):
+                total = 0
+            if status == "route_started":
+                completed = min(completed, total) if total else completed
+                action = "正在发散"
+            elif status == "route_reused":
+                action = "已复用"
+            else:
+                action = "已完成"
+            ctx.extra["t4_evolution_activity"] = f"P0 多视角 Idea 发散 · {completed}/{total} 条路径{action}"
+            ctx.extra["t4_evolution_current_deliverable"] = "初始候选池 P0（保留非重复的机制与问题表述）"
+            ctx.extra["t4_evolution_following_phase"] = "候选谱系与差异整理"
+            return
+        if phase == EvolutionPhase.OFFSPRING and status.startswith("child_"):
+            details = payload or {}
+            child_id = str(details.get("child_id") or "").strip()
+            parent_titles = details.get("parent_titles") if isinstance(details.get("parent_titles"), list) else []
+            parent = " / ".join(str(item).strip() for item in parent_titles if str(item).strip()) or "当前 Parent"
+            try:
+                completed = max(0, int(details.get("completed") or 0))
+                total = max(0, int(details.get("total") or 0))
+            except (TypeError, ValueError):
+                completed, total = 0, 0
+            progress = f" · {completed}/{total}" if total else ""
+            if status == "child_started":
+                activity = f"正在为 {parent} 生成 Child{progress}"
+            elif status == "child_scored":
+                activity = f"{child_id or 'Child'} 正在完成独立评分{progress}"
+            elif status == "child_survival":
+                activity = f"{child_id or 'Child'} 已完成 Survival Selection{progress}"
+            elif status == "child_deferred":
+                activity = f"{parent} 的本轮 Child 已延后{progress}"
+            elif status == "child_not_retained":
+                activity = f"{parent} 的 Child 未通过计划约束{progress}"
+            else:
+                activity = f"{child_id or 'Child'} 已生成并保存{progress}"
+            ctx.extra["t4_evolution_activity"] = activity
+            ctx.extra["t4_evolution_current_deliverable"] = "当前 Child 的变更、独立评分与存活结果"
+            ctx.extra["t4_evolution_following_phase"] = "更新 Candidate Population 与决策 Portfolio"
+            return
         label = labels.get(phase, phase.value.replace("_", " ").title())
-        ctx.extra["t4_evolution_activity"] = f"{label} · {status.replace('_', ' ')}"
-        ctx.extra["t4_evolution_next_artifact"] = {
-            EvolutionPhase.EVIDENCE_ROUTING: "Evidence Index",
-            EvolutionPhase.OPPORTUNITY_MAP: "Opportunity Map",
-            EvolutionPhase.FORMATION: "Population P0",
-            EvolutionPhase.GENOME_FAMILY: "Idea Family map",
-            EvolutionPhase.SCORING: "Independent scores",
-            EvolutionPhase.EVOLUTION_PLANNING: "Evolution plans",
-            EvolutionPhase.OFFSPRING: "Union score batch",
-            EvolutionPhase.SURVIVAL: "Population P1 and Portfolio",
-        }.get(phase, "T4 artifact")
+        status_label = {"started": "已开始", "completed": "已完成", "reused": "已复用", "rescoring": "重新评分中"}.get(status, status.replace("_", " "))
+        activity_details = {
+            EvolutionPhase.EVIDENCE_ROUTING: "整理可追溯证据、反例和可扩展线索",
+            EvolutionPhase.OPPORTUNITY_MAP: "提出机制缺口、竞争解释与待验证研究机会",
+            EvolutionPhase.FORMATION: "从不同认识视角形成彼此不重复的初始 Idea",
+            EvolutionPhase.GENOME_FAMILY: "识别候选间的机制差异、并行方向与谱系",
+            EvolutionPhase.SCORING: "区分当前成熟度与可能的科学上行空间",
+            EvolutionPhase.EVOLUTION_PLANNING: "选择值得澄清、反转或跨域重构的科研意图",
+            EvolutionPhase.OFFSPRING: "生成可证伪的 Child，并保留 Parent 作为对照",
+            EvolutionPhase.SURVIVAL: "保留成熟方向、并行机制和高潜力 Wildcard",
+        }
+        ctx.extra["t4_evolution_activity"] = f"{label} · {status_label} · {activity_details.get(phase, '')}".rstrip(" ·")
+        ctx.extra["t4_evolution_current_deliverable"] = {
+            EvolutionPhase.EVIDENCE_ROUTING: "证据索引与可用性边界",
+            EvolutionPhase.OPPORTUNITY_MAP: "研究机会清单（不是最终候选）",
+            EvolutionPhase.FORMATION: "初始候选池 P0",
+            EvolutionPhase.GENOME_FAMILY: "Idea Family 与差异图谱",
+            EvolutionPhase.SCORING: "双轴评估：当前成熟度 / 科学上行空间",
+            EvolutionPhase.EVOLUTION_PLANNING: "Evolution 计划与保留理由",
+            EvolutionPhase.OFFSPRING: "当前 Child 的变更、独立评分与存活结果",
+            EvolutionPhase.SURVIVAL: "候选集 P1 与可比较 Portfolio",
+        }.get(phase, "T4 阶段产物")
+        ctx.extra["t4_evolution_following_phase"] = {
+            EvolutionPhase.EVIDENCE_ROUTING: "研究机会探索",
+            EvolutionPhase.OPPORTUNITY_MAP: "多视角 Idea 发散",
+            EvolutionPhase.FORMATION: "候选谱系与差异整理",
+            EvolutionPhase.GENOME_FAMILY: "独立评估",
+            EvolutionPhase.SCORING: "演化意图规划",
+            EvolutionPhase.EVOLUTION_PLANNING: "Child 探索",
+            EvolutionPhase.OFFSPRING: "保留多样性与高潜力方向",
+            EvolutionPhase.SURVIVAL: "Gate1 人工比较与选择",
+        }.get(phase, "")
 
     def _render_t4_evolution_phase(
         self,
@@ -3503,12 +4827,22 @@ class AgentRunner:
             return False
         if self._t4_gate1_user_selection_exists(ctx):
             return False
+        # A Gate1 operation is an explicit new human decision.  Existing
+        # complete cards describe the *previous* Population and must never
+        # short-circuit a queued evolution, route regeneration, profile change,
+        # or card-only repair before the native controller can inspect it.
+        if isinstance(ctx.extra.get("t4_operation_request"), dict):
+            return False
         ok, err = validate_t4_gate1_ready(ctx.workspace_dir)
         # Candidate research content is model-authored. Do not silently turn a
         # provider failure into a template-derived Gate1 deck: users need the
         # model's actual mechanism, H1/H2/H3, and research judgement.
         if not ok:
-            self.log.info("t4_gate1_prefinalize_skipped", reason=err)
+            self.log.debug("t4_gate1_prefinalize_skipped", reason=err)
+            return False
+        cards_ok, cards_err = validate_t4_portfolio_final_cards(ctx.workspace_dir)
+        if not cards_ok:
+            self.log.debug("t4_gate1_prefinalize_skipped", reason=cards_err)
             return False
         gate1_paths = self._t4_gate1_artifact_paths(ctx)
         if not self._outputs_newer_than_inputs(
@@ -3534,6 +4868,7 @@ class AgentRunner:
                     "ideation/_gate1_candidate_cards.md",
                     "ideation/_gate1_selection_brief.md",
                     "ideation/bridge_coverage_review.json",
+                    "ideation/final_cards/portfolio_cards.json",
                 ],
             },
             action_type="t4_gate1_ready",
@@ -3553,11 +4888,23 @@ class AgentRunner:
             return stop_reason, error_msg
         if ctx.extra.get("completion_mode") in {"t4_resume_prefinalize", "t4_gate1_ready"}:
             return stop_reason, error_msg
+        if (
+            ctx.extra.get("t4_execution_mode") == "evolutionary"
+            and stop_reason != AgentResult.STOP_FINISHED
+        ):
+            # Native T4 already persists each completed phase.  A failed
+            # generation must resume from that state rather than falling into
+            # the legacy Gate1 projection and emitting a misleading event.
+            return stop_reason, error_msg
         ok, err = validate_t4_gate1_ready(ctx.workspace_dir)
         # Keep provider failures resumable rather than manufacturing a
         # deterministic candidate deck. See the matching preflight path above.
         if not ok:
-            self.log.info("t4_gate1_finalize_skipped", reason=err)
+            self.log.debug("t4_gate1_finalize_skipped", reason=err)
+            return stop_reason, error_msg
+        cards_ok, cards_err = validate_t4_portfolio_final_cards(ctx.workspace_dir)
+        if not cards_ok:
+            self.log.debug("t4_gate1_finalize_skipped", reason=cards_err)
             return stop_reason, error_msg
         gate1_paths = self._t4_gate1_artifact_paths(ctx)
         if not self._outputs_newer_than_inputs(
@@ -3583,6 +4930,7 @@ class AgentRunner:
                     "ideation/_gate1_candidate_cards.md",
                     "ideation/_gate1_selection_brief.md",
                     "ideation/bridge_coverage_review.json",
+                    "ideation/final_cards/portfolio_cards.json",
                 ],
             },
             action_type="t4_gate1_ready",
@@ -3609,7 +4957,8 @@ class AgentRunner:
         selection_path = ctx.workspace_dir / "ideation" / "_gate1_user_selection.json"
         if not selection_path.exists() or selection_path.stat().st_size <= 0:
             ok, _ = validate_t4_gate1_ready(ctx.workspace_dir)
-            if ok:
+            cards_ok, _ = validate_t4_portfolio_final_cards(ctx.workspace_dir)
+            if ok and cards_ok:
                 self.log.info("t4_resume_prefinalize_skipped", reason="gate1_selection_missing")
                 return False
             return True
@@ -3646,6 +4995,7 @@ class AgentRunner:
             ctx.workspace_dir / "ideation" / "_candidate_directions.json",
             ctx.workspace_dir / "ideation" / "_gate1_candidate_cards.md",
             ctx.workspace_dir / "ideation" / "_gate1_selection_brief.md",
+            ctx.workspace_dir / "ideation" / "final_cards" / "portfolio_cards.json",
         ]
         bridge_review = ctx.workspace_dir / "ideation" / "bridge_coverage_review.json"
         if bridge_review.exists():
@@ -3713,17 +5063,31 @@ class AgentRunner:
         collision_path = ctx.workspace_dir / "ideation" / "collision_cases.md"
         if collision_path.exists():
             paths.append(collision_path)
-        for rel in (
-            "ideation/hypotheses.md",
-            "ideation/exp_plan.yaml",
-            "ideation/contribution_hypothesis_map.yaml",
-            "ideation/validation_map.yaml",
-            "ideation/kill_criteria.yaml",
-            "ideation/post_novelty_formalization.json",
-        ):
-            path = ctx.workspace_dir / rel
-            if path.exists():
-                paths.append(path)
+        # Formalized T4.5 outputs are freshness-relevant only when they are
+        # explicitly bound to a passed novelty audit. Older workspaces can
+        # legitimately contain a pre-existing formal bundle that was migrated
+        # into a Pre-Novelty brief. Treating that source bundle as a T4.5
+        # output makes it older than the migration artifacts and incorrectly
+        # forces an LLM call on an otherwise valid audit resume.
+        formalization_path = ctx.workspace_dir / "ideation" / "post_novelty_formalization.json"
+        try:
+            formalization = json.loads(formalization_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            formalization = {}
+        if isinstance(formalization, dict) and formalization.get("semantics") == "t45_post_novelty_formalization" and formalization.get(
+            "status"
+        ) == "formalized_after_novelty_pass":
+            for rel in (
+                "ideation/hypotheses.md",
+                "ideation/exp_plan.yaml",
+                "ideation/contribution_hypothesis_map.yaml",
+                "ideation/validation_map.yaml",
+                "ideation/kill_criteria.yaml",
+                "ideation/post_novelty_formalization.json",
+            ):
+                path = ctx.workspace_dir / rel
+                if path.exists():
+                    paths.append(path)
         return paths
 
     def _t45_upstream_input_paths(self, ctx: ExecutionContext) -> list[Path]:
@@ -3856,13 +5220,13 @@ class AgentRunner:
             "external_executor/executor_status.json",
         )
         if not report.get("ok"):
-            raise RecoverableRuntimePause(str(report.get("message") or "WAITING_EXTERNAL: result pack not ready"))
+            raise RecoverableRuntimePause(str(report.get("message") or "WAITING_EXTERNAL: T8 handoff materials not ready"))
 
         output_path = ctx.workspace_dir / "external_executor" / "wait_acceptance_report.json"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         self.progress.emit(
-            "[Experimenter Agent] T5-EXTERNAL-WAIT 检测到外部 result_pack 已就绪，跳过 LLM 并进入 T7-INGEST",
+            "[Experimenter Agent] T5-EXTERNAL-WAIT 检测到外部 T8 handoff 材料已就绪，跳过 LLM 并进入 T8",
             important=True,
         )
         self._record_runtime_completion(
@@ -3966,6 +5330,76 @@ class AgentRunner:
             "paper_claim_audit_prefinalize",
             {"outputs": ["drafts/paper_claim_audit.md", "drafts/paper_claim_audit.json"]},
             action_type="paper_claim_audit_prefinalize",
+        )
+        return True
+
+    async def _maybe_finalize_t8_resource_before_llm(self, ctx: ExecutionContext) -> bool:
+        """Reuse a completed T8 resource index after resume."""
+
+        if ctx.task_id != "T8-RESOURCE":
+            return False
+        if ctx.mode not in {None, "resource_index"} and ctx.extra.get("phase") != "resource_index":
+            return False
+        if not self._is_resume_run(ctx):
+            return False
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.info("t8_resource_prefinalize_skipped", reason=err)
+            return False
+        self.progress.emit(
+            "[Writer Agent] T8-RESOURCE 检测到资源索引产物已合格，跳过重复 LLM 并进入下一阶段",
+            important=True,
+        )
+        self._record_runtime_completion(
+            ctx,
+            "t8_resource_prefinalize",
+            {
+                "outputs": [
+                    "drafts/manuscript_resource_index.json",
+                    "drafts/section_plan.json",
+                    "drafts/evidence_plan.json",
+                    "drafts/figure_table_plan.json",
+                    "drafts/cdr_claim_ledger.json",
+                    "drafts/claim_ledger.json",
+                    "drafts/figure_registry.json",
+                    "drafts/alignment_matrix.json",
+                ],
+            },
+            action_type="t8_resource_prefinalize",
+        )
+        return True
+
+    def _maybe_complete_t8_resource_after_spurious_human_prompt(self, ctx: ExecutionContext) -> bool:
+        """Finish T8-RESOURCE if the model asks a user question after completion."""
+
+        if ctx.task_id != "T8-RESOURCE":
+            return False
+        if ctx.mode not in {None, "resource_index"} and ctx.extra.get("phase") != "resource_index":
+            return False
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.info("t8_resource_spurious_human_prompt_not_finished", reason=err)
+            return False
+        self.progress.emit(
+            "[Writer Agent] T8-RESOURCE 资源索引已通过校验；忽略模型的继续确认请求并交给状态机推进",
+            important=True,
+        )
+        self._record_runtime_completion(
+            ctx,
+            "t8_resource_prefinalize",
+            {
+                "outputs": [
+                    "drafts/manuscript_resource_index.json",
+                    "drafts/section_plan.json",
+                    "drafts/evidence_plan.json",
+                    "drafts/figure_table_plan.json",
+                    "drafts/cdr_claim_ledger.json",
+                    "drafts/claim_ledger.json",
+                    "drafts/figure_registry.json",
+                    "drafts/alignment_matrix.json",
+                ],
+            },
+            action_type="t8_resource_spurious_human_prompt_finalized",
         )
         return True
 
@@ -4126,25 +5560,39 @@ class AgentRunner:
         mode_params = get_agent_mode_params("reader", "synthesize")
         if not bool(mode_params.get("prebuild_workbench_before_llm", False)):
             return False
-        notes_dir = ctx.workspace_dir / "literature" / "deep_read_notes"
-        bridge_notes_dir = ctx.workspace_dir / "literature" / "bridge_notes"
-        note_files = [path for path in notes_dir.glob("*.md") if is_paper_note_file(path)] if notes_dir.exists() else []
-        if bridge_notes_dir.exists():
-            note_files.extend(path for path in bridge_notes_dir.glob("**/*.md") if is_paper_note_file(path))
+        build_literature_manifest(ctx.workspace_dir, write=True)
+        note_files = [
+            ctx.workspace_dir / card.rel_path
+            for card in iter_literature_note_cards(ctx.workspace_dir, include_shallow=False)
+        ]
         if not note_files:
             return False
+        # A Cross-domain catalog is an independent synthesis input, not a
+        # paper note.  Reusing a workbench based only on note mtimes used to
+        # hide a newly retrieved B1/B2 track from T3.5 and all downstream
+        # ideation.  Include the plan, index and per-track context/catalog
+        # files in the freshness boundary while still allowing a zero-record
+        # track to remain valid contextual input.
+        bridge_inputs = [
+            ctx.workspace_dir / "literature" / "bridge_domain_plan.json",
+            ctx.workspace_dir / "literature" / "cross_domain_catalogs" / "index.json",
+        ]
+        for catalog_path in iter_bridge_catalog_paths(ctx.workspace_dir):
+            bridge_inputs.append(catalog_path)
+            bridge_inputs.append(catalog_path.parent / "bridge_context.json")
+        synthesis_inputs = [path for path in [*note_files, *bridge_inputs] if path.is_file()]
         staged_outputs = [
             ctx.workspace_dir / "literature" / "synthesis_workbench.json",
             ctx.workspace_dir / "literature" / "synthesis_outline.md",
             ctx.workspace_dir / "literature" / "synthesis_draft.md",
         ]
         if all(path.exists() and path.stat().st_size > 0 for path in staged_outputs):
-            newest_note_mtime = max((path.stat().st_mtime for path in note_files), default=0)
+            newest_input_mtime = max((path.stat().st_mtime for path in synthesis_inputs), default=0)
             oldest_staged_mtime = min(path.stat().st_mtime for path in staged_outputs)
-            if oldest_staged_mtime >= newest_note_mtime:
+            if oldest_staged_mtime >= newest_input_mtime:
                 self.progress.emit(
                     "[Synthesizer Agent] T3.5 使用已有结构化综合材料\n"
-                    f"- 输入: 检测到 {len(note_files)} 份 paper notes，现有 workbench 未过期\n"
+                    f"- 输入: 检测到 {len(note_files)} 份 paper notes 与 {len(bridge_inputs)} 个 Cross-domain 上下文入口，现有 workbench 未过期\n"
                     "- 输出: literature/synthesis_workbench.json；literature/synthesis_outline.md；literature/synthesis_draft.md\n"
                     "- 后续: LLM 将复核这些材料并写最终 synthesis.md",
                     important=True,
@@ -4189,13 +5637,15 @@ class AgentRunner:
             if path
         ]
         summary_bits = [
-            f"深读笔记 {data.get('note_count', 0)}",
+            f"核心深读 {data.get('deep_read_note_count', data.get('note_count', 0))}",
+            f"全文/部分全文去重 {data.get('note_count', 0)}",
             f"摘要轻读 {data.get('abstract_note_count', 0)}",
+            f"Bridge 论文笔记 {data.get('bridge_note_count', 0)}",
             f"方法家族 {data.get('family_count', 0)}",
         ]
         citation_target = data.get("citation_coverage_target")
         if citation_target not in (None, ""):
-            summary_bits.append(f"建议覆盖引用 {citation_target}")
+            summary_bits.append(f"主张级全文/部分全文最低唯一引用 {citation_target}")
         self.progress.emit(
             "[Synthesizer Agent] T3.5 结构化综合摘要\n"
             f"- 输入: {'；'.join(summary_bits)}\n"
@@ -4998,6 +6448,16 @@ class AgentRunner:
 
     @staticmethod
     def _tool_failure_cache_key(tool_name: str, arguments: dict[str, object]) -> tuple[str, str] | None:
+        if tool_name == "write_file":
+            normalized_path = str(arguments.get("path") or "").strip().lstrip("./")
+            schema_name = STRUCTURED_ONLY_WRITE_PATHS.get(normalized_path)
+            if schema_name:
+                # Cache by the canonical structured artifact, rather than the
+                # literal filename.  A model must not evade the required
+                # ``exp_plan.yaml`` contract by retrying the same payload as
+                # ``exp_plan.yml`` after the tool has already supplied the
+                # exact write_structured_file replacement call.
+                return (tool_name, f"structured_output:{schema_name}")
         if tool_name not in TOOL_FAILURE_CACHE_NAMES:
             return None
         if tool_name == "fetch_paper_pdf":
@@ -5013,7 +6473,7 @@ class AgentRunner:
         """Return the runtime timeout cap for a tool.
 
         Long-running experiment and LaTeX tools need their dedicated timeout
-        budget; otherwise the global small-tool cap kills valid T7/T9 work.
+        budget; otherwise the global small-tool cap kills valid external-execution or submission work.
         """
 
         if tool_name == "docker_exec":
@@ -5447,7 +6907,7 @@ class AgentRunner:
             "[Runtime T2 检索检查点] 已完成的检索必须保留，不要重新初始化、expand_queries 或重跑已完成的来源/query。"
             f"当前 papers_raw={raw_count} 条；已完成 {len(unique_queries)} 条不同 query、"
             f"{len(entries)} 次来源检索；来源={', '.join(sources) or '未记录'}；"
-            f"覆盖桶={', '.join(buckets) or '未记录'}。{page_note}"
+            f"检索主题类型={', '.join(buckets) or '未记录'}。{page_note}"
             "请基于刚读到的 title/abstract/source_query 继续 semantic_screen；需要更多记录时只读取下一页。"
             "完成必要筛选后调用 finish_task，让 runtime 做去重、核验和队列收尾。"
             "此检查点是运行事实，不是论文相关性或最终筛选结论。",
@@ -5803,6 +7263,142 @@ class AgentRunner:
     def _count_group_tokens(self, group: list[Message], binding: ModelBinding) -> int:
         return self.llm.count_tokens([message.to_openai_dict() for message in group], binding)
 
+    @staticmethod
+    def _mark_runtime_recovery(
+        ctx: ExecutionContext,
+        *,
+        kind: str,
+        error: str | None,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        """Attach a machine-readable, non-success recovery reason to this run.
+
+        The runner cannot persist a state-machine Gate itself because it is
+        intentionally reusable outside the full pipeline.  It can, however,
+        preserve an explicit signal on ``AgentResult`` so the StateMachine can
+        turn the interruption into a durable human decision.  This prevents a
+        validation/budget/provider pause from being confused with Ctrl-C.
+        """
+
+        ctx.extra["_runtime_recovery_signal"] = {
+            "schema_version": "1.0.0",
+            "kind": str(kind),
+            "task_id": ctx.task_id,
+            "run_id": ctx.run_id,
+            "error_summary": " ".join(str(error or "").split())[:1200],
+            "details": dict(details or {}),
+        }
+
+    @staticmethod
+    def _mark_explicit_runtime_pause(ctx: ExecutionContext, *, kind: str, decision: str) -> None:
+        """Remember that the researcher already chose to pause this run.
+
+        The StateMachine must not immediately replace an explicit "pause" in
+        an inline runtime prompt with a second generic recovery Gate.  This is
+        distinct from unavailable stdin, where no human decision was obtained
+        and a durable Gate is still required on resume.
+        """
+
+        ctx.extra["_runtime_explicit_pause"] = {
+            "kind": str(kind),
+            "decision": str(decision),
+            "task_id": ctx.task_id,
+            "run_id": ctx.run_id,
+        }
+
+    @staticmethod
+    def _apply_runtime_recovery_window(eff: EffectiveConfig, ctx: ExecutionContext) -> EffectiveConfig:
+        """Apply one explicitly approved bounded recovery window.
+
+        This only changes operational limits.  It never changes evidence
+        policy, schemas, tool permissions, or the Agent's scientific claims.
+        A new process normally gives a task a fresh budget anyway; the bounded
+        increment makes the user-selected "one more window" meaningful for
+        nodes that configure finite runtime limits.
+        """
+
+        recovery = ctx.extra.get("runtime_recovery")
+        if not isinstance(recovery, dict):
+            return eff
+        if recovery.get("target_task") != ctx.task_id:
+            return eff
+        if recovery.get("action") != "extend_recovery_window":
+            return eff
+
+        requested = recovery.get("resource_window")
+        window = requested if isinstance(requested, dict) else {}
+        try:
+            ratio = float(window.get("increase_ratio", 0.25) or 0.25)
+        except (TypeError, ValueError):
+            ratio = 0.25
+        ratio = max(0.05, min(ratio, 0.50))
+        if eff.unlimited_budget:
+            ctx.extra["runtime_recovery_window_applied"] = {
+                "mode": "fresh_unlimited_run",
+                "increase_ratio": ratio,
+            }
+            return eff
+
+        def expanded(value: int, minimum: int) -> int:
+            return int(value) + max(minimum, int(int(value) * ratio))
+
+        expanded_eff = replace(
+            eff,
+            max_steps=expanded(eff.max_steps, 4),
+            max_tokens=expanded(eff.max_tokens, 10_000),
+            max_wall_seconds=expanded(eff.max_wall_seconds, 120),
+        )
+        ctx.extra["runtime_recovery_window_applied"] = {
+            "mode": "bounded_extension",
+            "increase_ratio": ratio,
+            "before": {
+                "max_steps": eff.max_steps,
+                "max_tokens": eff.max_tokens,
+                "max_wall_seconds": eff.max_wall_seconds,
+            },
+            "after": {
+                "max_steps": expanded_eff.max_steps,
+                "max_tokens": expanded_eff.max_tokens,
+                "max_wall_seconds": expanded_eff.max_wall_seconds,
+            },
+        }
+        return expanded_eff
+
+    @staticmethod
+    def _runtime_recovery_prompt(ctx: ExecutionContext) -> str:
+        """Return an operational recovery instruction for every Agent family.
+
+        It deliberately does not synthesize any research content.  The Agent
+        still owns the explanation, hypothesis, prose, and repair judgement;
+        this message only tells it why an already-approved retry exists and
+        how to avoid discarding valid work.
+        """
+
+        recovery = ctx.extra.get("runtime_recovery")
+        if not isinstance(recovery, dict) or recovery.get("target_task") != ctx.task_id:
+            return ""
+        action = str(recovery.get("action") or "retry_targeted_repair")
+        error = " ".join(str(recovery.get("error_summary") or "").split())[:1200]
+        existing = recovery.get("existing_outputs")
+        existing_outputs = [str(item) for item in existing[:12]] if isinstance(existing, list) else []
+        receipt_path = str(recovery.get("path") or "").strip()
+        lines = [
+            "[本轮恢复决策] 研究者已明确批准一次可恢复的续跑。",
+            "先读取现有产物与诊断，在保留可用内容的前提下只处理实际受影响的问题；不要把一次修复变成整轮重写。",
+            "不得为了通过校验伪造引用、证据、数据、实验结果或科研解释。",
+        ]
+        if action == "extend_recovery_window":
+            lines.append("本轮额外资源/修复窗口已被批准；它只用于有针对性的诊断、修复和复核。")
+        else:
+            lines.append("本轮是定向修复窗口；优先复核上次失败原因对应的来源文件和结构化产物。")
+        if receipt_path:
+            lines.append(f"- 恢复决策记录：`{receipt_path}`")
+        if error:
+            lines.append(f"- 上次可恢复问题：{error}")
+        if existing_outputs:
+            lines.append("- 已有输出：`" + "`, `".join(existing_outputs) + "`")
+        return "\n".join(lines)
+
     def _build_result(
         self,
         *,
@@ -5827,6 +7423,12 @@ class AgentRunner:
             metadata["completion_mode"] = ctx.extra.get("completion_mode")
         if isinstance(ctx.extra.get("runtime_actions"), list):
             metadata["runtime_actions"] = ctx.extra.get("runtime_actions")
+        explicit_pause = ctx.extra.get("_runtime_explicit_pause")
+        if isinstance(explicit_pause, dict):
+            metadata["runtime_explicit_pause"] = dict(explicit_pause)
+        runtime_recovery = ctx.extra.get("_runtime_recovery_signal")
+        if isinstance(runtime_recovery, dict):
+            metadata["runtime_recovery"] = dict(runtime_recovery)
         message = {
             AgentResult.STOP_FINISHED: "Agent 成功完成",
             AgentResult.STOP_MAX_STEPS: "达到最大步数",
@@ -5847,6 +7449,8 @@ class AgentRunner:
             message = "Agent 成功完成（T3.6 taxonomy visual 已验证，跳过重复生成）"
         elif ok and metadata.get("completion_mode") == "t36_compile_resume_prefinalize":
             message = "Agent 成功完成（T3.6 survey PDF 已验证，跳过重复编译）"
+        elif ok and metadata.get("completion_mode") == "t36_compile_deterministic":
+            message = "Agent 成功完成（T3.6 已确定性编译并验证 survey PDF）"
         elif ok and metadata.get("completion_mode") == "t4_resume_prefinalize":
             message = "Agent 成功完成（T4 resume 确定性收尾）"
         elif ok and metadata.get("completion_mode") == "t4_gate1_ready":
@@ -5855,6 +7459,12 @@ class AgentRunner:
             message = "Agent 成功完成（已生成 Pre-Novelty brief，进入 T4.5）"
         elif ok and metadata.get("completion_mode") == "t45_resume_prefinalize":
             message = "Agent 成功完成（T4.5 resume 确定性收尾）"
+        elif ok and metadata.get("completion_mode") == "t5_reboost_resume_prefinalize":
+            message = "Agent 成功完成（T5 reboost 已有 handoff 复用）"
+        elif ok and metadata.get("completion_mode") == "t5_reboost_timeout_recovery":
+            message = "Agent 成功完成（T5 reboost 超时后确定性收尾）"
+        elif ok and metadata.get("completion_mode") == "t8_resource_prefinalize":
+            message = "Agent 成功完成（T8 resource index 已验证，交给状态机推进）"
         elif ok and metadata.get("completion_mode") == "t8_section_plan_prefinalize":
             message = "Agent 成功完成（T8 section-plan 确定性修复/收尾）"
         elif ok and metadata.get("completion_mode") == "t9_submission_prefinalize":
@@ -5971,7 +7581,13 @@ class AgentRunner:
             raise RecoverableRuntimePause(str(exc)) from exc
         finally:
             budget.exclude_wall_time(time.time() - human_started)
-        if (result or {}).get("option_id") != "extend":
+        option_id = str((result or {}).get("option_id") or "stop")
+        if option_id != "extend":
+            self._mark_explicit_runtime_pause(
+                ctx,
+                kind="budget",
+                decision=option_id,
+            )
             return False, used_extensions
 
         # 只扩当前触顶维度，避免一次确认后无节制地放大全部预算。
@@ -6017,6 +7633,25 @@ class AgentRunner:
             "只修复该错误涉及的最小 artifact，保留其它已合格字段；修复后再次调用 finish_task。"
         )
         if ctx.task_id != "T4":
+            if ctx.task_id == "T3.6-ASSEMBLE":
+                return (
+                    base
+                    + "读取 `drafts/survey/survey_audit.md` 和 `drafts/survey/survey_audit.json`。"
+                    "若失败为 `citation_diversity`，读取 `repair_guidance.citation_diversity.over_repeated` 中的 key、次数和 section 分布；"
+                    "逐节核查这些引用对应的论断。先合并或删除重复表达，再仅在另一篇已核验文献确实支持该句的历史、比较、边界或方法主张时替换 citation。"
+                    "不得用 citation padding、无关文献、abstract-only 线索或新编造的事实来分散引用。"
+                    "只编辑受影响的 `drafts/survey/sections/*.tex`，然后调用 assemble_survey 与 audit_survey_coverage；"
+                    "不要直接编辑派生的 `survey.tex`。若现有语料没有安全替代来源，写 `drafts/survey/survey_assemble_repair_plan.md`，"
+                    "说明需要补检的具体主题和为什么当前材料不足，再 finish_task 以进入人工恢复决策。"
+                )
+            if ctx.task_id.startswith("T3.6-SEC-"):
+                return (
+                    base
+                    + "这是一轮综述 prose 重写，而不是关键词替换：读取当前 section、该节 outline 和 citation pool；"
+                    "保留已核验 citation 及其原有语义，不添加新事实或引用。将标签式冒号、破折号串联、\\paragraph、"
+                    "以及 First/Second 的罗列骨架改写为自然衔接的完整段落。每段应推进一个论点，并用因果、对比或边界"
+                    "连接相邻段落；不要为了命中 validator 的词面标签而写 'Definition:'、'Gap:' 一类句式。"
+                )
             return base
 
         idea_match = re.search(r"idea\s+([A-Za-z][A-Za-z0-9_-]*)", error)
@@ -6063,10 +7698,11 @@ class AgentRunner:
         if "_candidate_directions.json" in error:
             return (
                 base
-                + "读取 `ideation/_candidate_directions.json` 并修复报错候选的模型归纳字段。"
-                "每个 Gate1 candidate 必须保留 2-4 条不同的可证伪假设、`basis_sources` 的 claim/implication、"
-                "CDR 设计理由和互不重复的七维评分理由；使用 `write_file` 写回完整 JSON 对象。"
-                "不要让 runtime 展示层补写研究内容。"
+                + "读取 `ideation/_candidate_directions.json`，只修复真正的结构、身份、谱系、来源边界或正式评分传输错误。"
+                "保留当前 Candidate、已写出的假设和已有证据；不要为了通过 Gate1 凭空补写论文级机制、引用、实验配置或评分理由。"
+                "缺少标题说明、innovation delta、basis_sources 解释、Profile Fit、legacy 七维兼容评分、评分 rationale，"
+                "或只有一条 provisional hypothesis 时，应记录为可见的 enrichment / focused-evolution 工作，而不是把整轮阻断。"
+                "若需要完善科研解释，明确请求一次针对该 Candidate 的 LLM enrichment；runtime 展示层不得用固定模板代写科研内容。"
             )
         return (
             base
@@ -6149,7 +7785,13 @@ class AgentRunner:
         finally:
             budget.exclude_wall_time(time.time() - human_started)
 
-        if (result or {}).get("option_id") != "extend":
+        option_id = str((result or {}).get("option_id") or "stop")
+        if option_id != "extend":
+            self._mark_explicit_runtime_pause(
+                ctx,
+                kind="validation",
+                decision=option_id,
+            )
             return False, retry_limit, used_extensions
 
         new_limit = retry_limit + delta

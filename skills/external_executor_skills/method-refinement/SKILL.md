@@ -108,6 +108,7 @@ The specification must define, at minimum:
 - dataset, preprocessing, metric, baseline, and fairness interfaces inherited from the protocol;
 - config keys, defaults, ablation switches, and diagnostic controls;
 - logging, provenance, checkpoint, and raw-output requirements;
+- deployment targets under `external_executor/expr/` and raw run outputs under `external_executor/raw_results/`;
 - non-contribution engineering choices and training tricks;
 - expected failure modes and fallback behavior;
 - implementation targets and tests;

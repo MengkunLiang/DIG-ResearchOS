@@ -69,23 +69,9 @@ interaction:
 
 # Venue Fit Review
 
-Read `manuscript.md` to obtain exactly one existing workspace-relative `.tex` path,
-then read that manuscript and the supplied venue requirements. Treat the requirements
-file as the source of truth for venue-specific rules; it may be incomplete, so record
-unknowns rather than asserting current official limits or policies. Inspect relevant
-bibliography/evidence materials only when they are listed in the optional context or
-needed to substantiate a specific finding.
+Read `manuscript.md` to obtain exactly one existing workspace-relative `.tex` path, then read that manuscript and the supplied venue requirements. Treat the requirements file as the source of truth for venue-specific rules; it may be incomplete, so record unknowns rather than asserting current official limits or policies. Inspect relevant bibliography/evidence materials only when they are listed in the optional context or needed to substantiate a specific finding.
 
-Run `audit_manuscript_claims` and `audit_writing_craft` against the chosen manuscript
-where their input contracts permit, preserving their raw finding paths and status in
-the review. Evaluate scope fit separately from writing quality. For CCF-A ML
-conferences, prioritize a precise technical contribution, formal or algorithmic
-clarity where appropriate, reproducible experimental evidence, bounded claims, and a
-compact story; for journal/UTD-like work, evaluate theory/motivation, identification
-or rationale, mechanism, boundary conditions, and a coherent research narrative.
+Run `audit_manuscript_claims` and `audit_writing_craft` against the chosen manuscript where their input contracts permit, preserving their raw finding paths and status in the review. Evaluate scope fit separately from writing quality. For CCF-A ML conferences, prioritize a precise technical contribution, formal or algorithmic clarity where appropriate, reproducible experimental evidence, bounded claims, and a compact story; for journal/UTD-like work, evaluate theory/motivation, identification or rationale, mechanism, boundary conditions, and a coherent research narrative.
 These are review lenses, not invented venue rules.
 
-Do not edit the manuscript, bibliography, or venue guide. Write both outputs with
-blocking issues, evidence-supported strengths, uncertainty, and a revision order that
-states required inputs for each action. Finish by naming the two outputs and every
-unverified venue condition.
+Do not edit the manuscript, bibliography, or venue guide. Write both outputs with blocking issues, evidence-supported strengths, uncertainty, and a revision order that states required inputs for each action. Finish by naming the two outputs and every unverified venue condition.

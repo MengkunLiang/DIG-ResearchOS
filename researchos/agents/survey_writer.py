@@ -15,14 +15,13 @@ import yaml
 
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
+from ..runtime.bridge_catalog import load_bridge_catalog_summaries
 from ..runtime.prompts import render_prompt
 from ..tools.latex_compile import _compile_dependency_fingerprint
 from ..literature_identity import is_paper_note_file, is_placeholder_text
 from ..tools.citation_alignment import citation_support_text_by_key
 from ..tools.manuscript import _extract_latex_cites, _extract_bib_keys, has_formal_citation
 from ..tools.survey_tools import (
-    _SURVEY_MIN_PLAIN_CHARS,
-    SURVEY_SECTION_MIN_CITATIONS,
     SURVEY_SECTION_SEQUENCE,
     SURVEY_SECTION_TITLES,
     _language_profile,
@@ -31,7 +30,10 @@ from ..tools.survey_tools import (
     _survey_section_id_for_heading,
     _survey_state_writing_language,
     _survey_internal_alignment_hits,
-    _survey_section_quality_issues,
+    _validate_input_fingerprint_map,
+    migrate_survey_audit_artifact,
+    migrate_survey_visual_manifest,
+    survey_audit_release_ready,
 )
 from ._common import ensure_seed_outline_profile, load_jsonl, load_project, prepend_resume_prefix, read_text_file
 
@@ -66,7 +68,10 @@ class SurveyWriterAgent(Agent):
                     "max_steps": 120,
                     "max_tokens_total": 500_000,
                     "max_wall_seconds": 1800,
-                    "max_validation_retries": 3,
+                    # Section prose often needs a distinct structural rewrite
+                    # after citation/syntax repair.  Keep the window bounded,
+                    # then hand control to the runtime recovery gate.
+                    "max_validation_retries": 5,
                     "temperature": 0.55,
                     "allowed_read_prefixes": [
                         "",
@@ -87,9 +92,32 @@ class SurveyWriterAgent(Agent):
             # content.  A survey taxonomy map is the only permitted graphic;
             # generic file writes or LaTeX calls could otherwise fabricate
             # cross-paper performance comparisons.
-            self.spec.tool_names = ["read_file", "build_survey_figures", "finish_task"]
-            self.spec.allowed_read_prefixes = ["literature/", "drafts/survey/"]
-            self.spec.allowed_write_prefixes = ["drafts/survey/figures/"]
+            # ``build_survey_figures`` deterministically loads the plan,
+            # state, manifest and resolved paper links itself.  Giving the
+            # model ``read_file`` here led it to guess legacy note directories
+            # and pass directories to a file-only tool before invoking the
+            # actual builder.
+            self.spec.tool_names = ["build_survey_figures", "finish_task"]
+            self.spec.allowed_read_prefixes = ["drafts/survey/", "literature/"]
+            self.spec.allowed_write_prefixes = ["drafts/survey/figures/", "literature/"]
+        elif mode == "survey_expand":
+            # Corpus expansion is one deterministic action after the human
+            # already chose its scope.  Do not expose ask_human here: the old
+            # broad tool set let the model print an opaque "next path" and
+            # open a second, unspecified multiline dialogue after retrieval.
+            self.spec.tool_names = ["expand_corpus_for_survey", "finish_task"]
+            self.spec.allowed_read_prefixes = ["drafts/survey/", "literature/"]
+            self.spec.allowed_write_prefixes = ["drafts/survey/", "literature/"]
+        elif mode == "survey_compile":
+            # Compilation is a deterministic publication check, not a prose
+            # generation phase.  Giving this mode broad read/write tools let
+            # a model repeatedly inspect or even rewrite the derived
+            # ``survey.tex`` instead of invoking the compiler.  The runtime
+            # now executes the compiler directly; this minimal surface remains
+            # a safe fallback and makes the boundary explicit.
+            self.spec.tool_names = ["latex_compile", "finish_task"]
+            self.spec.allowed_read_prefixes = ["drafts/survey/"]
+            self.spec.allowed_write_prefixes = ["drafts/survey/"]
         elif mode == "survey_section":
             # The runtime additionally intersects write permissions with the
             # declared T3.6-SEC output.  Restricting the tool surface here
@@ -117,13 +145,18 @@ class SurveyWriterAgent(Agent):
         project = load_project(ctx)
         phase = self._phase(ctx)
         section_id = self._section_id(ctx)
-        visual_only = phase == "survey_visuals"
+        # Visual rendering and PDF compilation consume already-authored,
+        # audited artifacts.  They do not need the large literature/context
+        # payload reserved for LLM writing phases.  Keeping the prompt narrow
+        # also prevents a compile retry from spending context on unrelated
+        # synthesis material.
+        artifact_only = phase in {"survey_visuals", "survey_compile"}
         section_outline = (
             read_text_file(ws / "drafts" / "survey" / "section_outlines" / f"{section_id}.md", default="")
             if section_id
             else ""
         )
-        if visual_only:
+        if artifact_only:
             seed_outline_profile = ""
             seed_ideas = ""
             seed_constraints = ""
@@ -140,8 +173,13 @@ class SurveyWriterAgent(Agent):
             seed_papers = load_jsonl(ws / "user_seeds" / "seed_papers.jsonl")
             external_resources = load_jsonl(ws / "user_seeds" / "seed_external_resources.jsonl")
         related_work_bib_path = ws / "literature" / "related_work.bib"
-        related_work_keys = [] if visual_only else _extract_bib_keys(related_work_bib_path)
-        citation_pool_preview = [] if visual_only else _citation_pool_preview(ws, related_work_keys)
+        related_work_keys = [] if artifact_only else _extract_bib_keys(related_work_bib_path)
+        citation_pool_preview = [] if artifact_only else _citation_pool_preview(ws, related_work_keys)
+        bridge_catalogs = [] if artifact_only else load_bridge_catalog_summaries(
+            ws,
+            records_per_bridge=2,
+            abstract_excerpt_chars=420,
+        )
         return render_prompt(
             self.spec.prompt_template,
             ctx,
@@ -149,36 +187,34 @@ class SurveyWriterAgent(Agent):
             phase=phase,
             section_id=section_id,
             section_title=SURVEY_SECTION_TITLES.get(section_id, section_id.replace("_", " ").title()),
-            synthesis_preview="" if visual_only else read_text_file(ws / "literature" / "synthesis.md", default="")[:6000],
-            synthesis_workbench_preview="" if visual_only else read_text_file(ws / "literature" / "synthesis_workbench.json", default="")[:6000],
-            domain_map_preview="" if visual_only else read_text_file(ws / "literature" / "domain_map.json", default="")[:5000],
-            comparison_table_preview="" if visual_only else read_text_file(ws / "literature" / "comparison_table.csv", default="")[:4000],
-            survey_plan_preview=read_text_file(ws / "drafts" / "survey" / "survey_plan.json", default="")[:7000],
-            writing_template_preview="" if visual_only else read_text_file(ws / "drafts" / "survey" / "writing_template.json", default="")[:2000],
-            survey_state_preview="" if visual_only else read_text_file(ws / "drafts" / "survey" / "survey_state.json", default="")[:7000],
-            corpus_decision_preview="" if visual_only else read_text_file(ws / "drafts" / "survey" / "corpus_decision.json", default="")[:2000],
-            survey_audit_preview="" if visual_only else read_text_file(ws / "drafts" / "survey" / "survey_audit.md", default="")[:3000],
-            survey_visual_manifest_preview=read_text_file(
-                ws / "drafts" / "survey" / "figures" / "survey_visual_manifest.json", default=""
-            )[:4000]
-            if not visual_only
-            else "",
-            section_outline_preview="" if visual_only else section_outline[:5000],
-            related_work_preview="" if visual_only else read_text_file(related_work_bib_path, default="")[:3000],
-            related_work_keys=[] if visual_only else related_work_keys,
-            related_work_key_count=0 if visual_only else len(related_work_keys),
-            citation_pool_preview=[] if visual_only else citation_pool_preview,
-            seed_outline_profile_preview="" if visual_only else seed_outline_profile[:7000],
-            has_seed_outline_profile=False if visual_only else bool(seed_outline_profile.strip()),
-            seed_ideas_preview="" if visual_only else seed_ideas[:3000],
-            has_seed_ideas=False if visual_only else bool(seed_ideas.strip()),
-            seed_constraints_preview="" if visual_only else seed_constraints[:2000],
-            has_seed_constraints=False if visual_only else bool(seed_constraints.strip()),
-            seed_papers_preview=[] if visual_only else seed_papers[:10],
-            seed_paper_count=0 if visual_only else len(seed_papers),
-            external_resources_preview=[] if visual_only else external_resources[:12],
-            external_resource_count=0 if visual_only else len(external_resources),
-            has_external_resources=False if visual_only else bool(external_resources),
+            synthesis_preview="" if artifact_only else read_text_file(ws / "literature" / "synthesis.md", default="")[:6000],
+            synthesis_workbench_preview="" if artifact_only else read_text_file(ws / "literature" / "synthesis_workbench.json", default="")[:6000],
+            domain_map_preview="" if artifact_only else read_text_file(ws / "literature" / "domain_map.json", default="")[:5000],
+            comparison_table_preview="" if artifact_only else read_text_file(ws / "literature" / "comparison_table.csv", default="")[:4000],
+            bridge_catalog_preview=bridge_catalogs,
+            bridge_catalog_count=0 if artifact_only else len(bridge_catalogs),
+            survey_plan_preview=read_text_file(ws / "drafts" / "survey" / "survey_plan.json", default="")[:7000] if not artifact_only else "",
+            writing_template_preview="" if artifact_only else read_text_file(ws / "drafts" / "survey" / "writing_template.json", default="")[:2000],
+            survey_state_preview="" if artifact_only else read_text_file(ws / "drafts" / "survey" / "survey_state.json", default="")[:7000],
+            corpus_decision_preview="" if artifact_only else read_text_file(ws / "drafts" / "survey" / "corpus_decision.json", default="")[:2000],
+            survey_audit_preview="" if artifact_only else read_text_file(ws / "drafts" / "survey" / "survey_audit.md", default="")[:3000],
+            survey_visual_manifest_preview=_survey_visual_manifest_prompt_preview(ws)[:4000] if not artifact_only else "",
+            section_outline_preview="" if artifact_only else section_outline[:5000],
+            related_work_preview="" if artifact_only else read_text_file(related_work_bib_path, default="")[:3000],
+            related_work_keys=[] if artifact_only else related_work_keys,
+            related_work_key_count=0 if artifact_only else len(related_work_keys),
+            citation_pool_preview=[] if artifact_only else citation_pool_preview,
+            seed_outline_profile_preview="" if artifact_only else seed_outline_profile[:7000],
+            has_seed_outline_profile=False if artifact_only else bool(seed_outline_profile.strip()),
+            seed_ideas_preview="" if artifact_only else seed_ideas[:3000],
+            has_seed_ideas=False if artifact_only else bool(seed_ideas.strip()),
+            seed_constraints_preview="" if artifact_only else seed_constraints[:2000],
+            has_seed_constraints=False if artifact_only else bool(seed_constraints.strip()),
+            seed_papers_preview=[] if artifact_only else seed_papers[:10],
+            seed_paper_count=0 if artifact_only else len(seed_papers),
+            external_resources_preview=[] if artifact_only else external_resources[:12],
+            external_resource_count=0 if artifact_only else len(external_resources),
+            has_external_resources=False if artifact_only else bool(external_resources),
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
@@ -199,6 +235,9 @@ class SurveyWriterAgent(Agent):
             message = (
                 "请执行 T3.6-PLAN：基于 literature/synthesis.md、synthesis_workbench.json、"
                 "domain_map.json、comparison_table.csv、deep_read_notes 和 shallow_read_notes 规划 taxonomy-driven survey。"
+                "目录不能传给 read_file：先用 list_files/grep_search 枚举三类 note root 的具体 .md；先读 literature/cross_domain_catalogs/index.json，"
+                "再按 index 路径查看每个已确认 Cross-domain bridge 的 bridge_context.json 与 paper_catalog.json：它们可用于历史发展、前沿、"
+                "相邻概念、taxonomy 边界和未来阅读线索，但未读材料不得被写成机制或结果证据。"
                 "摘要阅读笔记可扩展 taxonomy、趋势、比较和范围；核心机制或方法论断仍须回查全文/部分全文笔记。"
                 "还必须读取 drafts/survey/decision.json 的 survey_retrieval_preference；若其为 "
                 "targeted_supplement_before_writing，在 plan 中明确薄弱 taxonomy 类与需要的补检类型，"
@@ -218,8 +257,10 @@ class SurveyWriterAgent(Agent):
             )
         elif phase == "survey_expand":
             message = (
-                "请执行 T3.6-EXPAND：调用 expand_corpus_for_survey 生成一次性定向补检计划。"
-                "这不是回到 T2，也不是 idea 阶段循环。"
+                "请执行 T3.6-EXPAND：只调用 expand_corpus_for_survey 一次，然后读取 survey_expansion.json 确认检索记录、"
+                "canonical shallow 阅读笔记和 note 路径均已写入。不要调用 ask_human，也不要要求用户在本阶段输入内容；"
+                "完成后直接 finish_task，系统将自动进入 T3.6-STATE。补充笔记位于 literature/shallow_read_notes，"
+                "与 T3 使用同一 Contract；它们仍是 ABSTRACT_ONLY，核心机制/结果/因果结论须升级为 deep_read_notes 或 bridge_notes。"
             )
         elif phase == "survey_state":
             message = (
@@ -230,6 +271,8 @@ class SurveyWriterAgent(Agent):
             message = (
                 "请执行 T3.6-VISUALS：调用 build_survey_figures。该确定性工具最多生成一张 "
                 "fig_taxonomy_overview.pdf，只使用 survey_plan.json 中显式 taxonomy 类与直接关联的 paper IDs。"
+                "本阶段不要调用 read_file，也不要自行枚举或猜测 literature 目录；工具会通过统一 literature_manifest 和 link audit "
+                "解析已验证的具体论文文件。"
                 "严禁生成性能/基线/相对提升图、跨研究指标比较、T2 筛选分数图、风险或安全热图，以及装饰图。"
                 "taxonomy 信息不足时，manifest 必须记录 skipped。写完 manifest 后 finish_task；不要在本阶段改写正文或调用 LaTeX。"
             )
@@ -238,7 +281,10 @@ class SurveyWriterAgent(Agent):
             message = (
                 f"请执行 T3.6-SEC：只写 `{section_id}` 这一节到 "
                 f"drafts/survey/sections/{section_id}.tex。"
-                "不能写其它 section，不能生成整篇 wrapper。写完后调用 update_survey_section_state。"
+                "不能写其它 section，不能生成整篇 wrapper。所有工具路径都相对 workspace 根目录；"
+                "文献只能用 literature/...，不要写成 drafts/survey/literature/...。"
+                "读取其它 section 前先 list_files 或查看 survey_state 确认文件存在；不要 read_file 尚未生成的 later section。"
+                "写完后调用 update_survey_section_state。"
             )
         elif phase == "survey_assemble":
             message = (
@@ -248,7 +294,20 @@ class SurveyWriterAgent(Agent):
                 "section/bib/plan/state 输入。未修改相关输入前严禁再次 assemble 或 audit。若失败原因无法从 "
                 "当前可读证据安全修复，写 drafts/survey/survey_assemble_repair_plan.md，说明失败检查、受影响文件、"
                 "所需证据和下一步，然后 finish_task；不要反复重写无关 section 或循环调用 assemble。"
+                "citation_diversity 是可见的质量告警，不是放行阻断：若时间和语料允许，可阅读 survey_audit.json 的"
+                "repair_guidance.citation_diversity，合并真正重复的论断，或仅用已核验且语义支持该句的来源替换引用。"
+                "不得用无关论文、abstract-only 线索或 citation padding 降低重复率；没有安全替代来源时保留告警并继续。"
             )
+            recovery = ctx.extra.get("t36_assemble_recovery")
+            if isinstance(recovery, dict) and recovery.get("action") == "retry_survey_repair":
+                directive_path = str(recovery.get("path") or "drafts/survey/survey_assemble_recovery_directive.json")
+                message += (
+                    "这是人工明确批准的新一轮定向修复窗口。先读取 `"
+                    + directive_path
+                    + "` 以及其中引用的 survey_audit.json；它保存了本次必须优先处理的 audit guidance。"
+                    "这不是要求重写整篇综述，也不是要求添加 citation padding。只修复实际受影响的来源 section、bibliography、plan 或 state，"
+                    "然后重新 assemble + audit。"
+                )
         elif phase == "survey_review":
             message = (
                 "请执行 T3.6-REVIEW：逐 section 审阅 survey.tex 的 taxonomy 合理性、覆盖、公允比较、"
@@ -257,6 +316,18 @@ class SurveyWriterAgent(Agent):
                 "survey.tex 是派生产物：禁止用 write_file 直接写它；若标题或模板信息需要修正，"
                 "通过 assemble_survey(title=...) 重新拼装，并在 review actions 中记录该来源和动作。"
             )
+            compile_recovery = ctx.extra.get("t36_compile_recovery")
+            if isinstance(compile_recovery, dict) and compile_recovery.get("action") == "return_to_review":
+                report_path = str(
+                    compile_recovery.get("compile_report_path")
+                    or "drafts/survey/survey_compile_report.json"
+                )
+                message += (
+                    "这是研究者明确选择的编译来源修复。先读取 `"
+                    + report_path
+                    + "` 和相关 log；只修复它实际指向的 section、references、模板输入或 review action。"
+                    "不得直接编辑派生的 survey.tex，也不得为消除错误重写无关章节。修复后依次 assemble、audit 和 latex_compile。"
+                )
         elif phase == "survey_compile":
             message = (
                 "请执行 T3.6-COMPILE：根据 survey_state 写作语言调用 latex_compile 编译 survey PDF；"
@@ -320,8 +391,23 @@ class SurveyWriterAgent(Agent):
             data, err = _load_json(ws / "drafts" / "survey" / "survey_expansion.json")
             if err:
                 return False, err
-            if data.get("semantics") != "one_shot_survey_corpus_expansion_plan_not_ideation_loop":
+            if data.get("semantics") != "one_shot_survey_corpus_expansion_retrieval_not_ideation_loop":
                 return False, "survey_expansion.json semantics 不正确"
+            if int(data.get("retrieval_actions") or 0) < 1:
+                return False, "survey_expansion.json 未记录实际检索动作"
+            artifacts = data.get("supplement_artifacts") if isinstance(data.get("supplement_artifacts"), dict) else {}
+            required = ("search_plan", "search_log", "papers", "section_evidence_map")
+            missing = [str(artifacts.get(key) or key) for key in required if not (ws / str(artifacts.get(key) or "")).is_file()]
+            if missing:
+                return False, "survey_expansion.json 缺少补充检索产物: " + ", ".join(missing)
+            reading_notes = data.get("reading_notes") if isinstance(data.get("reading_notes"), dict) else {}
+            if str(reading_notes.get("root") or "") != "literature/shallow_read_notes":
+                return False, "survey_expansion.json 未声明统一 shallow 阅读笔记根目录"
+            note_paths = reading_notes.get("paper_note_paths") if isinstance(reading_notes.get("paper_note_paths"), list) else []
+            for raw_path in note_paths:
+                rel_path = str(raw_path or "").replace("\\", "/").lstrip("/")
+                if not rel_path.startswith("literature/shallow_read_notes/") or not (ws / rel_path).is_file():
+                    return False, "survey_expansion.json 包含不存在或非 canonical 的补充阅读笔记: " + str(raw_path)
             return True, None
         if phase == "survey_state":
             return _validate_survey_state(ws)
@@ -329,11 +415,52 @@ class SurveyWriterAgent(Agent):
             manifest, err = _load_json(ws / "drafts" / "survey" / "figures" / "survey_visual_manifest.json")
             if err:
                 return False, err
+            # A completed pre-contract visual may be resumed safely only when
+            # the migration can re-audit its direct paper links against the
+            # current canonical Literature Artifact Contract.  The helper is
+            # deliberately conservative: otherwise this remains the normal
+            # stale/blocked path below rather than treating a legacy manifest
+            # as generated merely because a PDF happens to exist.
+            migrated_manifest, _visual_migrations = migrate_survey_visual_manifest(ws)
+            if isinstance(migrated_manifest, dict):
+                manifest = migrated_manifest
             if manifest.get("semantics") != "deterministic_survey_data_visual_manifest":
                 return False, "survey_visual_manifest.json semantics 不正确"
             status = manifest.get("status")
             if status not in {"generated", "skipped"}:
                 return False, "survey_visual_manifest.json status 必须为 generated/skipped"
+            missing_fingerprints = _missing_survey_visual_fingerprints(manifest)
+            if missing_fingerprints:
+                # Give an old Workspace a useful failure rather than the
+                # generic "missing new field" message when the reason that
+                # prevents compatibility migration is a changed source
+                # directory or plan.  This remains a block: a changed legacy
+                # input cannot be given a new fingerprint retroactively.
+                legacy_reason = ""
+                fingerprints = manifest.get("input_fingerprints")
+                if (
+                    missing_fingerprints == ["literature_manifest"]
+                    and isinstance(fingerprints, dict)
+                ):
+                    legacy_ok, legacy_error = _validate_input_fingerprint_map(
+                        ws,
+                        fingerprints,
+                        "survey_visual_manifest.json",
+                    )
+                    if not legacy_ok and legacy_error:
+                        legacy_reason = (
+                            "；旧图表不能安全迁移，因为其已记录输入已变化："
+                            + str(legacy_error)
+                            + "。不会复用该图，请重新运行 T3.6-VISUALS。"
+                        )
+                return False, (
+                    "survey_visual_manifest.json 已过期，缺少输入指纹: "
+                    + ", ".join(missing_fingerprints)
+                    + legacy_reason
+                )
+            ok, err = _validate_input_fingerprint_map(ws, manifest.get("input_fingerprints"), "survey_visual_manifest.json")
+            if not ok:
+                return False, "survey_visual_manifest.json 已过期，需重新生成: " + (err or "")
             policy = manifest.get("generation_policy") if isinstance(manifest.get("generation_policy"), dict) else {}
             forbidden_policy = {
                 "only_one_figure": True,
@@ -348,6 +475,9 @@ class SurveyWriterAgent(Agent):
             if missing_policy:
                 return False, "survey visual manifest 缺少强制事实图政策: " + ", ".join(missing_policy)
             source = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}
+            literature_manifest = source.get("literature_manifest") if isinstance(source.get("literature_manifest"), dict) else {}
+            if int(literature_manifest.get("note_cards") or 0) <= 0:
+                return False, "survey visual manifest 未证明实际可读文献输入；literature_manifest.note_cards 必须大于 0"
             link_audit = source.get("paper_link_audit") if isinstance(source.get("paper_link_audit"), dict) else {}
             unresolved = link_audit.get("unresolved_direct_paper_ids") if isinstance(link_audit.get("unresolved_direct_paper_ids"), list) else []
             if unresolved:
@@ -359,6 +489,17 @@ class SurveyWriterAgent(Agent):
                 return True, None
             if len(figures) != 1:
                 return False, "survey visual manifest 只能包含一张 taxonomy overview 图"
+            if int(link_audit.get("direct_link_records") or 0) <= 0 or int(link_audit.get("resolved_direct_paper_ids") or 0) <= 0:
+                return False, "survey visual manifest 生成图前必须至少有一篇直接关联且已解析到本地笔记卡的论文"
+            consumed = source.get("consumed_note_cards") if isinstance(source.get("consumed_note_cards"), list) else []
+            if not consumed:
+                return False, "survey visual manifest 生成图前必须记录实际消费的 paper IDs 和 note paths"
+            for consumed_item in consumed:
+                if not isinstance(consumed_item, dict):
+                    return False, "survey visual manifest consumed_note_cards 条目必须是对象"
+                rel_path = str(consumed_item.get("path") or "").replace("\\", "/").lstrip("/")
+                if not rel_path or not (ws / rel_path).is_file():
+                    return False, "survey visual manifest consumed_note_cards 包含不存在的 note path: " + rel_path
             item = figures[0] if isinstance(figures[0], dict) else {}
             expected_path = "drafts/survey/figures/fig_taxonomy_overview.pdf"
             if item.get("id") != "taxonomy_overview" or item.get("path") != expected_path:
@@ -385,9 +526,14 @@ class SurveyWriterAgent(Agent):
             ok, err = _validate_fingerprint_map(ws, assembly_manifest.get("input_fingerprints"), "survey_assembly_manifest.json")
             if not ok:
                 return False, err
-            audit, err = _load_json(ws / "drafts" / "survey" / "survey_audit.json")
+            audit_path = ws / "drafts" / "survey" / "survey_audit.json"
+            audit, err = _load_json(audit_path)
             if err:
                 return False, err
+            try:
+                audit, _migrations = migrate_survey_audit_artifact(audit_path)
+            except ValueError as exc:
+                return False, str(exc)
             if audit.get("semantics") != "deterministic_survey_coverage_audit_not_scientific_judgment":
                 return False, "survey_audit.json semantics 不正确"
             ok, err = _validate_fingerprint_map(ws, audit.get("input_fingerprints"), "survey_audit.json")
@@ -416,13 +562,9 @@ class SurveyWriterAgent(Agent):
             missing_checks = sorted(required_checks - present_checks)
             if missing_checks:
                 return False, "survey_audit.json 缺少新增质量检查，请重新运行 audit_survey_coverage: " + ", ".join(missing_checks)
-            fail_checks = [
-                item.get("name")
-                for item in audit.get("checks") or []
-                if isinstance(item, dict) and item.get("level") == "FAIL" and item.get("passed") is False
-            ]
-            if fail_checks:
-                return False, "survey_audit.json 存在 FAIL: " + ", ".join(str(x) for x in fail_checks[:6])
+            audit_ready, hard_failures, _warnings = survey_audit_release_ready(audit)
+            if not audit_ready:
+                return False, "survey_audit.json 存在硬失败: " + ", ".join(hard_failures[:6])
             return True, None
         if phase == "survey_review":
             review_path = ws / "drafts" / "survey" / "survey_review.md"
@@ -547,6 +689,33 @@ def _load_json(path: Path) -> tuple[dict, str | None]:
     if not isinstance(data, dict):
         return {}, f"{path} 顶层必须是对象"
     return data, None
+
+
+def _survey_visual_manifest_prompt_preview(ws: Path) -> str:
+    path = ws / "drafts" / "survey" / "figures" / "survey_visual_manifest.json"
+    if not path.exists() or path.stat().st_size <= 0:
+        return ""
+    text = read_text_file(path, default="")
+    manifest, err = _load_json(path)
+    if err:
+        return text
+    missing = _missing_survey_visual_fingerprints(manifest)
+    ok, fingerprint_error = _validate_input_fingerprint_map(
+        ws,
+        manifest.get("input_fingerprints"),
+        "survey_visual_manifest.json",
+    )
+    if missing or not ok:
+        stale = {
+            "semantics": "deterministic_survey_data_visual_manifest",
+            "status": "stale",
+            "path": "drafts/survey/figures/survey_visual_manifest.json",
+            "reason": "input fingerprints no longer match current survey/literature inputs; rerun T3.6-VISUALS before citing a figure",
+            "missing_fingerprints": missing,
+            "fingerprint_error": fingerprint_error,
+        }
+        return json.dumps(stale, ensure_ascii=False, indent=2)
+    return text
 
 
 def _validate_survey_template_selection(data: dict) -> str | None:
@@ -1063,31 +1232,15 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
                 return False, f"survey section {section_id} 引用了 related_work.bib 不存在的 key: {missing_cites[:8]}{suffix}"
     elif cited and not bib_keys:
         return False, f"survey section {section_id} 含引用但 literature/related_work.bib 缺失或无 BibTeX key"
-    citation_err = _validate_section_citation_density(section_id, cited)
-    if citation_err:
-        return False, citation_err
     foreign = _foreign_survey_headers(text, section_id, state)
     if foreign:
         return False, f"survey section {section_id} 夹带其它章节: {', '.join(foreign[:5])}"
-    if section_id != "abstract":
-        craft_hits = _survey_section_craft_issues(text)
-        if craft_hits:
-            return False, f"survey section {section_id} 写作结构问题: {', '.join(craft_hits[:4])}"
     if isinstance(entry, dict) and entry.get("status") not in {"written", "revised"}:
         return False, f"survey_state 中 {section_id} 未标记 written/revised"
     ok, err = _validate_section_fingerprints(ws, state, section_id, entry)
     if not ok:
         return False, err
     return True, None
-
-
-def _validate_section_citation_density(section_id: str, cited: set[str]) -> str | None:
-    if section_id in {"abstract", "conclusion"} or section_id.startswith("theme_"):
-        return None
-    minimum = SURVEY_SECTION_MIN_CITATIONS.get(section_id, 0)
-    if minimum and len(cited) < minimum:
-        return f"survey section {section_id} 引用过少: unique citations={len(cited)} < {minimum}"
-    return None
 
 
 def _survey_runtime_process_hits(text: str) -> list[str]:
@@ -1097,18 +1250,10 @@ def _survey_runtime_process_hits(text: str) -> list[str]:
 
 def _validate_section_language_and_depth(section_id: str, text: str, language: str) -> str | None:
     profile = _language_profile(text)
-    min_chars = _SURVEY_MIN_PLAIN_CHARS.get(section_id, {"en": 600, "zh": 800})
-    metric = profile["cjk_chars"] if language == "zh" else len(_plain_latex_text(text))
-    required = min_chars.get(language, 600)
-    if metric < required:
-        return f"survey section {section_id} 篇幅不足: {metric} < {required} ({language})"
     if language == "zh" and profile["latin_words"] > max(80, profile["cjk_chars"] * 0.35):
         return f"survey section {section_id} 语言不一致：中文稿中英文内容过多"
     if language == "en" and profile["cjk_chars"] > max(40, profile["latin_words"] * 1.5):
         return f"survey section {section_id} 语言不一致：英文稿中中文内容过多"
-    quality_issues = _survey_section_quality_issues(section_id, text)
-    if quality_issues:
-        return f"survey section {section_id} 综述论证结构不足: {', '.join(quality_issues[:3])}"
     return None
 
 
@@ -1266,44 +1411,6 @@ def _placeholder_hits(text: str) -> list[str]:
     return sorted(set(re.findall(r"\b(?:TODO|TBD|LLM_REVIEW_REQUIRED|PLACEHOLDER)\b", text or "", flags=re.IGNORECASE)))
 
 
-def _survey_section_craft_issues(text: str) -> list[str]:
-    issues: list[str] = []
-    lowered = text.lower()
-    if lowered.count("this section reviews") + lowered.count("this section discusses") >= 2:
-        issues.append("重复空泛 section 开场")
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    etal_sentences = sum(1 for sentence in sentences if re.search(r"\bet al\.", sentence))
-    comparison_signals = len(
-        re.findall(
-            r"\b(whereas|however|contrast|tension|boundary|mechanism|taxonomy|challenge|future direction)\b|"
-            r"相比|然而|机制|边界|分类|张力|挑战|方向",
-            text,
-            flags=re.IGNORECASE,
-        )
-    )
-    if etal_sentences >= 5 and comparison_signals < 2:
-        issues.append("疑似逐篇论文流水账")
-    if len(re.findall(r"\\subsubsection\*?\{", text)) > 0:
-        issues.append("综述 section 不应使用过细 subsubsection")
-    if _mechanical_punctuation_style_issue(text):
-        issues.append("冒号/破折号模板句过多，需改成凝练连贯的综述 prose")
-    return issues
-
-
-def _mechanical_punctuation_style_issue(text: str) -> bool:
-    prose = re.sub(r"\\(?:section|subsection|subsubsection)\*?\{[^{}]*\}", " ", text or "")
-    label_hits = len(
-        re.findall(
-            r"\b(?:Background|Problem|Gap|Insight|Mechanism|Challenge|Implication|Future direction|Contribution)\s*[:：]"
-            r"|(?:背景|问题|缺口|机制|挑战|启示|未来方向|贡献)\s*[:：]",
-            prose,
-            flags=re.IGNORECASE,
-        )
-    )
-    dash_hits = len(re.findall(r"\s(?:--|---|–|—)\s", prose))
-    return label_hits >= 5 or dash_hits >= 8
-
-
 def _validate_fingerprint_map(ws: Path, fingerprints: object, label: str) -> tuple[bool, str | None]:
     if not isinstance(fingerprints, dict):
         return False, f"{label} 缺少 input_fingerprints，必须重新生成"
@@ -1357,13 +1464,19 @@ def _sha256_dir(root: Path) -> str:
 
 
 def _validate_current_survey_audit(ws: Path) -> tuple[bool, str | None]:
-    audit, err = _load_json(ws / "drafts" / "survey" / "survey_audit.json")
+    audit_path = ws / "drafts" / "survey" / "survey_audit.json"
+    audit, err = _load_json(audit_path)
     if err:
         return False, "T3.6-COMPILE 前必须有当前 survey_audit.json: " + err
+    try:
+        audit, _migrations = migrate_survey_audit_artifact(audit_path)
+    except ValueError as exc:
+        return False, str(exc)
     if audit.get("semantics") != "deterministic_survey_coverage_audit_not_scientific_judgment":
         return False, "survey_audit.json semantics 不正确"
-    if audit.get("passed") is not True:
-        return False, "survey_audit.json 未通过，不能编译放行"
+    audit_ready, hard_failures, _warnings = survey_audit_release_ready(audit)
+    if not audit_ready:
+        return False, "survey_audit.json 存在硬失败，不能编译放行: " + ", ".join(hard_failures[:6])
     ok, err = _validate_fingerprint_map(ws, audit.get("input_fingerprints"), "survey_audit.json")
     if not ok:
         return False, "survey_audit.json 已过期，需重新 audit_survey_coverage: " + (err or "")
@@ -1386,7 +1499,22 @@ def _missing_survey_audit_fingerprints(audit: dict[str, Any]) -> list[str]:
         "deep_read_notes_dir",
         "shallow_read_notes_dir",
         "bridge_notes_dir",
+        "cross_domain_catalogs_dir",
         "survey_assembly_manifest",
+    }
+    return sorted(required - set(fingerprints))
+
+
+def _missing_survey_visual_fingerprints(manifest: dict[str, Any]) -> list[str]:
+    fingerprints = manifest.get("input_fingerprints")
+    if not isinstance(fingerprints, dict):
+        return ["input_fingerprints"]
+    required = {
+        "survey_plan",
+        "literature_manifest",
+        "deep_read_notes_dir",
+        "shallow_read_notes_dir",
+        "bridge_notes_dir",
     }
     return sorted(required - set(fingerprints))
 

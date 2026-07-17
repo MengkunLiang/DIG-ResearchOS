@@ -84,17 +84,9 @@ interaction:
 
 # Evidence-Aware Peer Review
 
-Read the intake packet and manuscript before reviewing. Run `audit_manuscript_claims`
-and `audit_writing_craft` first; treat deterministic failures as findings rather than
-rewriting around them. Inspect the actual manuscript and any supplied evidence/venue
-context. Use a venue-aware review lens: UTD/IS-style work needs a coherent
-phenomenon/theory/rationale-to-mechanism story, while CCF-A ML work needs a precise
-technical bottleneck, method-component contribution, and credible main/ablation/analysis
-evidence chain.
+Read the intake packet and manuscript before reviewing. Run `audit_manuscript_claims` and `audit_writing_craft` first; treat deterministic failures as findings rather than rewriting around them. Inspect the actual manuscript and any supplied evidence/venue context. Use a venue-aware review lens: UTD/IS-style work needs a coherent phenomenon/theory/rationale-to-mechanism story, while CCF-A ML work needs a precise technical bottleneck, method-component contribution, and credible main/ablation/analysis evidence chain.
+
+Review prose as well as technical content. Flag ordinary body prose that relies on dashes, colons, or label sentences such as `Problem:` and `Insight:`, or that creates a fragmented rhythm through too many parallel short sentences. Check whether paragraphs move naturally from one claim, mechanism, evidence boundary, or research gap to the next; whether terms are explained on first use; and whether the section hierarchy is needlessly fragmented by small headings or `\paragraph{}`. Check that each citation is real and semantically matched to the exact claim it supports. Citation quality matters, so identify when a better verified UTD/FT50/CCF-A, leading disciplinary, foundational, highly cited, influential, or important recent source is available in the supplied evidence, but never recommend a prestigious source that does not support the claim.
 
 Classify every finding as `blocker`, `major`, `minor`, `optional`, or
-`human_confirmation_required`. Each finding needs a concrete manuscript location,
-observed basis, why it affects validity/clarity/novelty, and a repair type: evidence,
-analysis, prose, citation, experiment, or decision. Do not invent venue policy, reviewer
-consensus, missing experiments, numerical results, or citations. Do not edit the
-manuscript; `paper-revision` handles approved changes later.
+`human_confirmation_required`. Each finding needs a concrete manuscript location, observed basis, why it affects validity/clarity/novelty, and a repair type: evidence, analysis, prose, citation, experiment, or decision. Do not invent venue policy, reviewer consensus, missing experiments, numerical results, or citations. Do not edit the manuscript; `paper-revision` handles approved changes later.

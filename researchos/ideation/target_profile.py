@@ -16,7 +16,45 @@ import yaml
 
 from ..runtime.system_config import system_config_path
 from ..writing_profiles import resolve_venue_writing_profile
-from .models import TargetProfile
+from .models import CORE_SCORE_DIMENSIONS, ScoreDimensions, TargetProfile
+
+
+def core_score_weights(profile: TargetProfile | None) -> dict[str, float]:
+    """Return the published three-dimension ranking weights for a profile.
+
+    The weights affect only the derived ``overall_readiness`` summary used for
+    ranking and compact CLI comparison. They do not turn an orientation,
+    evidence observation, validation sketch, or Profile Fit into a fourth
+    score gate.
+    """
+
+    profile_type = profile.profile_type if profile is not None else "hybrid"
+    if profile_type in {"utd_is", "management_is"}:
+        return {
+            "research_value": 0.40,
+            "mechanism_integrity": 0.30,
+            "contribution_distinctiveness": 0.30,
+        }
+    if profile_type in {"ccf_cs", "technical_cs"}:
+        return {
+            "research_value": 0.25,
+            "mechanism_integrity": 0.35,
+            "contribution_distinctiveness": 0.40,
+        }
+    return {
+        "research_value": 0.34,
+        "mechanism_integrity": 0.33,
+        "contribution_distinctiveness": 0.33,
+    }
+
+
+def derive_overall_score(scores: ScoreDimensions, profile: TargetProfile | None = None) -> float:
+    """Derive the non-gating ranking summary from formal core dimensions only."""
+
+    weights = core_score_weights(profile)
+    if set(weights) != set(CORE_SCORE_DIMENSIONS):
+        raise ValueError("T4 core score weights must cover exactly the three formal dimensions")
+    return round(sum(float(getattr(scores, name)) * weights[name] for name in CORE_SCORE_DIMENSIONS), 4)
 
 
 def load_target_profile_catalog(path: Path | None = None) -> dict[str, dict[str, Any]]:
@@ -60,7 +98,7 @@ def suggest_target_profile(workspace_dir: Path) -> TargetProfile:
     if profile_type is None:
         resolved = resolve_venue_writing_profile(venue, writing_style)
         style = str(resolved.get("venue_style") or "").strip().casefold()
-        profile_type = {"is": "management_is", "ccf_a": "technical_cs", "both": "hybrid"}.get(style)
+        profile_type = {"is": "utd_is", "ccf_a": "ccf_cs", "both": "hybrid"}.get(style)
         if profile_type is not None:
             inferred_from.append(str(resolved.get("resolved_from") or "workspace publication setting"))
     if profile_type is None:
@@ -96,7 +134,7 @@ def parse_target_profile_instruction(
     venue_profile = resolve_venue_writing_profile(raw, {})
     if profile_type is None:
         style = str(venue_profile.get("venue_style") or "").strip().casefold()
-        profile_type = {"is": "management_is", "ccf_a": "technical_cs", "both": "hybrid"}.get(style)
+        profile_type = {"is": "utd_is", "ccf_a": "ccf_cs", "both": "hybrid"}.get(style)
     if profile_type is None:
         profile_type = "custom"
     venues = list(suggested.target_venues)
@@ -137,7 +175,11 @@ def prompt_profile_summary(profile: TargetProfile, *, mode: str) -> dict[str, An
         base["avoid"] = ["Do not turn the profile into an unsupported story or change Evidence Permission."]
     elif mode == "scorer":
         base["secondary_dimensions"] = profile.secondary_dimensions
-        base["scoring_rule"] = "Return Profile Fit separately from the five Core Scientific Score dimensions."
+        base["core_score_weights"] = core_score_weights(profile)
+        base["scoring_rule"] = (
+            "Use the three formal core score dimensions only. Return Profile Fit, evidence and validation observations "
+            "only as optional qualitative diagnostics; they cannot change the core scores."
+        )
     elif mode in {"evolver", "crossover", "human_composition"}:
         base["preservation_rule"] = "Improve profile-relevant strengths only when the approved plan permits it; do not rewrite evidence facts."
     elif mode == "final_card":
@@ -157,7 +199,7 @@ def _materialize_profile(
     catalog = load_target_profile_catalog()
     raw = dict(catalog.get(profile_type) or catalog.get("hybrid") or {})
     return TargetProfile(
-        profile_type=profile_type if profile_type in {"management_is", "technical_cs", "hybrid", "custom"} else "hybrid",
+        profile_type=profile_type if profile_type in {"utd_is", "ccf_cs", "management_is", "technical_cs", "hybrid", "custom"} else "hybrid",
         target_venues=target_venues,
         primary_orientation=str(raw.get("primary_orientation") or "balanced"),
         priority_dimensions=[str(item) for item in raw.get("priority_dimensions", [])],
@@ -178,10 +220,18 @@ def _profile_type_from_text(value: str) -> str | None:
         return None
     if any(token in normalized for token in ("hybrid", "cross disciplinary", "cross-disciplinary", "跨学科", "双重贡献", "兼顾")):
         return "hybrid"
-    if any(token in normalized for token in ("management", "management is", "information systems", "utd", "管理", "组织", "理论机制")):
+    # Keep legacy names parseable when they are explicitly written, while new
+    # user-facing intent resolves to the more precise UTD/INFORMS or CCF/CS
+    # lenses. These are configurable internal research profiles, not claims
+    # about a venue's current official review policy.
+    if normalized in {"management is", "management_is"}:
         return "management_is"
-    if any(token in normalized for token in ("technical", "computer science", "ccf", "algorithm", "算法", "技术", "计算")):
+    if normalized in {"technical cs", "technical_cs"}:
         return "technical_cs"
+    if any(token in normalized for token in ("utd", "informs", "misq", "management", "information systems", "管理", "组织", "理论机制")):
+        return "utd_is"
+    if any(token in normalized for token in ("ccf", "neurips", "icml", "iclr", "kdd", "technical", "computer science", "algorithm", "算法", "技术", "计算")):
+        return "ccf_cs"
     return None
 
 

@@ -22,7 +22,10 @@ python -m researchos.cli init-workspace \
   --workspace ./workspace/project-a \
   --project-id project-a \
   --topic "your research topic"
-
+python -m researchos.cli init-workspace \
+  --workspace ./workspace/project-a \
+  --project-id project-a \
+  --topic "your research topic"
 python -m researchos.cli run --workspace ./workspace/project-a
 ```
 
@@ -72,6 +75,12 @@ python -m researchos.cli workspace-status --workspace-root ./workspace
 
 `status` 默认显示简洁的项目摘要：当前步骤、状态、待定决策、最新可操作消息和下一个命令。仅在调试需要完整的原始 `state.yaml` 时使用 `status --detail`。
 
+### 安全暂停
+
+运行中的项目需要暂停时按一次 `Ctrl+C`。ResearchOS 会停止当前命令、把 `state.yaml` 标记为 `PAUSED`，并显示可直接复制的 `resume` 命令；已落盘的论文、笔记和阶段产物会保留。终端正在等待 provider 或用户输入时，第一次 `Ctrl+C` 也会走同一保存路径。第二次 `Ctrl+C` 表示立即退出，仅在不需要等待清理完成时使用。
+
+不要使用 `Ctrl+Z` 结束项目。它只是 shell 的 suspend，进程仍会停留在任务列表中，既不会正常退出，也不能作为项目已安全暂停的依据。误按后可在原终端输入 `fg` 恢复进程，再按一次 `Ctrl+C`；或先确认 `state.yaml` 和 `workspace-status`，再处理该 suspended job。
+
 ## 命令索引
 
 | 命令 | 用途 | 常用形式 |
@@ -80,11 +89,11 @@ python -m researchos.cli workspace-status --workspace-root ./workspace
 | `run` | 运行完整流水线；可选择从其他项目复用已验证的前提条件 | `run --workspace <dir>`; `run --workspace <new> --from <source> --start-task T4` |
 | `run_smoke` | 运行一个真实工具的冒烟工作流 | `run_smoke --workspace <dir>` |
 | `resume` | 继续已暂停的项目 | `resume --workspace <dir>`; 使用 `--from-task <task>` 进行同一工作区的有目的重新进入 |
-| `run-task` | 诊断或执行单个任务而不推进主流水线 | `run-task T4 --workspace <dir>` |
+| `run-task` | 诊断或执行单个任务而不推进主流水线；可用 `--from` 先复制该任务的前置材料 | `run-task T4 --workspace <dir>`; `run-task T4 --workspace <new> --from <source>` |
 | `status` / `workspace-status` | 检查单个项目或工作区根目录；`status --detail` 打印原始状态 | `status --workspace <dir>`; `workspace-status --workspace-root ./workspace` |
 | `configure-llm` / `selftest` | 配置并检查所有阶段共用的 provider/model connection | `configure-llm`; `selftest` |
 | `doctor` | 检查本地/Docker/TeX 依赖 | `doctor --workspace <dir>` |
-| `trace` / `validate` | 检查有边界的运行摘要或验证已存储的任务结果 | `trace <run-id> --workspace <dir>`; `validate --task T4 --workspace <dir>` |
+| `trace` / `validate` | 检查有边界的运行摘要、前置材料或已存储的任务结果 | `trace <run-id> --workspace <dir>`; `validate --task T4 --scope inputs --workspace <dir>`; `validate --task T4 --scope outputs --workspace <dir>` |
 | `audit-survey` | 重建确定性的综述覆盖率审计 | `audit-survey --workspace <dir>` |
 | `validate-config` | 检查状态机、门控、路由和运行时配置 | `validate-config` |
 | `run-task T5-SPECIALIZE-EXECUTOR-SKILLS` | 只运行通过仓库级 Skill 发布并校验项目专属 T5 executor Skill suite 的 LLM-backed 任务 | `run-task T5-SPECIALIZE-EXECUTOR-SKILLS --workspace <dir>` |
@@ -100,8 +109,8 @@ python -m researchos.cli workspace-status --workspace-root ./workspace
 | Skill 缺少材料 | 添加/回答所请求的 `user_inputs/<skill>/...` 文件 | `run-skill ... --session-id <id> --resume` |
 | 提供方故障 | 检查 `model_settings.yaml` 或 `.env`，确认连接正确后等待服务恢复 | `resume` |
 | TeX 环境 | 运行 `doctor`，安装主机 TeX 或构建 Docker 镜像 | `resume` |
-| 验证错误 | 运行 `validate --task <task>`，修复指定的产物 | `resume` |
-| 外部 executor 等待 | 写出所声明的 executor 结果包 | `resume` |
+| 验证错误 | 用 `validate --task <task> --scope inputs` 检查缺失前置材料，用 `--scope outputs` 检查已生成产物，然后修复指明的文件或契约 | `resume` |
+| 外部 executor 等待 | 写出声明的 executor 结果包，以及 T8 核心交接报告 `external_executor/executor_research_report.md` | `resume` |
 
 ## 6. 调试单个阶段
 
@@ -116,7 +125,7 @@ python -m researchos.cli run-task T9 --workspace ./workspace/project-a
 
 修复产物后使用 `validate`。使用 `trace <run-id>` 查看先前运行的有限人工渲染摘要，并检查 `_runtime/logs/researchos.log` 以获取详细的操作时间线。
 
-对于 T4，模型会基于 Workspace 证据撰写 Candidate 框架、机制、2–4 条 Draft Hypotheses、Contribution、评分解释和面向研究者的 Portfolio 文案。Standard mode 完成完整的 `P0 -> P1` Evolution Round，而不是只改写一次文本。Rich 面板会展示 Evidence Routing、Opportunity Map、Multi-route Generation、Independent Scoring、Evolution Planning、Offspring & Rescoring 和 Survival & Portfolio，不显示原始 JSON 或隐藏推理。provider 调用进行中时，终端会在 12 秒后显示低频 Live Runtime 面板，此后每 30 秒刷新一次。
+对于 T4，模型会基于 Workspace 上下文以及清楚标注为猜想的学术知识或结构性类比，撰写 Candidate 框架、机制、2–4 条 Draft Hypotheses、Contribution、评分解释和面向研究者的 Portfolio 文案。Standard mode 完成完整的 `P0 -> P1` Evolution Round，而不是只改写一次文本。证据用于认证 Claim，不会把模型限制为复述 Evidence Bundle。Rich 面板会展示 `研究机会探索（Opportunity Map）`、多视角 Idea 发散、Independent Scoring、Evolution Planning、Offspring & Rescoring 和 Survival & Portfolio，不显示原始 JSON 或隐藏推理。provider 调用进行中时，终端会分开显示当前活动、当前产物和后续阶段，而不会把 Opportunity Map 同时写成当前工作和“下一步”；终端会在 12 秒后显示低频 Live Runtime 面板，此后每 30 秒刷新一次。
 
 ## 7. T5 Executor 技能与恢复
 
@@ -135,7 +144,7 @@ ResearchOS Task
 -> ResearchOS 独立校验持久化 Artifact
 ```
 
-一次有效 specialization 会在进入 executor 选择前写出 `external_executor/project_skill_context.yaml`、复制到 workspace 的 schema、`external_executor/skill_specialization_report.json`、全部 13 个 `external_executor/skills/*/SKILL.md`，以及 `external_executor/skill_specialization_execution.json`。`ready` 和 `incomplete` 都可进入 executor gate；`failed` 会停止。
+一次有效 specialization 会在进入 executor 选择前写出 `external_executor/project_skill_context.yaml`、`external_executor/schemas/project_skill_context.schema.json`、`external_executor/report/skill_specialization_report.json`、全部 13 个完整的 `external_executor/skills/<skill>/` 目录及其中带项目专属 guidance 的 `SKILL.md`，以及 `external_executor/report/skill_specialization_execution.json`。`ready` 和 `incomplete` 都可进入 executor gate；`failed` 会停止。
 
 只运行 T5 reboost 模块而不推进完整流水线时，使用：
 
@@ -143,12 +152,23 @@ ResearchOS Task
 python -m researchos.cli run-task T5-REBOOST --workspace ./workspace/project-a
 ```
 
+`T5-REBOOST` 会把后续需要消费的语义 handoff 与控制文件保持在稳定根路径：`external_executor/handoff_pack.json`、`paper_card_evidence_index.json`、`expected_outputs_schema.json`、`allowed_paths.txt`、`AGENTS.md` 和 `CLAUDE.md`。它的过程报告写入 `external_executor/report/`：`reboost_report.json`、`reboost_validation_report.json`，以及模型提交 handoff candidate 时的 `reboost_llm_candidate_handoff_pack.json` 和 `reboost_llm_candidate_validation_report.json`。`external_executor/expr/` 由 workspace 初始化创建，后续用于材料放置以及 our method/baseline 的部署资产；T5-REBOOST 不再创建 `expr/MATERIALS_CHECKLIST.json` 或 `expr/README.md`。`T5-EXECUTOR-GATE` 会把 executor 控制回执写入 `external_executor/report/`；执行器专属 prompt 文件不再生成。
+
 只运行项目 Skill 专属化任务而不推进完整流水线时，使用：
 
 ```bash
 python -m researchos.cli run-task T5-SPECIALIZE-EXECUTOR-SKILLS \
-  --workspace ./workspace/project-a
+  --workspace <workspace>
 ```
+
+专属化完成后，只运行执行器选择 gate 时，使用同一个 workspace：
+
+```bash
+python -m researchos.cli run-task T5-EXECUTOR-GATE \
+  --workspace <workspace>
+```
+
+真实 Codex/Claude/manual executor 完成后，T5 会直接恢复到 T8。T5 到 T8 的必需接口是 `external_executor/executor_research_report.md`；`external_executor/` 下其他文件继续作为可追溯上下文供 Writer 按需读取。当前 T5 gate 只定义并校验这个接口，不自行生成该报告。
 
 对于由旧版本创建、且已在 `T5-EXTERNAL-WAIT` 状态下暂停但没有 `external_executor/skills/` 的工作区，可用离线确定性命令在不调用模型的情况下修复或校验同一套件：
 
@@ -212,6 +232,12 @@ python -m researchos.cli run \
 ```
 
 目标保留其自己的状态、门控、日志和输出产物。在复用文献、声明或协议细节之前，确认其来源。
+
+`run-task T4 --workspace <new> --from <source>` 也可以从其他项目复制 T4 的声明输入，但只执行 T4，不会推进完整 pipeline。对于已经有 `state.yaml` 的调试 workspace，请使用 `resume --workspace <target> --from <source> --from-task T4`：它会先合并缺失的 T4 输入，再恢复完整 pipeline。复制在模型连接检查之前完成，因此 provider 暂时不可用时，目标 workspace 里的材料仍会保留。对所有依赖文献的下游阶段（`T3.5`、`T3.6`、`T4`、`T5`、`T8`），导入会复制完整的 `literature/` artifact 树，而不是只复制第一个子节点的狭窄输入列表。因此，即使目标 workspace 已初始化出空的标准目录，也会带入真实论文卡、队列、synthesis、BibTeX 和独立的 Cross-domain catalog。`resume --from` 导入会保留目标端已有文件；来源 workspace 永远不会被修改。
+
+`literature/bridge_notes/` **没有被改名**：它仍是实际全文/部分全文 Bridge 论文笔记的 canonical 根目录。`literature/cross_domain_catalogs/` 是独立的 B1/B2 检索与 metadata catalog。历史 workspace 中与 `bridge_notes/` 同置的 catalog JSON 会以非破坏方式复制到新的 catalog 根目录兼容读取，绝不会替换或删除真实论文笔记。
+
+`resume --from-task T3.6` 是“是否撰写 Survey”的公共入口别名，等价于 `T3.6-GATE-SURVEY`。配合 `--from <source>` 时，它会在进入该 Gate 前导入来源的完整文献树，使之后的 PLAN/VISUALS 拿到同一套论文语料，而不是初始化后的空笔记目录。T3.6 PLAN 和 VISUALS 会在提交模型请求前拒绝空的必需论文笔记根目录。
 
 ## 10. 笔记卡片选择与再访
 

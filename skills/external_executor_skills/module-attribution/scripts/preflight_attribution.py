@@ -56,7 +56,7 @@ def main() -> int:
     intervention_runs = [x for x in runs if str(x.get("run_type", "")).lower() in {"ablation", "diagnostic"} or x.get("module_states") or x.get("disabled_modules") or x.get("removed_modules")]
     if not intervention_runs:
         warnings.append({"id": "no_intervention_runs", "message": "Only implementation facts/correlational attribution may be possible"})
-    targets = [output, ext / "module_attribution_snapshot.json", ext / "module_attribution_facts.json", ext / "module_attribution_report.json", ext / "workdir/module_attribution"]
+    targets = [output, ext / "module_attribution_snapshot.json", ext / "module_attribution_facts.json", ext / "module_attribution_report.json", ext / "module_attribution"]
     for target in targets:
         try:
             assert_write_allowed(ws, target)

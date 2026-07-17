@@ -116,13 +116,12 @@ workflow:
 
 # Survey Evidence Package
 
-Do not write a survey manuscript in this Skill. Treat it as the pre-writing evidence
-gate that a researcher can inspect. Create a corpus sufficiency report before choosing
-a taxonomy. It must distinguish unavailable retrieval, metadata-only lead,
-abstract-only coverage, and full/partial evidence suitable for bounded discussion.
+Do not write a survey manuscript in this Skill. Treat it as the pre-writing evidence gate that a researcher can inspect. Create a corpus sufficiency report before choosing a taxonomy. It must distinguish unavailable retrieval, metadata-only lead, abstract-only coverage, and full/partial evidence suitable for bounded discussion.
 
-If the human authorizes supplementation, make small source-returning searches and
-record the exact query, retained source, and what it can upgrade. Do not convert search
-results into central taxonomy evidence without a readable source/card. The final
-handoff must state whether it is ready for conservative Survey planning, ready only
-after targeted reading, or not ready.
+When proposing the Survey storyline and taxonomy, prepare the conditions for clean publication prose rather than a long catalogue of papers. The eventual survey should be able to move naturally from the review question and the field's consequential developmental shifts into the taxonomy, comparisons, challenges, and future agenda.
+Keep the planned section hierarchy compact, and do not reserve a separate heading for each paper or taxonomy label. Each proposed section needs a reader question, an argument, a bridge from the prior section, and a note of where terms need first-use explanation or a real/conditional `such as` example. The later writer should use complete, connected sentences rather than dash/colon label prose or fragmented lists.
+This is a writing preference, not a mechanical pass/fail rule.
+
+For every proposed source, preserve the evidence level and the specific claim types it can support. Recommend broad, high-quality coverage from genuinely relevant UTD/FT50/ CCF-A, leading disciplinary, foundational, highly cited, influential, and important recent work, but never pad a taxonomy with prestigious papers that do not support its claims. Citation existence, source meaning, and claim-level fit must be verified again by the T3.6 writer before the source enters Survey prose.
+
+If the human authorizes supplementation, make small source-returning searches and record the exact query, retained source, and what it can upgrade. Do not convert search results into central taxonomy evidence without a readable source/card. The final handoff must state whether it is ready for conservative Survey planning, ready only after targeted reading, or not ready.

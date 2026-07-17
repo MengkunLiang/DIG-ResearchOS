@@ -43,7 +43,8 @@ Integrated Skill sessions add a `workflow` object in the same session file. It c
 
 ```bash
 python -m researchos.cli status --workspace ./workspace/project-a
-python -m researchos.cli validate --task T3.6-SEC-INTRO --workspace ./workspace/project-a
+python -m researchos.cli validate --task T3.6-SEC-INTRO --scope outputs --workspace ./workspace/project-a
+python -m researchos.cli validate --task T3.6-VISUALS --scope inputs --workspace ./workspace/project-a
 python -m researchos.cli trace <run-id> --workspace ./workspace/project-a
 tail -n 120 ./workspace/project-a/_runtime/logs/researchos.log
 ```
@@ -58,7 +59,7 @@ tail -n 120 ./workspace/project-a/_runtime/logs/researchos.log
 | `DEGRADED` | A non-blocking source/tool failed while alternatives continue | Read the stage summary and source-health table; do not assume zero coverage. |
 | `unsupported` | Evidence cannot support the requested conclusion | Add the named evidence, weaken the claim, or choose another direction. |
 | `waiting_evidence` (Skill phase) | An integrated workflow has a known evidence gap after preflight | Authorize scoped retrieval, upload the named source, or choose a narrower/weakly worded output. |
-| Validation failure | Artifact exists but breaks its declared contract | Run `validate --task`, repair the named file/state, then resume. |
+| Validation failure | A prerequisite contract is not ready, or an artifact exists but breaks its declared contract | Run `validate --task <task> --scope inputs` for prerequisites or `--scope outputs` for generated artifacts, repair the named file/state, then resume. |
 
 ## T3.6 Example: Section Validation
 

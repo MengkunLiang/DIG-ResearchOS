@@ -30,6 +30,18 @@
 论文卡是文献机制、设计理由、边界条件与基线出处的 section 级证据。它们不是实验性能证据；
 在报告中必须区分 FULL/PARTIAL/ABSTRACT，abstract-only 只能作为补检线索，不能单独确认机制碰撞或新颖性结论。
 
+{% if bridge_catalog_preview %}
+### Cross-domain catalog context
+以下轨道来自 T2 的已检索 bridge catalog。它们可以帮助你形成跨域检索词、识别相邻概念、基线家族、构念错配和外部有效性风险；它们不是深读论文卡，不可直接作为 mechanism collision、true collision、实验结果或新颖性结论的证据。
+{% for bridge in bridge_catalog_preview %}
+- {{ bridge.get('bridge_id', '') }} · {{ bridge.get('name', '未命名跨域方向') }} | records={{ bridge.get('record_count', 0) }} | abstract_leads={{ bridge.get('abstract_record_count', 0) }} | status={{ bridge.get('status', '') }}
+  {% if bridge.get('rationale') %}迁移问题：{{ bridge.get('rationale') }}{% endif %}
+  {% for record in bridge.get('sample_records', []) %}
+  - lead：{{ record.get('title', record.get('paper_id', 'untitled')) }} | {{ record.get('usage_boundary', '') }}
+  {% endfor %}
+{% endfor %}
+{% endif %}
+
 {% if agent_guidance %}
 {{ agent_guidance }}
 
@@ -39,17 +51,26 @@
 
 你需要对 `ideation/hypothesis_brief.yaml` 中的 Draft Hypotheses（{{ hypothesis_count }} 个：{{ hypothesis_anchors | join(', ') }}）进行新颖性审计，判断是否与已有工作重复，产出审计报告。当前 brief 状态为 `{{ pre_novelty_mode }}`；它是被选 Candidate 的可查新草案，不是已确认的新颖性结论，也不是实验执行授权。
 
+{% if selection_warnings %}
+### Gate1 已知风险（必须在审计中回应）
+{% for warning in selection_warnings %}
+- {{ warning }}
+{% endfor %}
+这些是进入 T4.5 时保留的风险提示，不是自动拒绝。请明确判断每项风险需要补证据、补验证、重构，还是可在声明边界后继续；不得把它们忽略或包装成已被证实的结论。
+{% endif %}
+
 ---
 
 ## 工作流程
 
 ### Step 1: 读取完整输入
-用 `read_file` 读取：
+用 `read_file` 读取具体文件；目录必须先用 `list_files` 或 `grep_search` 枚举，绝不能把目录路径直接传给 `read_file`：
 - `ideation/hypothesis_brief.yaml` - 选中 Candidate 的 Draft Hypotheses、证据边界与来源谱系
 - `ideation/selected/t45_search_targets.json` - 本轮 novelty/collision 检索目标
 - `literature/synthesis.md` - 完整的文献综述
 - `literature/comparison_table.csv` - 已有方法对比表（如果存在）
-- `literature/deep_read_notes/`、`literature/bridge_notes/`、`literature/shallow_read_notes/` - 对候选最近工作、机制或基线存在疑问时，读取精确论文阅读笔记 section；摘要阅读笔记可扩展覆盖和反例线索，但不能单独确认核心机制或基线细节；不要盲读全部笔记
+- 先读 `literature/cross_domain_catalogs/index.json`，再按 index 指向的具体 `bridge_context.json` 与 `paper_catalog.json` 读取 Cross-domain catalog。catalog 用来扩展搜索与差异化问题，不是阅读笔记或 citation anchor。
+- 对 `literature/deep_read_notes/`、`literature/bridge_notes/`、`literature/shallow_read_notes/`，先枚举具体 `.md` paper card，再只读取与候选最近工作、机制或基线相关的精确论文阅读笔记 section。摘要阅读笔记可扩展覆盖和反例线索，但不能单独确认核心机制或基线细节；不要盲读全部笔记。
 
 理解每个假设的核心内容：
 - 假设的核心方法/技术
@@ -173,7 +194,7 @@ search_papers(
 - 如果只是机制相似但任务或贡献边界不同，应写成 baseline 或 crucial experiment，而不是机械判死刑
 - Ambition Axis 必须独立判断：`high_ambition` / `medium_ambition` / `incremental` / `routine_risk`
 - 没有 closest baseline 或与现有工作正交时，不得降低 ambition；应标为 high novelty/high risk，并说明需要怎样验证
-- Final Gate Verdict = collision axis 与 ambition axis 的组合：collision 过高或 routine_risk 都不能无条件进入 T7/T8
+- Final Gate Verdict = collision axis 与 ambition axis 的组合：collision 过高或 routine_risk 都不能无条件进入外部执行/T8
 
 #### 2.4 判断新颖性等级
 
@@ -290,7 +311,7 @@ search_papers(
 
 #### explanatory_competition: N
 - [论文标题]: <brief description>
-  → This is the crucial experiment, frame as such in T7.
+  → This is the crucial experiment, frame as such in the external execution handoff.
 
 #### safe: N
 [简要列出]
@@ -419,7 +440,7 @@ search_papers(
 
 ### Step 3.5: Post-Novelty Formal Compilation（仅在通过时）
 
-先完成并落盘 `ideation/novelty_audit.md`，并在其中写出明确的 `Final Gate Verdict`。只有 verdict 为 `pass`、`pass_to_experiment`、`pass_with_required_baselines`、`go_t7`、`continue_to_t7` 或 `continue_to_experiment` 时，才执行本步骤。
+先完成并落盘 `ideation/novelty_audit.md`，并在其中写出明确的 `Final Gate Verdict`。只有 verdict 为 `pass`、`pass_to_experiment`、`pass_with_required_baselines`、`continue_to_t5` 或 `continue_to_experiment` 时，才执行本步骤。
 
 通过时，基于 `hypothesis_brief.yaml` 中已选 Candidate 的 Draft Hypotheses、T4.5 检索结果和审计限制，依次写入：
 
@@ -443,6 +464,13 @@ search_papers(
   }
 }
 ```
+
+#### 文件写入工具契约
+
+- 只对 Markdown 报告调用 `write_file`，例如 `ideation/novelty_audit.md` 与 `ideation/collision_cases.md`。
+- `ideation/exp_plan.yaml` 是唯一的正式实验计划路径，必须且只能调用 `write_structured_file(path='ideation/exp_plan.yaml', schema_name='exp_plan', format='yaml', data=...)`。`exp_plan.yml` 不是兼容路径，不能创建、不能作为替代输出，也不能用于规避校验。
+- 若结构化写入返回 schema 诊断，应逐项修复 `data` 后重新调用同一个 `write_structured_file`。不得改用 `write_file`、换扩展名、删减已审计字段，或把失败当作普通噪声重复调用。
+- 在调用 `finish_task` 前，重新检查正式 `ideation/exp_plan.yaml` 是否存在且与审计 verdict 一致。它缺失时必须如实报告未完成，不得以任何旁路文件替代。
 
 若 verdict 为 reframe、drop、collision、reject 或需要 Human review：不得生成或更新上述正式执行产物；在 audit 中说明回到 T4 所需的具体调整。`hypothesis_brief.yaml` 会保留，方便后续重构和查新。
 

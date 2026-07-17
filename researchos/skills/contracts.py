@@ -19,6 +19,14 @@ from .workflow import parse_skill_workflow
 
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+_SKILL_EXECUTION_SCOPES = frozenset(
+    {
+        "standalone",
+        "state_machine",
+        "internal_only",
+        "executor_template",
+    }
+)
 
 # Guided intake is deliberately narrower than a running Skill. These tools can
 # resolve a source a researcher explicitly names, but cannot mutate research
@@ -68,6 +76,37 @@ def _as_string_list(value: Any, *, label: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not value:
         raise ConfigurationError(f"{label} must be a non-empty list of strings")
     return tuple(_as_string(item, label=label) for item in value)
+
+
+def skill_execution_scope(metadata: Mapping[str, Any]) -> str:
+    """Return the validated execution boundary declared by one Skill.
+
+    Older third-party Skills did not have this field.  They retain the
+    historical standalone default, while repository-owned non-standalone
+    workflows declare their execution boundary explicitly.
+    """
+
+    scope = _as_string(
+        metadata.get("execution_scope", "standalone"),
+        label="execution_scope",
+    )
+    if scope not in _SKILL_EXECUTION_SCOPES:
+        known = ", ".join(sorted(_SKILL_EXECUTION_SCOPES))
+        raise ConfigurationError(f"execution_scope must be one of: {known}")
+    return scope
+
+
+def skill_execution_owner(metadata: Mapping[str, Any]) -> str:
+    """Return the researcher-facing owner of a non-standalone Skill."""
+
+    scope = skill_execution_scope(metadata)
+    raw_owner = metadata.get("execution_owner", "")
+    owner = _as_string(raw_owner, label="execution_owner", allow_empty=True)
+    if scope != "standalone" and not owner:
+        raise ConfigurationError(
+            "non-standalone Skill must declare execution_owner so the CLI can explain its entry point"
+        )
+    return owner
 
 
 def _permission_prefixes(metadata: Mapping[str, Any], *, field: str, source: Path) -> tuple[str, ...]:
@@ -357,6 +396,7 @@ def validate_skill_metadata(metadata: Mapping[str, Any], *, source: Path) -> Non
     from .capabilities import resolve_capability_profiles
 
     resolve_capability_profiles(str(metadata.get("name") or source.parent.name), metadata)
+    skill_execution_owner(metadata)
     interaction = parse_skill_interaction(metadata)
     # Parse the optional integrated-workflow declaration during discovery so a
     # malformed phase list cannot become a late runtime failure after an LLM

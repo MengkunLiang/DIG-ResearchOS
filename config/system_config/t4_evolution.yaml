@@ -2,6 +2,12 @@
 # belongs here; researchers adjust T4 mode through the Pre-run Gate instead.
 schema_version: "1.0.0"
 route_quotas:
+  # `required` is retained only as legacy invitation metadata. It never means
+  # "must return a Candidate", never enables a fill/retry loop, and never
+  # blocks Gate1. `minimum` and `maximum` bound exploration cost/diversity;
+  # an underfilled Route may keep non-redundant Ideas or an explicit defer
+  # receipt. LLM parametric knowledge and analogy are allowed throughout when
+  # marked conjectural and verification-required.
   - route: evidence_routed_literature
     minimum: 3
     maximum: 3
@@ -38,6 +44,8 @@ route_quotas:
     required: false
     may_be_unsupported: true
 population:
+  # Target values guide diversity and scheduling. They do not make an
+  # underfilled but evidence-safe Population invalid or force filler ideas.
   max_initial_population: 14
   active_population_target: 7
   active_population_minimum: 6
@@ -53,9 +61,20 @@ offspring:
 opportunity_minimum: 3
 opportunity_maximum: 6
 maximum_rounds: 3
+# This only retrieves possible sibling Families for later LLM/human comparison;
+# it never proves two Ideas are semantically equivalent or deletes one.
 family_similarity_threshold: 0.45
 complexity_growth_ratio_limit: 1.8
 one_repair_attempt_per_route: true
+# Candidate dossiers carry a large evidence-bound schema. Limit concurrent
+# provider calls so repairs do not saturate a single endpoint and turn a short
+# P0 formation phase into a queue of long-running requests.
+route_max_concurrency: 2
+# Independent scoring uses exactly three formal dimensions. Rationale and all
+# evidence, validation, upside, and publication-orientation observations are
+# repairable diagnostics, not batch-level gates. Persist small batches so an
+# interrupted or malformed response only needs to repair that batch on resume.
+scoring_batch_size: 3
 bridge_policy_default: allow_abstract_with_upgrade
 scoring_rubric_path: config/system_config/idea_scoring_rubric.yaml
 evidence_permissions_path: config/system_config/idea_evidence_permissions.yaml

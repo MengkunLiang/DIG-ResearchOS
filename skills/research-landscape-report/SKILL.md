@@ -98,8 +98,4 @@ workflow:
 
 # Research Landscape Report
 
-Use visual/map terminology carefully. Citation connections and clustering are discovery
-signals, not direct measures of importance or quality. The opportunity register must
-separate evidence-supported open questions from coverage deficiencies and unsupported
-speculation. Do not infer performance trends, causal mechanisms, or resource
-availability from title, venue, or graph position alone.
+Use visual/map terminology carefully. Citation connections and clustering are discovery signals, not direct measures of importance or quality. The opportunity register must separate evidence-supported open questions from coverage deficiencies and unsupported speculation. Do not infer performance trends, causal mechanisms, or resource availability from title, venue, or graph position alone.

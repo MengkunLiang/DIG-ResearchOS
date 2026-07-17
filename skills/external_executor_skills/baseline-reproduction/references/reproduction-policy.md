@@ -8,9 +8,9 @@ This Skill executes and repairs already approved baseline material under an alre
 
 The Skill may:
 
-- copy an approved baseline candidate into a controlled attempt directory;
+- copy an approved baseline candidate into a controlled deployment directory under `external_executor/expr/`;
 - configure and execute the baseline command authorized by the current iteration plan;
-- capture logs, metrics, environment, hardware, resource/version identity, and checksums;
+- capture logs, metrics, environment, hardware, resource/version identity, and checksums under `external_executor/raw_results/`;
 - perform bounded compatibility, adapter, configuration, seed, logging, and metric-extraction repairs;
 - compare reproduced outputs with a predeclared reference or sanity rule;
 - classify failures and record claim risks;

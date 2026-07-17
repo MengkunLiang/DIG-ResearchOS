@@ -31,7 +31,7 @@ PATTERN_RULES = [
         "pattern_id": "ARIS_RESULT_TO_CLAIM",
         "keywords": ["result-to-claim", "claim", "evidence"],
         "mechanism": "Map experiment outputs to explicitly supported, weak, or unsupported claims before writing.",
-        "researchos_target_stage": ["T7-CLAIMS", "T8-RESOURCE", "T8-SELF-CHECK"],
+        "researchos_target_stage": ["T8-RESOURCE", "T8-SELF-CHECK"],
         "adaptation": "Use validator-backed result_to_claim and evidence pack artifacts rather than free-form prose.",
         "required_artifacts": ["experiments/results_summary.json", "drafts/result_to_claim.json"],
         "acceptance_tests": ["mock-only result cannot become paper evidence", "metric mismatch is reported by paper-claim-audit"],
@@ -50,7 +50,7 @@ PATTERN_RULES = [
         "keywords": ["experiment-bridge", "external", "executor", "handoff"],
         "mechanism": "A protocol bridge hands a constrained experiment task to an external coding executor.",
         "researchos_target_stage": ["T5-HANDOFF", "T5-DRY-RUN"],
-        "adaptation": "ResearchOS writes handoff_pack, executor prompt, expected schema, allowed paths, and does not run real experiments in dry-run.",
+        "adaptation": "ResearchOS writes handoff_pack, AGENTS/CLAUDE control instructions, expected schema, allowed paths, and does not run real experiments in dry-run.",
         "required_artifacts": ["external_executor/handoff_pack.json", "external_executor/expected_outputs_schema.json"],
         "acceptance_tests": ["allowed paths are present", "executor done is not accepted"],
     },
@@ -58,8 +58,8 @@ PATTERN_RULES = [
         "pattern_id": "CLAUDE_RESUMABLE_RUN_STATE",
         "keywords": ["resumable", "checkpoint", "heartbeat", "accepted", "done"],
         "mechanism": "Separate executor completion from verifier acceptance and persist resumable run status.",
-        "researchos_target_stage": ["T5-DRY-RUN", "T7-INGEST", "runtime-resume"],
-        "adaptation": "Keep executor_status.accepted=false until ResearchOS ingest/audit validates artifacts.",
+        "researchos_target_stage": ["T5-DRY-RUN", "T5-EXTERNAL-WAIT", "runtime-resume"],
+        "adaptation": "Keep executor_status.accepted=false until external-executor handoff validation confirms required artifacts.",
         "required_artifacts": ["external_executor/executor_status.json", "external_executor/run_manifest.json"],
         "acceptance_tests": ["status done with accepted true is rejected in dry-run", "run manifest is present"],
     },
@@ -67,8 +67,8 @@ PATTERN_RULES = [
         "pattern_id": "AUTORESEARCH_FIXED_BUDGET_LOOP",
         "keywords": ["budget", "keep", "discard", "metric", "run.log", "results.tsv"],
         "mechanism": "Run constrained edit-run-eval iterations with an objective metric and keep/discard decisions.",
-        "researchos_target_stage": ["T5-HANDOFF", "T7-AUDIT", "T7.5"],
-        "adaptation": "Encode objective metrics and acceptance criteria in handoff; audit raw metrics before PI decisions.",
+        "researchos_target_stage": ["T5-HANDOFF", "T5-EXTERNAL-WAIT", "T8-RESOURCE"],
+        "adaptation": "Encode objective metrics and acceptance criteria in handoff; validate raw metric provenance before T8 writing.",
         "required_artifacts": ["external_executor/result_pack.json", "experiments/iteration_log.md"],
         "acceptance_tests": ["missing metric fails ingest", "iteration log records dry-run boundary"],
     },
@@ -356,7 +356,7 @@ def _format_anti_patterns() -> str:
         "# Anti-Patterns\n\n"
         "- 不把执行器 summary 当成 raw evidence。\n"
         "- 不把 validator 写成领域知识硬编码；validator 只检查文件协议、来源、hash、mock 标记和 traceability。\n"
-        "- 不把 T5-T7 恢复逻辑导回旧的内部实验代码生成路径。\n"
+        "- 不把 T5 外部执行恢复逻辑导回旧的内部实验代码生成路径。\n"
         "- 不让 section writer 直接消费未经 result-to-claim 的实验数字。\n"
     )
 

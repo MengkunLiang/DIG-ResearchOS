@@ -58,7 +58,7 @@ def normalize_module(comp: dict[str, Any], *, contribution_role: str, status: st
         "outputs": outputs,
         "invariants": invariants,
         "implementation_notes": [],
-        "code_targets": [f"external_executor/workdir/src/{module_id.lower()}.py"],
+        "code_targets": [f"external_executor/expr/implementation/src/{module_id.lower()}.py"],
         "config_keys": [
             {
                 "key": switch_key,
@@ -263,6 +263,8 @@ def main() -> int:
             "non_goals": listify(intent.get("must_not_claim")),
             "runtime_constraints": get_nested(result, "context_alignment.confirmed_execution_scope.executor_capabilities", default={}),
             "allowed_paths_ref": "external_executor/allowed_paths.txt",
+            "deployment_root": "external_executor/expr/",
+            "raw_results_root": "external_executor/raw_results/",
         },
         "modules": modules,
         "objectives_and_losses": previous.get("objectives_and_losses", []),
@@ -299,6 +301,7 @@ def main() -> int:
             "required": ["resolved config", "seed/repeat", "protocol fingerprint", "code/patch reference", "raw log", "metric output", "checkpoint metadata"],
             "structured_run_record_required": True,
             "silent_fallback_forbidden": True,
+            "raw_results_root": "external_executor/raw_results/",
         },
         "ablation_and_diagnostic_controls": traceability,
         "acceptance_checks": [

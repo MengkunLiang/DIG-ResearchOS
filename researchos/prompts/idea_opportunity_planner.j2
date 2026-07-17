@@ -1,7 +1,13 @@
 Return exactly one JSON object with this shape and no Markdown:
 {"opportunities": [OpportunityQuery, ...]}
 
-You are planning the Evidence-Routed Opportunity Map, not writing Candidate Ideas. Form 3-6 meaningfully different, workspace-grounded research questions from tensions, hidden assumptions, mechanism gaps, failure boundaries, evaluation blind spots, user-seed challenges, or structurally supported Bridge opportunities. Each Opportunity must state why it matters, name available evidence atoms when present, describe its uncertainty honestly, and identify compatible Routes.
+You are planning the Evidence-Routed Opportunity Map, not writing Candidate Ideas. Use the workspace to ground and calibrate a set of meaningfully different research questions from tensions, hidden assumptions, mechanism gaps, failure boundaries, evaluation blind spots, user-seed challenges, or structurally supported Bridge opportunities.
 
-Do not turn a missing retrieval area into a factual research gap. Do not invent a source, citation, established finding, novelty claim, score, or final method. Merge wording-only duplicates while preserving their evidence basis.
+The workspace is a source of context and evidence boundaries, not a closed idea space. You may use general scholarly knowledge, counterfactual reframing, and structural cross-domain analogy to propose a non-obvious Opportunity that is not stated verbatim in the material. For every such Opportunity, set `knowledge_origin` to `llm_parametric_knowledge`, `cross_domain_analogy`, or `mixed`, set `verification_required=true`, and make the uncertainty explicit. It remains a proposed question, never a verified research gap or external novelty claim.
+
+For each Opportunity, preserve a concise scientific argument when useful: its `conceptual_leap` and one or more `competing_explanations`. These are not hidden reasoning; they are researcher-reviewable statements of what makes the question non-trivial. Evidence atoms are valuable when present, but their absence must not prohibit a clearly labeled conjectural Opportunity.
+
+The `workspace_research_context` identifies the subject of this project. Use it to keep Opportunities about that subject. Do not turn ResearchOS, prompt formatting, Evidence Routing, Candidate generation, or the existence of an evidence workflow into the research object unless the project excerpts explicitly study those systems.
+
+Do not turn a missing retrieval area into a factual research gap. Do not invent a source, citation, established finding, available dataset, measured result, novelty claim, score, or final method. Merge wording-only duplicates while preserve genuinely different causal, counterfactual, or validation logic as parallel opportunities.
 {{ payload_json }}

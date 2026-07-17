@@ -10,6 +10,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+from ..literature_identity import is_paper_note_file
+
 try:
     import jsonschema
     from jsonschema import Draft7Validator, ValidationError
@@ -297,6 +299,23 @@ def validate_prerequisites(workspace_dir: Path, task_id: str) -> tuple[bool, str
         return True, None
 
     errors = []
+    # A standard workspace deliberately contains empty note directories.  Any
+    # task that declares the shared literature manifest is saying that it
+    # consumes the Literature Artifact Contract, not just a path that happens
+    # to exist.  Merely seeing ``literature/literature_manifest.json`` or an
+    # empty note directory is therefore not sufficient for T3.5/T3.6/T4/T5/T8.
+    # Use the single contract rather than per-task globs: it validates
+    # canonical paths, text readability, legacy migration, deduplication and
+    # the required full/partial evidence boundary in one place.
+    requires_literature_corpus = "literature_manifest" in inputs
+    # Capture this before ``validate_literature_corpus`` refreshes the shared
+    # manifest. A legacy workspace that never adopted the T2/T3 shallow-reading
+    # contract must remain readable, while a workspace that explicitly chose a
+    # coverage target cannot advance because a generated manifest happens to
+    # exist after validation.
+    from ..runtime.abstract_sweep import has_shallow_read_coverage_contract
+
+    has_configured_shallow_coverage = has_shallow_read_coverage_contract(workspace_dir)
 
     for input_name, input_path in inputs.items():
         file_path = workspace_dir / input_path
@@ -306,11 +325,76 @@ def validate_prerequisites(workspace_dir: Path, task_id: str) -> tuple[bool, str
             if input_name in required_inputs:
                 errors.append(f"Missing required input: {input_name} ({input_path})")
             continue
+    if requires_literature_corpus:
+        from ..runtime.literature_contract import validate_literature_corpus
+
+        corpus = validate_literature_corpus(workspace_dir, require_full_or_partial=True, write_manifest=True)
+        if not corpus.ok:
+            errors.append(
+                "Literature Artifact Contract is not ready: "
+                + corpus.reason
+                + f" (manifest: {corpus.manifest_path})"
+            )
+        if has_configured_shallow_coverage:
+            coverage_error = _configured_shallow_coverage_error(workspace_dir)
+            if coverage_error:
+                errors.append(
+                    "Literature reading coverage is not ready for this downstream task: "
+                    + coverage_error
+                )
 
     if errors:
         return False, "; ".join(errors)
 
     return True, None
+
+
+def _configured_shallow_coverage_error(workspace_dir: Path) -> str | None:
+    """Validate a researcher-selected T3 shallow-reading target downstream.
+
+    T3.5, T3.6, T4, T4.5, T5, and T8 all declare the same shared literature
+    manifest. Once a workspace has also persisted a T2/T3 coverage decision,
+    every one of those consumers must reject an absent, stale, or underfilled
+    shallow-reading manifest. This prevents a workspace produced by an older
+    runtime from resuming directly into T4 with a partial reading corpus.
+
+    Workspaces without either the workspace-local parameter artifact or a
+    shallow manifest predate this contract and retain the existing corpus-only
+    compatibility path.
+    """
+
+    literature_dir = workspace_dir / "literature"
+    params_path = literature_dir / "literature_params.json"
+    manifest_path = literature_dir / "shallow_read_manifest.json"
+    try:
+        if params_path.is_file():
+            from ..runtime.t2_config import get_effective_reader_read_params
+
+            reader_params = get_effective_reader_read_params(workspace_dir)
+            config = reader_params.get("abstract_sweep") if isinstance(reader_params, dict) else None
+            if not isinstance(config, dict):
+                return "无法解析 workspace 的摘要轻读参数。"
+        else:
+            # A manifest created by a prior compatible runtime is itself an
+            # explicit coverage contract. Reuse its persisted target rather
+            # than applying today's global default to the historical run.
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                return f"literature/shallow_read_manifest.json 不可读取：{type(exc).__name__}。"
+            target = manifest.get("target") if isinstance(manifest, dict) else None
+            config = {"enabled": True, "lite_paper_num": target}
+
+        from ..runtime.abstract_sweep import validate_abstract_sweep_coverage
+
+        ok, error = validate_abstract_sweep_coverage(
+            workspace_dir,
+            config,
+            require_manifest=True,
+        )
+        return None if ok else str(error or "摘要轻读覆盖未完成。")
+    except Exception as exc:
+        return f"无法验证摘要轻读覆盖：{type(exc).__name__}: {exc}"
 
 
 def build_declared_outputs_from_state_machine(state_machine_config: Path, task_id: str) -> dict[str, str]:
@@ -679,7 +763,7 @@ def register_builtin_task_checkers():
         if not isinstance(run, dict) or not run.get("trace_id"):
             return False, "skill_specialization_execution.llm_run.trace_id is missing"
         outputs = execution.get("outputs")
-        if not isinstance(outputs, dict) or outputs.get("report") != "external_executor/skill_specialization_report.json":
+        if not isinstance(outputs, dict) or outputs.get("report") != "external_executor/report/skill_specialization_report.json":
             return False, "skill_specialization_execution.outputs.report is invalid"
         record_validation = execution.get("validation")
         if not isinstance(record_validation, dict) or record_validation.get("status") != "pass":
@@ -687,10 +771,34 @@ def register_builtin_task_checkers():
         return True, None
 
     def check_ideation_phase(workspace_dir: Path) -> tuple[bool, str | None]:
-        """T4 checker：复用 IdeationAgent 的 schema、anchor、Gate 和 bridge 条件校验。"""
+        """Validate the active T4 contract without conflating Gate1 and legacy formalization.
+
+        Native T4 deliberately stops at a researcher-facing Gate1 Portfolio.
+        Formal ``hypotheses.md`` and ``exp_plan.yaml`` are produced only after a
+        selected Candidate passes T4.5. The historical all-in-one T4 checker
+        remains necessary for legacy workspaces, but using it for a native
+        Gate1 result makes a successfully persisted Population look invalid.
+        """
         from ..agents.ideation import IdeationAgent
+        from ..agents.ideation import validate_t4_gate1_ready
+        from ..ideation.final_card_readiness import validate_t4_portfolio_final_cards
         from ..orchestration.task_io_contract import resolve_outputs
         from ..runtime.agent import ExecutionContext
+
+        native_state = workspace_dir / "ideation" / "evolution" / "state.json"
+        if native_state.is_file():
+            ok, error = validate_t4_gate1_ready(workspace_dir)
+            if not ok:
+                return False, error
+            cards_ok, cards_error = validate_t4_portfolio_final_cards(workspace_dir)
+            if not cards_ok:
+                return False, cards_error
+            selection_path = workspace_dir / "ideation" / "_gate1_user_selection.json"
+            if selection_path.exists() and selection_path.stat().st_size > 0:
+                from ..orchestration.state_machine import validate_t4_gate1_selection_file
+
+                return validate_t4_gate1_selection_file(workspace_dir)
+            return True, None
 
         ctx = ExecutionContext(
             workspace_dir=workspace_dir,
@@ -703,16 +811,41 @@ def register_builtin_task_checkers():
 
     def check_t4_gate1_phase(workspace_dir: Path) -> tuple[bool, str | None]:
         from ..agents.ideation import validate_t4_gate1_ready
+        from ..ideation.final_card_readiness import validate_t4_portfolio_final_cards
 
         ok, err = validate_t4_gate1_ready(workspace_dir)
         if not ok:
             return False, err
+        cards_ok, cards_err = validate_t4_portfolio_final_cards(workspace_dir)
+        if not cards_ok:
+            return False, cards_err
         decision_path = workspace_dir / "ideation" / "_gate1_user_selection.json"
         if not decision_path.exists() or decision_path.stat().st_size <= 0:
             return True, None
         from ..orchestration.state_machine import validate_t4_gate1_selection_file
 
         return validate_t4_gate1_selection_file(workspace_dir)
+
+    def check_novelty_auditor_phase(workspace_dir: Path) -> tuple[bool, str | None]:
+        """Validate the conditional T4.5 formalization contract.
+
+        The task I/O contract intentionally keeps formal execution artifacts
+        optional because a novelty audit can legitimately return a non-pass
+        verdict.  Once an audit declares a pass, however, the manifest and all
+        canonical formalization artifacts become mandatory.  Delegate that
+        conditional rule to the agent validator so the CLI, Resume, and direct
+        agent execution cannot disagree.
+        """
+        from ..agents.novelty_auditor import NoveltyAuditorAgent
+        from ..runtime.agent import ExecutionContext
+
+        ctx = ExecutionContext(
+            workspace_dir=workspace_dir,
+            project_id="validator",
+            task_id="T4.5",
+            run_id="validator",
+        )
+        return NoveltyAuditorAgent().validate_outputs(ctx)
 
     def check_reviewer_phase(workspace_dir: Path, task_id: str) -> tuple[bool, str | None]:
         from ..agents.reviewer import ReviewerAgent
@@ -805,13 +938,13 @@ def register_builtin_task_checkers():
     register_task_checker("T3", check_t3)
     register_task_checker("T4", check_ideation_phase)
     register_task_checker("T4-GATE1", check_t4_gate1_phase)
+    register_task_checker("T4.5", check_novelty_auditor_phase)
     register_task_checker(
         "T5-REBOOST-GATE",
         lambda workspace_dir: check_experimenter_phase(workspace_dir, "T5-REBOOST-GATE"),
     )
     register_task_checker("T5-SPECIALIZE-EXECUTOR-SKILLS", check_project_skill_specialization_phase)
     register_task_checker("T5", lambda workspace_dir: check_experimenter_phase(workspace_dir, "T5"))
-    register_task_checker("T7", lambda workspace_dir: check_experimenter_phase(workspace_dir, "T7"))
     register_task_checker("T8-REVIEW-1", lambda workspace_dir: check_reviewer_phase(workspace_dir, "T8-REVIEW-1"))
     register_task_checker("T8-REVIEW-2", lambda workspace_dir: check_reviewer_phase(workspace_dir, "T8-REVIEW-2"))
     register_task_checker("T9", check_submission_phase)

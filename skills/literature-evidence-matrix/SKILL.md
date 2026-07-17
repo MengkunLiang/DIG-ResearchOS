@@ -62,13 +62,6 @@ interaction:
 
 # Literature Evidence Matrix
 
-Validate each requested source path before extracting fields. Use source-native labels
-where possible and record the path and note section/field that supplied every
-nontrivial cell. A missing field must remain blank or `unknown`; never infer a dataset,
-metric, causal mechanism, result, or citation from a title alone.
+Validate each requested source path before extracting fields. Use source-native labels where possible and record the path and note section/field that supplied every nontrivial cell. A missing field must remain blank or `unknown`; never infer a dataset, metric, causal mechanism, result, or citation from a title alone.
 
-Write a CSV that is valid RFC-style CSV: quote cells containing commas, quotes, or new
-lines. Keep the table compact enough to scan, while the Markdown report carries longer
-explanations, weak-evidence warnings, coverage counts, and proposed section-specific
-follow-up searches. Clearly distinguish full-text/partial-text/abstract-only/metadata
-records and prevent the latter two from becoming strong evidence rows.
+Write a CSV that is valid RFC-style CSV: quote cells containing commas, quotes, or new lines. Keep the table compact enough to scan, while the Markdown report carries longer explanations, weak-evidence warnings, coverage counts, and proposed section-specific follow-up searches. Clearly distinguish full-text/partial-text/abstract-only/metadata records and prevent the latter two from becoming strong evidence rows.

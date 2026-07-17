@@ -26,8 +26,7 @@
           "candidate_ids",
           "visible_to_gate",
           "selected_into_hypotheses",
-          "decision_summary",
-          "escape_hatch"
+          "review_status"
         ],
         "properties": {
           "bridge_id": {
@@ -52,6 +51,19 @@
           },
           "selected_into_hypotheses": {
             "type": "boolean"
+          },
+          "review_status": {
+            "type": "string",
+            "enum": ["llm_reviewed", "unreviewed"]
+          },
+          "review_diagnostic": {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": {
+              "code": {"type": "string", "minLength": 1},
+              "message": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": true
           },
           "decision_summary": {
             "type": "string",
@@ -81,6 +93,16 @@
             "additionalProperties": true
           }
         },
+        "allOf": [
+          {
+            "if": {"properties": {"review_status": {"const": "llm_reviewed"}}},
+            "then": {"required": ["decision_summary", "escape_hatch"]}
+          },
+          {
+            "if": {"properties": {"review_status": {"const": "unreviewed"}}},
+            "then": {"required": ["review_diagnostic"]}
+          }
+        ],
         "additionalProperties": true
       }
     },

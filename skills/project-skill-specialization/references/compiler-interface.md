@@ -59,12 +59,10 @@ python -m researchos.cli run-task T5-SPECIALIZE-EXECUTOR-SKILLS \
   --workspace <workspace>
 ```
 
-That task loads this repository Skill, asks the LLM to run the bundled wrappers,
-then performs an independent validate-only pass before writing
-`external_executor/skill_specialization_execution.json`.
+That task loads this repository Skill, asks the LLM to run the bundled wrappers, then performs an independent validate-only pass before writing
+`external_executor/report/skill_specialization_execution.json`.
 
-The repository-level deterministic CLI remains available for offline preview,
-repair, and validation:
+The repository-level deterministic CLI remains available for offline preview, repair, and validation:
 
 ```bash
 python -m researchos.cli specialize-executor-skills \
@@ -79,9 +77,7 @@ Supported modes:
 --deterministic
 ```
 
-The bundled Skill wrapper imports the Python service directly so that the Skill,
-offline CLI, T5 task, and tests share one implementation. It must not reimplement
-the compiler or invoke a chain of internal scripts.
+The bundled Skill wrapper imports the Python service directly so that the Skill, offline CLI, T5 task, and tests share one implementation. It must not reimplement the compiler or invoke a chain of internal scripts.
 
 ## Wrapper behavior
 

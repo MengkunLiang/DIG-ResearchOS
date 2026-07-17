@@ -32,6 +32,14 @@ class T2FinalizeConfig:
     finish_finalize_min_raw: int = 30
     dedup_title_threshold: float = 0.95
     access_audit_top_n: int = 50
+    # Every retained, metadata-verified candidate gets one deterministic open
+    # PDF acquisition attempt.  This is an availability operation only; it
+    # never upgrades reading evidence.
+    pdf_acquisition_enabled: bool = True
+    pdf_acquisition_max_concurrency: int = 4
+    pdf_acquisition_retry_terminal_failures: bool = False
+    pdf_acquisition_skip_known_books: bool = True
+    pdf_acquisition_max_auto_read_pages: int = 100
     pre_active_light_backfill_max: int = 220
     metadata_backfill_max_concurrency: int = 6
     abstract_backfill_title_match_threshold: float = 0.88
@@ -277,6 +285,27 @@ def load_t2_finalize_config(workspace_dir: Path | str | None = None) -> T2Finali
             maximum=1.0,
         ),
         access_audit_top_n=_as_int(finalize.get("access_audit_top_n"), defaults.access_audit_top_n, minimum=1),
+        pdf_acquisition_enabled=_as_bool(
+            finalize.get("pdf_acquisition_enabled"), defaults.pdf_acquisition_enabled
+        ),
+        pdf_acquisition_max_concurrency=_as_int(
+            finalize.get("pdf_acquisition_max_concurrency"),
+            defaults.pdf_acquisition_max_concurrency,
+            minimum=1,
+        ),
+        pdf_acquisition_retry_terminal_failures=_as_bool(
+            finalize.get("pdf_acquisition_retry_terminal_failures"),
+            defaults.pdf_acquisition_retry_terminal_failures,
+        ),
+        pdf_acquisition_skip_known_books=_as_bool(
+            finalize.get("pdf_acquisition_skip_known_books"),
+            defaults.pdf_acquisition_skip_known_books,
+        ),
+        pdf_acquisition_max_auto_read_pages=_as_int(
+            finalize.get("pdf_acquisition_max_auto_read_pages"),
+            defaults.pdf_acquisition_max_auto_read_pages,
+            minimum=1,
+        ),
         pre_active_light_backfill_max=_as_int(
             finalize.get("pre_active_light_backfill_max"),
             defaults.pre_active_light_backfill_max,

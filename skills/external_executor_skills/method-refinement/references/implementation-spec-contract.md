@@ -114,6 +114,10 @@ Bind rather than duplicate:
 
 Any intentional deviation requires an explicit change record and root authorization.
 
+## Deployment and raw outputs
+
+Implementation targets for ours modules, baseline adapters, entrypoints, and runnable configs must resolve under `external_executor/expr/`. Experiment logs, metric files, run records, checkpoints, and other run-produced outputs must resolve under `external_executor/raw_results/`. Prepared datasets, checkpoints, benchmark resources, and externally acquired baselines are read from `resources/` for by-hand local material or `resource/` for acquired/reimplemented material, not from `external_executor/expr/`.
+
 ## Configuration contract
 
 For every config key record:

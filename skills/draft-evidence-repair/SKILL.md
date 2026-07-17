@@ -105,8 +105,4 @@ workflow:
 
 # Draft Evidence Repair
 
-Read only the declared manuscript and authorized evidence. Separate literature claims,
-experimental claims, and rhetorical positioning. For each issue state the current text,
-evidence status, source/artifact, allowed wording, and the smallest action that would
-resolve it. Never create a citation, experiment result, metric, dataset, or concrete
-protocol because the draft appears to require one.
+Read only the declared manuscript and authorized evidence. Separate literature claims, experimental claims, and rhetorical positioning. For each issue state the current text, evidence status, source/artifact, allowed wording, and the smallest action that would resolve it. Never create a citation, experiment result, metric, dataset, or concrete protocol because the draft appears to require one.

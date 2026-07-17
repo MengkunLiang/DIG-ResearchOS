@@ -128,32 +128,13 @@ workflow:
 
 # Domain Synthesis Studio
 
-Start from the verified brief and intake packet. In `intake_and_inventory`, record
-which documents are FULL/PARTIAL/ABSTRACT/METADATA and what cannot yet support a
-mechanism or causal claim. Do not scan unrelated conventional paths.
+Start from the verified brief and intake packet. In `intake_and_inventory`, record which documents are FULL/PARTIAL/ABSTRACT/METADATA and what cannot yet support a mechanism or causal claim. Do not scan unrelated conventional paths.
 
-Before any search, call `update_skill_workflow` for `retrieval_decision` and ask the
-human whether to (a) synthesize the present corpus only, (b) authorize a scoped
-literature supplement, or (c) upload/identify specific missing sources. If search is
-authorized, use source-returning tools with a small explicit query portfolio and write
-the retained/duplicate/excluded records plus their provenance to the manifest. Search
-leads without section-level reading are discovery evidence only.
+Before any search, call `update_skill_workflow` for `retrieval_decision` and ask the human whether to (a) synthesize the present corpus only, (b) authorize a scoped literature supplement, or (c) upload/identify specific missing sources. If search is authorized, use source-returning tools with a small explicit query portfolio and write the retained/duplicate/excluded records plus their provenance to the manifest. Search leads without section-level reading are discovery evidence only.
 
-Use existing paper cards and, when available, `build_synthesis_workbench`; inspect its
-output rather than treating its clusters as final scholarly judgments. Produce every
-declared artifact. The research-question report must classify each item as
-evidence-supported opportunity, untested boundary, missing comparison, retrieval
-deficiency, or unsupported speculation. State plainly that retrieval coverage is not a
-research gap.
+Use existing paper cards and, when available, `build_synthesis_workbench`; inspect its output rather than treating its clusters as final scholarly judgments. Produce every declared artifact. The research-question report must classify each item as evidence-supported opportunity, untested boundary, missing comparison, retrieval deficiency, or unsupported speculation. State plainly that retrieval coverage is not a research gap.
 
-For workspace-backed notes, read the canonical roots only: `literature/deep_read_notes/`,
-`literature/shallow_read_notes/`, and `literature/bridge_notes/`. Keep their Evidence
-Permission distinct in the synthesis: deep/bridge notes can support bounded mechanism
-or design-rationale discussion; shallow notes extend coverage and comparison but cannot
-by themselves establish a mechanism, causal finding, or implementation detail. Old
-`paper_notes*` directory names are migration inputs, never a second live corpus.
+For workspace-backed notes, read the canonical note roots only: `literature/deep_read_notes/`,
+`literature/shallow_read_notes/`, and `literature/bridge_notes/`. Keep their Evidence Permission distinct in the synthesis: deep/bridge notes can support bounded mechanism or design-rationale discussion; shallow notes extend coverage and comparison but cannot by themselves establish a mechanism, causal finding, or implementation detail. Separately, read `literature/cross_domain_catalogs/` for B1–B# retrieval context when it can sharpen historical framing, taxonomy boundaries, comparisons, or reading priorities; catalog data is not a paper-note evidence source. Old `paper_notes*` directory names are migration inputs, never a second live corpus.
 
-At `next_path_gate`, present corpus sufficiency, unsupported areas, and the precise
-handoff options. If the human selects Survey preparation, write that explicit decision
-and an evidence package pointer into `domain_synthesis_manifest.json`; do not write a
-Survey manuscript without a separate Survey workflow decision.
+At `next_path_gate`, present corpus sufficiency, unsupported areas, and the precise handoff options. If the human selects Survey preparation, write that explicit decision and an evidence package pointer into `domain_synthesis_manifest.json`; do not write a Survey manuscript without a separate Survey workflow decision.

@@ -101,12 +101,6 @@ workflow:
 
 # Related Work Builder
 
-Use literature evidence to explain a research story, not to manufacture a novelty
-claim. Each sentence that compares the current paper with prior work must name the
-comparison axis and retain a source anchor in the evidence map. An adjacent or
-cross-domain work can supply conceptual background but must not be presented as a
-direct empirical baseline unless the project evidence says so.
+Use literature evidence to explain a research story, not to manufacture a novelty claim. Each sentence that compares the current paper with prior work must name the comparison axis and retain a source anchor in the evidence map. An adjacent or cross-domain work can supply conceptual background but must not be presented as a direct empirical baseline unless the project evidence says so.
 
-When the positioning brief lacks a decision-critical statement, request it through the
-guided follow-up protocol. Do not invent a method, result, baseline, metric, or
-contribution merely to make the section read smoothly.
+When the positioning brief lacks a decision-critical statement, request it through the guided follow-up protocol. Do not invent a method, result, baseline, metric, or contribution merely to make the section read smoothly.

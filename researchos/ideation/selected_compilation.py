@@ -27,10 +27,14 @@ def compile_pre_novelty_hypothesis_brief(
 
     store = T4ArtifactStore(workspace_dir)
     candidate = _load_candidate(workspace_dir, selected_candidate_id)
+    ready, reason = validate_candidate_selection_ready(candidate)
+    if not ready:
+        raise ValueError(reason or "Selected Candidate is not ready for Pre-Novelty compilation")
+    selection_warnings = candidate_selection_warnings(candidate)
     hypotheses = candidate.get("candidate_hypotheses") if isinstance(candidate.get("candidate_hypotheses"), list) else []
     hypotheses = [item for item in hypotheses if isinstance(item, dict)]
-    if not 2 <= len(hypotheses) <= 4:
-        raise ValueError("Pre-Novelty compilation requires 2-4 LLM-authored draft hypotheses")
+    if not 1 <= len(hypotheses) <= 4:
+        raise ValueError("Pre-Novelty compilation requires 1-4 LLM-authored draft hypotheses")
     contributions = candidate.get("contributions") if isinstance(candidate.get("contributions"), list) else []
     minimum = candidate.get("minimum_experiment") if isinstance(candidate.get("minimum_experiment"), dict) else {}
     source_paths = _source_paths(candidate)
@@ -41,6 +45,7 @@ def compile_pre_novelty_hypothesis_brief(
         "candidate_id": selected_candidate_id,
         "candidate": candidate,
         "candidate_fingerprint": stable_fingerprint(candidate),
+        "selection_warnings": selection_warnings,
     }
     store.write_json("ideation/selected/selected_candidate.json", selected_payload)
     brief = {
@@ -49,6 +54,11 @@ def compile_pre_novelty_hypothesis_brief(
         "selection_fingerprint": selection_fingerprint,
         "candidate_id": selected_candidate_id,
         "status": "draft_for_novelty_review",
+        # A Gate1 selection is an instruction to perform the novelty audit,
+        # not a claim that its empirical support is complete.  Preserve the
+        # screening concern so T4.5 can audit it explicitly instead of
+        # returning a mature Candidate to T4 without an actionable path.
+        "selection_warnings": selection_warnings,
         "core_thesis": str(candidate.get("core_claim") or candidate.get("pitch") or "").strip(),
         "mechanism": str(candidate.get("mechanism") or "").strip(),
         "contributions": contributions,
@@ -98,6 +108,118 @@ def compile_pre_novelty_hypothesis_brief(
         "search_targets": "ideation/selected/t45_search_targets.json",
         "brief": "ideation/selected/pre_novelty_brief.md",
     }
+
+
+def validate_candidate_selection_ready(candidate: dict[str, Any]) -> tuple[bool, str | None]:
+    """Validate the minimum structural contract for a T4.5 audit handoff.
+
+    Gate1 may present a fully explained, independently scored IdeaSeed whose
+    evidence and design still need a novelty audit.  ``maturity=seed`` is a
+    lifecycle label, not a reason to make a confirmed selection loop back to
+    T4.  T4.5 is precisely where the provisional mechanism, one initial
+    falsifiable hypothesis, and evidence limitations are audited.  Missing
+    scientific structure remains a hard block; provisionality is carried in
+    the Pre-Novelty warnings instead.
+    """
+
+    candidate_id = str(candidate.get("id") or candidate.get("idea_id") or "Candidate").strip()
+    native_lifecycle_fields = {"maturity", "scoring_status", "evolution_score", "candidate_status"}
+    if not any(field in candidate for field in native_lifecycle_fields):
+        # Historical Gate1 workspaces predate the native Population lifecycle.
+        # They already store a human-visible candidate, hypotheses, and their
+        # own selection/resume contract. Do not reinterpret a missing native
+        # maturity field as ``seed`` and strand a previously valid workspace.
+        # New T4 projections always carry lifecycle fields, so the strict
+        # selection checks below remain mandatory for native Evolution.
+        return True, None
+    # ``revise_before_selection`` is an evidence/validation recommendation,
+    # rather than a lifecycle or structural defect.  T4.5 is the dedicated
+    # pre-novelty audit which must receive and assess that concern.  Treating
+    # it as a hard rejection made an explicit "推进 D1" appear to succeed at
+    # confirmation, then silently reopen T4 forever.
+    final_card = candidate.get("final_idea_card") if isinstance(candidate.get("final_idea_card"), dict) else {}
+    if not final_card:
+        # The runtime repairs the Portfolio Card with the LLM before opening
+        # Gate1. This guard protects old/corrupt workspaces as well: a
+        # renderer may never substitute a title, score, or risk sentence for
+        # the missing LLM decision narrative.
+        return (
+            False,
+            f"Candidate {candidate_id} 缺少已完成的 LLM Portfolio Idea Card；"
+            "请先完成定向卡片富化或继续演化，再进入 Pre-Novelty selection。",
+        )
+    if str(candidate.get("scoring_status") or "").strip() == "unscored":
+        return (
+            False,
+            f"Candidate {candidate_id} has no independent score after bounded retry. Retry scoring or review it before Pre-Novelty selection.",
+        )
+    if not isinstance(candidate.get("evolution_score"), dict):
+        return False, f"Candidate {candidate_id} has no independent scoring record for Pre-Novelty selection."
+    hypotheses = candidate.get("candidate_hypotheses") if isinstance(candidate.get("candidate_hypotheses"), list) else []
+    if not 1 <= len([item for item in hypotheses if isinstance(item, dict)]) <= 4:
+        return False, f"Candidate {candidate_id} needs 1-4 LLM-authored draft hypotheses before Pre-Novelty selection."
+    if not str(candidate.get("core_claim") or candidate.get("pitch") or "").strip():
+        return False, f"Candidate {candidate_id} lacks a traceable core thesis for Pre-Novelty selection."
+    return True, None
+
+
+def candidate_selection_warnings(candidate: dict[str, Any]) -> list[str]:
+    """Return non-blocking Gate1 concerns that T4.5 must audit.
+
+    These warnings deliberately do not replace ``validate_candidate_selection_ready``:
+    malformed or incomplete Candidate artifacts still block T4.5.  They only
+    carry forward substantive concerns such as missing evidence anchors,
+    recommended validation upgrades, and model-authored uncertainty notes.
+    """
+
+    warnings: list[str] = []
+    screening = candidate.get("pass2_screening") if isinstance(candidate.get("pass2_screening"), dict) else {}
+    recommendation = str(screening.get("screening_recommendation") or "").strip()
+    screening_warning = str(screening.get("selection_warning") or candidate.get("selection_warning") or "").strip()
+    if recommendation and recommendation != "proceed":
+        if screening_warning:
+            warnings.append(screening_warning)
+        else:
+            warnings.append(
+                f"Gate1 screening recommendation is {recommendation}; T4.5 must review the stated evidence, validation, or scoring concern."
+            )
+    maturity = str(candidate.get("maturity") or "").strip().casefold()
+    if maturity == "seed":
+        warnings.append(
+            "该候选仍处于探索性 IdeaSeed 生命周期；T4.5 必须审计其机制边界、证据缺口和后续富化需求，不得将其直接视为已成熟的研究方案。"
+        )
+    hypotheses = candidate.get("candidate_hypotheses") if isinstance(candidate.get("candidate_hypotheses"), list) else []
+    hypothesis_count = len([item for item in hypotheses if isinstance(item, dict)])
+    if hypothesis_count == 1:
+        warnings.append(
+            "当前仅有一条草案假设；T4.5 应核验该假设的可证伪性，并判断是否需要补充竞争机制、边界条件或额外验证假设。"
+        )
+    for value in candidate.get("warnings") if isinstance(candidate.get("warnings"), list) else []:
+        text = str(value).strip()
+        if text:
+            warnings.append(text)
+    # Preserve ordering while avoiding duplicate messages in the brief and UI.
+    return list(dict.fromkeys(warnings))
+
+
+def candidate_selection_readiness(
+    workspace_dir: Path,
+    *,
+    candidate_id: str,
+) -> tuple[bool, str | None]:
+    """Read one Gate1 Candidate and evaluate its Pre-Novelty readiness."""
+
+    return validate_candidate_selection_ready(_load_candidate(workspace_dir, candidate_id))
+
+
+def candidate_selection_warnings_for_workspace(
+    workspace_dir: Path,
+    *,
+    candidate_id: str,
+) -> list[str]:
+    """Read one Gate1 Candidate and return its non-blocking T4.5 warnings."""
+
+    return candidate_selection_warnings(_load_candidate(workspace_dir, candidate_id))
 
 
 def selected_candidate_id_from_gate_input(workspace_dir: Path, captured: dict[str, Any]) -> str | None:
@@ -252,6 +374,9 @@ def _render_pre_novelty_brief(candidate: dict[str, Any], hypotheses: list[dict[s
     lines = ["# Pre-Novelty Hypothesis Brief", "", f"## Selected Candidate", str(candidate.get("display_title") or candidate.get("title") or ""), "", "## Core Thesis", str(candidate.get("core_claim") or candidate.get("pitch") or ""), "", "## Mechanism", str(candidate.get("mechanism") or ""), "", "## Draft Hypotheses"]
     for item in hypotheses:
         lines.extend([f"### {item.get('id') or 'Draft hypothesis'}", str(item.get("statement") or ""), "", f"Mechanism: {item.get('mechanism') or ''}", f"Prediction: {item.get('observable_prediction') or item.get('prediction') or ''}", f"Discriminating test: {item.get('discriminating_test') or item.get('test') or ''}", ""])
+    warnings = candidate_selection_warnings(candidate)
+    if warnings:
+        lines.extend(["## Gate1 Warnings To Audit", *[f"- {warning}" for warning in warnings], ""])
     lines.extend(["## Evidence Boundary", str(candidate.get("basis_summary") or ""), "", "## Files", *[f"- `{path}`" for path in source_paths], ""])
     return "\n".join(lines)
 

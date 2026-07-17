@@ -78,20 +78,7 @@ interaction:
 
 # Source-Grounded Paper Comparison
 
-Read the source list first and classify each entry as a workspace path, PDF, DOI/arXiv/
-OpenAlex identifier, URL, exact title, or an explicit topic-plus-count request. Resolve
-identifiers with metadata/search tools, and attempt PDF retrieval only to
-`user_inputs/paper-comparison/` when the user authorized that source. For a topic-plus-
-count request, write the exact query, returned candidates, selection rule, and access
-outcome before comparing; do not silently broaden the topic or replace unread papers
-with model memory. If a source is missing, malformed, inaccessible, or not a readable
-note/PDF, write a focused follow-up request and retain the limitation. Extract only what
-the actual sources support and retain each source path plus section/field anchors.
+Read the source list first and classify each entry as a workspace path, PDF, DOI/arXiv/ OpenAlex identifier, URL, exact title, or an explicit topic-plus-count request. Resolve identifiers with metadata/search tools, and attempt PDF retrieval only to
+`user_inputs/paper-comparison/` when the user authorized that source. For a topic-plus- count request, write the exact query, returned candidates, selection rule, and access outcome before comparing; do not silently broaden the topic or replace unread papers with model memory. If a source is missing, malformed, inaccessible, or not a readable note/PDF, write a focused follow-up request and retain the limitation. Extract only what the actual sources support and retain each source path plus section/field anchors.
 
-The report must distinguish observed facts, analytical comparisons, and proposed
-research implications. Compare at least: problem/unit of analysis, mechanism or design
-rationale, method/intervention, data/evaluation, evidence status, limitations, and
-nearest usable role (baseline, mechanism source, boundary case, or background). State
-whether a proposed merger is evidence-supported, merely plausible, or currently
-unsupported. Do not create BibTeX entries or say a source supports a claim without an
-anchor.
+The report must distinguish observed facts, analytical comparisons, and proposed research implications. Compare at least: problem/unit of analysis, mechanism or design rationale, method/intervention, data/evaluation, evidence status, limitations, and nearest usable role (baseline, mechanism source, boundary case, or background). State whether a proposed merger is evidence-supported, merely plausible, or currently unsupported. Do not create BibTeX entries or say a source supports a claim without an anchor.

@@ -11,6 +11,22 @@ Use this guidance during T8 writing and revision.
 
 Write the paper as a staged research argument, not as one long generation. Tools organize resources, inventories, section plans, assembly, and mechanical audits. The Writer LLM is responsible for the scientific story, claims, section prose, and venue-aware positioning.
 
+## Publication Prose and Citation Preferences
+
+Treat these as editorial standards for writing and review. When they conflict with factual accuracy, verified evidence, or a target-venue template, preserve the fact and express it naturally.
+
+- Aim for the clean, precise, and restrained prose expected in strong UTD/FT50/CCF-A work. Do not use empty importance claims, stock transitions, or repeated statements to make a section look longer.
+- In ordinary body prose, do not rely on dashes, colons, or label sentences such as
+  `Problem:`, `Gap:`, `Insight:`, or `Implication:`. Definitions, equations, tables, contribution lists, and a venue template may require limited punctuation of that kind, but the argument itself should use complete sentences that state causality, contrast, qualification, or consequence.
+- Do not construct an argument as a sequence of parallel short sentences. Let each paragraph develop one claim through a readable order such as definition, mechanism, evidence, boundary, and implication. Move to a new term, paper, result, or practical consequence only after explaining why the preceding discussion leads there.
+- Keep the section hierarchy compact. Do not create a subsection or `\paragraph{}` for every artifact, claim, or paper. Use a heading only when the argument changes function in a way that helps the reader navigate the paper.
+- Explain a technical or theoretical term when it first matters to the argument. When useful, use a real or conditional `such as` scenario to make an abstract mechanism legible. An illustrative example must not be presented as data, a result, or a fact that has not been verified.
+- Every citation must be real, available in the bibliography, and semantically matched to the precise claim it supports. Verify the paper's subject, method, setting, and evidence level in its note card, citation pool, or source record before citing it.
+  Prefer genuinely relevant work from UTD/FT50/CCF-A venues, leading marketing, economics, management science, information systems, and computer-science outlets, together with foundational, highly cited, influential, and important recent work.
+  Venue quality never permits a background citation to support a mechanism, causal effect, empirical result, business implication, or contribution that it does not actually establish.
+- Treat citation selection as a source-reading decision, not a formatting operation.
+  Do not infer support from a title, author reputation, venue, abstract snippet, or model memory. If the available source record cannot verify the intended wording, remove the citation and dependent strong claim, or use an explicitly bounded motivation statement. Broaden coverage through verified work that represents a distinct development stage, research tradition, comparison dimension, or evidence boundary, never through an unrelated citation bundle.
+
 ## Required Stages
 
 - Resource index: inventory project, literature, hypotheses, novelty audit, experiment results, ablations, figures, tables, code, logs, and bibliography.

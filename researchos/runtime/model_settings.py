@@ -196,6 +196,46 @@ def load_model_settings(path: Path | None = None) -> dict[str, Any]:
     return settings
 
 
+def inspect_model_settings_source(path: Path | None = None) -> dict[str, Any]:
+    """Read declared connection values without expanding credential references.
+
+    Runtime loading deliberately expands ``${ENV_VAR}`` references. The setup
+    wizard must instead know what was declared on disk so completing a missing
+    model cannot replace a secure environment reference with a literal key.
+    """
+
+    settings_path = resolve_model_settings_path(path)
+    source_path = settings_path
+    raw: dict[str, Any] = {}
+    if settings_path.exists():
+        try:
+            parsed = yaml.safe_load(settings_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            raw = parsed
+    elif settings_path == DEFAULT_MODEL_SETTINGS_PATH and LEGACY_USER_SETTINGS_PATH.exists():
+        source_path = LEGACY_USER_SETTINGS_PATH
+        try:
+            parsed = yaml.safe_load(source_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            raw = parsed
+
+    nested = raw.get("connection") if isinstance(raw.get("connection"), dict) else raw.get("llm")
+    connection = dict(nested) if isinstance(nested, dict) else dict(raw)
+    return {
+        "settings_path": str(settings_path),
+        "source_path": str(source_path),
+        "source_exists": bool(raw),
+        "provider": str(connection.get("provider") or "").strip(),
+        "api_base": str(connection.get("api_base") or "").strip(),
+        "api_key": str(connection.get("api_key") or "").strip(),
+        "model": str(connection.get("model") or "").strip(),
+    }
+
+
 def load_llm_runtime_defaults(path: Path | None = None) -> dict[str, Any]:
     """Load internal defaults that users should not need to tune."""
 

@@ -34,6 +34,7 @@ allowed_read_prefixes:
 allowed_write_prefixes:
   - user_inputs/cross-domain-idea-studio/
   - literature/bridge_notes/
+  - literature/cross_domain_catalogs/
   - ideation/
 outputs_expected:
   bridge_plan: ideation/cross_domain_bridge_plan.json
@@ -125,35 +126,21 @@ workflow:
 
 # Cross-domain Idea Studio
 
-Treat the target domain and bridge domain symmetrically as evidence problems. A bridge
-paper may inspire a candidate but does not prove target-domain validity. For each
-transfer card, state the source mechanism, source anchor, target mapping, mismatch,
-evidence level, alternative explanation, and minimum discriminating observation.
+Treat the target domain and bridge domain symmetrically as evidence problems. A bridge paper may inspire a candidate but does not prove target-domain validity. For each transfer card, state the source mechanism, source anchor, target mapping, mismatch, evidence level, alternative explanation, and minimum discriminating observation.
 
 Use only the canonical Paper Note roots when existing ResearchOS notes are relevant:
-`literature/deep_read_notes/` for mainline full/partial reading, `literature/bridge_notes/`
-for bridge full/partial reading, and `literature/shallow_read_notes/` for abstract-level
-recall. Do not read or create retired `paper_notes*` directories. Shallow notes may
-surface a Bridge lead or required reading upgrade, but cannot establish a transfer
-mechanism or target-domain validity.
+`literature/deep_read_notes/` for mainline full/partial reading, `literature/bridge_notes/` for bridge full/partial reading, and `literature/shallow_read_notes/` for abstract-level recall. Do not read or create retired `paper_notes*` directories. Shallow notes may surface a Bridge lead or required reading upgrade, but cannot establish a transfer mechanism or target-domain validity.
 
-Generate candidates only after the transfer audit. When target or bridge evidence is
-missing, output `preliminary`, `needs_retrieval`, or `unsupported` rather than a scored
-novelty claim. Never fabricate a current-project dataset, baseline, metric, command,
-budget, performance estimate, AUUC/Qini value, or experimental result. Concrete details
-are allowed only when allowed artifacts explicitly source them.
+Use `literature/cross_domain_catalogs/` separately for the user-confirmed B1–B# tracks.
+Its `bridge_context.json` and `paper_catalog.json` preserve retrieved metadata and abstract-level transfer fuel even when no Bridge paper has been deeply read. They can generate a leap, counterexample, mechanism challenge, or validation question, but must remain explicitly conjectural until a canonical note or other verifiable source supports the concrete claim.
 
-The final selection file must preserve the human decision. Do not claim that a selected
-candidate has entered hypothesis compilation unless the decision says so; recommend the
-separate `hypothesis-compiler` Skill as the next explicit action.
+Generate candidates only after the transfer audit. When target or bridge evidence is missing, output `preliminary`, `needs_retrieval`, or `unsupported` rather than a scored novelty claim. Never fabricate a current-project dataset, baseline, metric, command, budget, performance estimate, AUUC/Qini value, or experimental result. Concrete details are allowed only when allowed artifacts explicitly source them.
+
+The final selection file must preserve the human decision. Do not claim that a selected candidate has entered hypothesis compilation unless the decision says so; recommend the separate `hypothesis-compiler` Skill as the next explicit action.
 
 ## Native T4 handoff boundary
 
-The files produced here are Bridge evidence and optional Candidate Seeds. They are not
-native T4 Population artifacts: do not write `ideation/evidence/`, `ideation/populations/`,
-`ideation/evolution/`, `ideation/portfolio.json`, or `ideation/final_cards/`. When the
-researcher wants these Seeds considered with other routes, hand them to the T4 Evidence
-Routing flow. It preserves the Bridge escape hatch, decides whether the evidence permits a
-Candidate, independently scores any resulting Candidate, and keeps unsupported transfers
-visible rather than forcing a merge. A selected native Candidate produces a Pre-Novelty
-brief first; formal hypotheses and an experiment plan remain a T4.5-only outcome.
+The files produced here are Bridge evidence and optional Candidate Seeds. They are not native T4 Population artifacts: do not write `ideation/evidence/`, `ideation/populations/`,
+`ideation/evolution/`, `ideation/portfolio.json`, or `ideation/final_cards/`. When the researcher wants these Seeds considered with other routes, hand them to the T4 Evidence Routing flow. It preserves the Bridge escape hatch, decides whether the evidence permits a Candidate, independently scores any resulting Candidate, and keeps unsupported transfers visible rather than forcing a merge. A selected native Candidate produces a Pre-Novelty brief first; formal hypotheses and an experiment plan remain a T4.5-only outcome.
+
+Use `t4-evolution` to enter or resume the native T4 workflow after this Skill has prepared optional Bridge inputs. It determines whether the Bridge is a supported Candidate route or an explicit escape-hatch result.

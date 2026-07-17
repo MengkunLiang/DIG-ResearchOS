@@ -27,7 +27,7 @@
   "requirement_ids": [],
   "source": {
     "class": "official_author_repo|author_recognized|third_party_reproduction|executor_reimplementation|approximate_reproduction",
-    "path": "external_executor/workdir/resources/...",
+    "path": "resource/... or resources/...",
     "revision": "",
     "sha256": "",
     "resource_review_ids": []
@@ -115,7 +115,8 @@
 An item is executable only when:
 
 - the candidate is approved for baseline reproduction;
-- source path exists inside authorized workspace material;
+- source path exists inside the approved resource pool: `resources/` for by-hand local material or `resource/` for acquired/reimplemented material;
+- `external_executor/workdir/` and `external_executor/expr/` are not approved source pools;
 - protocol/fairness fingerprints are non-empty;
 - dataset/split and primary metric are explicit;
 - argv is a non-empty array and `authorized=true`;
@@ -123,3 +124,17 @@ An item is executable only when:
 - no blocking issue remains.
 
 A generated scaffold normally starts `incomplete` until project-specific command, config, metric extractor, and reference rules are completed.
+
+## Execution and result locations
+
+`working_directory` is resolved relative to the copied baseline deployment under:
+
+```text
+external_executor/expr/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/source/
+```
+
+All logs, run records, normalized metrics, environment records, and staged produced outputs must be written under the paired raw-result directory:
+
+```text
+external_executor/raw_results/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/
+```

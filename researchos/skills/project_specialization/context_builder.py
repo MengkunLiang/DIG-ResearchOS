@@ -102,8 +102,18 @@ def set_context_field(
 def _apply_handoff(context: MutableMapping[str, Any], handoff: Mapping[str, Any]) -> None:
     metadata = context["field_metadata"]
     context_reboost = _mapping(handoff.get("context_reboost"))
+    study_scope = _mapping(context_reboost.get("study_scope"))
+    method_mechanism = _mapping(context_reboost.get("method_mechanism"))
     method_intent = _mapping(handoff.get("method_intent"))
     experiment_contract = _mapping(handoff.get("experiment_contract"))
+    baseline_matrix = _object_list(_first_resolved(context_reboost.get("baseline_matrix"), handoff.get("baseline_matrix")))
+    claim_matrix = _object_list(_first_resolved(context_reboost.get("claim_evidence_matrix"), handoff.get("claim_evidence_matrix")))
+    minimum_loop = _mapping(_first_resolved(context_reboost.get("minimum_experiment_loop"), handoff.get("minimum_experiment_loop")))
+    iteration_budget = _mapping(_first_resolved(context_reboost.get("iteration_budget"), handoff.get("iteration_budget")))
+    claim_boundaries = _mapping(handoff.get("claim_boundaries"))
+    execution_contract = _mapping(handoff.get("execution_contract"))
+    writer_handoff = _mapping(handoff.get("writer_handoff_contract"))
+    paper_card_policy = _mapping(handoff.get("paper_card_evidence_policy"))
     sources = ["external_executor/handoff_pack.json"]
 
     handoff_rules = {
@@ -116,36 +126,30 @@ def _apply_handoff(context: MutableMapping[str, Any], handoff: Mapping[str, Any]
             _get(context_reboost, "central_hypothesis.statement"),
             context_reboost.get("central_hypothesis"),
         ),
-        "research.claim_boundaries": _string_list(
-            _first_resolved(
-                context_reboost.get("claim_boundaries"),
-                _get(handoff, "claim_boundaries.novelty_boundary"),
-                _get(handoff, "claim_boundaries.conditional_claims"),
-            )
+        "research.contribution_type": _first_resolved(
+            _get(method_mechanism, "contribution_intent"),
+            _get(claim_boundaries, "method_vs_engineering_boundary"),
         ),
+        "research.novelty_boundary": _string_list(_first_resolved(_get(claim_boundaries, "novelty_boundary"), context_reboost.get("claim_boundaries"))),
+        "research.claim_boundaries": _claim_boundaries(claim_boundaries, context_reboost),
         "research.must_not_claim": _string_list(
             _first_resolved(
                 context_reboost.get("must_not_claim"),
-                _get(handoff, "claim_boundaries.must_not_claim"),
+                claim_boundaries.get("must_not_claim"),
                 handoff.get("must_not_claim"),
             )
         ),
-        "research.core_claims": _claims_from_matrix(_first_resolved(context_reboost.get("claim_evidence_matrix"), handoff.get("claim_evidence_matrix"))),
-        "research.reviewer_questions": _reviewer_questions(_first_resolved(context_reboost.get("claim_evidence_matrix"), handoff.get("claim_evidence_matrix"))),
+        "research.core_claims": _claims_from_matrix(claim_matrix),
+        "research.reviewer_questions": _reviewer_questions(claim_matrix),
         "method.central_mechanism_hypothesis": _first_resolved(
-            _get(context_reboost, "method_mechanism.central_mechanism_hypothesis"),
+            _get(method_mechanism, "central_mechanism_hypothesis"),
             method_intent.get("central_mechanism_hypothesis"),
         ),
         "method.core_mechanism": _first_resolved(
-            _get(context_reboost, "method_mechanism.core_mechanism"),
+            _get(method_mechanism, "core_mechanism"),
             method_intent.get("core_mechanism"),
         ),
-        "method.must_preserve_components": _object_list(
-            _first_resolved(
-                _get(context_reboost, "method_mechanism.must_preserve_components"),
-                method_intent.get("must_preserve_components"),
-            )
-        ),
+        "method.must_preserve_components": _must_preserve_components(method_mechanism, method_intent),
         "method.candidate_components": _object_list(
             _first_resolved(method_intent.get("candidate_components"), method_intent.get("candidate_modules"))
         ),
@@ -159,9 +163,18 @@ def _apply_handoff(context: MutableMapping[str, Any], handoff: Mapping[str, Any]
             )
         ),
         "method.implementation_questions": _string_list(method_intent.get("implementation_questions")),
-        "method.implementation_acceptance": _string_list(method_intent.get("implementation_acceptance")),
-        "method.scope_change_triggers": _string_list(method_intent.get("scope_change_triggers")),
-        "method.attribution_requirements": _string_list(method_intent.get("attribution_requirements")),
+        "method.implementation_acceptance": _first_non_empty_list(
+            _string_list(method_intent.get("implementation_acceptance")),
+            _implementation_acceptance(context_reboost, writer_handoff),
+        ),
+        "method.scope_change_triggers": _first_non_empty_list(
+            _string_list(method_intent.get("scope_change_triggers")),
+            _scope_change_triggers(execution_contract, claim_boundaries),
+        ),
+        "method.attribution_requirements": _first_non_empty_list(
+            _string_list(method_intent.get("attribution_requirements")),
+            _attribution_requirements(method_intent, claim_matrix),
+        ),
         "method.initial_framework_figure_intent": _mapping(
             _first_resolved(
                 method_intent.get("initial_framework_figure_intent"),
@@ -177,33 +190,86 @@ def _apply_handoff(context: MutableMapping[str, Any], handoff: Mapping[str, Any]
             )
         ),
         "baselines.optional": _baseline_list(_first_resolved(context_reboost.get("optional_baselines"), handoff.get("optional_baselines"))),
-        "baselines.replacement_policy": _mapping(_first_resolved(context_reboost.get("baseline_replacement_policy"), handoff.get("baseline_replacement_policy"))),
-        "baselines.identity_requirements": _string_list(context_reboost.get("baseline_identity_requirements")),
-        "baselines.fairness_constraints": _string_list(context_reboost.get("baseline_fairness_constraints")),
+        "baselines.replacement_policy": _first_resolved(
+            _mapping(_first_resolved(context_reboost.get("baseline_replacement_policy"), handoff.get("baseline_replacement_policy"))),
+            _baseline_replacement_policy(baseline_matrix),
+        ),
+        "baselines.identity_requirements": _first_non_empty_list(
+            _string_list(context_reboost.get("baseline_identity_requirements")),
+            _baseline_identity_requirements(baseline_matrix),
+        ),
+        "baselines.fairness_constraints": _first_non_empty_list(
+            _string_list(context_reboost.get("baseline_fairness_constraints")),
+            _baseline_fairness_constraints(baseline_matrix),
+        ),
         "baselines.expected_reference_results": _object_list(context_reboost.get("expected_reference_results")),
         "baselines.allowed_repairs": _string_list(context_reboost.get("allowed_repairs")),
-        "baselines.forbidden_repairs": _string_list(context_reboost.get("forbidden_repairs")),
-        "baselines.reproduction_acceptance": _string_list(context_reboost.get("reproduction_acceptance")),
+        "baselines.forbidden_repairs": _first_non_empty_list(
+            _string_list(context_reboost.get("forbidden_repairs")),
+            _baseline_forbidden_repairs(baseline_matrix),
+        ),
+        "baselines.reproduction_acceptance": _first_non_empty_list(
+            _string_list(context_reboost.get("reproduction_acceptance")),
+            _baseline_reproduction_acceptance(baseline_matrix),
+        ),
         "baselines.known_risks": _string_list(context_reboost.get("baseline_known_risks")),
         "experiment.minimum_experiment_loop": _minimum_loop(
             _first_resolved(context_reboost.get("minimum_experiment_loop"), handoff.get("minimum_experiment_loop"))
         ),
-        "experiment.claim_evidence_matrix": _object_list(_first_resolved(context_reboost.get("claim_evidence_matrix"), handoff.get("claim_evidence_matrix"))),
-        "experiment.primary_metrics": _metrics(_first_resolved(handoff.get("metrics"), experiment_contract.get("metrics"))),
-        "experiment.seed_policy": _seed_policy(_first_resolved(handoff.get("seeds"), experiment_contract.get("seeds"))),
+        "experiment.claim_evidence_matrix": _object_list(claim_matrix),
+        "experiment.task": _experiment_task(study_scope, handoff.get("minimum_experiment_loop")),
+        "experiment.benchmarks": _benchmarks_from_minimum_loop(handoff.get("minimum_experiment_loop"), study_scope),
+        "experiment.datasets": _datasets_from_study_scope(study_scope),
+        "experiment.splits": _splits_from_study_scope(study_scope),
+        "experiment.primary_metrics": _metrics(_first_resolved(handoff.get("metrics"), experiment_contract.get("metrics"), study_scope.get("metrics"))),
+        "experiment.seed_policy": _seed_policy(_first_resolved(handoff.get("seeds"), experiment_contract.get("seeds"), _seeds_from_scope(study_scope))),
+        "experiment.required_experiment_types": _required_experiment_types(minimum_loop, study_scope),
+        "experiment.comparison_axes": _comparison_axes(claim_matrix, baseline_matrix),
+        "experiment.important_subsets": _important_subsets(study_scope),
+        "experiment.known_confounders": _known_confounders(context_reboost),
+        "experiment.interpretation_boundaries": _interpretation_boundaries(claim_matrix, claim_boundaries),
+        "experiment.protocol_constraints": _protocol_constraints(study_scope, execution_contract, baseline_matrix),
+        "experiment.statistical_policy": _statistical_policy(claim_matrix, study_scope),
+        "resources.resource_requirements": _resource_requirements(study_scope, baseline_matrix, writer_handoff),
+        "resources.acceptance_criteria": _resource_acceptance_criteria(execution_contract, writer_handoff, baseline_matrix),
+        "resources.license_constraints": _resource_license_constraints(execution_contract),
+        "implementation.work_root": _work_root_from_execution_contract(execution_contract),
+        "implementation.ablation_switch_requirements": _ablation_switch_requirements(method_intent),
         "execution.max_iterations": _max_iterations(_first_resolved(context_reboost.get("iteration_budget"), handoff.get("iteration_budget"))),
         "execution.budget": _mapping(_first_resolved(context_reboost.get("iteration_budget"), handoff.get("iteration_budget"))),
-        "execution.stop_conditions": _string_list(context_reboost.get("stop_conditions")),
-        "execution.human_review_triggers": _string_list(context_reboost.get("human_review_triggers")),
-        "outputs.writer_handoff_requirements": _string_list(
-            _first_resolved(context_reboost.get("writer_handoff_contract"), handoff.get("writer_handoff_contract"))
+        "execution.stop_conditions": _string_list(_first_resolved(context_reboost.get("stop_conditions"), iteration_budget.get("stop_conditions"))),
+        "execution.human_review_triggers": _first_non_empty_list(
+            _string_list(context_reboost.get("human_review_triggers")),
+            _human_review_triggers(execution_contract, claim_boundaries),
         ),
-        "outputs.handoff_readiness_requirements": _string_list(context_reboost.get("handoff_readiness_requirements")),
+        "execution.isolation_requirements": _isolation_requirements(execution_contract),
+        "execution.allowed_run_levels": _allowed_run_levels(execution_contract),
+        "execution.resume_policy": _resume_policy(iteration_budget, execution_contract),
+        "outputs.required_artifact_types": _required_artifact_types(writer_handoff),
+        "outputs.realized_method_requirements": _realized_method_requirements(writer_handoff),
+        "outputs.framework_figure_requirements": _framework_figure_requirements(method_intent, writer_handoff),
+        "outputs.required_figure_types": _required_figure_types(writer_handoff),
+        "outputs.required_table_types": _required_table_types(writer_handoff),
+        "outputs.visual_traceability_requirements": _visual_traceability_requirements(writer_handoff),
+        "outputs.writer_handoff_requirements": _writer_handoff_requirements(writer_handoff),
+        "outputs.t7_requirements": _t7_requirements(writer_handoff),
+        "outputs.handoff_readiness_requirements": _handoff_readiness_requirements(writer_handoff),
+        "outputs.evidence_ceiling_policy": _evidence_ceiling_policy(claim_matrix, claim_boundaries, paper_card_policy),
     }
     for path, value in handoff_rules.items():
         if value is not MISSING and not is_empty_value(value):
             set_context_field(context, metadata, path=path, value=value, status="confirmed", sources=sources)
-    if not is_empty_value(handoff.get("workspace_relative_workdir")):
+    deployment_dir = handoff.get("workspace_relative_deployment_dir")
+    if not is_empty_value(deployment_dir):
+        set_context_field(
+            context,
+            metadata,
+            path="implementation.work_root",
+            value=deployment_dir,
+            status="confirmed",
+            sources=sources,
+        )
+    elif not is_empty_value(handoff.get("workspace_relative_workdir")) and str(handoff.get("workspace_relative_workdir")).strip() not in {".", "./"}:
         set_context_field(
             context,
             metadata,
@@ -288,22 +354,22 @@ def _apply_experiment_source(context: MutableMapping[str, Any], exp_plan: Mappin
     metadata = context["field_metadata"]
     source = "ideation/exp_plan.yaml"
     rules = {
-        "experiment.task": _first_resolved(exp_plan.get("task"), exp_plan.get("experiment_task")),
-        "experiment.benchmarks": _object_list(_first_resolved(exp_plan.get("benchmarks"), exp_plan.get("benchmark"))),
-        "experiment.datasets": _object_list(_first_resolved(exp_plan.get("datasets"), exp_plan.get("dataset"))),
-        "experiment.splits": _object_list(exp_plan.get("splits")),
-        "experiment.preprocessing": _string_list(exp_plan.get("preprocessing")),
-        "experiment.primary_metrics": _metrics(_first_resolved(exp_plan.get("primary_metrics"), exp_plan.get("metrics"))),
-        "experiment.secondary_metrics": _metrics(exp_plan.get("secondary_metrics")),
-        "experiment.seed_policy": _mapping(_first_resolved(exp_plan.get("seed_policy"), exp_plan.get("seeds"))),
-        "experiment.minimum_experiment_loop": _minimum_loop(exp_plan.get("minimum_experiment_loop")),
-        "experiment.required_experiment_types": _string_list(exp_plan.get("required_experiment_types")),
-        "experiment.comparison_axes": _string_list(exp_plan.get("comparison_axes")),
-        "experiment.practical_thresholds": _numeric_mapping(exp_plan.get("practical_thresholds")),
-        "experiment.important_subsets": _string_list(exp_plan.get("important_subsets")),
+        "experiment.task": _first_resolved(exp_plan.get("task"), exp_plan.get("experiment_task"), exp_plan.get("goal"), _task_from_exp_plan(exp_plan)),
+        "experiment.benchmarks": _object_list(_first_resolved(exp_plan.get("benchmarks"), exp_plan.get("benchmark"), _benchmarks_from_exp_plan(exp_plan))),
+        "experiment.datasets": _object_list(_first_resolved(exp_plan.get("datasets"), exp_plan.get("dataset"), _datasets_from_exp_plan(exp_plan))),
+        "experiment.splits": _object_list(_first_resolved(exp_plan.get("splits"), _splits_from_exp_plan(exp_plan))),
+        "experiment.preprocessing": _first_non_empty_list(_string_list(exp_plan.get("preprocessing")), _preprocessing_from_exp_plan(exp_plan)),
+        "experiment.primary_metrics": _metrics(_first_resolved(exp_plan.get("primary_metrics"), exp_plan.get("metrics"), _metrics_from_exp_plan(exp_plan, primary=True))),
+        "experiment.secondary_metrics": _metrics(_first_resolved(exp_plan.get("secondary_metrics"), _metrics_from_exp_plan(exp_plan, primary=False))),
+        "experiment.seed_policy": _mapping(_first_resolved(exp_plan.get("seed_policy"), exp_plan.get("seeds"), _seed_policy_from_exp_plan(exp_plan))),
+        "experiment.minimum_experiment_loop": _minimum_loop(_first_resolved(exp_plan.get("minimum_experiment_loop"), _minimum_loop_from_exp_plan(exp_plan))),
+        "experiment.required_experiment_types": _first_non_empty_list(_string_list(exp_plan.get("required_experiment_types")), _required_experiment_types_from_exp_plan(exp_plan)),
+        "experiment.comparison_axes": _first_non_empty_list(_string_list(exp_plan.get("comparison_axes")), _comparison_axes_from_exp_plan(exp_plan)),
+        "experiment.practical_thresholds": _first_resolved(_numeric_mapping(exp_plan.get("practical_thresholds")), _practical_thresholds_from_exp_plan(exp_plan)),
+        "experiment.important_subsets": _first_non_empty_list(_string_list(exp_plan.get("important_subsets")), _important_subsets_from_exp_plan(exp_plan)),
         "experiment.known_confounders": _string_list(exp_plan.get("known_confounders")),
         "experiment.interpretation_boundaries": _mapping(exp_plan.get("interpretation_boundaries")),
-        "experiment.protocol_constraints": _string_list(exp_plan.get("protocol_constraints")),
+        "experiment.protocol_constraints": _first_non_empty_list(_string_list(exp_plan.get("protocol_constraints")), _protocol_constraints_from_exp_plan(exp_plan)),
         "experiment.statistical_policy": _mapping(exp_plan.get("statistical_policy")),
     }
     for path, value in rules.items():
@@ -324,6 +390,9 @@ def _apply_execution_sources(
     if forbidden:
         _set_authoritative(context, metadata, "execution.forbidden_paths", forbidden, MISSING, "external_executor/allowed_paths.txt")
         _set_authoritative(context, metadata, "implementation.protected_paths", forbidden, MISSING, "external_executor/allowed_paths.txt")
+    work_root = _work_root_from_path_lines(allowed)
+    if work_root:
+        _set_authoritative(context, metadata, "implementation.work_root", work_root, _get(handoff, "implementation.work_root"), "external_executor/allowed_paths.txt")
     security = _extract_bullets_after_heading(agents_text, ["hard boundaries", "security", "do not"])
     if security:
         _set_authoritative(context, metadata, "resources.security_constraints", security, MISSING, "external_executor/AGENTS.md")
@@ -352,26 +421,56 @@ def _apply_output_sources(context: MutableMapping[str, Any], expected_outputs: M
     )
     if required:
         _set_authoritative(context, metadata, "outputs.required_result_sections", required, MISSING, source)
+    writer_handoff = _mapping(handoff.get("writer_handoff_contract"))
     handoff_contract = _mapping(handoff.get("executor_outputs_contract"))
-    must_write = _string_list(handoff_contract.get("must_write"))
-    if must_write:
+    output_sources = [source]
+    if writer_handoff:
+        output_sources.append("external_executor/handoff_pack.json")
+
+    artifact_types = _required_artifact_types(writer_handoff, expected_outputs)
+    if artifact_types:
+        set_context_field(
+            context,
+            metadata,
+            path="outputs.required_artifact_types",
+            value=artifact_types,
+            status="confirmed",
+            sources=output_sources,
+        )
+    t7_requirements = _first_non_empty_list(_string_list(handoff_contract.get("must_write")), _t7_requirements(writer_handoff, expected_outputs))
+    if t7_requirements:
         set_context_field(
             context,
             metadata,
             path="outputs.t7_requirements",
-            value=must_write,
+            value=t7_requirements,
             status="confirmed",
-            sources=["external_executor/handoff_pack.json"],
+            sources=output_sources,
         )
+    output_rules = {
+        "implementation.metric_output_contract": _metric_output_contract(expected_outputs),
+        "implementation.logging_requirements": _logging_requirements(expected_outputs),
+        "implementation.testing_requirements": _testing_requirements(expected_outputs),
+        "implementation.review_requirements": _review_requirements(writer_handoff, expected_outputs),
+        "outputs.realized_method_requirements": _realized_method_requirements(writer_handoff, expected_outputs),
+        "outputs.visual_traceability_requirements": _visual_traceability_requirements(writer_handoff, expected_outputs),
+        "outputs.writer_handoff_requirements": _writer_handoff_requirements(writer_handoff, expected_outputs),
+        "outputs.handoff_readiness_requirements": _handoff_readiness_requirements(writer_handoff, expected_outputs),
+    }
+    for path, value in output_rules.items():
+        if not is_empty_value(value):
+            set_context_field(context, metadata, path=path, value=value, status="confirmed", sources=output_sources)
 
 
 def _apply_known_materials(context: MutableMapping[str, Any], workspace: Path) -> None:
     metadata = context["field_metadata"]
     materials: list[dict[str, Any]] = []
-    for rel in ("resources", "external_executor/expr"):
+    scanned_sources: list[str] = []
+    for rel in ("resource", "resources"):
         root = workspace / rel
         if not root.exists():
             continue
+        scanned_sources.append(rel)
         for path in sorted(root.iterdir()):
             if path.name.startswith("."):
                 continue
@@ -390,7 +489,7 @@ def _apply_known_materials(context: MutableMapping[str, Any], workspace: Path) -
             path="resources.known_materials",
             value=materials,
             status="confirmed_from_source",
-            sources=["resources", "external_executor/expr"],
+            sources=scanned_sources,
         )
 
 
@@ -418,6 +517,795 @@ def _resource_acquisition_policy(handoff: Mapping[str, Any], context_reboost: Ma
     policy.setdefault("allowed_domains", default["allowed_domains"])
     policy.setdefault("material_absence_policy", default["material_absence_policy"])
     return policy
+
+
+def _first_non_empty_list(*values: Any) -> list[Any]:
+    for value in values:
+        if value is MISSING or is_empty_value(value):
+            continue
+        if isinstance(value, list):
+            return value
+        converted = _string_list(value)
+        if converted:
+            return converted
+    return []
+
+
+def _dedupe_strings(values: Sequence[Any]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        text = " ".join(str(value).split())
+        if text and text not in result:
+            result.append(text)
+    return result
+
+
+def _claim_boundaries(claim_boundaries: Mapping[str, Any], context_reboost: Mapping[str, Any]) -> list[str]:
+    items: list[str] = []
+    items.extend(_string_list(context_reboost.get("claim_boundaries")))
+    items.extend(_string_list(claim_boundaries.get("novelty_boundary")))
+    method_boundary = claim_boundaries.get("method_vs_engineering_boundary")
+    if not is_empty_value(method_boundary):
+        items.extend(_string_list(method_boundary))
+    for claim in _object_list(claim_boundaries.get("conditional_claims")):
+        claim_id = str(_first_resolved(claim.get("claim_id"), "claim")).strip()
+        strength = str(_first_resolved(claim.get("maximum_strength"), "bounded")).strip()
+        conditions = "; ".join(_string_list(claim.get("conditions")))
+        items.append(f"{claim_id} is capped at {strength} strength when: {conditions}" if conditions else f"{claim_id} is capped at {strength} strength")
+    items.extend(_string_list(_get(context_reboost, "novelty_audit_resolution.claim_constraints")))
+    return _dedupe_strings(items)
+
+
+def _must_preserve_components(method_mechanism: Mapping[str, Any], method_intent: Mapping[str, Any]) -> list[dict[str, Any]]:
+    direct = _object_list(_first_resolved(method_mechanism.get("must_preserve_components"), method_intent.get("must_preserve_components")))
+    if direct:
+        return [_normalize_component(item) for item in direct]
+
+    must_ids = _dedupe_strings(
+        [
+            *_string_list(method_mechanism.get("must_preserve_module_ids")),
+            *_string_list(method_intent.get("must_preserve_module_ids")),
+        ]
+    )
+    candidates = _object_list(_first_resolved(method_intent.get("candidate_components"), method_intent.get("candidate_modules")))
+    result: list[dict[str, Any]] = []
+    for candidate in candidates:
+        candidate_id = str(_first_resolved(candidate.get("component_id"), candidate.get("module_id"), candidate.get("id"), "")).strip()
+        if must_ids and candidate_id not in must_ids:
+            continue
+        payload = _normalize_component(candidate)
+        payload.setdefault("component_id", candidate_id)
+        if not payload.get("intended_role"):
+            payload["intended_role"] = str(_first_resolved(candidate.get("intended_role"), candidate.get("classification"), candidate.get("mechanism"), "preserve declared module"))
+        result.append(payload)
+    if not result:
+        invariants = _object_list(method_mechanism.get("mechanism_invariants"))
+        for idx, module_id in enumerate(must_ids, start=1):
+            invariant = invariants[idx - 1] if idx <= len(invariants) else {}
+            result.append(
+                {
+                    "component_id": module_id,
+                    "name": module_id,
+                    "intended_role": str(_first_resolved(invariant.get("statement"), "Preserve module declared in must_preserve_module_ids.")),
+                }
+            )
+    return _dedupe_objects(result, ["component_id", "name"])
+
+
+def _normalize_component(item: Mapping[str, Any]) -> dict[str, Any]:
+    payload = dict(item)
+    if "component_id" not in payload and "module_id" in payload:
+        payload["component_id"] = payload["module_id"]
+    if "intended_role" not in payload:
+        payload["intended_role"] = _first_resolved(payload.get("role"), payload.get("classification"), payload.get("mechanism"), "")
+    return payload
+
+
+def _baseline_replacement_policy(baselines: list[dict[str, Any]]) -> dict[str, Any]:
+    entries: list[dict[str, Any]] = []
+    for baseline in baselines:
+        policy = _mapping(baseline.get("substitution_policy"))
+        if not policy:
+            continue
+        entries.append(
+            {
+                "baseline_id": baseline.get("baseline_id"),
+                "name": baseline.get("name"),
+                "allowed": policy.get("allowed"),
+                "approval_required": policy.get("approval_required"),
+                "conditions": policy.get("conditions") or [],
+                "candidate_substitutes": policy.get("candidate_substitutes") or [],
+            }
+        )
+    if not entries:
+        return {}
+    return {
+        "default": "Do not replace required baselines silently; follow each baseline substitution_policy.",
+        "per_baseline": entries,
+    }
+
+
+def _baseline_identity_requirements(baselines: list[dict[str, Any]]) -> list[str]:
+    items: list[str] = []
+    for baseline in baselines:
+        baseline_id = str(baseline.get("baseline_id") or baseline.get("id") or "baseline")
+        name = str(baseline.get("name") or baseline_id)
+        source = baseline.get("implementation_source")
+        target = baseline.get("reproduction_target")
+        if not is_empty_value(source):
+            items.append(f"{baseline_id} ({name}) identity must preserve implementation source/provenance: {source}.")
+        if not is_empty_value(target):
+            items.append(f"{baseline_id} ({name}) reproduction target: {target}.")
+    return _dedupe_strings(items)
+
+
+def _baseline_fairness_constraints(baselines: list[dict[str, Any]]) -> list[str]:
+    items: list[str] = []
+    key_labels = {
+        "same_data_split": "Use the same data split across baselines.",
+        "same_metric_definition": "Use the same metric definition across baselines.",
+        "same_tuning_budget": "Use the same tuning budget across baselines.",
+        "same_evaluation_protocol": "Use the same evaluation protocol across baselines.",
+    }
+    for baseline in baselines:
+        contract = _mapping(baseline.get("fairness_contract"))
+        for key, label in key_labels.items():
+            if contract.get(key) is True:
+                items.append(label)
+        items.extend(_string_list(contract.get("additional_constraints")))
+    return _dedupe_strings(items)
+
+
+def _baseline_forbidden_repairs(baselines: list[dict[str, Any]]) -> list[str]:
+    items: list[str] = []
+    for baseline in baselines:
+        policy = _mapping(baseline.get("substitution_policy"))
+        if policy.get("allowed") is False:
+            approval = str(policy.get("approval_required") or "human")
+            items.append(f"Do not replace {baseline.get('baseline_id')} ({baseline.get('name')}) without {approval} approval.")
+    items.extend(
+        item
+        for item in _baseline_fairness_constraints(baselines)
+        if "Do not weaken" in item or "without human review" in item
+    )
+    return _dedupe_strings(items)
+
+
+def _baseline_reproduction_acceptance(baselines: list[dict[str, Any]]) -> list[str]:
+    items: list[str] = []
+    for baseline in baselines:
+        target = baseline.get("reproduction_target")
+        if not is_empty_value(target):
+            items.append(f"{baseline.get('baseline_id')} ({baseline.get('name')}): {target}")
+    items.extend(_baseline_fairness_constraints(baselines))
+    return _dedupe_strings(items)
+
+
+def _experiment_task(study_scope: Mapping[str, Any], minimum_loop: Any) -> str | object:
+    return _first_resolved(study_scope.get("target_setting"), "; ".join(_string_list(study_scope.get("tasks"))), _minimum_loop(minimum_loop))
+
+
+def _benchmarks_from_minimum_loop(minimum_loop: Any, study_scope: Mapping[str, Any]) -> list[dict[str, Any]]:
+    loop = _mapping(minimum_loop)
+    experiments = _object_list(loop.get("required_experiments"))
+    result: list[dict[str, Any]] = []
+    for idx, item in enumerate(experiments, start=1):
+        result.append(
+            {
+                "id": str(_first_resolved(item.get("experiment_id"), item.get("id"), f"E{idx}")),
+                "name": str(_first_resolved(item.get("purpose"), item.get("run_type"), f"experiment_{idx}")),
+                "version": str(_first_resolved(item.get("run_type"), "predeclared")),
+            }
+        )
+    if not result:
+        for idx, task in enumerate(_string_list(study_scope.get("tasks")), start=1):
+            result.append({"id": f"T{idx}", "name": task, "version": "study_scope"})
+    return result
+
+
+def _datasets_from_study_scope(study_scope: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return [{"dataset_id": f"D{idx}", "name": name, "version": "study_scope"} for idx, name in enumerate(_string_list(study_scope.get("datasets")), start=1)]
+
+
+def _splits_from_study_scope(study_scope: Mapping[str, Any]) -> list[dict[str, Any]]:
+    splits: list[dict[str, Any]] = []
+    for idx, item in enumerate(_string_list(study_scope.get("datasets")), start=1):
+        if "split" in item.lower():
+            splits.append({"split_id": f"S{idx}", "dataset_id": f"D{idx}", "description": item})
+    return splits
+
+
+def _seeds_from_scope(study_scope: Mapping[str, Any]) -> dict[str, Any] | object:
+    for constraint in _string_list(study_scope.get("constraints")):
+        if "seed" not in constraint.lower():
+            continue
+        seeds = [int(item) for item in re.findall(r"\b\d+\b", constraint)]
+        if seeds:
+            return {"seeds": seeds, "source": constraint}
+    return MISSING
+
+
+def _required_experiment_types(minimum_loop: Mapping[str, Any], study_scope: Mapping[str, Any]) -> list[str]:
+    items: list[str] = []
+    for experiment in _object_list(minimum_loop.get("required_experiments")):
+        items.append(str(_first_resolved(experiment.get("run_type"), experiment.get("purpose"), experiment.get("experiment_id"), "")))
+    items.extend(_string_list(study_scope.get("tasks")))
+    return _dedupe_strings(items)
+
+
+def _comparison_axes(claim_matrix: list[dict[str, Any]], baselines: list[dict[str, Any]]) -> list[str]:
+    items: list[str] = []
+    for claim in claim_matrix:
+        for requirement in _object_list(claim.get("evidence_requirements")):
+            items.extend(_string_list(requirement.get("comparison")))
+            metric = requirement.get("metric_or_observation")
+            setting = requirement.get("dataset_or_setting")
+            if not is_empty_value(metric) or not is_empty_value(setting):
+                items.append(f"{claim.get('claim_id')}: {metric} on {setting}")
+    if baselines:
+        items.append("Compare proposed method against every required baseline under the same split, seed policy, and metric definition.")
+    return _dedupe_strings(items)
+
+
+def _important_subsets(study_scope: Mapping[str, Any]) -> list[str]:
+    return [
+        metric
+        for metric in _string_list(study_scope.get("metrics"))
+        if any(token in metric.lower() for token in ("subgroup", "few-shot", "zero-shot", "10%", "20%", "full target"))
+    ]
+
+
+def _known_confounders(context_reboost: Mapping[str, Any]) -> list[str]:
+    items: list[str] = []
+    for risk in _object_list(context_reboost.get("risk_register")):
+        description = _first_resolved(risk.get("category"), risk.get("description"), risk.get("risk_id"))
+        if description is not MISSING:
+            items.append(str(description))
+    for mismatch in _object_list(context_reboost.get("known_context_mismatches")):
+        topic = _first_resolved(mismatch.get("topic"), mismatch.get("mismatch_id"))
+        if topic is not MISSING:
+            items.append(str(topic))
+    return _dedupe_strings(items)
+
+
+def _interpretation_boundaries(claim_matrix: list[dict[str, Any]], claim_boundaries: Mapping[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key in ("support_criteria", "weaken_criteria", "falsification_criteria", "prohibited_interpretations"):
+        values: list[str] = []
+        for claim in claim_matrix:
+            values.extend(_string_list(claim.get(key)))
+        if values:
+            result[key] = _dedupe_strings(values)
+    must_not = _string_list(claim_boundaries.get("must_not_claim"))
+    if must_not:
+        result["must_not_claim"] = must_not
+    conditional = _object_list(claim_boundaries.get("conditional_claims"))
+    if conditional:
+        result["conditional_claims"] = conditional
+    return result
+
+
+def _protocol_constraints(study_scope: Mapping[str, Any], execution_contract: Mapping[str, Any], baselines: list[dict[str, Any]]) -> list[str]:
+    items = _string_list(study_scope.get("constraints"))
+    for rule in _object_list(execution_contract.get("authority_rules")):
+        action = rule.get("action")
+        authority = rule.get("authority")
+        if not is_empty_value(action) and not is_empty_value(authority):
+            items.append(f"{action}: {authority}")
+    items.extend(_baseline_fairness_constraints(baselines))
+    return _dedupe_strings(items)
+
+
+def _statistical_policy(claim_matrix: list[dict[str, Any]], study_scope: Mapping[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    constraints = _string_list(study_scope.get("constraints"))
+    if constraints:
+        result["fixed_protocol_constraints"] = "; ".join(constraints)
+    for key in ("support_criteria", "weaken_criteria", "falsification_criteria"):
+        values: list[str] = []
+        for claim in claim_matrix:
+            values.extend(_string_list(claim.get(key)))
+        if values:
+            result[key] = "; ".join(_dedupe_strings(values))
+    return result
+
+
+def _resource_requirements(study_scope: Mapping[str, Any], baselines: list[dict[str, Any]], writer_handoff: Mapping[str, Any]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for idx, name in enumerate(_string_list(study_scope.get("datasets")), start=1):
+        result.append({"requirement_id": f"D{idx}", "resource_type": "dataset", "name": name, "required": True})
+    for baseline in baselines:
+        source = baseline.get("implementation_source")
+        result.append(
+            {
+                "requirement_id": str(baseline.get("baseline_id") or baseline.get("name")),
+                "resource_type": "baseline_implementation",
+                "name": str(baseline.get("name") or baseline.get("baseline_id")),
+                "required": True,
+                "source": "" if is_empty_value(source) else str(source),
+            }
+        )
+    for artifact in _object_list(writer_handoff.get("required_artifacts")):
+        result.append(
+            {
+                "requirement_id": str(artifact.get("artifact_id") or artifact.get("artifact_type")),
+                "resource_type": "output_artifact",
+                "name": str(artifact.get("artifact_type") or artifact.get("artifact_id")),
+                "required": True,
+            }
+        )
+    return _dedupe_objects(result, ["requirement_id", "name"])
+
+
+def _resource_acceptance_criteria(execution_contract: Mapping[str, Any], writer_handoff: Mapping[str, Any], baselines: list[dict[str, Any]]) -> list[str]:
+    items: list[str] = []
+    policy = _mapping(execution_contract.get("resource_policy"))
+    if policy.get("license_checks_required") is True:
+        items.append("Resource and external-code use requires license checks.")
+    if policy.get("checksum_required") is True:
+        items.append("Downloaded or prepared resources require checksums.")
+    if policy.get("citation_required") is True:
+        items.append("External resources require citation/provenance records.")
+    items.extend(_baseline_reproduction_acceptance(baselines))
+    for artifact in _object_list(writer_handoff.get("required_artifacts")):
+        fields = ", ".join(_string_list(artifact.get("required_fields")))
+        if fields:
+            items.append(f"{artifact.get('artifact_type')} must include {fields}.")
+    return _dedupe_strings(items)
+
+
+def _resource_license_constraints(execution_contract: Mapping[str, Any]) -> list[str]:
+    policy = _mapping(execution_contract.get("resource_policy"))
+    items: list[str] = []
+    if policy.get("authenticated_resources_allowed") is False:
+        items.append("Authenticated resources are not allowed.")
+    if policy.get("license_checks_required") is True:
+        items.append("License checks are required before using datasets, code, or baselines.")
+    if policy.get("public_resources_allowed") is True:
+        items.append("Public resources are allowed within the declared path and license constraints.")
+    return items
+
+
+def _work_root_from_execution_contract(execution_contract: Mapping[str, Any]) -> str | object:
+    return _work_root_from_path_lines(_string_list(execution_contract.get("write_paths")))
+
+
+def _work_root_from_path_lines(paths: Sequence[str]) -> str | object:
+    for raw in paths:
+        path = re.sub(r"^(?:rw|ro)\s+", "", str(raw).strip()).strip()
+        if path.rstrip("/") == "external_executor/expr":
+            return "external_executor/expr"
+    for raw in paths:
+        path = re.sub(r"^(?:rw|ro)\s+", "", str(raw).strip()).strip()
+        if path.startswith("external_executor/expr/"):
+            return "external_executor/expr"
+    for raw in paths:
+        path = re.sub(r"^(?:rw|ro)\s+", "", str(raw).strip()).strip()
+        if path.rstrip("/") == "external_executor/workdir":
+            return "external_executor/workdir"
+    for raw in paths:
+        path = re.sub(r"^(?:rw|ro)\s+", "", str(raw).strip()).strip()
+        if path.startswith("external_executor/workdir/"):
+            return "external_executor/workdir"
+    return MISSING
+
+
+def _ablation_switch_requirements(method_intent: Mapping[str, Any]) -> list[str]:
+    items: list[str] = []
+    for ablation in _object_list(_first_resolved(method_intent.get("mechanism_to_ablation"), method_intent.get("mechanism_to_ablation_plan"))):
+        ablation_id = str(_first_resolved(ablation.get("ablation_id"), ablation.get("id"), ablation.get("mechanism"), "ablation"))
+        planned = _first_resolved(ablation.get("planned_test"), ablation.get("test"), ablation.get("mechanism"))
+        module_ids = ", ".join(_string_list(ablation.get("module_ids")))
+        if planned is not MISSING:
+            suffix = f" for modules {module_ids}" if module_ids else ""
+            items.append(f"{ablation_id}: expose a reproducible switch/test for {planned}{suffix}.")
+    return _dedupe_strings(items)
+
+
+def _implementation_acceptance(context_reboost: Mapping[str, Any], writer_handoff: Mapping[str, Any]) -> list[str]:
+    items = _string_list(_get(context_reboost, "project_goal.success_criteria"))
+    for artifact in _object_list(writer_handoff.get("required_artifacts")):
+        items.append(f"Produce {artifact.get('artifact_type')} with audit status and provenance.")
+    return _dedupe_strings(items)
+
+
+def _scope_change_triggers(execution_contract: Mapping[str, Any], claim_boundaries: Mapping[str, Any]) -> list[str]:
+    items = _string_list(claim_boundaries.get("narrowing_triggers"))
+    policy = _mapping(execution_contract.get("scope_change_policy"))
+    if policy:
+        request = policy.get("request_artifact")
+        if not is_empty_value(request):
+            items.append(f"Major scope changes require {request}.")
+        if policy.get("silent_changes_forbidden") is True:
+            items.append("Silent scope changes are forbidden.")
+    for rule in _object_list(execution_contract.get("authority_rules")):
+        if str(rule.get("authority") or "").lower() in {"human_approval", "forbidden"}:
+            items.append(f"{rule.get('action')}: {rule.get('authority')}")
+    return _dedupe_strings(items)
+
+
+def _attribution_requirements(method_intent: Mapping[str, Any], claim_matrix: list[dict[str, Any]]) -> list[str]:
+    items: list[str] = []
+    for ablation in _object_list(_first_resolved(method_intent.get("mechanism_to_ablation"), method_intent.get("mechanism_to_ablation_plan"))):
+        planned = _first_resolved(ablation.get("planned_test"), ablation.get("test"), ablation.get("mechanism"))
+        if planned is not MISSING:
+            items.append(f"Ablation requirement: {planned}")
+    for claim in claim_matrix:
+        related = ", ".join(_string_list(claim.get("related_module_ids")))
+        if related:
+            items.append(f"{claim.get('claim_id')} attribution must trace evidence to modules: {related}.")
+    return _dedupe_strings(items)
+
+
+def _human_review_triggers(execution_contract: Mapping[str, Any], claim_boundaries: Mapping[str, Any]) -> list[str]:
+    items = _scope_change_triggers(execution_contract, claim_boundaries)
+    for rule in _object_list(execution_contract.get("authority_rules")):
+        if str(rule.get("authority") or "").lower() == "human_approval":
+            items.append(f"Human approval required before: {rule.get('action')}.")
+    return _dedupe_strings(items)
+
+
+def _isolation_requirements(execution_contract: Mapping[str, Any]) -> list[str]:
+    items: list[str] = []
+    allowed = _string_list(execution_contract.get("allowed_paths"))
+    prohibited = _string_list(execution_contract.get("prohibited_paths"))
+    if allowed:
+        items.append("Write only within declared allowed/write paths.")
+    if prohibited:
+        items.append(f"Do not modify prohibited paths: {', '.join(prohibited)}.")
+    policy = _mapping(execution_contract.get("resource_policy"))
+    if policy.get("authenticated_resources_allowed") is False:
+        items.append("Do not use authenticated resources.")
+    return _dedupe_strings(items)
+
+
+def _allowed_run_levels(execution_contract: Mapping[str, Any]) -> list[str]:
+    items: list[str] = []
+    write_paths = _string_list(execution_contract.get("write_paths"))
+    if write_paths:
+        items.append("Preflight, design, resource preparation, implementation, and run artifacts are allowed only under declared write paths.")
+    policy = _mapping(execution_contract.get("resource_policy"))
+    if policy.get("public_resources_allowed") is True:
+        items.append("Public-resource experiment runs are allowed after executor mode selection, within the resource policy.")
+    if policy.get("authenticated_resources_allowed") is False:
+        items.append("Authenticated-resource runs are not allowed.")
+    return _dedupe_strings(items)
+
+
+def _resume_policy(iteration_budget: Mapping[str, Any], execution_contract: Mapping[str, Any]) -> list[str]:
+    items = _string_list(iteration_budget.get("stop_conditions"))
+    plateau = iteration_budget.get("plateau_definition")
+    if not is_empty_value(plateau):
+        items.append(f"Stop or resume decisions must respect plateau definition: {plateau}")
+    write_paths = _string_list(execution_contract.get("write_paths"))
+    for path in ("external_executor/executor_status.json", "external_executor/run_manifest.json", "external_executor/job_state.json"):
+        if path in write_paths:
+            items.append(f"Resume state must preserve and update {path}.")
+    return _dedupe_strings(items)
+
+
+def _required_artifact_types(writer_handoff: Mapping[str, Any], expected_outputs: Mapping[str, Any] | None = None) -> list[str]:
+    items = [str(item.get("artifact_type")) for item in _object_list(writer_handoff.get("required_artifacts")) if not is_empty_value(item.get("artifact_type"))]
+    if expected_outputs:
+        items.extend(_string_list(expected_outputs.get("required_files")))
+    return _dedupe_strings(items)
+
+
+def _realized_method_requirements(writer_handoff: Mapping[str, Any], expected_outputs: Mapping[str, Any] | None = None) -> list[str]:
+    items: list[str] = []
+    for artifact in _object_list(writer_handoff.get("required_artifacts")):
+        if artifact.get("artifact_type") == "realized_method_package":
+            items.append(str(_first_resolved(artifact.get("description"), "Produce realized_method_package.")))
+            fields = ", ".join(_string_list(artifact.get("required_fields")))
+            if fields:
+                items.append(f"realized_method_package requires fields: {fields}.")
+    items.extend(item for item in _string_list(writer_handoff.get("must_include")) if "method" in item.lower())
+    if expected_outputs:
+        semantics = _mapping(expected_outputs.get("field_semantics"))
+        text = semantics.get("realized_method_package")
+        if not is_empty_value(text):
+            items.append(str(text))
+    return _dedupe_strings(items)
+
+
+def _framework_figure_requirements(method_intent: Mapping[str, Any], writer_handoff: Mapping[str, Any]) -> dict[str, Any]:
+    result = _mapping(_first_resolved(method_intent.get("initial_framework_figure_intent"), method_intent.get("initial_framework_figure_sketch")))
+    for artifact in _object_list(writer_handoff.get("required_artifacts")):
+        if artifact.get("artifact_type") == "final_framework_figure":
+            result["required_artifact"] = artifact
+    return result
+
+
+def _required_figure_types(writer_handoff: Mapping[str, Any]) -> list[str]:
+    return _dedupe_strings(
+        item.get("artifact_type")
+        for item in _object_list(writer_handoff.get("required_artifacts"))
+        if "figure" in str(item.get("artifact_type") or "").lower()
+    )
+
+
+def _required_table_types(writer_handoff: Mapping[str, Any]) -> list[str]:
+    return _dedupe_strings(
+        item.get("artifact_type")
+        for item in _object_list(writer_handoff.get("required_artifacts"))
+        if "table" in str(item.get("artifact_type") or "").lower() or "inventory" in str(item.get("artifact_type") or "").lower()
+    )
+
+
+def _visual_traceability_requirements(writer_handoff: Mapping[str, Any], expected_outputs: Mapping[str, Any] | None = None) -> list[str]:
+    items: list[str] = []
+    for artifact in _object_list(writer_handoff.get("required_artifacts")):
+        fields = ", ".join(_string_list(artifact.get("required_fields")))
+        if fields:
+            items.append(f"{artifact.get('artifact_type')} traceability fields: {fields}.")
+    if expected_outputs:
+        fields = ", ".join(_string_list(expected_outputs.get("artifact_required")))
+        if fields:
+            items.append(f"Every artifact entry requires: {fields}.")
+    return _dedupe_strings(items)
+
+
+def _writer_handoff_requirements(writer_handoff: Mapping[str, Any], expected_outputs: Mapping[str, Any] | None = None) -> list[str]:
+    items = _string_list(writer_handoff.get("must_include"))
+    for artifact in _object_list(writer_handoff.get("required_artifacts")):
+        description = _first_resolved(artifact.get("description"), artifact.get("artifact_type"))
+        if description is not MISSING:
+            items.append(str(description))
+    for forbidden in _string_list(writer_handoff.get("must_not_use_as_final_fact_source")):
+        items.append(f"Do not use {forbidden} as final fact source.")
+    if expected_outputs:
+        semantics = _mapping(expected_outputs.get("field_semantics"))
+        text = semantics.get("writer_handoff")
+        if not is_empty_value(text):
+            items.append(str(text))
+    return _dedupe_strings(items)
+
+
+def _t7_requirements(writer_handoff: Mapping[str, Any], expected_outputs: Mapping[str, Any] | None = None) -> list[str]:
+    items: list[str] = []
+    for artifact in _object_list(writer_handoff.get("required_artifacts")):
+        legacy_audit_key = "requires_" + "t7_audit"
+        if artifact.get("requires_handoff_validation") is True or artifact.get(legacy_audit_key) is True:
+            fields = ", ".join(_string_list(artifact.get("required_fields")))
+            suffix = f" with fields {fields}" if fields else ""
+            items.append(f"{artifact.get('artifact_type')} requires final T8 handoff validation{suffix}.")
+    if expected_outputs:
+        for key in ("result_to_claim", "writer_handoff", "realized_method_package", "final_framework_figure"):
+            text = _mapping(expected_outputs.get("field_semantics")).get(key)
+            if not is_empty_value(text):
+                items.append(str(text))
+    return _dedupe_strings(items)
+
+
+def _handoff_readiness_requirements(writer_handoff: Mapping[str, Any], expected_outputs: Mapping[str, Any] | None = None) -> list[str]:
+    items: list[str] = []
+    required = _object_list(writer_handoff.get("required_artifacts"))
+    if required:
+        items.append("All writer_handoff_contract.required_artifacts must be present before downstream writing.")
+    items.extend(_writer_handoff_requirements(writer_handoff, expected_outputs))
+    return _dedupe_strings(items)
+
+
+def _evidence_ceiling_policy(claim_matrix: list[dict[str, Any]], claim_boundaries: Mapping[str, Any], paper_card_policy: Mapping[str, Any]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for claim in claim_matrix:
+        claim_id = str(claim.get("claim_id") or "")
+        ceiling = claim.get("initial_strength_ceiling")
+        if claim_id and not is_empty_value(ceiling):
+            result[f"claim_{claim_id}"] = str(ceiling)
+    for key in ("allowed_uses", "prohibited_uses"):
+        values = _string_list(paper_card_policy.get(key))
+        if values:
+            result[f"paper_card_{key}"] = "; ".join(values)
+    must_not = _string_list(claim_boundaries.get("must_not_claim"))
+    if must_not:
+        result["must_not_claim"] = "; ".join(must_not)
+    return result
+
+
+def _metric_output_contract(expected_outputs: Mapping[str, Any]) -> list[str]:
+    fields = _string_list(expected_outputs.get("metric_required"))
+    if fields:
+        return [f"Each metric record must include: {', '.join(fields)}."]
+    return []
+
+
+def _logging_requirements(expected_outputs: Mapping[str, Any]) -> list[str]:
+    items: list[str] = []
+    for path in _string_list(expected_outputs.get("required_files")):
+        if any(token in path for token in ("logs", "configs", "raw_results", "run_manifest")):
+            items.append(f"Write and preserve {path}.")
+    return _dedupe_strings(items)
+
+
+def _testing_requirements(expected_outputs: Mapping[str, Any]) -> list[str]:
+    items: list[str] = []
+    status_fields = _string_list(expected_outputs.get("status_required"))
+    manifest_fields = _string_list(expected_outputs.get("run_manifest_required"))
+    if status_fields:
+        items.append(f"executor_status must include: {', '.join(status_fields)}.")
+    if manifest_fields:
+        items.append(f"run_manifest must include: {', '.join(manifest_fields)}.")
+    if "result_pack" in _string_list(expected_outputs.get("required")):
+        items.append("Validate result_pack against the expected output sections before handoff.")
+    return items
+
+
+def _review_requirements(writer_handoff: Mapping[str, Any], expected_outputs: Mapping[str, Any]) -> list[str]:
+    items = _t7_requirements(writer_handoff, expected_outputs)
+    artifact_fields = _string_list(expected_outputs.get("artifact_required"))
+    if artifact_fields:
+        items.append(f"Review artifact inventory for required fields: {', '.join(artifact_fields)}.")
+    return _dedupe_strings(items)
+
+
+def _experiments_from_exp_plan(exp_plan: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return _object_list(exp_plan.get("experiments"))
+
+
+def _task_from_exp_plan(exp_plan: Mapping[str, Any]) -> str | object:
+    names = [str(_first_resolved(item.get("name"), item.get("title"), item.get("id"), "")) for item in _experiments_from_exp_plan(exp_plan)]
+    names = [name for name in names if name]
+    return "; ".join(names) if names else MISSING
+
+
+def _benchmarks_from_exp_plan(exp_plan: Mapping[str, Any]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for idx, experiment in enumerate(_experiments_from_exp_plan(exp_plan), start=1):
+        result.append(
+            {
+                "id": str(_first_resolved(experiment.get("id"), f"E{idx}")),
+                "name": str(_first_resolved(experiment.get("name"), experiment.get("title"), f"experiment_{idx}")),
+                "version": str(_first_resolved(experiment.get("hypothesis_ref"), "exp_plan")),
+            }
+        )
+    return result
+
+
+def _datasets_from_exp_plan(exp_plan: Mapping[str, Any]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for exp_idx, experiment in enumerate(_experiments_from_exp_plan(exp_plan), start=1):
+        exp_id = str(_first_resolved(experiment.get("id"), f"exp{exp_idx}"))
+        for data_idx, dataset in enumerate(_object_list(experiment.get("datasets")), start=1):
+            payload = dict(dataset)
+            payload.setdefault("dataset_id", f"{exp_id}_D{data_idx}")
+            payload.setdefault("version", exp_id)
+            payload["experiment_id"] = exp_id
+            result.append(payload)
+    return _dedupe_objects(result, ["dataset_id", "name", "experiment_id"])
+
+
+def _splits_from_exp_plan(exp_plan: Mapping[str, Any]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for dataset in _datasets_from_exp_plan(exp_plan):
+        split = dataset.get("split")
+        if is_empty_value(split):
+            continue
+        dataset_id = str(dataset.get("dataset_id"))
+        result.append(
+            {
+                "split_id": f"{dataset_id}_split",
+                "dataset_id": dataset_id,
+                "description": str(split),
+                "experiment_id": str(dataset.get("experiment_id") or ""),
+            }
+        )
+    return result
+
+
+def _preprocessing_from_exp_plan(exp_plan: Mapping[str, Any]) -> list[str]:
+    items: list[str] = []
+    for experiment in _experiments_from_exp_plan(exp_plan):
+        for step in _object_list(experiment.get("steps")):
+            action = str(step.get("action") or "")
+            details = str(step.get("details") or "")
+            if any(token in f"{action} {details}".lower() for token in ("prepare", "preprocess", "data", "embedding", "cache")):
+                items.append(f"{action}: {details}".strip(": "))
+    return _dedupe_strings(items)
+
+
+def _metrics_from_exp_plan(exp_plan: Mapping[str, Any], *, primary: bool) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for experiment in _experiments_from_exp_plan(exp_plan):
+        exp_id = str(experiment.get("id") or "")
+        for idx, metric in enumerate(_object_list(experiment.get("metrics")), start=1):
+            is_primary = bool(metric.get("primary"))
+            if is_primary != primary:
+                continue
+            payload = dict(metric)
+            payload.setdefault("name", metric.get("metric") or f"{exp_id}_metric_{idx}")
+            payload.setdefault("direction", "unknown")
+            payload.setdefault("aggregation", "unspecified")
+            payload["experiment_id"] = exp_id
+            result.append(payload)
+    return _dedupe_objects(result, ["experiment_id", "name"])
+
+
+def _seed_policy_from_exp_plan(exp_plan: Mapping[str, Any]) -> dict[str, Any] | object:
+    text_parts: list[str] = []
+    for experiment in _experiments_from_exp_plan(exp_plan):
+        text_parts.extend(_string_list(experiment.get("notes")))
+        for step in _object_list(experiment.get("steps")):
+            text_parts.extend([str(step.get("action") or ""), str(step.get("details") or "")])
+    for text in text_parts:
+        if "seed" not in text.lower():
+            continue
+        seeds = [int(item) for item in re.findall(r"\b\d+\b", text)]
+        if seeds:
+            return {"seeds": seeds, "source": text}
+    return MISSING
+
+
+def _minimum_loop_from_exp_plan(exp_plan: Mapping[str, Any]) -> list[str]:
+    result: list[str] = []
+    for experiment in _experiments_from_exp_plan(exp_plan):
+        name = _first_resolved(experiment.get("name"), experiment.get("title"), experiment.get("id"))
+        if name is not MISSING:
+            result.append(str(name))
+    return result
+
+
+def _required_experiment_types_from_exp_plan(exp_plan: Mapping[str, Any]) -> list[str]:
+    return _minimum_loop_from_exp_plan(exp_plan)
+
+
+def _comparison_axes_from_exp_plan(exp_plan: Mapping[str, Any]) -> list[str]:
+    items: list[str] = []
+    for experiment in _experiments_from_exp_plan(exp_plan):
+        exp_id = str(experiment.get("id") or "")
+        for baseline in _object_list(experiment.get("baselines")):
+            if not is_empty_value(baseline.get("name")):
+                items.append(f"{exp_id}: compare against {baseline.get('name')}.")
+        for criterion in _object_list(experiment.get("success_criteria")):
+            metric = criterion.get("metric")
+            threshold = criterion.get("threshold")
+            comparison = criterion.get("comparison")
+            if not is_empty_value(metric):
+                items.append(f"{exp_id}: {metric} {comparison or ''} {threshold or ''}".strip())
+    return _dedupe_strings(items)
+
+
+def _practical_thresholds_from_exp_plan(exp_plan: Mapping[str, Any]) -> dict[str, float]:
+    result: dict[str, float] = {}
+    for experiment in _experiments_from_exp_plan(exp_plan):
+        for criterion in _object_list(experiment.get("success_criteria")):
+            metric = criterion.get("metric")
+            threshold = criterion.get("threshold")
+            if is_empty_value(metric) or is_empty_value(threshold):
+                continue
+            match = re.search(r"[-+]?\d+(?:\.\d+)?", str(threshold))
+            if match:
+                result[str(metric)] = float(match.group(0))
+    return result
+
+
+def _important_subsets_from_exp_plan(exp_plan: Mapping[str, Any]) -> list[str]:
+    items: list[str] = []
+    for metric in [*_metrics_from_exp_plan(exp_plan, primary=True), *_metrics_from_exp_plan(exp_plan, primary=False)]:
+        text = " ".join(str(metric.get(key) or "") for key in ("name", "target"))
+        if any(token in text.lower() for token in ("subgroup", "few-shot", "zero-shot", "10%", "20%", "full target")):
+            items.append(text)
+    return _dedupe_strings(items)
+
+
+def _protocol_constraints_from_exp_plan(exp_plan: Mapping[str, Any]) -> list[str]:
+    items: list[str] = []
+    for split in _splits_from_exp_plan(exp_plan):
+        items.append(f"{split.get('dataset_id')}: {split.get('description')}")
+    return _dedupe_strings(items)
+
+
+def _dedupe_objects(values: Sequence[Mapping[str, Any]], keys: Sequence[str]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[str, ...]] = set()
+    for value in values:
+        payload = dict(value)
+        identity = tuple(str(payload.get(key) or "") for key in keys)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        result.append(payload)
+    return result
 
 
 def _set_authoritative(
@@ -493,6 +1381,9 @@ def _source_artifacts(workspace: Path) -> dict[str, str | None]:
         "agents_policy": "external_executor/AGENTS.md",
         "allowed_paths": "external_executor/allowed_paths.txt",
         "synthesis": "literature/synthesis.md",
+        "bridge_plan": "literature/bridge_domain_plan.json",
+        "bridge_catalog_index": "literature/cross_domain_catalogs/index.json",
+        "bridge_catalog_root": "literature/cross_domain_catalogs",
         "risks": "ideation/risks.md",
         "idea_scorecard": "ideation/idea_scorecard.yaml",
     }
@@ -546,22 +1437,14 @@ def _object_list(value: Any) -> list[dict[str, Any]]:
 def _string_list(value: Any) -> list[str]:
     if value is MISSING:
         return []
+    if isinstance(value, Mapping):
+        selected = _mapping_text(value)
+        return [selected] if selected else []
     if isinstance(value, list):
         result: list[str] = []
         for item in value:
             if isinstance(item, Mapping):
-                selected = _first_resolved(
-                    item.get("boundary"),
-                    item.get("claim"),
-                    item.get("statement"),
-                    item.get("description"),
-                    item.get("artifact_type"),
-                    item.get("name"),
-                    item.get("value"),
-                )
-                if selected is MISSING:
-                    selected = json.dumps(dict(item), ensure_ascii=False, sort_keys=True)
-                result.append(str(selected).strip())
+                result.append(_mapping_text(item))
             elif str(item).strip():
                 result.append(str(item).strip())
         return [item for item in result if item]
@@ -572,6 +1455,33 @@ def _string_list(value: Any) -> list[str]:
             return [line.strip("-* \t") for line in value.splitlines() if line.strip("-* \t")]
         return [part.strip() for part in re.split(r"[,;]", value) if part.strip()]
     return []
+
+
+def _mapping_text(item: Mapping[str, Any]) -> str:
+    condition = item.get("condition")
+    trigger = item.get("trigger")
+    action = item.get("required_action")
+    if not is_empty_value(condition) and not is_empty_value(trigger):
+        suffix = f" -> {action}" if not is_empty_value(action) else ""
+        return f"{condition}: {trigger}{suffix}".strip()
+    authority_action = item.get("action")
+    authority = item.get("authority")
+    if not is_empty_value(authority_action) and not is_empty_value(authority):
+        return f"{authority_action}: {authority}".strip()
+    selected = _first_resolved(
+        item.get("boundary"),
+        item.get("claim"),
+        item.get("statement"),
+        item.get("description"),
+        item.get("artifact_type"),
+        item.get("name"),
+        item.get("trigger"),
+        item.get("action"),
+        item.get("value"),
+    )
+    if selected is MISSING:
+        selected = json.dumps(dict(item), ensure_ascii=False, sort_keys=True)
+    return str(selected).strip()
 
 
 def _baseline_list(value: Any) -> list[dict[str, Any]]:
@@ -669,8 +1579,16 @@ def _reviewer_questions(value: Any) -> list[str]:
     for item in value if isinstance(value, list) else []:
         if isinstance(item, Mapping):
             question = _first_resolved(item.get("reviewer_question"), item.get("question"), item.get("evidence_needed"))
-            if not is_empty_value(question):
+            if question is not MISSING and not is_empty_value(question):
                 questions.append(str(question))
+                continue
+            claim_id = item.get("claim_id")
+            for requirement in _object_list(item.get("evidence_requirements")):
+                evidence_type = requirement.get("evidence_type")
+                metric = requirement.get("metric_or_observation")
+                setting = requirement.get("dataset_or_setting")
+                if not is_empty_value(evidence_type) or not is_empty_value(metric):
+                    questions.append(f"{claim_id}: verify {evidence_type or 'evidence'} using {metric or 'declared metrics'} on {setting or 'declared setting'}.")
     return questions
 
 
@@ -680,7 +1598,7 @@ def _max_iterations(value: Any) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     if isinstance(value, Mapping):
-        for key in ("max_iterations", "iterations", "iteration_budget"):
+        for key in ("max_iterations", "iterations", "iteration_budget", "max_rounds"):
             item = value.get(key)
             if isinstance(item, int) and not isinstance(item, bool):
                 return item

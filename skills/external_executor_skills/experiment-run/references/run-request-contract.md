@@ -22,7 +22,7 @@ Use this contract to materialize and validate one immutable execution attempt.
   "execution_level": "smoke | small_scale | formal",
   "analysis_role": "confirmatory | diagnostic | exploratory",
   "command": ["python", "train.py", "--config", "..."],
-  "cwd": "external_executor/workdir/...",
+  "cwd": "external_executor/expr/...",
   "timeout_seconds": 3600,
   "experiment_plan_ref": "external_executor/.../experiment_plan.json",
   "iteration_plan_ref": "external_executor/.../iteration_plan.json",
@@ -30,11 +30,11 @@ Use this contract to materialize and validate one immutable execution attempt.
   "review_id": "REV-...",
   "input_fingerprint": "sha256",
   "protocol_fingerprint": "...",
-  "config_ref": "external_executor/configs/...json",
-  "raw_log_path": "external_executor/logs/...log",
+  "config_ref": "external_executor/expr/...config.json",
+  "raw_log_path": "external_executor/raw_results/...log",
   "metric_output_path": "external_executor/raw_results/...metrics.json",
-  "run_record_path": "external_executor/runs/...record.json",
-  "checkpoint_path": "external_executor/runs/...checkpoint.json",
+  "run_record_path": "external_executor/raw_results/...record.json",
+  "checkpoint_path": "external_executor/raw_results/...checkpoint.json",
   "declared_outputs": ["external_executor/raw_results/..."],
   "dependencies": [
     {
@@ -73,6 +73,9 @@ Use this contract to materialize and validate one immutable execution attempt.
 - `review_id`, `input_fingerprint`, and `protocol_fingerprint` must match the current review.
 - `command` is an argument vector. Shell interpreters with command-string flags, redirection, pipes, and implicit interpolation are forbidden.
 - All paths are workspace-relative and must resolve under allowed paths.
+- `cwd` must resolve under `external_executor/expr/`; it is the deployment and execution area for baselines and ours.
+- `raw_log_path`, `metric_output_path`, `run_record_path`, `checkpoint_path`, and every `declared_outputs` path must resolve under `external_executor/raw_results/`.
+- `config_ref` and dependencies with `kind=code` or `kind=config` must resolve under `external_executor/expr/`; dependencies with `kind=dataset` or `kind=resource` must resolve under `resources/` for by-hand local material or `resource/` for acquired/reimplemented material.
 - Dependency hashes are calculated before launch. A mismatch blocks execution.
 
 ## Plan lookup
@@ -108,6 +111,7 @@ run_type=formal     -> execution_level=formal
 ## Output rules
 
 - The raw log, metric output, run record, and checkpoint must be distinct regular-file paths.
+- Raw log, metric output, run record, checkpoint, environment snapshot, and declared outputs are raw run evidence and must live under `external_executor/raw_results/`.
 - The config must exist before launch.
 - Declared outputs may be files or directories, but the run record fingerprints only regular files.
 - Formal requests require at least one `code`, one `resource` or `dataset`, and one `evaluator` or `metric` dependency.

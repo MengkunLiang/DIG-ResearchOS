@@ -64,10 +64,10 @@ interaction:
 When `ideation/hypothesis_brief.yaml` exists, treat it as a Pre-Novelty draft bundle. It preserves the selected Candidate's draft hypotheses, source lineage, and evidence boundary; it is not proof that the hypotheses are novel or ready for execution. Read `ideation/selected/t45_search_targets.json` and `ideation/selected/hypothesis_lineage.json` when available, and preserve the recorded Candidate and paper-note paths.
 
 When a claim needs source verification, reopen only the referenced canonical Paper Note:
-`literature/deep_read_notes/` or `literature/bridge_notes/` can support bounded
-full/partial-reading claims; `literature/shallow_read_notes/` can support background,
-coverage, or an explicit reading-upgrade request only. Do not resurrect or scan retired
+`literature/deep_read_notes/` or `literature/bridge_notes/` can support bounded full/partial-reading claims; `literature/shallow_read_notes/` can support background, coverage, or an explicit reading-upgrade request only. Do not resurrect or scan retired
 `paper_notes*` directories as an additional evidence source.
+
+`literature/cross_domain_catalogs/` is a separate source of B1–B# retrieval context. It may sharpen a conjectural mechanism contrast, boundary, or follow-up reading target, but it cannot itself support a hypothesis claim or replace a linked canonical note.
 
 Build a hypothesis table before prose. Each hypothesis must name the intervention/condition, predicted outcome, mechanism, alternative explanation, discriminating observation, boundary condition, measurement, baseline/control, and kill criterion. Distinguish assumptions from evidence. Re-open a cited note section when a mechanism or boundary is asserted; otherwise mark the statement as proposed. When combining material from more than one Candidate, do not concatenate sentences: first record a Compatibility Check, a Gene Donor Map, the source Candidate IDs, and the reason that one coherent Core Thesis is possible.
 
@@ -76,10 +76,6 @@ Do not create an experiment result, numerical effect, available dataset, or caus
 ## Native T4 compatibility
 
 When the source is a native T4 Candidate, use `ideation/selected/selected_candidate.json`,
-`ideation/hypothesis_brief.yaml`, its lineage, and the referenced canonical Paper Notes as
-read-only inputs. Do not rewrite `ideation/evidence/`, `ideation/populations/`,
-`ideation/evolution/`, `ideation/portfolio.json`, or `ideation/final_cards/`; those preserve
-P0/P1, Family, Mutation, Crossover, and Portfolio history. This Skill can prepare a
-researcher-facing hypothesis draft, but it cannot upgrade a Pre-Novelty brief into formal
-`ideation/hypotheses.md` or `ideation/exp_plan.yaml`. That authority belongs to a passing
-T4.5 novelty/collision audit.
+`ideation/hypothesis_brief.yaml`, its lineage, and the referenced canonical Paper Notes as read-only inputs. Do not rewrite `ideation/evidence/`, `ideation/populations/`,
+`ideation/evolution/`, `ideation/portfolio.json`, or `ideation/final_cards/`; those preserve P0/P1, Family, Mutation, Crossover, and Portfolio history. This Skill can prepare a researcher-facing hypothesis draft, but it cannot upgrade a Pre-Novelty brief into formal
+`ideation/hypotheses.md` or `ideation/exp_plan.yaml`. That authority belongs to a passing T4.5 novelty/collision audit.

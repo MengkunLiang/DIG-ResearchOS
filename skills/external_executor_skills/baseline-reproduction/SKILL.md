@@ -32,7 +32,8 @@ Write only:
 - `external_executor/baseline_reproduction_preflight.json`;
 - `external_executor/baseline_reproduction_plan.json`;
 - `external_executor/baseline_reproduction_report.json`;
-- controlled copies, configs, logs, metrics, patches, environment records, and run records under `external_executor/workdir/baseline_reproduction/`;
+- controlled baseline deployments, copied source, configs, and repair patches under `external_executor/expr/baseline_reproduction/`;
+- baseline stdout/stderr logs, metrics, environment records, run records, and produced outputs under `external_executor/raw_results/baseline_reproduction/`;
 - `result_pack.json#baseline_reproduction` through the narrow apply script.
 
 Do not change resources, experiment design, iteration decisions, executor status, run manifest, proposed-method code, or sibling-owned result-pack sections. The root registers produced artifacts and chooses the next child.
@@ -106,13 +107,19 @@ python <skill-dir>/scripts/prepare_attempt.py --workspace <workspace> \
   --reproduction-id <reproduction-id> --attempt <N>
 ```
 
-The attempt directory is:
+The deployment directory is:
 
 ```text
-external_executor/workdir/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/
+external_executor/expr/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/
 ```
 
-It contains the copied source, immutable plan fragment, source/config manifests, and later environment/log/metric/repair evidence. Never patch the Phase B source in place. Reject path-escaping symlinks.
+The paired raw-result directory is:
+
+```text
+external_executor/raw_results/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/
+```
+
+The deployment directory contains the copied source, immutable plan fragment, source/config manifests, and repair patches. The raw-result directory contains runtime evidence and outputs. Never patch the Phase B source in place. Reject path-escaping symlinks.
 
 ## Capture the execution environment
 
@@ -120,8 +127,8 @@ Run before the first command and after a material environment repair:
 
 ```bash
 python <skill-dir>/scripts/capture_environment.py \
-  --path <attempt-dir>/environment.json \
-  --source <attempt-dir>/source
+  --path <raw-result-dir>/environment.json \
+  --source <deployment-dir>/source
 ```
 
 Capture OS, architecture, Python/runtime, installed packages, selected hardware facts, Git identity, and declared non-secret environment names. Do not store secret values. Treat a material environment change as a new attempt or new fingerprint.
@@ -141,7 +148,9 @@ The runner:
 - uses an argument vector and never `shell=True`;
 - checks the executable against the plan allowlist;
 - sanitizes inherited environment variables and withholds credentials by default;
-- writes stdout/stderr continuously to the attempt directory;
+- executes from the deployment directory under `external_executor/expr/`;
+- exposes `RESEARCHOS_OUTPUT_DIR` under the paired `external_executor/raw_results/` directory;
+- writes stdout/stderr continuously to the raw-result directory;
 - records start/end time, exit status, timeout, resource usage, expected-output checks, and checksums;
 - preserves failed and superseded attempts;
 - never upgrades evidence level based on exit code alone.
@@ -154,9 +163,9 @@ Use a declared extractor; never copy a number from the console by memory:
 
 ```bash
 python <skill-dir>/scripts/extract_metrics.py \
-  --attempt-dir <attempt-dir> \
-  --spec <attempt-dir>/plan_fragment.json \
-  --output <attempt-dir>/metrics.json
+  --attempt-dir <deployment-dir> \
+  --spec <deployment-dir>/plan_fragment.json \
+  --output <raw-result-dir>/metrics.json
 ```
 
 Supported generic extraction modes are JSON file/path, JSON Lines, CSV column, and regex against a named log. Record the exact source file, selector, units, direction, aggregation, and raw matched value. If multiple seeds/repeats are planned, keep per-run values and aggregate only by the locked rule.
@@ -167,10 +176,10 @@ When execution or evidence validation fails, run:
 
 ```bash
 python <skill-dir>/scripts/classify_failure.py \
-  --run-record <attempt-dir>/run_record.json \
-  --stdout <attempt-dir>/stdout.log \
-  --stderr <attempt-dir>/stderr.log \
-  --output <attempt-dir>/failure_classification.json
+  --run-record <raw-result-dir>/run_record.json \
+  --stdout <raw-result-dir>/stdout.log \
+  --stderr <raw-result-dir>/stderr.log \
+  --output <raw-result-dir>/failure_classification.json
 ```
 
 Use the taxonomy in `references/failure-and-repair-taxonomy.md`. The script provides a heuristic proposal; the Builder and Reviewer must inspect the direct evidence before accepting the category.
@@ -193,11 +202,11 @@ Run after each candidate evidence bundle:
 
 ```bash
 python <skill-dir>/scripts/evaluate_reproduction.py \
-  --plan-fragment <attempt-dir>/plan_fragment.json \
-  --run-record <attempt-dir>/run_record.json \
-  --metrics <attempt-dir>/metrics.json \
-  --environment <attempt-dir>/environment.json \
-  --output <attempt-dir>/reproduction_evaluation.json
+  --plan-fragment <deployment-dir>/plan_fragment.json \
+  --run-record <raw-result-dir>/run_record.json \
+  --metrics <raw-result-dir>/metrics.json \
+  --environment <raw-result-dir>/environment.json \
+  --output <raw-result-dir>/reproduction_evaluation.json
 ```
 
 Use `references/sanity-and-comparability.md`. Separate:

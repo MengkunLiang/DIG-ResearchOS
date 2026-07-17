@@ -16,12 +16,17 @@ The mapping file is the only per-Skill injection specification. Do not add `skil
 ```text
 external_executor/
 ├── project_skill_context.yaml
+├── report/
+│   ├── skill_specialization_execution.json
+│   ├── skill_specialization_failure_report.json
+│   └── skill_specialization_report.json
 ├── schemas/project_skill_context.schema.json
-├── skill_specialization_report.json
 └── skills/<13 specialized Skill directories>/
 ```
 
 `project_skill_context.yaml` stores stable project facts. Runtime artifacts continue to own iteration plans, reviews, runs, diagnoses, attributions, realized methods, and evidence packages.
+
+The copied workspace Schema is a downstream validation input, not a disposable generation scratch file. The task adapter, artifact validator, and executor gate use it to validate `project_skill_context.yaml` after publication.
 
 ## Required Context properties
 

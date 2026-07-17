@@ -8,8 +8,12 @@ Use the stricter rule when this reference, `AGENTS.md`, handoff policy, and `all
 - Normalize every path and resolve existing symlinks.
 - Reject absolute targets outside the workspace and relative paths containing an escape.
 - Reject symlink-based escape from an allowed directory.
-- Treat `external_executor/expr/` as original input and read-only unless explicitly authorized.
-- Place derived resources, adapters, code, configs, and runs under authorized `external_executor/workdir/` or output directories.
+- Do not search `external_executor/expr/` for baseline, benchmark, dataset, checkpoint, or evaluation resources. Treat it as the formal execution area after resources, baselines, and the method are prepared; write there only when the owning execution/build step explicitly authorizes it.
+- Place by-hand local resources under `resources/`.
+- Place public remote acquisitions and baseline reimplementations under `resource/`.
+- Place deployable baseline code, method code, adapters, and runnable configs under authorized subdirectories of `external_executor/expr/`.
+- Place raw run evidence, including logs, metrics, run records, checkpoints, environment snapshots, and produced experiment outputs, under `external_executor/raw_results/`.
+- `external_executor/workdir/` is a legacy workspace path only. Current execution starts from the workspace root, deploys runnable method/baseline code under `external_executor/expr/`, and writes child analysis artifacts only to paths explicitly listed in `external_executor/allowed_paths.txt`.
 - Do not modify ResearchOS runtime, config, drafts, or submission paths unless a precise path and operation is explicitly authorized.
 
 ## Resource acquisition

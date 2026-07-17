@@ -79,6 +79,10 @@ def main() -> int:
                     warnings.append(f"module_missing_failure_modes:{mid}")
                 else:
                     errors.append(f"module_missing_field:{mid}:{field}")
+        for target in listify(module.get("code_targets")):
+            normalized = str(target).strip().lstrip("./")
+            if normalized and not (normalized == "external_executor/expr" or normalized.startswith("external_executor/expr/")):
+                errors.append(f"module_code_target_outside_expr:{mid}:{target}")
         if role in {"core", "supporting"}:
             ablation = dictify(module.get("ablation_switch"))
             if not nonempty(ablation.get("config_key")) and not nonempty(module.get("diagnostic_hooks")):

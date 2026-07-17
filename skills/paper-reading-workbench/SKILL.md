@@ -105,8 +105,4 @@ workflow:
 
 # Paper Reading Workbench
 
-Prioritize papers according to the researcher’s stated question, not only citation or
-search ranking. For each paper state access level, page/section coverage, extraction
-status, evidence level, and open uncertainty. A missing PDF is not permission to infer
-methods or results from metadata. Abstract-only readings may produce cautious coverage
-hints but cannot answer detailed mechanism, dataset, metric, or causal questions.
+Prioritize papers according to the researcher’s stated question, not only citation or search ranking. For each paper state access level, page/section coverage, extraction status, evidence level, and open uncertainty. A missing PDF is not permission to infer methods or results from metadata. Abstract-only readings may produce cautious coverage hints but cannot answer detailed mechanism, dataset, metric, or causal questions.

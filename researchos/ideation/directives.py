@@ -37,6 +37,8 @@ _DIRECTIVE_ACTIONS = {
     "inspect_hypotheses",
     "inspect_contributions",
     "inspect_genome",
+    "inspect_files",
+    "compare_candidates",
     "regenerate_route",
     "change_target_profile",
     "rollback",
@@ -79,6 +81,16 @@ def parse_idea_directive(
         raise ValueError("T4 directive needs a non-empty user instruction")
     proposed = llm_payload if isinstance(llm_payload, dict) else {}
     detected_ids, components = _extract_references(raw, candidate_ids)
+    if (
+        option_id in {"", "t4_directive"}
+        and detected_ids
+        and not components
+        and _bare_candidate_reference_only(raw, detected_ids)
+    ):
+        joined = "、".join(detected_ids)
+        raise ValueError(
+            f"你只输入了 {joined}。请说明是“推进 {joined}”、“优化 {joined}”还是“查看 {joined}”。"
+        )
     proposed_ids = proposed.get("target_candidate_ids")
     if isinstance(proposed_ids, list):
         detected_ids = list(dict.fromkeys([*detected_ids, *[str(item) for item in proposed_ids if str(item) in candidate_ids]]))
@@ -175,8 +187,19 @@ def validate_idea_directive(directive: IdeaDirective, *, candidate_ids: set[str]
         raise ValueError("T4 directive references components from unknown candidates: " + ", ".join(component_missing))
     if directive.action == "select_candidate" and len(directive.target_candidate_ids) != 1:
         raise ValueError("select_candidate requires exactly one complete Candidate")
-    if directive.action in {"focus_candidate", "inspect_score", "inspect_evidence", "inspect_lineage", "inspect_hypotheses", "inspect_contributions", "inspect_genome"} and not directive.target_candidate_ids:
+    if directive.action in {
+        "focus_candidate",
+        "inspect_score",
+        "inspect_evidence",
+        "inspect_lineage",
+        "inspect_hypotheses",
+        "inspect_contributions",
+        "inspect_genome",
+        "inspect_files",
+    } and not directive.target_candidate_ids:
         raise ValueError(f"{directive.action} requires a Candidate ID")
+    if directive.action == "compare_candidates" and len(directive.target_candidate_ids) < 2:
+        raise ValueError("compare_candidates requires at least two Candidate IDs")
     if directive.action == "compose_from_components" and len(set(component_candidates)) < 2:
         raise ValueError("compose_from_components requires components from at least two Candidates")
     if directive.action == "merge_candidates" and len(directive.target_candidate_ids) < 2:
@@ -300,11 +323,25 @@ def _component_candidate_id(value: str, candidate_ids: set[str]) -> str | None:
 
 
 def _normalized_action(*, option_id: str, raw: str, proposed_action: str, target_count: int, component_count: int) -> str:
+    # A plain inspection request is an explicit safety boundary.  The LLM is
+    # allowed to help with complex research wording, but it may never turn
+    # ``查看 D1`` into a selecting/confirming operation.  Resolve this exact,
+    # non-mutating intent before considering an LLM proposal.
+    read_only_action = _explicit_read_only_action(raw, target_count=target_count)
+    if read_only_action:
+        return read_only_action
+    # “推进 D1” is a public, user-facing promise: it means choose that
+    # completed Candidate for the T4.5 novelty gate, not “focus D1 and run
+    # another T4 evolution”.  Resolve this narrow wording before an LLM can
+    # reinterpret it as focus_candidate/refine_candidate.
+    if _explicit_selection_action(raw, target_count=target_count):
+        return "select_candidate"
     proposed = proposed_action.strip()
     if proposed in _DIRECTIVE_ACTIONS:
         return proposed
     option_map = {
         "select_or_reframe": "select_candidate" if target_count == 1 else "refine_candidate",
+        "select_candidate": "select_candidate",
         "proceed": "select_candidate",
         "proceed_candidate": "select_candidate",
         "merge": "compose_from_components" if component_count else "merge_candidates",
@@ -335,27 +372,52 @@ def _normalized_action(*, option_id: str, raw: str, proposed_action: str, target
         return "rollback"
     if any(token in lowered for token in ("研究取向", "publication orientation", "target profile", "改成更偏 utd", "改成 ccf", "改成 hybrid")):
         return "change_target_profile"
-    if any(token in lowered for token in ("再进化", "下一代", "continue evolution", "another generation")):
+    # Gate1 is Chinese-first.  These are intent aliases, not a substitute for
+    # the later candidate-ID and confirmation checks: all model-changing
+    # requests still become a fingerprint-bound directive before execution.
+    if any(
+        token in lowered
+        for token in (
+            "再进化",
+            "再演化",
+            "重新演化",
+            "重新进化",
+            "继续演化",
+            "继续进化",
+            "下一代",
+            "继续一轮",
+            "continue evolution",
+            "another generation",
+            "evolve again",
+        )
+    ):
         return "continue_evolution"
     if any(token in lowered for token in ("剩余候选", "剩余 population", "show population", "remaining population", "查看 population")):
         return "show_more"
     if any(token in lowered for token in ("archive", "归档候选", "查看归档")):
         return "show_archive"
-    if any(token in lowered for token in ("focus", "只优化", "聚焦")):
+    if any(token in lowered for token in ("focus", "优化", "改进", "精修", "简化", "降低", "只优化", "聚焦", "定向优化", "定向演化", "refine")):
         return "focus_candidate"
-    if any(token in lowered for token in ("crossover", "交叉", "组合候选")) and target_count >= 2:
+    if any(token in lowered for token in ("并行", "parallel", "分别保留", "保留多个方向", "并行保留")):
+        return "keep_parallel"
+    if any(token in lowered for token in ("crossover", "交叉", "组合候选", "合并", "merge", "组合")) and target_count >= 2:
         return "merge_candidates"
     if any(token in lowered for token in ("重新生成", "regenerate", "重跑 route", "route")):
         return "regenerate_route"
-    if any(token in lowered for token in ("查看证据", "evidence")):
+    inspection_requested = any(token in lowered for token in ("查看", "view", "inspect", "详情"))
+    if any(token in lowered for token in ("比较", "对比", "compare")):
+        return "compare_candidates"
+    if any(token in lowered for token in ("文件", "产物", "artifact", "files", "路径")) and inspection_requested:
+        return "inspect_files" if target_count else "show_more"
+    if ("证据" in lowered and inspection_requested) or "evidence" in lowered:
         return "inspect_evidence" if target_count else "show_more"
-    if any(token in lowered for token in ("查看谱系", "lineage")):
+    if ("谱系" in lowered and inspection_requested) or "lineage" in lowered:
         return "inspect_lineage" if target_count else "show_more"
-    if any(token in lowered for token in ("查看假设", "hypotheses")):
+    if ("假设" in lowered and inspection_requested) or "hypotheses" in lowered:
         return "inspect_hypotheses" if target_count else "show_more"
-    if any(token in lowered for token in ("查看贡献", "contributions")):
+    if ("贡献" in lowered and inspection_requested) or "contributions" in lowered:
         return "inspect_contributions" if target_count else "show_more"
-    if any(token in lowered for token in ("查看基因", "genome")):
+    if ("基因" in lowered and inspection_requested) or "genome" in lowered:
         return "inspect_genome" if target_count else "show_more"
     if any(token in lowered for token in ("查看", "inspect", "评分", "score")):
         return "inspect_score" if target_count else "show_more"
@@ -363,7 +425,107 @@ def _normalized_action(*, option_id: str, raw: str, proposed_action: str, target
         return "compose_from_components"
     if target_count >= 2:
         return "select_multiple"
+    if option_id in {"", "t4_directive"} and target_count == 1:
+        return "focus_candidate"
     return "select_candidate" if target_count == 1 else "refine_candidate"
+
+
+def _bare_candidate_reference_only(raw: str, detected_ids: list[str]) -> bool:
+    """Return True when the turn contains only candidate handles and separators."""
+
+    remainder = str(raw or "").strip()
+    if not remainder:
+        return False
+    for candidate_id in sorted(detected_ids, key=len, reverse=True):
+        remainder = re.sub(
+            rf"(?<![A-Za-z0-9._:-]){re.escape(candidate_id)}(?![A-Za-z0-9._:-])",
+            "",
+            remainder,
+            flags=re.IGNORECASE,
+        )
+    remainder = re.sub(r"(?i)\b(and|or)\b", "", remainder)
+    remainder = re.sub(r"[\s,，、;；/|+&和或与]+", "", remainder)
+    return not remainder
+
+
+def _explicit_read_only_action(raw: str, *, target_count: int) -> str:
+    """Return a read-only action for an unambiguously inspection-only turn.
+
+    This deliberately does not classify mixed requests such as “查看 D1 后
+    推进它”; those need the normal semantic parser and confirmation.  A user
+    who starts with 查看/view/inspect and supplies no mutation verb, however,
+    must never reach a confirmation screen.
+    """
+
+    lowered = " ".join(str(raw or "").casefold().split())
+    if not lowered:
+        return ""
+    inspection_signal = any(
+        token in lowered for token in ("查看", "看一下", "想看", "看看", "详情", "view", "inspect", "show")
+    )
+    comparison_signal = any(token in lowered for token in ("对比", "比较", "compare"))
+    if not (inspection_signal or comparison_signal):
+        return ""
+    mutation_tokens = (
+        "推进", "选择", "选定", "确认", "优化", "修改", "重构", "组合", "合并", "交叉", "演化", "进化",
+        "重新生成", "重跑", "保留", "提交", "proceed", "select", "confirm", "refine", "merge", "compose",
+        "crossover", "evolve", "regenerate", "rollback",
+    )
+    if any(token in lowered for token in mutation_tokens):
+        return ""
+    if comparison_signal:
+        return "compare_candidates" if target_count >= 2 else "show_more"
+    if any(token in lowered for token in ("文件", "产物", "artifact", "files", "路径")):
+        return "inspect_files" if target_count else "show_more"
+    if any(token in lowered for token in ("证据", "evidence")):
+        return "inspect_evidence" if target_count else "show_more"
+    if any(token in lowered for token in ("谱系", "lineage")):
+        return "inspect_lineage" if target_count else "show_more"
+    if any(token in lowered for token in ("假设", "hypotheses")):
+        return "inspect_hypotheses" if target_count else "show_more"
+    if any(token in lowered for token in ("贡献", "contributions")):
+        return "inspect_contributions" if target_count else "show_more"
+    if any(token in lowered for token in ("基因", "genome")):
+        return "inspect_genome" if target_count else "show_more"
+    # A request to view several complete Candidates is still read-only.  The
+    # most useful deterministic presentation is their comparison, never an
+    # implicit choice of the first handle.
+    return "compare_candidates" if target_count >= 2 else "inspect_score" if target_count else "show_more"
+
+
+def _explicit_selection_action(raw: str, *, target_count: int) -> bool:
+    """Recognize an unambiguous one-Candidate advance request.
+
+    Mixed scientific instructions remain available to the LLM parser, but
+    simple public commands such as ``推进 D1`` must preserve the documented
+    T4.5 meaning even if a model proposes a T4 focus/evolution action.
+    """
+
+    if target_count != 1:
+        return False
+    lowered = " ".join(str(raw or "").casefold().split())
+    if not lowered:
+        return False
+    starts_selection = lowered.startswith(("推进", "选择", "选定", "进入 t4.5", "进入t4.5", "proceed", "select", "advance"))
+    next_stage_selection = any(
+        phrase in lowered
+        for phrase in (
+            "进入下一阶段",
+            "进入下一个阶段",
+            "用于下一阶段",
+            "for the next stage",
+            "to the next stage",
+            "for t4.5",
+            "into t4.5",
+        )
+    )
+    if not (starts_selection or next_stage_selection):
+        return False
+    alternate_operation_tokens = (
+        "优化", "修改", "重构", "演化", "进化", "再探索", "重新生成", "重跑", "合并", "组合", "交叉",
+        "refine", "focus", "evolve", "regenerate", "merge", "compose", "crossover",
+    )
+    return not any(token in lowered for token in alternate_operation_tokens)
 
 
 def _requested_rounds(value: object, raw: str) -> int | None:
@@ -394,6 +556,9 @@ def _route_from_raw(raw: str) -> str:
         "子群": "subgroup_failure",
         "缺口": "gap_exploration",
         "跨域": "cross_domain_bridge",
+        "跨领域": "cross_domain_bridge",
+        "交叉领域": "cross_domain_bridge",
+        "跨学科": "cross_domain_bridge",
         "桥接": "cross_domain_bridge",
     }
     lowered = " ".join(str(raw or "").casefold().replace("_", " ").replace("-", " ").split())

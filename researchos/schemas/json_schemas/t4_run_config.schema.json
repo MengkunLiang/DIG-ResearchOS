@@ -17,7 +17,7 @@
     "target_profile": {
       "type": "object",
       "properties": {
-        "profile_type": {"enum": ["management_is", "technical_cs", "hybrid", "custom"]},
+        "profile_type": {"enum": ["utd_is", "ccf_cs", "management_is", "technical_cs", "hybrid", "custom"]},
         "target_venues": {"type": "array", "items": {"type": "string"}},
         "primary_orientation": {"enum": ["theory_and_phenomenon", "technical_and_computational", "balanced"]},
         "priority_dimensions": {"type": "array", "items": {"type": "string"}},

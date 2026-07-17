@@ -61,20 +61,9 @@ interaction:
 
 # Research Material Ingest
 
-Read `materials.md` first and inspect only the listed workspace-relative files or
-files under this Skill's input directory. Classify each item as PDF, data, code,
-URL/context, or unsupported. For eligible local files, use the matching
-`upload_seed_pdf`, `upload_seed_data`, or `upload_seed_code` tool so ResearchOS keeps
-the normal user-seed provenance. Do not copy arbitrary directory trees manually.
+Read `materials.md` first and inspect only the listed workspace-relative files or files under this Skill's input directory. Classify each item as PDF, data, code, URL/context, or unsupported. For eligible local files, use the matching
+`upload_seed_pdf`, `upload_seed_data`, or `upload_seed_code` tool so ResearchOS keeps the normal user-seed provenance. Do not copy arbitrary directory trees manually.
 
-Write both declared manifest files even when part of the input cannot be imported. For
-each entry record the original path, stated owner/source, intended role, import result,
-machine-readable limitation, and whether it is safe to use as evidence, a reproduction
-input, or only background. Do not inspect secrets, silently publish private material,
-or infer licence/permission from a filename.
+Write both declared manifest files even when part of the input cannot be imported. For each entry record the original path, stated owner/source, intended role, import result, machine-readable limitation, and whether it is safe to use as evidence, a reproduction input, or only background. Do not inspect secrets, silently publish private material, or infer licence/permission from a filename.
 
-When a listed path is absent or its intended use is ambiguous, write a focused
-follow-up request and use `ask_human` if available. Continue to register usable
-materials; the output must make the unresolved items visible rather than blocking or
-inventing replacements. Finish by naming both outputs and the exact materials that
-need human action.
+When a listed path is absent or its intended use is ambiguous, write a focused follow-up request and use `ask_human` if available. Continue to register usable materials; the output must make the unresolved items visible rather than blocking or inventing replacements. Finish by naming both outputs and the exact materials that need human action.

@@ -262,8 +262,8 @@ class Agent(ABC):
 
         `AgentSpec.structured_outputs` is agent-level config, while several
         agents are reused for multiple tasks or modes.  Filter it through the
-        current task's declared outputs so T5 does not require T7 schemas, T7
-        does not require T5 schemas, and T7.5 does not require T1 project.yaml.
+        current task's declared outputs so reused agents do not require schemas
+        from unrelated task modes.
         """
 
         if not self.spec.structured_outputs:

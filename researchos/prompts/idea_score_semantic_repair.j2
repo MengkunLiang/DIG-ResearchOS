@@ -1,0 +1,14 @@
+Return exactly one JSON object with this shape and no Markdown:
+{"scores": [ScoreReport, ...]}
+
+You are normalizing an attempted independent score response. The response may use equivalent names such as `reports`, `assessments`, `overall_score`, `profile_assessment`, or `idea_potential`, or may nest report fields incorrectly.
+
+Preserve the three original formal numeric assessments under canonical fields: `research_value`, `mechanism_integrity`, and `contribution_distinctiveness`. Preserve Candidate IDs and blind status. Do not create, infer, round, or change a missing core score. The runtime derives the overall summary itself.
+
+The formal scale is `1.0` through `5.0`. If an attempted value is outside that range, do not clamp, divide, or otherwise convert it: this is not a lossless semantic repair and must remain visible so the independent scorer can issue a fresh replacement assessment.
+
+If an older response contains numeric `evidence_calibration` or `validation_tractability`, retain it as legacy diagnostic metadata rather than treating it as a fourth or fifth score. Evidence, validation, Profile Fit, scientific upside, uncertainty, Wildcard guidance, and rationale are non-blocking diagnostics. Map aliases and nesting only. Do not invent a source, dataset, metric, result, citation, external novelty claim, or stronger Evidence Permission.
+
+If an essential core numeric field was not present in the attempted response, leave it unavailable rather than fabricating it; the deterministic runtime will request an independent re-score. Missing rationale does not make the score invalid.
+
+{{ payload_json }}

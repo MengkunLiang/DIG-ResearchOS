@@ -65,21 +65,11 @@ interaction:
 
 # Citation Graph Explorer
 
-Read and normalize each listed seed without discarding the original string. For a DOI,
-register the seed with `process_seed_paper` when possible, then call
+Read and normalize each listed seed without discarding the original string. For a DOI, register the seed with `process_seed_paper` when possible, then call
 `fetch_outgoing_citations`. For an OpenAlex work identifier, call
-`fetch_outgoing_citations` directly. Respect the bounded policy; do not recursively
-snowball, scrape publisher pages, or silently replace an unavailable seed with a
-title-similar paper.
+`fetch_outgoing_citations` directly. Respect the bounded policy; do not recursively snowball, scrape publisher pages, or silently replace an unavailable seed with a title-similar paper.
 
-Write the raw but bounded response for every seed to `skill_citation_graph.json` and
-make every fallback or provider warning visible. Pass only the actual returned paper
-records and edges to `build_domain_map`, explicitly setting the declared
-`skill_citation_domain_map.json` output path. Treat that map as a mechanical
-organization aid, never as a final gap, novelty, importance, or relevance judgment.
+Write the raw but bounded response for every seed to `skill_citation_graph.json` and make every fallback or provider warning visible. Pass only the actual returned paper records and edges to `build_domain_map`, explicitly setting the declared
+`skill_citation_domain_map.json` output path. Treat that map as a mechanical organization aid, never as a final gap, novelty, importance, or relevance judgment.
 
-The Markdown report must distinguish direct references, provider-reported related
-works, metadata-only candidates, and sources requiring verification. It may propose
-section-specific follow-up searches, but it must not create final citations or assert
-that an unread neighbor supports a claim. Finish after all three declared output files
-exist, including a report of failed or unresolved seeds.
+The Markdown report must distinguish direct references, provider-reported related works, metadata-only candidates, and sources requiring verification. It may propose section-specific follow-up searches, but it must not create final citations or assert that an unread neighbor supports a claim. Finish after all three declared output files exist, including a report of failed or unresolved seeds.

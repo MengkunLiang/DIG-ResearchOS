@@ -11,9 +11,13 @@ import unicodedata
 from typing import Any, Awaitable, Callable
 
 from rich.console import Console, Group
+from rich import box
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+
+from ..latex_templates import ccf_template_ids, ccf_template_option_id, normalize_ccf_template_id
+from ..ui.candidate_cards import CandidateCardRenderer, CandidateViewModel
 
 
 _READLINE_CONFIGURED = False
@@ -89,6 +93,47 @@ def _read_cli_line(prompt: str) -> str:
 
     _configure_readline_once()
     return _strip_terminal_control_sequences(input(prompt))
+
+
+def _read_cli_multiline(
+    *,
+    prompt: str = "> ",
+    continuation_prompt: str | None = None,
+    submit_hint: str | None = None,
+) -> str:
+    """Collect a terminal text block, where Enter remains a newline.
+
+    T4 is a research dialogue: a directive often needs a constraint, an
+    evidence concern, and a requested action in one turn.  Requiring the
+    researcher to encode that in a single shell line is both fragile and
+    unnecessarily unlike the rest of the human interface.  ``Ctrl+D`` ends
+    the block on POSIX terminals; a standalone ``END`` is a discoverable
+    fallback for terminals where EOF is intercepted by an IDE.
+
+    ``EOFError`` is intentionally consumed when at least one line was typed:
+    it is the normal submit gesture.  With no content it is re-raised so the
+    caller can persist a waiting Gate rather than silently selecting a
+    default.
+    """
+
+    lines: list[str] = []
+    current_prompt = prompt
+    hint_printed = False
+    try:
+        while True:
+            line = _read_cli_line(current_prompt)
+            if line.strip().casefold() == "end":
+                break
+            lines.append(line)
+            if continuation_prompt is not None:
+                current_prompt = continuation_prompt
+            if line.strip() and not hint_printed and submit_hint:
+                print(submit_hint)
+                hint_printed = True
+    except EOFError:
+        if not lines:
+            raise
+    return "\n".join(lines).strip()
 
 
 def _parse_json_object_from_llm_content(value: Any) -> dict[str, Any] | None:
@@ -218,10 +263,12 @@ def build_t4_directive_llm_interpreter(
 
     async def interpret(raw_answer: str) -> dict[str, Any]:
         prompt = """Parse one ResearchOS T4 Gate1 instruction. Return exactly one JSON object, no Markdown and no explanation.
-Allowed action values: select_candidate, keep_parallel, compose_from_components, continue_evolution, focus_candidate, merge_candidates, show_more, show_archive, inspect_score, inspect_evidence, inspect_lineage, inspect_hypotheses, inspect_contributions, inspect_genome, regenerate_route, rollback, pause, cancel.
+Allowed action values: select_candidate, keep_parallel, compose_from_components, continue_evolution, focus_candidate, merge_candidates, show_more, show_archive, inspect_score, inspect_evidence, inspect_lineage, inspect_hypotheses, inspect_contributions, inspect_genome, inspect_files, compare_candidates, regenerate_route, rollback, pause, cancel.
 Allowed keys: action, target_candidate_ids, target_family_ids, component_refs, preserve_genes, donor_genes, requested_rounds, requested_route, constraints.
 Do not invent an ID, research claim, score, or mechanism. Use an empty list for an omitted list field rather than guessing.
 For multiple complete Candidates, use keep_parallel unless the instruction explicitly asks for a unified composition or crossover. For partial hypotheses/contributions/genes, use compose_from_components.
+If the user says 查看 / view / inspect / show a Candidate and does not also request a mutation, selection, evolution, merge, or confirmation, return an inspect_* action. Never interpret a read-only request as select_candidate.
+If the user explicitly says 推进 / 选择 / proceed exactly one Candidate and does not ask to optimize, evolve, merge, compose, or regenerate, return select_candidate. That action enters T4.5 only after human confirmation.
 User input:
 """ + _strip_terminal_control_sequences(raw_answer)
         response = await llm_client.chat(
@@ -250,6 +297,155 @@ def _compact_text(value: Any, limit: int = 220) -> str:
     return " ".join(str(value or "").split())
 
 
+def _t4_card_excerpt(value: Any, *, max_chars: int, max_sentences: int = 2) -> str:
+    """Project stored T4 prose into a compact, non-inferential card preview.
+
+    Gate1 is a decision surface, not an export of every LLM-authored field.
+    The underlying Final Idea Card remains unchanged and is available through
+    the read-only detail commands.  This helper only keeps complete leading
+    sentences where possible, then makes a visibly truncated preview; it never
+    rewrites scientific content, supplies a missing explanation, or changes
+    evidence strength.
+    """
+
+    text = " ".join(str(value or "").split())
+    if len(text) <= max_chars:
+        return text
+    sentences = [item.strip() for item in re.split(r"(?<=[。！？!?\.])\s+", text) if item.strip()]
+    selected: list[str] = []
+    current_length = 0
+    for sentence in sentences:
+        proposed_length = current_length + (1 if selected else 0) + len(sentence)
+        if selected and (len(selected) >= max_sentences or proposed_length > max_chars):
+            break
+        if not selected and len(sentence) > max_chars:
+            break
+        selected.append(sentence)
+        current_length = proposed_length
+    if selected:
+        preview = " ".join(selected)
+        if len(preview) < len(text):
+            return preview.rstrip("。；;，, ") + "…"
+        return preview
+    cutoff = text[:max_chars].rstrip()
+    for boundary in ("。", "！", "？", ".", "!", "?", "；", ";", "，", ",", " "):
+        position = cutoff.rfind(boundary)
+        if position >= max(24, max_chars // 2):
+            cutoff = cutoff[: position + (1 if boundary not in {" ", "，", ","} else 0)].rstrip()
+            break
+    return cutoff.rstrip("。；;，, ") + "…"
+
+
+def _t4_card_list_excerpt(values: Any, *, max_items: int, max_chars: int) -> str:
+    """Render a bounded list without merging separate risks into one claim."""
+
+    if not isinstance(values, list):
+        return ""
+    excerpts = [
+        _t4_card_excerpt(item, max_chars=max_chars, max_sentences=1)
+        for item in values[:max_items]
+        if str(item or "").strip()
+    ]
+    return "\n".join(f"{index}. {item}" for index, item in enumerate(excerpts, start=1))
+
+
+def _t4_evidence_summary(value: Any) -> str:
+    """Deduplicate internal evidence-level tokens for the Gate decision view."""
+
+    raw = " ".join(str(value or "").split())
+    if not raw:
+        return "当前未标注；选择前请查看论文阅读笔记。"
+    labels = {
+        "FULL_TEXT": "全文依据",
+        "PARTIAL_TEXT": "部分全文依据",
+        "ABSTRACT_ONLY": "摘要级线索",
+        "USER_PROVIDED": "人工提供材料",
+        "SYNTHESIS": "综合材料",
+    }
+    entries: list[str] = []
+    for token in re.split(r"[;,，；]+", raw):
+        normalized = token.strip().upper()
+        label = labels.get(normalized, token.strip())
+        if label and label not in entries:
+            entries.append(label)
+    return "；".join(entries) if entries else raw
+
+
+def _t4_portfolio_role_label(value: Any) -> str:
+    return {
+        "lead": "主线",
+        "alternative": "备选",
+        "high_upside": "高潜力",
+        "supporting": "支撑模块",
+        "parallel": "并行候选",
+    }.get(str(value or "").strip().lower(), "待定位")
+
+
+def _t4_origin_label(value: Any) -> str:
+    """Translate controller Route names without reinterpreting the Idea."""
+
+    return {
+        "evidence_routed_literature": "文献线索发散",
+        "informed_brainstorm": "知情头脑风暴",
+        "mechanism_challenge": "机制挑战",
+        "reverse_operation": "逆向操作",
+        "subgroup_failure": "子群失效",
+        "gap_exploration": "研究缺口探索",
+        "cross_domain_bridge": "跨领域候选方向（Cross-domain）",
+        "bridge_synthesis": "跨领域候选方向（Cross-domain）",
+        "human_composition": "人工指定的组件组合",
+    }.get(str(value or "").strip(), str(value or "未标注"))
+
+
+def _t4_candidate_stage_label(value: Any) -> str:
+    return {
+        "seed": "Idea Seed（待富化）",
+        "idea_seed": "Idea Seed（待富化）",
+        "evolved": "Evolved Candidate",
+        "evolved_candidate": "Evolved Candidate",
+        "selected": "Selected Candidate",
+        "selected_candidate": "Selected Candidate",
+        "legacy_partial": "历史候选（部分迁移）",
+    }.get(str(value or "").strip().lower(), str(value or "未标注"))
+
+
+def _t4_contribution_type_label(value: Any) -> str:
+    return {
+        "invention": "方法/系统",
+        "improvement": "方法改进",
+        "exaptation": "跨域迁移",
+        "measurement": "测量/评估",
+        "mechanism": "机制解释",
+        "theory": "理论",
+        "design": "研究设计",
+        "benchmark": "基准",
+        "algorithm": "算法",
+        "evaluation": "评测",
+        "empirical": "实证",
+    }.get(str(value or "").strip().lower(), str(value or "未由模型归类"))
+
+
+def _t4_complete_final_card(value: Any) -> dict[str, Any] | None:
+    """Return a typed LLM Final Card or no card at all.
+
+    Gate1 uses this helper in both Rich and plain-terminal rendering.  A
+    dictionary with a title or a recommendation is not sufficient: every
+    researcher-facing explanation must satisfy the complete LLM card contract.
+    The caller then presents an operational repair state rather than borrowing
+    prose from ``gate1_card``, a Candidate pitch, a score rationale, or a
+    local template.
+    """
+
+    if not isinstance(value, dict):
+        return None
+    try:
+        from ..ideation.models import FinalIdeaCardTranslation
+
+        return FinalIdeaCardTranslation.model_validate(value).model_dump(mode="json")
+    except (TypeError, ValueError):
+        return None
+
+
 def _summarize_arguments(arguments: dict[str, Any]) -> str:
     fields = []
     for key in ("path", "query", "tool_name", "action", "mode", "summary", "question"):
@@ -275,6 +471,7 @@ def _humanize_presentation_key(key: str) -> str:
         "weak_evidence_preview": "弱证据提示",
         "survey_compile_report": "编译报告",
         "survey_insights": "综述洞察",
+        "supplement_recommendation": "补充检索建议",
         "how_to_choose": "如何选择",
         "task_id": "任务",
         "run_id": "运行",
@@ -282,10 +479,151 @@ def _humanize_presentation_key(key: str) -> str:
         "retry_limit": "自动修复上限",
         "last_error": "最近错误",
         "existing_outputs": "已有输出",
+        "error_summary": "当前问题",
+        "audit_path": "审计文件",
+        "repair_guidance": "定向修复信息",
+        "compile_report_path": "编译报告",
+        "artifacts_present": "已保存文件",
+        "runtime_recovery": "恢复摘要",
+        "resume_state_path": "恢复状态",
     }
     if key in labels:
         return labels[key]
     return key.replace("_", " ")
+
+
+def _format_recovery_error(value: Any) -> str:
+    """Keep an operational failure readable without hiding the original signal."""
+
+    text = " ".join(str(value or "").split())
+    return text or "未记录更具体的错误；请先查看保存的诊断文件。"
+
+
+def _format_t36_assemble_recovery_field(key: str, value: Any) -> str | None:
+    """Render a Survey assembly recovery decision without dumping audit JSON.
+
+    The content is entirely deterministic diagnostic information.  It must not
+    manufacture a prose-repair recommendation or pretend that a quality
+    warning is evidence of a citation error.
+    """
+
+    if key == "error_summary":
+        return _format_recovery_error(value)
+    if key == "audit_path":
+        return f"请先查看 `{value or 'drafts/survey/survey_audit.json'}`；其中保存了本次审计的完整检查和原始证据。"
+    if key != "repair_guidance":
+        return None
+    if not isinstance(value, dict):
+        return "未保存结构化修复信息；请先查看 survey_audit.json，再决定是否继续定向修复。"
+
+    diversity = value.get("citation_diversity")
+    if not isinstance(diversity, dict):
+        return "审计没有提供可自动定位的来源文件；继续时只应处理审计明确指出的问题。"
+
+    lines = [
+        "引用分布只是一项质量诊断，不代表引用失实，也不会要求用无关文献填充。",
+    ]
+    total = diversity.get("citation_use_count")
+    repeat_limit = diversity.get("repeat_limit")
+    concentration = diversity.get("concentration_limit")
+    facts: list[str] = []
+    if isinstance(total, (int, float)):
+        facts.append(f"当前引用出现次数：{int(total)}")
+    if isinstance(repeat_limit, (int, float)):
+        facts.append(f"单一来源提示阈值：{int(repeat_limit)}")
+    if isinstance(concentration, (int, float)):
+        facts.append(f"集中度提示阈值：{float(concentration):.0%}")
+    if facts:
+        lines.append("；".join(facts) + "。")
+    offenders = diversity.get("over_repeated")
+    if isinstance(offenders, list) and offenders:
+        lines.append("需人工判断的集中使用来源：")
+        for item in offenders[:6]:
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("key") or "未标注来源")
+            count = item.get("count")
+            ratio = item.get("ratio")
+            suffix: list[str] = []
+            if isinstance(count, (int, float)):
+                suffix.append(f"出现 {int(count)} 次")
+            if isinstance(ratio, (int, float)):
+                suffix.append(f"占 {float(ratio):.0%}")
+            section_counts = item.get("section_counts")
+            if isinstance(section_counts, dict) and section_counts:
+                sections = "、".join(
+                    f"{section} {amount} 次"
+                    for section, amount in list(section_counts.items())[:5]
+                )
+                suffix.append(f"涉及 {sections}")
+            lines.append(f"- {source}" + ("：" + "；".join(suffix) if suffix else ""))
+    else:
+        lines.append("未发现单篇来源异常集中使用；若仍需修复，请以 audit 中的具体失败项为准。")
+    policy = " ".join(str(diversity.get("repair_policy") or "").split())
+    if policy:
+        lines.append("审计策略：" + policy)
+    return "\n".join(lines)
+
+
+def _format_t36_compile_recovery_field(key: str, value: Any) -> str | None:
+    """Render deterministic compilation recovery facts in a compact form."""
+
+    if key == "error_summary":
+        return _format_recovery_error(value)
+    if key == "compile_report_path":
+        return f"请先查看 `{value or 'drafts/survey/survey_compile_report.json'}`；重试编译不会改写正文。"
+    if key != "artifacts_present":
+        return None
+    if not isinstance(value, dict):
+        return "未保存文件清单；请检查 survey 目录和 compile report。"
+    present = [str(path) for path, exists in value.items() if exists]
+    missing = [str(path) for path, exists in value.items() if not exists]
+    lines: list[str] = []
+    if present:
+        lines.append("已保存：" + "、".join(present))
+    if missing:
+        lines.append("尚未生成：" + "、".join(missing))
+    return "\n".join(lines) or "未发现可确认的编译产物。"
+
+
+def _format_runtime_recovery_field(key: str, value: Any) -> str | None:
+    """Summarize a generic runtime recovery without exposing implementation JSON."""
+
+    if key == "error_summary":
+        return _format_recovery_error(value)
+    if key == "existing_outputs":
+        if not isinstance(value, list) or not value:
+            return "本次没有可确认的阶段输出；恢复仍会保留日志和状态。"
+        return "已保存且可复用的输出：\n" + "\n".join(f"- {item}" for item in value[:20])
+    if key == "resume_state_path":
+        return f"恢复状态会写入 `{value}`，用于下一次定向续跑。"
+    if key != "runtime_recovery":
+        return None
+    if not isinstance(value, dict):
+        return "未保存结构化恢复摘要；请查看运行日志后再决定是否重试。"
+    kind = str(value.get("kind") or "runtime").strip().lower()
+    kind_label = {
+        "validation": "输出或格式修复窗口耗尽",
+        "artifact_validation": "产物校验需要定向修复",
+        "budget": "旧版资源窗口恢复记录",
+        "max_steps": "旧版步骤窗口恢复记录",
+        "provider": "模型服务暂时不可用",
+        "environment": "运行环境需要修复",
+        "human_input": "当前调用未能取得必要人工输入",
+        "runtime": "可恢复的运行时中断",
+    }.get(kind, "可恢复的运行时中断")
+    task = str(value.get("target_task") or "当前任务")
+    lines = [f"任务：{task}", f"恢复类型：{kind_label}"]
+    details = value.get("details")
+    if isinstance(details, dict):
+        retry_count = details.get("retry_count")
+        retry_limit = details.get("retry_limit")
+        if isinstance(retry_count, int) and isinstance(retry_limit, int):
+            lines.append(f"已使用修复尝试：{retry_count}/{retry_limit}")
+        provider = details.get("provider")
+        if provider:
+            lines.append(f"Provider：{provider}")
+    return "\n".join(lines)
 
 
 class HumanInputUnavailable(RuntimeError):
@@ -330,7 +668,7 @@ class CLIHumanInterface(HumanInterface):
     def _render_panel(self, *, title: str, lines: list[str], border_style: str) -> None:
         """Render gate context without turning interactive input into a TUI."""
 
-        width = max(88, min(140, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        width = max(80, min(140, shutil.get_terminal_size(fallback=(120, 40)).columns))
         buffer = io.StringIO()
         console = Console(
             file=buffer,
@@ -355,10 +693,10 @@ class CLIHumanInterface(HumanInterface):
             file=buffer,
             force_terminal=True,
             color_system="truecolor",
-            width=max(88, min(140, shutil.get_terminal_size(fallback=(120, 40)).columns)),
+            width=max(80, min(140, shutil.get_terminal_size(fallback=(120, 40)).columns)),
             highlight=False,
             _environ={
-                "COLUMNS": str(max(88, min(140, shutil.get_terminal_size(fallback=(120, 40)).columns))),
+                "COLUMNS": str(max(80, min(140, shutil.get_terminal_size(fallback=(120, 40)).columns))),
                 "LINES": "40",
             },
         )
@@ -468,12 +806,23 @@ class CLIHumanInterface(HumanInterface):
                 if option.get("description"):
                     print(f"    作用: {option['description']}")
         if gate_id == "t4_gate1_selection_gate":
-            print("也可以直接描述下一步，例如：`用 I1 继续`、`再进化一轮`、`只优化 I2`、`组合 I1 与 I3`、`用 I1-H1 和 I2-H2 构建新方案`、`查看 I1 的证据`、`回到 P0`。")
+            print("直接输入即可：`推进 D1`、`优化 D2`、`再探索一轮`、`暂停`。也可以输入：`查看 D1`、`对比 D1 和 D3`、`更多操作`。只输入 `D1` 时系统会先追问，不会直接改变候选。")
+            print("这是持续对话：可输入多行研究说明；Enter 只换行，输入完成后按 Ctrl+D 提交（或单独一行 `END`）。确认、取消和只读查看也按同样方式提交。")
         selected = None
         while selected is None:
             try:
-                prompt = "请选择或直接说明: " if gate_id == "t4_gate1_selection_gate" else "请选择: "
-                raw_answer = _read_cli_line(prompt).strip()
+                if gate_id == "t4_gate1_selection_gate":
+                    raw_answer = _read_cli_multiline(
+                        prompt="T4> ",
+                        continuation_prompt="T4... ",
+                        submit_hint="已记录这一行；可以继续补充说明，提交请按 Ctrl+D，或单独输入 END。",
+                    )
+                    if raw_answer:
+                        print(
+                            f"[T4] 已提交 {len(raw_answer.splitlines())} 行输入；正在判断是查看、比较还是研究操作。"
+                        )
+                else:
+                    raw_answer = _read_cli_line("请选择: ").strip()
             except EOFError:
                 raise HumanInputUnavailable(f"确认步骤 {gate_id} 需要你的选择，但当前输入不可用。") from None
             if gate_id == "t2_literature_param_gate":
@@ -503,7 +852,7 @@ class CLIHumanInterface(HumanInterface):
                         continue
                     break
                 if gate_id == "t4_gate1_selection_gate":
-                    print("未识别。请使用编号，或直接描述下一步，例如：`用 I1 继续`、`再进化一轮`、`查看 I1 的评分`、`回到 P0`。")
+                    print("未识别。请直接输入例如：`推进 D1`、`优化 D2`、`查看 D1`、`对比 D1 和 D3`、`更多操作` 或 `暂停`。")
                 else:
                     print(f"无效选择: {raw_answer!r}。请输入 1-{len(options)}，或直接输入一句参数修改要求。")
                 continue
@@ -514,6 +863,9 @@ class CLIHumanInterface(HumanInterface):
             captured = await self._collect_t2_customization_line(options)
         else:
             for field_name in selected.get("collect_input", []):
+                if gate_id == "t36_corpus_gate" and field_name == "supplement_target_papers":
+                    captured[field_name] = self._collect_t36_supplement_target(presentation)
+                    continue
                 prompt = self._collect_input_prompt(selected, field_name)
                 try:
                     captured[field_name] = _read_cli_line(f"{prompt}: ").strip()
@@ -525,8 +877,8 @@ class CLIHumanInterface(HumanInterface):
                 captured.setdefault(str(key), str(value))
         if gate_id == "t5_executor_gate" and option_id == "codex_cli":
             print(
-                "codex_cli 将允许在 external_executor/workdir 内运行真实实验，"
-                "可能消耗较多算力/时间。"
+                "codex_cli 将在 workspace 根目录作为外部执行器启动；"
+                "external_executor/expr 仅用于部署 our method 和 baseline，可能消耗较多算力/时间。"
             )
             try:
                 confirm = _read_cli_line(
@@ -546,7 +898,7 @@ class CLIHumanInterface(HumanInterface):
         """Render the T4 confirmation from a typed ViewModel, never raw JSON."""
 
         if not isinstance(value, dict):
-            print("T4 input readiness is unavailable. Resume after checking the workspace artifacts.")
+            print("暂时无法读取 T4 的输入准备状态；检查 workspace artifact 后再 resume。")
             return
         try:
             from ..ideation.models import T4RunConfig
@@ -556,9 +908,9 @@ class CLIHumanInterface(HumanInterface):
             inspection = T4InputInspection.model_validate(value.get("inspection") or {})
             config = T4RunConfig.model_validate(value.get("run_config") or {})
         except Exception:
-            print("T4 input readiness is unavailable. Resume after checking the workspace artifacts.")
+            print("暂时无法读取 T4 的输入准备状态；检查 workspace artifact 后再 resume。")
             return
-        width = max(100, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        width = max(80, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
         buffer = io.StringIO()
         console = Console(
             file=buffer,
@@ -577,7 +929,7 @@ class CLIHumanInterface(HumanInterface):
     def _render_t4_action_options(self, options: list[dict]) -> None:
         """Render Gate1 actions as a compact Rich decision guide."""
 
-        width = max(100, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        width = max(80, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
         buffer = io.StringIO()
         console = Console(
             file=buffer,
@@ -588,18 +940,28 @@ class CLIHumanInterface(HumanInterface):
             highlight=False,
             _environ={"COLUMNS": str(width), "LINES": "48"},
         )
-        table = Table(expand=True, show_header=True, header_style="bold bright_yellow", border_style="bright_yellow")
+        table = Table(
+            expand=True,
+            show_header=True,
+            show_lines=True,
+            box=box.SQUARE,
+            header_style="bold bright_yellow",
+            border_style="bright_yellow",
+        )
         table.add_column("#", width=4, justify="right")
-        table.add_column("Next action", width=31, overflow="fold")
-        table.add_column("What changes", ratio=3, overflow="fold")
+        table.add_column("下一步操作", width=24, overflow="fold")
+        table.add_column("会发生什么", ratio=3, overflow="fold")
         for index, option in enumerate(options, start=1):
             option_id = str(option.get("id") or option.get("key") or "")
-            if option_id in {"select_or_reframe", "merge", "new_idea", "reanalyze"}:
+            if option.get("advanced") or option_id in {"select_or_reframe", "merge", "new_idea", "reanalyze"}:
                 continue
-            label = str(option.get("label") or option_id)
+            label = {
+                "confirm": "确认执行",
+                "cancel": "取消并返回",
+            }.get(option_id, str(option.get("label") or option_id))
             description = " ".join(str(option.get("description") or "").split())
             table.add_row(str(index), label, description)
-        console.print(Panel(table, title="What would you like to do next?", border_style="bright_yellow", expand=True))
+        console.print(Panel(table, title="推荐操作", border_style="bright_yellow", expand=True))
         rendered = buffer.getvalue().rstrip()
         if rendered:
             print(rendered)
@@ -609,7 +971,7 @@ class CLIHumanInterface(HumanInterface):
 
         if not isinstance(value, dict):
             return
-        width = max(96, min(150, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        width = max(80, min(150, shutil.get_terminal_size(fallback=(120, 40)).columns))
         buffer = io.StringIO()
         console = Console(
             file=buffer,
@@ -624,11 +986,11 @@ class CLIHumanInterface(HumanInterface):
         grid.add_column(style="bold bright_yellow", width=18, no_wrap=True)
         grid.add_column(ratio=1, overflow="fold")
         labels = (
-            ("Operation", "action"),
-            ("System will do", "what_happens"),
-            ("Estimated time", "estimated_time"),
-            ("Version policy", "version_policy"),
-            ("After this", "next_stage"),
+            ("操作", "action"),
+            ("系统会做什么", "what_happens"),
+            ("预计时间", "estimated_time"),
+            ("版本保留", "version_policy"),
+            ("完成后", "next_stage"),
         )
         for label, key in labels:
             text = " ".join(str(value.get(key) or "").split())
@@ -637,10 +999,10 @@ class CLIHumanInterface(HumanInterface):
         identifiers = [str(item) for item in value.get("candidate_ids", []) if str(item).strip()]
         components = [str(item) for item in value.get("component_refs", []) if str(item).strip()]
         if identifiers:
-            grid.add_row("Candidates", ", ".join(identifiers))
+            grid.add_row("Candidate", ", ".join(identifiers))
         if components:
-            grid.add_row("Selected parts", ", ".join(components))
-        console.print(Panel(grid, title="Confirm this operation", border_style="bright_yellow", expand=True))
+            grid.add_row("所选部分", ", ".join(components))
+        console.print(Panel(grid, title="确认此操作", border_style="bright_yellow", expand=True))
         rendered = buffer.getvalue().rstrip()
         if rendered:
             print(rendered)
@@ -650,7 +1012,7 @@ class CLIHumanInterface(HumanInterface):
 
         if not isinstance(value, dict):
             return
-        width = max(96, min(150, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        width = max(80, min(150, shutil.get_terminal_size(fallback=(120, 40)).columns))
         buffer = io.StringIO()
         console = Console(
             file=buffer,
@@ -661,13 +1023,35 @@ class CLIHumanInterface(HumanInterface):
             highlight=False,
             _environ={"COLUMNS": str(width), "LINES": "42"},
         )
+        # A read-only Candidate request must reuse the validated Gate card,
+        # not fall back to a separate genome summary. Render it before the
+        # narrow response panel below so cards are never nested inside cards.
+        candidate_cards = value.get("candidate_cards") if isinstance(value.get("candidate_cards"), list) else []
+        candidate = value.get("candidate") if isinstance(value.get("candidate"), dict) else {}
+        single_card = candidate.get("candidate_card") if isinstance(candidate.get("candidate_card"), dict) else None
+        if single_card is not None:
+            candidate_cards = [single_card, *candidate_cards]
+        rendered_ids: set[str] = set()
+        for card in candidate_cards:
+            if not isinstance(card, dict):
+                continue
+            card_id = str(card.get("id") or "")
+            if card_id in rendered_ids:
+                continue
+            try:
+                console.print(self._t4_rich_candidate_card(card))
+                rendered_ids.add(card_id)
+            except ValueError:
+                # Gate1 validation owns missing-card recovery. A stale detail
+                # result must remain read-only and cannot invent a fallback.
+                continue
         items: list[Any] = [Text(" ".join(str(value.get("summary") or "").split()), overflow="fold")]
         candidates = value.get("candidates") if isinstance(value.get("candidates"), list) else []
-        if candidates:
+        if candidates and str(value.get("kind") or "") != "compare_candidates":
             table = Table(expand=True, show_header=True, header_style="bold cyan", border_style="cyan")
-            table.add_column("Candidate", width=13)
-            table.add_column("One-line thesis", ratio=3, overflow="fold")
-            table.add_column("Main risk", ratio=2, overflow="fold")
+            table.add_column("候选", width=13)
+            table.add_column("一句话核心", ratio=3, overflow="fold")
+            table.add_column("主要风险", ratio=2, overflow="fold")
             for candidate in candidates:
                 if not isinstance(candidate, dict):
                     continue
@@ -677,29 +1061,117 @@ class CLIHumanInterface(HumanInterface):
                     str(candidate.get("main_risk") or ""),
                 )
             items.append(table)
-        candidate = value.get("candidate") if isinstance(value.get("candidate"), dict) else {}
         if candidate:
             grid = Table.grid(expand=True, padding=(0, 1))
             grid.add_column(style="bold cyan", width=14, no_wrap=True)
             grid.add_column(ratio=1, overflow="fold")
-            for label, key in (("Candidate", "candidate_id"), ("Core thesis", "one_line_thesis"), ("Main risk", "main_risk")):
+            for label, key in (("候选", "candidate_id"), ("核心主张", "one_line_thesis"), ("主要风险", "main_risk")):
                 text = " ".join(str(candidate.get(key) or "").split())
                 if text:
                     grid.add_row(label, Text(text, overflow="fold"))
             items.append(grid)
         detail = value.get("detail") if isinstance(value.get("detail"), dict) else {}
+        detail_rows = detail.get("rows") if isinstance(detail.get("rows"), list) else []
+        if detail_rows:
+            row_table = Table(
+                expand=True,
+                show_header=True,
+                show_lines=True,
+                box=box.SQUARE,
+                header_style="bold cyan",
+                border_style="cyan",
+            )
+            row_table.add_column("项目", width=16, overflow="fold")
+            row_table.add_column("简述", ratio=3, overflow="fold")
+            row_table.add_column("来源 / 备注", ratio=2, overflow="fold")
+            for row in detail_rows:
+                if not isinstance(row, dict):
+                    continue
+                row_table.add_row(
+                    " ".join(str(row.get("label") or row.get("field") or "").split()),
+                    " ".join(str(row.get("summary") or row.get("content") or "").split()),
+                    " ".join(str(row.get("source") or row.get("note") or "").split()),
+                )
+            if row_table.row_count:
+                items.append(row_table)
         detail_items = detail.get("items") if isinstance(detail.get("items"), list) else []
         if detail_items:
-            items.append(Text("\n".join(f"• {' '.join(str(item).split())}" for item in detail_items), overflow="fold"))
+            item_table = Table(
+                expand=True,
+                show_header=True,
+                show_lines=True,
+                box=box.SQUARE,
+                header_style="bold cyan",
+                border_style="cyan",
+            )
+            item_table.add_column("#", width=4, justify="right", no_wrap=True)
+            item_table.add_column("内容", ratio=1, overflow="fold")
+            for index, item in enumerate(detail_items, start=1):
+                item_table.add_row(str(index), " ".join(str(item).split()))
+            items.append(item_table)
+        detail_path = " ".join(str(detail.get("path") or "").split())
+        if detail_path:
+            extra_paths = detail.get("paths") if isinstance(detail.get("paths"), list) else []
+            detail_paths = [detail_path, *[str(item) for item in extra_paths if str(item).strip()]]
+        else:
+            detail_paths = detail.get("paths") if isinstance(detail.get("paths"), list) else []
+        if detail_paths:
+            paths_table = Table(
+                expand=True,
+                show_header=False,
+                show_lines=True,
+                box=box.SQUARE,
+                border_style="cyan",
+                padding=(0, 1),
+            )
+            paths_table.add_column(style="bold cyan", width=14, no_wrap=True)
+            paths_table.add_column(ratio=1, overflow="fold")
+            for path in detail_paths:
+                normalized = " ".join(str(path or "").split())
+                if normalized:
+                    paths_table.add_row("产物路径", Text(normalized, overflow="fold"))
+            items.append(paths_table)
+        advanced_operations = value.get("advanced_operations") if isinstance(value.get("advanced_operations"), list) else []
+        if advanced_operations:
+            advanced_table = Table(expand=True, show_header=True, header_style="bold yellow", border_style="yellow")
+            advanced_table.add_column("操作", ratio=1, overflow="fold")
+            advanced_table.add_column("何时使用", ratio=3, overflow="fold")
+            for item in advanced_operations:
+                if not isinstance(item, dict):
+                    continue
+                advanced_table.add_row(
+                    " ".join(str(item.get("label") or "").split()),
+                    " ".join(str(item.get("description") or "").split()),
+                )
+            items.append(advanced_table)
+        comparison = value.get("comparison") if isinstance(value.get("comparison"), dict) else {}
+        comparison_ids = comparison.get("candidate_ids") if isinstance(comparison.get("candidate_ids"), list) else []
+        if comparison_ids:
+            comparison_table = Table(expand=True, show_header=True, header_style="bold magenta", border_style="magenta")
+            comparison_table.add_column("候选", width=12)
+            comparison_table.add_column("核心命题", ratio=2, overflow="fold")
+            comparison_table.add_column("机制", ratio=2, overflow="fold")
+            comparison_table.add_column("主要风险", ratio=2, overflow="fold")
+            theses = comparison.get("core_theses") if isinstance(comparison.get("core_theses"), list) else []
+            mechanisms = comparison.get("mechanisms") if isinstance(comparison.get("mechanisms"), list) else []
+            risks = comparison.get("risks") if isinstance(comparison.get("risks"), list) else []
+            for index, public_id in enumerate(comparison_ids):
+                comparison_table.add_row(
+                    str(public_id),
+                    " ".join(str(theses[index] if index < len(theses) else "").split()),
+                    " ".join(str(mechanisms[index] if index < len(mechanisms) else "").split()),
+                    " ".join(str(risks[index] if index < len(risks) else "").split()),
+                )
+            items.append(comparison_table)
         composition = value.get("composition") if isinstance(value.get("composition"), dict) else {}
         if composition:
             composition_table = Table.grid(expand=True, padding=(0, 1))
             composition_table.add_column(style="bold magenta", width=19, no_wrap=True)
             composition_table.add_column(ratio=1, overflow="fold")
             for label, key in (
-                ("Composition", "composition_id"),
-                ("Structure", "composition_type"),
-                ("Recommendation", "recommended_action"),
+                ("组合编号", "composition_id"),
+                ("组合方式", "composition_type"),
+                ("系统建议", "recommended_action"),
                 ("Compatibility", "explanation"),
             ):
                 text = " ".join(str(composition.get(key) or "").split())
@@ -710,30 +1182,25 @@ class CLIHumanInterface(HumanInterface):
                 composition_table.add_row("Gene Donor Map", Text(", ".join(f"{key}: {item}" for key, item in donors.items()), overflow="fold"))
             repairs = composition.get("required_repairs") if isinstance(composition.get("required_repairs"), list) else []
             if repairs:
-                composition_table.add_row("Required repairs", Text("; ".join(str(item) for item in repairs), overflow="fold"))
+                composition_table.add_row("需要调整", Text("；".join(str(item) for item in repairs), overflow="fold"))
             items.extend([Text("Compatibility Check", style="bold magenta"), composition_table])
         path = str(value.get("artifact") or "")
         if path:
-            items.append(Text(f"Saved record: {path}", style="dim", overflow="fold"))
-        console.print(Panel(Group(*items), title=str(value.get("title") or "T4 update"), border_style="bright_cyan", expand=True))
+            items.append(Text(f"已保存记录：{path}", style="dim", overflow="fold"))
+        console.print(Panel(Group(*items), title=str(value.get("title") or "T4 更新"), border_style="bright_cyan", expand=True))
         rendered = buffer.getvalue().rstrip()
         if rendered:
             print(rendered)
 
     def _render_t4_candidate_overview(self, value: Any) -> None:
-        """Render Gate1 as a complete Rich decision deck, never a wrapped dump.
-
-        The machine-readable candidate structure has already been localized by
-        the state machine. This renderer only lays it out for comparison and
-        does not synthesize fields or truncate research content.
-        """
+        """Render a decision-first Gate1 overview; details stay available on demand."""
 
         if not isinstance(value, dict) or not isinstance(value.get("candidates"), list):
             self._render_section("候选方向（中文决策面板）")
             print("候选方向概览暂不可用；请检查 ideation/_candidate_directions.json。")
             return
         candidates = [item for item in value["candidates"] if isinstance(item, dict)]
-        width = max(100, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        width = max(80, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
         buffer = io.StringIO()
         console = Console(
             file=buffer,
@@ -751,33 +1218,78 @@ class CLIHumanInterface(HumanInterface):
         guide = Text(guide_text, overflow="fold")
         console.print(Panel(guide, title="研究方向选择", border_style="bright_cyan", expand=True))
 
+        # The comparison table is intentionally only a decision index.  The
+        # complete LLM-authored explanation belongs in the card immediately
+        # below; forcing every semantic field into a wide table made the
+        # terminal hard to scan and hid the actual differences between Ideas.
         index = Table(expand=True, show_header=True, header_style="bold cyan", border_style="cyan")
-        index.add_column("ID", style="bold", width=6, no_wrap=True)
-        index.add_column("通道", width=10)
-        index.add_column("候选方向", ratio=3, overflow="fold")
-        index.add_column("创新类型", ratio=1, overflow="fold")
-        index.add_column("成熟度", width=9, justify="center")
-        index.add_column("假设", width=8, justify="center")
-        index.add_column("证据", width=12, overflow="fold")
-        index.add_column("建议", ratio=1, overflow="fold")
+        index.add_column("ID", style="bold", width=5, no_wrap=True)
+        index.add_column("短标题", ratio=3, overflow="fold")
+        index.add_column("角色", width=10, overflow="fold")
+        index.add_column("主要判断", ratio=3, overflow="fold")
+        missing_final_cards = []
         for item in candidates:
-            innovation = item.get("innovation") if isinstance(item.get("innovation"), dict) else {}
             evolution_score = item.get("evolution_score") if isinstance(item.get("evolution_score"), dict) else {}
-            hypotheses = item.get("candidate_hypotheses") if isinstance(item.get("candidate_hypotheses"), list) else []
+            final_card = _t4_complete_final_card(item.get("final_idea_card"))
+            if not final_card:
+                missing_final_cards.append(str(item.get("id") or "?"))
+                continue
             index.add_row(
                 str(item.get("id") or "?"),
-                str(item.get("lane") or ""),
-                str(item.get("title") or item.get("full_title") or ""),
-                str(innovation.get("type") or ""),
-                f"{evolution_score.get('overall_readiness')}/5" if evolution_score.get("overall_readiness") is not None else "-",
-                f"{len(hypotheses)} 条",
-                str(item.get("evidence") or ""),
-                str(item.get("selection_recommendation") or ""),
+                str(final_card.get("short_title") or ""),
+                _t4_portfolio_role_label(item.get("portfolio_role")),
+                str(final_card.get("recommendation") or final_card.get("innovation_delta") or ""),
             )
-        console.print(index)
+        if missing_final_cards:
+            console.print(
+                Panel(
+                    Text(
+                        "当前 Portfolio 尚未拥有完整的 LLM Idea Card，不能显示半成品科研解释。"
+                        "请在 T4 恢复决策中选择继续 LLM 卡片修复。"
+                        f"缺少卡片：{'、'.join(missing_final_cards)}",
+                        overflow="fold",
+                    ),
+                    title="T4 卡片修复",
+                    border_style="yellow",
+                    expand=True,
+                )
+            )
+            rendered = buffer.getvalue().rstrip()
+            if rendered:
+                print(rendered)
+            return
+        # Validate every visible Card before rendering any one of them. A
+        # partial deck would make the Human Gate look selectable despite a
+        # missing LLM explanation, so this defensive path fails closed into an
+        # operational repair panel instead of showing a mix of full and
+        # fallback cards.
+        try:
+            rendered_cards = [self._t4_rich_candidate_summary(item) for item in candidates]
+        except Exception as exc:
+            console.print(
+                Panel(
+                    Text(
+                        "Portfolio Idea Card 未能完整渲染；不会用旧字段或固定模板补全科研解释。"
+                        "请返回 T4 恢复决策并选择继续 LLM 卡片修复。"
+                        f"诊断：{' '.join(str(exc).split())[:500]}",
+                        overflow="fold",
+                    ),
+                    title="T4 卡片修复",
+                    border_style="yellow",
+                    expand=True,
+                )
+            )
+            rendered = buffer.getvalue().rstrip()
+            if rendered:
+                print(rendered)
+            return
+        for card in rendered_cards:
+            console.print(card)
 
-        for item in candidates:
-            console.print(self._t4_rich_candidate_card(item))
+        # The cards establish what each Candidate means. Only then does a
+        # compact comparison index help the researcher make a final choice.
+        console.print(Panel(Text("先阅读上方 Idea Cards；下表仅汇总差异，便于最后比较与选择。", overflow="fold"), title="候选比较摘要", border_style="cyan", expand=True))
+        console.print(index)
 
         hint = str(value.get("input_hint") or "")
         if hint:
@@ -787,109 +1299,449 @@ class CLIHumanInterface(HumanInterface):
             print(rendered)
 
     @staticmethod
-    def _t4_rich_candidate_card(item: dict[str, Any]) -> Panel:
-        """Render persisted, model-authored candidate fields without inventing claims."""
+    def _t4_card_render_failure_panel(item: dict[str, Any]) -> Panel:
+        candidate_id = str(item.get("id") or "?")
+        title = str(item.get("title") or item.get("full_title") or "未命名候选")
+        diagnostics = item.get("projection_diagnostics") if isinstance(item.get("projection_diagnostics"), list) else []
+        detail = "；".join(str(value).strip() for value in diagnostics if str(value).strip())
+        body = Text(
+            "该 Candidate 的一个展示组件未能渲染。候选、谱系和已保存的评分没有被删除；"
+            "可查看其结构化文件，或选择继续演化以补全该卡片。"
+            + ("\n已记录诊断：" + detail if detail else ""),
+            overflow="fold",
+        )
+        return Panel(body, title=f"[bold]{candidate_id} · {title}[/bold]", border_style="yellow", expand=True)
+
+    @staticmethod
+    def _t4_legacy_rich_candidate_summary(item: dict[str, Any]) -> Panel:
+        """Render the normal, decision-first Candidate card for Gate1.
+
+        This surface intentionally excludes artifact paths, lineage IDs, raw
+        enums and aggregate readiness.  Those are useful in Debug/Trace and
+        explicit read-only inspection, but they should not be prerequisites
+        for a researcher deciding whether to advance, refine, compare or pause
+        a candidate.
+        """
 
         candidate_id = str(item.get("id") or "?")
         lane = str(item.get("lane") or "候选方向")
-        title = str(item.get("title") or item.get("full_title") or "未命名候选")
+        evolution_score = item.get("evolution_score") if isinstance(item.get("evolution_score"), dict) else {}
+        final_card = _t4_complete_final_card(item.get("final_idea_card"))
+        if not final_card:
+            raise ValueError("Final Idea Card is required for a Gate1 candidate summary")
+        title = str(final_card.get("short_title") or "").strip()
+        if not title:
+            raise ValueError("Final Idea Card short_title is required for a Gate1 candidate summary")
+        final_risks = final_card.get("risks_and_boundaries") if isinstance(final_card.get("risks_and_boundaries"), list) else []
+        implications = final_card.get("implications") if isinstance(final_card.get("implications"), list) else []
+        stakeholders = final_card.get("affected_stakeholders_or_processes") if isinstance(final_card.get("affected_stakeholders_or_processes"), list) else []
 
         def text(raw: Any) -> Text:
             return Text(" ".join(str(raw or "").split()), overflow="fold")
 
-        overview = Table.grid(expand=True, padding=(0, 1))
-        overview.add_column(style="bold cyan", width=12, no_wrap=True)
+        # First screen: a researcher should be able to answer “what is it,
+        # why now, who benefits, and what do I do next” without reading every
+        # retained LLM paragraph or internal runtime label.  The full Card is
+        # intentionally preserved behind the read-only detail commands.
+        overview = Table(
+            expand=True,
+            show_header=False,
+            show_lines=True,
+            box=box.SQUARE,
+            border_style="cyan",
+            padding=(0, 1),
+        )
+        overview.add_column(style="bold cyan", width=19, no_wrap=True)
         overview.add_column(ratio=1, overflow="fold")
-        gate1_card = item.get("gate1_card") if isinstance(item.get("gate1_card"), dict) else {}
-        for label, value in (
-            ("为何入选", gate1_card.get("role_summary")),
-            ("研究问题", item.get("target_problem")),
-            ("核心命题", item.get("value")),
-            ("技术机制", item.get("mechanism")),
-            ("反事实", item.get("counterfactual")),
-            ("选择建议", gate1_card.get("selection_advice")),
-        ):
-            overview.add_row(label, text(value))
+        overview.add_row("研究命题", text(_t4_card_excerpt(final_card.get("plain_language_summary"), max_chars=190)))
+        overview.add_row("研究价值", text(_t4_card_excerpt(final_card.get("why_it_matters"), max_chars=145)))
+        overview.add_row("现实 / 应用意义", text(_t4_card_excerpt(final_card.get("real_world_significance"), max_chars=140)))
+        if stakeholders:
+            overview.add_row("影响对象", text(_t4_card_list_excerpt(stakeholders, max_items=2, max_chars=46)))
+        overview.add_row("建议下一步", text(_t4_card_excerpt(final_card.get("recommendation"), max_chars=135)))
 
+        components: list[Any] = [Text("研究摘要", style="bold cyan"), overview]
+        rationales = evolution_score.get("rationales") if isinstance(evolution_score.get("rationales"), dict) else {}
+        bottleneck = str(evolution_score.get("dominant_bottleneck") or "").strip()
+
+        contributions = item.get("contributions") if isinstance(item.get("contributions"), list) else []
+        if contributions:
+            contribution_table = Table(
+                expand=True, show_header=True, show_lines=True, box=box.SQUARE,
+                header_style="bold green", border_style="green",
+            )
+            contribution_table.add_column("核心贡献", width=14, no_wrap=True)
+            contribution_table.add_column("提出什么", ratio=3, overflow="fold")
+            contribution_table.add_column("若成立的改变", ratio=2, overflow="fold")
+            for position, contribution in enumerate(contributions[:2], start=1):
+                if not isinstance(contribution, dict):
+                    continue
+                kind = _t4_contribution_type_label(contribution.get("type"))
+                statement = " ".join(str(contribution.get("statement") or "").split())
+                change = " ".join(str(contribution.get("what_changes_if_true") or "").split())
+                change_preview = (
+                    "与提出内容相同，完整表述见详情。"
+                    if change and change == statement
+                    else _t4_card_excerpt(change, max_chars=100, max_sentences=1)
+                )
+                contribution_table.add_row(
+                    f"贡献 {position} · {kind}",
+                    text(_t4_card_excerpt(statement, max_chars=120, max_sentences=1)),
+                    text(change_preview),
+                )
+            if contribution_table.row_count:
+                components.extend([Text("核心贡献", style="bold green"), contribution_table])
+
+        hypotheses = item.get("candidate_hypotheses") if isinstance(item.get("candidate_hypotheses"), list) else []
+        if hypotheses:
+            hypothesis_table = Table(
+                expand=True, show_header=True, show_lines=True, box=box.SQUARE,
+                header_style="bold yellow", border_style="yellow",
+            )
+            hypothesis_table.add_column("可检验假设", width=12, no_wrap=True)
+            hypothesis_table.add_column("主张", ratio=3, overflow="fold")
+            hypothesis_table.add_column("观察信号 / 判据", ratio=2, overflow="fold")
+            for position, hypothesis in enumerate(hypotheses[:2], start=1):
+                if not isinstance(hypothesis, dict):
+                    continue
+                statement = " ".join(str(hypothesis.get("statement") or "").split())
+                signal = " ".join(
+                    str(hypothesis.get("prediction") or hypothesis.get("observable_prediction") or "").split()
+                )
+                signal_preview = (
+                    "未提供独立观察信号，完整判别测试见详情。"
+                    if not signal or signal == statement
+                    else _t4_card_excerpt(signal, max_chars=100, max_sentences=1)
+                )
+                hypothesis_table.add_row(
+                    f"H{position}",
+                    text(_t4_card_excerpt(statement, max_chars=120, max_sentences=1)),
+                    text(signal_preview),
+                )
+            if hypothesis_table.row_count:
+                components.extend([Text("关键假设与验证信号", style="bold yellow"), hypothesis_table])
+
+        score_table = Table(
+            expand=True, show_header=True, show_lines=True, box=box.SQUARE,
+            header_style="bold blue", border_style="blue",
+        )
+        score_table.add_column("评分维度", width=15, no_wrap=True)
+        score_table.add_column("分数", width=7, justify="center", no_wrap=True)
+        score_table.add_column("为什么得到这个分数", ratio=3, overflow="fold")
+        for key, label in (
+            ("research_value", "研究价值"),
+            ("mechanism_integrity", "机制完整性"),
+            ("contribution_distinctiveness", "贡献差异性"),
+        ):
+            value = (evolution_score.get("dimensions") or {}).get(key) if isinstance(evolution_score.get("dimensions"), dict) else None
+            if value is None:
+                continue
+            rationale = " ".join(str(rationales.get(key) or "").split())
+            score_table.add_row(
+                label,
+                f"{value}/5",
+                text(
+                    _t4_card_excerpt(rationale, max_chars=130, max_sentences=1)
+                    if rationale
+                    else "评分理由尚未形成；请查看该候选的完整评分。"
+                ),
+            )
+        if score_table.row_count:
+            components.extend([Text("三项决策评分", style="bold blue"), score_table])
+
+        evidence_risk = Table(
+            expand=True,
+            show_header=False,
+            show_lines=True,
+            box=box.SQUARE,
+            border_style="red",
+            padding=(0, 1),
+        )
+        evidence_risk.add_column(style="bold red", width=14, no_wrap=True)
+        evidence_risk.add_column(ratio=1, overflow="fold")
+        if bottleneck:
+            evidence_risk.add_row("当前扣分点", text(_t4_card_excerpt(bottleneck, max_chars=135, max_sentences=1)))
+        if final_risks:
+            evidence_risk.add_row("主要风险", text(_t4_card_list_excerpt(final_risks, max_items=2, max_chars=100)))
+        if evidence_risk.row_count:
+            components.extend([Text("风险与下一步", style="bold red"), evidence_risk])
+
+        components.append(
+            Text(
+                f"上方为简述。查看详情：`查看 {candidate_id}`（完整说明）｜`查看 {candidate_id} 的证据 / 假设 / 贡献 / 谱系`。"
+                "所有查看均为只读：不会调用模型、确认操作或改变当前版本。",
+                style="dim",
+                overflow="fold",
+            )
+        )
+        return Panel(
+            Group(*components),
+            title=f"[bold]{candidate_id} · {lane} · {title}[/bold]",
+            border_style="bright_cyan" if lane == "主方向" else "cyan",
+            expand=True,
+        )
+
+    @staticmethod
+    def _t4_legacy_rich_candidate_card(item: dict[str, Any]) -> Panel:
+        """Render a complete LLM Final Card plus durable non-prose facts.
+
+        Gate1 admits a visible Portfolio Candidate only after the runtime has
+        validated a full ``FinalIdeaCardTranslation``.  This renderer therefore
+        never falls back to ``gate1_card.selection_advice``, a score rationale,
+        or a locally composed sentence when a researcher-facing explanation is
+        missing.  Candidate IDs, route, lineage, source paths, and numeric
+        scores remain controller-owned facts; all scientific interpretation is
+        copied from an LLM-authored Candidate, ScoreReport, or Final Card.
+        """
+
+        candidate_id = str(item.get("id") or "?")
+        lane = str(item.get("lane") or "候选方向")
+        internal_id = str(item.get("internal_id") or "").strip()
+        final_card = _t4_complete_final_card(item.get("final_idea_card"))
+        if final_card is None:
+            raise ValueError("Final Idea Card requires LLM repair before rendering")
+        required_card_fields = (
+            "short_title",
+            "plain_language_summary",
+            "why_it_matters",
+            "representative_scenario",
+            "real_world_significance",
+            "current_failure",
+            "scientific_technical_core",
+            "contribution_type_label",
+            "innovation_type",
+            "innovation_delta",
+            "non_routine_explanation",
+            "relationship_to_portfolio",
+            "composition_guidance",
+            "recommendation",
+            "bottleneck_explanation",
+            "evidence_status_summary",
+        )
+        missing = [field for field in required_card_fields if not " ".join(str(final_card.get(field) or "").split())]
+        if missing:
+            raise ValueError("Final Idea Card requires LLM repair before rendering: " + ", ".join(missing))
+        title = str(final_card["short_title"]).strip()
+
+        def text(raw: Any) -> Text:
+            return Text(" ".join(str(raw or "").split()), overflow="fold")
+
+        def detail_table(*, style: str, border_style: str, label_width: int = 16) -> Table:
+            table = Table(
+                expand=True,
+                show_header=False,
+                show_lines=True,
+                box=box.SQUARE,
+                border_style=border_style,
+                padding=(0, 1),
+            )
+            table.add_column(style=style, width=label_width, no_wrap=True)
+            table.add_column(ratio=1, overflow="fold")
+            return table
+
+        def add_if_present(table: Table, label: str, value: Any) -> None:
+            if str(value or "").strip():
+                table.add_row(label, text(value))
+
+        overview = detail_table(style="bold cyan", border_style="cyan")
+        for label, value in (
+            ("组合角色", _t4_portfolio_role_label(item.get("portfolio_role"))),
+            ("来源通道", _t4_origin_label(item.get("origin"))),
+            ("候选阶段", _t4_candidate_stage_label(item.get("candidate_stage") or item.get("maturity"))),
+            ("主贡献类型", final_card["contribution_type_label"]),
+            ("Idea Family", item.get("mechanism_family")),
+            ("内部谱系 ID", internal_id),
+            ("父候选", "、".join(str(value) for value in item.get("parent_ids") or [])),
+            ("一句话命题", final_card["plain_language_summary"]),
+            ("核心命题", final_card.get("core_thesis")),
+            ("为何值得研究", final_card["why_it_matters"]),
+            ("当前问题", final_card["current_failure"]),
+            ("科学 / 技术核心", final_card["scientific_technical_core"]),
+            ("代表性场景", final_card["representative_scenario"]),
+            ("现实意义", final_card["real_world_significance"]),
+            ("选择建议", final_card["recommendation"]),
+        ):
+            add_if_present(overview, label, value)
         components: list[Any] = [overview]
+
         evolution_score = item.get("evolution_score") if isinstance(item.get("evolution_score"), dict) else {}
         dimensions = evolution_score.get("dimensions") if isinstance(evolution_score.get("dimensions"), dict) else {}
-        evolution_rationales = evolution_score.get("rationales") if isinstance(evolution_score.get("rationales"), dict) else {}
         if dimensions:
             readiness = evolution_score.get("overall_readiness")
             uncertainty = evolution_score.get("uncertainty")
             components.append(
                 Text(
-                    f"Maturity: {item.get('maturity') or 'evolved'} · Overall readiness: {readiness}/5 · Uncertainty: {uncertainty}",
+                    f"候选成熟度：{_t4_candidate_stage_label(item.get('maturity') or 'evolved')} · 当前就绪度：{readiness}/5 · 不确定性：{uncertainty}",
                     style="bold blue",
                     overflow="fold",
                 )
             )
-            evolution_table = Table(expand=True, show_header=True, header_style="bold blue", border_style="blue")
-            evolution_table.add_column("Independent dimension", width=30, overflow="fold")
-            evolution_table.add_column("Score", width=8, justify="center")
-            evolution_table.add_column("Rationale", ratio=2, overflow="fold")
+            evolution_table = Table(
+                expand=True,
+                show_header=True,
+                show_lines=True,
+                box=box.SQUARE,
+                header_style="bold blue",
+                border_style="blue",
+            )
+            evolution_table.add_column("独立评分维度", width=22, overflow="fold")
+            evolution_table.add_column("评分", width=8, justify="center")
             for key, label in (
-                ("research_value", "Research Value"),
-                ("mechanism_integrity", "Mechanism Integrity"),
-                ("contribution_distinctiveness", "Contribution Distinctiveness"),
-                ("evidence_calibration", "Evidence Calibration"),
-                ("validation_tractability", "Validation Tractability"),
+                ("research_value", "研究价值"),
+                ("mechanism_integrity", "机制完整性"),
+                ("contribution_distinctiveness", "贡献差异性"),
+                ("evidence_calibration", "证据校准"),
+                ("validation_tractability", "验证可实施性"),
             ):
                 if dimensions.get(key) is not None:
-                    evolution_table.add_row(label, f"{dimensions[key]}/5", text(evolution_rationales.get(key)))
-            components.extend([Text("Independent assessment", style="bold blue"), evolution_table])
+                    evolution_table.add_row(label, f"{dimensions[key]}/5")
+            components.extend([Text("独立科研评分", style="bold blue"), evolution_table])
+            score_summary = detail_table(style="bold blue", border_style="blue")
+            add_if_present(score_summary, "主要优势", evolution_score.get("dominant_strength"))
+            add_if_present(score_summary, "主要瓶颈", evolution_score.get("dominant_bottleneck"))
+            add_if_present(score_summary, "科研上行空间", evolution_score.get("scientific_upside_rationale"))
+            if score_summary.row_count:
+                components.append(score_summary)
+
         profile_fit = evolution_score.get("profile_fit") if isinstance(evolution_score.get("profile_fit"), dict) else {}
         if profile_fit:
-            profile_table = Table.grid(expand=True, padding=(0, 1))
-            profile_table.add_column(style="bold magenta", width=18, no_wrap=True)
-            profile_table.add_column(ratio=1, overflow="fold")
-            profile_table.add_row("Profile", text(profile_fit.get("profile_type")))
-            profile_table.add_row("Profile Fit", text(f"{profile_fit.get('overall_fit', '-')}/5"))
-            profile_table.add_row("Rationale", text(profile_fit.get("rationale")))
-            components.extend([Text("Target Profile Fit", style="bold magenta"), profile_table])
-        innovation = item.get("innovation") if isinstance(item.get("innovation"), dict) else {}
-        innovation_table = Table.grid(expand=True, padding=(0, 1))
-        innovation_table.add_column(style="bold magenta", width=12, no_wrap=True)
-        innovation_table.add_column(ratio=1, overflow="fold")
-        for label, key in (
-            ("创新", "summary"),
-            ("类型", "type"),
-            ("相对变化", "delta"),
-            ("非增量理由", "non_incremental"),
-        ):
-            innovation_table.add_row(label, text(innovation.get(key)))
+            profile_table = detail_table(style="bold magenta", border_style="magenta", label_width=18)
+            add_if_present(profile_table, "投稿取向", profile_fit.get("profile_type"))
+            if profile_fit.get("overall_fit") is not None:
+                profile_table.add_row("取向适配度", text(f"{profile_fit.get('overall_fit')}/5"))
+            add_if_present(profile_table, "模型解释", profile_fit.get("rationale"))
+            if profile_table.row_count:
+                components.extend([Text("论文取向适配", style="bold magenta"), profile_table])
+
+        innovation_table = detail_table(style="bold magenta", border_style="magenta")
+        innovation_table.add_row("创新性质", text(final_card["innovation_type"]))
+        innovation_table.add_row("相对变化", text(final_card["innovation_delta"]))
+        innovation_table.add_row("非惯例理由", text(final_card["non_routine_explanation"]))
         components.extend([Text("核心创新", style="bold magenta"), innovation_table])
 
+        contributions = item.get("contributions") if isinstance(item.get("contributions"), list) else []
+        if contributions:
+            contribution_table = Table(
+                expand=True,
+                show_header=True,
+                show_lines=True,
+                box=box.SQUARE,
+                header_style="bold green",
+                border_style="green",
+            )
+            contribution_table.add_column("贡献", width=10, no_wrap=True)
+            contribution_table.add_column("类型", width=14, overflow="fold")
+            contribution_table.add_column("贡献命题", ratio=2, overflow="fold")
+            contribution_table.add_column("若成立会改变什么", ratio=2, overflow="fold")
+            for contribution in contributions:
+                if not isinstance(contribution, dict):
+                    continue
+                contribution_table.add_row(
+                    str(contribution.get("id") or ""),
+                    _t4_contribution_type_label(contribution.get("type")),
+                    text(contribution.get("statement")),
+                    text(contribution.get("what_changes_if_true")),
+                )
+            components.extend([Text("贡献包", style="bold green"), contribution_table])
+
         hypotheses = item.get("candidate_hypotheses") if isinstance(item.get("candidate_hypotheses"), list) else []
-        components.append(Text("候选假设", style="bold green"))
         if hypotheses:
-            hypothesis_table = Table(expand=True, show_header=True, header_style="bold green", border_style="green")
+            hypothesis_table = Table(
+                expand=True,
+                show_header=True,
+                show_lines=True,
+                box=box.SQUARE,
+                header_style="bold green",
+                border_style="green",
+            )
             hypothesis_table.add_column("假设", width=9, no_wrap=True)
             hypothesis_table.add_column("命题", ratio=2, overflow="fold")
             hypothesis_table.add_column("机制", ratio=2, overflow="fold")
             hypothesis_table.add_column("预测 / 判别测试", ratio=3, overflow="fold")
             hypothesis_table.add_column("证据状态", width=14, overflow="fold")
-            for position, hypothesis in enumerate(hypotheses, start=1):
+            for hypothesis in hypotheses:
                 if not isinstance(hypothesis, dict):
                     continue
-                prediction_test = "预测：" + " ".join(str(hypothesis.get("prediction") or "").split())
-                prediction_test += "\n测试：" + " ".join(str(hypothesis.get("test") or "").split())
+                prediction = " ".join(str(hypothesis.get("prediction") or hypothesis.get("observable_prediction") or "").split())
+                test = " ".join(str(hypothesis.get("test") or hypothesis.get("discriminating_test") or "").split())
                 hypothesis_table.add_row(
                     str(hypothesis.get("id") or ""),
                     text(hypothesis.get("statement")),
                     text(hypothesis.get("mechanism")),
-                    Text(prediction_test, overflow="fold"),
+                    Text("预测：" + prediction + "\n测试：" + test, overflow="fold"),
                     text(hypothesis.get("evidence_status")),
                 )
-            components.append(hypothesis_table)
+            components.extend([Text("候选假设", style="bold green"), hypothesis_table])
+
+        minimum = item.get("minimum_validation") if isinstance(item.get("minimum_validation"), dict) else {}
+        minimum_table = detail_table(style="bold yellow", border_style="yellow")
+        for label, key in (("数据 / 任务", "dataset"), ("基线", "baseline"), ("指标", "metric"), ("预期信号", "expected_signal")):
+            add_if_present(minimum_table, label, minimum.get(key))
+        add_if_present(minimum_table, "协议证据状态", minimum.get("evidence_status"))
+        refs = minimum.get("source_refs") if isinstance(minimum.get("source_refs"), list) else []
+        if refs:
+            minimum_table.add_row("协议来源", text("；".join(str(ref) for ref in refs if str(ref).strip())))
+        if minimum_table.row_count:
+            components.extend([Text("最小验证", style="bold yellow"), minimum_table])
+
+        impact_table = detail_table(style="bold bright_cyan", border_style="bright_cyan")
+        implications = final_card.get("implications") if isinstance(final_card.get("implications"), list) else []
+        for implication in implications:
+            if not isinstance(implication, dict):
+                continue
+            conditions = implication.get("conditions") if isinstance(implication.get("conditions"), list) else []
+            condition_text = "；".join(str(value) for value in conditions if str(value).strip())
+            statement = str(implication.get("statement") or "").strip()
+            if statement:
+                label = f"{implication.get('implication_type', '影响')} [{implication.get('evidence_status', 'unknown')}]"
+                impact_table.add_row(label, text(statement + (f"（条件：{condition_text}）" if condition_text else "")))
+        impact_conditions = final_card.get("conditions_for_impact") if isinstance(final_card.get("conditions_for_impact"), list) else []
+        if impact_conditions:
+            impact_table.add_row("影响条件", text("；".join(str(value) for value in impact_conditions if str(value).strip())))
+        if impact_table.row_count:
+            components.extend([Text("研究意义与影响", style="bold bright_cyan"), impact_table])
+
+        relationship = detail_table(style="bold bright_magenta", border_style="bright_magenta")
+        relationship.add_row("与其他候选的关系", text(final_card["relationship_to_portfolio"]))
+        dependencies = item.get("dependency_display_ids") if isinstance(item.get("dependency_display_ids"), list) else []
+        if dependencies:
+            relationship.add_row("明确依赖", text("、".join(str(value) for value in dependencies if str(value).strip())))
+        relationship.add_row("组合建议", text(final_card["composition_guidance"]))
+        relationship.add_row("针对性建议", text(final_card["recommendation"]))
+        relationship.add_row("瓶颈解释", text(final_card["bottleneck_explanation"]))
+        components.extend([Text("候选关系与下一步", style="bold bright_magenta"), relationship])
+
+        lineage = item.get("lineage") if isinstance(item.get("lineage"), dict) else {}
+        if lineage or item.get("parent_ids"):
+            lineage_table = detail_table(style="bold cyan", border_style="cyan")
+            for label, value in (
+                ("来源 Route", _t4_origin_label(lineage.get("route") or item.get("origin"))),
+                ("形成方式", lineage.get("created_by")),
+                ("父候选", "、".join(str(value) for value in lineage.get("parent_ids") or item.get("parent_ids") or [])),
+                ("演化计划", lineage.get("evolution_plan_id")),
+                ("复杂度诊断", lineage.get("complexity_inflation")),
+            ):
+                add_if_present(lineage_table, label, value)
+            if lineage_table.row_count:
+                components.extend([Text("演化谱系", style="bold cyan"), lineage_table])
+
+        cross_domain_sources = item.get("cross_domain_sources") if isinstance(item.get("cross_domain_sources"), list) else []
+        cross_domain_relation = str(item.get("cross_domain_relation") or "").strip()
+        if cross_domain_sources or cross_domain_relation:
+            bridge_table = detail_table(style="bold bright_magenta", border_style="bright_magenta")
+            if cross_domain_sources:
+                bridge_table.add_row("桥接来源", text("、".join(str(value) for value in cross_domain_sources if str(value).strip())))
+            add_if_present(bridge_table, "可迁移关系", cross_domain_relation)
+            components.extend([Text("跨领域信息", style="bold bright_magenta"), bridge_table])
 
         evidence_chain = item.get("evidence_chain") if isinstance(item.get("evidence_chain"), list) else []
-        components.append(Text("证据链", style="bold red"))
         if evidence_chain:
-            chain_table = Table(expand=True, show_header=True, header_style="bold red", border_style="red")
+            chain_table = Table(
+                expand=True, show_header=True, show_lines=True, box=box.SQUARE,
+                header_style="bold red", border_style="red",
+            )
             chain_table.add_column("来源", ratio=1, overflow="fold")
-            chain_table.add_column("论文/材料观察", ratio=2, overflow="fold")
+            chain_table.add_column("论文 / 材料观察", ratio=2, overflow="fold")
             chain_table.add_column("导向当前设计的含义", ratio=2, overflow="fold")
             chain_table.add_column("等级", width=12, overflow="fold")
             for link in evidence_chain:
@@ -900,77 +1752,14 @@ class CLIHumanInterface(HumanInterface):
                         text(link.get("implication")),
                         str(link.get("evidence_level") or ""),
                     )
-            components.append(chain_table)
-
-        minimum = item.get("minimum_validation") if isinstance(item.get("minimum_validation"), dict) else {}
-        minimum_table = Table.grid(expand=True, padding=(0, 1))
-        minimum_table.add_column(style="bold yellow", width=12, no_wrap=True)
-        minimum_table.add_column(ratio=1, overflow="fold")
-        protocol_status = str(minimum.get("evidence_status") or "unknown").lower()
-        protocol_labels = {
-            "supported": "已由可追溯材料支持",
-            "user_provided": "由人工明确提供",
-            "proposed_not_verified": "待验证提议",
-            "unknown": "待核验",
-        }
-        refs = minimum.get("source_refs") if isinstance(minimum.get("source_refs"), list) else []
-        for label, key in (("数据/任务", "dataset"), ("基线", "baseline"), ("指标", "metric"), ("预期信号", "expected_signal")):
-            minimum_table.add_row(label, text(minimum.get(key)))
-        minimum_table.add_row("协议状态", text(protocol_labels.get(protocol_status, protocol_status)))
-        if refs:
-            minimum_table.add_row("协议来源", text("； ".join(str(ref) for ref in refs)))
-        components.extend([Text("最小验证", style="bold yellow"), minimum_table])
-
-        scores = item.get("scores") if isinstance(item.get("scores"), dict) else {}
-        rationales = item.get("score_rationale") if isinstance(item.get("score_rationale"), dict) else {}
-        if scores:
-            score_table = Table(expand=True, show_header=True, header_style="bold blue", border_style="blue")
-            score_table.add_column("维度", width=14)
-            score_table.add_column("评分", width=7, justify="center")
-            score_table.add_column("模型依据", ratio=1, overflow="fold")
-            for key, label in (
-                ("novelty", "新颖性"), ("feasibility", "可行性"), ("impact", "影响力"),
-                ("evaluability", "可评估性"), ("differentiation", "差异化"),
-                ("cost", "资源/实施成本"), ("contribution_strength", "贡献强度"),
-            ):
-                if scores.get(key) is not None:
-                    score_table.add_row(label, f"{scores[key]}/5", text(rationales.get(key)))
-            components.extend([Text("评分", style="bold blue"), score_table])
-
-        final_card = item.get("final_idea_card") if isinstance(item.get("final_idea_card"), dict) else {}
-        if final_card:
-            impact_table = Table.grid(expand=True, padding=(0, 1))
-            impact_table.add_column(style="bold bright_cyan", width=16, no_wrap=True)
-            impact_table.add_column(ratio=1, overflow="fold")
-            impact_table.add_row("Why It Matters", text(final_card.get("why_it_matters")))
-            impact_table.add_row("Scenario", text(final_card.get("representative_scenario")))
-            impact_table.add_row("Current failure", text(final_card.get("current_failure")))
-            impact_table.add_row("Scientific / Technical", text(final_card.get("scientific_technical_core")))
-            implications = final_card.get("implications") if isinstance(final_card.get("implications"), list) else []
-            for implication in implications:
-                if isinstance(implication, dict):
-                    impact_table.add_row(
-                        f"{implication.get('implication_type', 'Implication')} [{implication.get('evidence_status', 'unknown')}]",
-                        text(implication.get("statement")),
-                    )
-            components.extend([Text("Why It Matters", style="bold bright_cyan"), impact_table])
-
-        risk_table = Table.grid(expand=True, padding=(0, 1))
-        risk_table.add_column(style="bold red", width=12, no_wrap=True)
-        risk_table.add_column(ratio=1, overflow="fold")
-        for label, value in (
-            ("证据解读", gate1_card.get("evidence_interpretation")),
-            ("主要风险", gate1_card.get("risk_summary")),
-            ("可调整处", gate1_card.get("user_edit_hint")),
-            ("最近先例", item.get("nearest_prior_work")),
-            ("新颖性信号", item.get("novelty_signal")),
-        ):
-            risk_table.add_row(label, text(value))
-        components.extend([Text("证据与风险", style="bold red"), risk_table])
+            components.extend([Text("证据链", style="bold red"), chain_table])
 
         support = item.get("supporting_papers") if isinstance(item.get("supporting_papers"), list) else []
         if support:
-            sources = Table(expand=True, show_header=True, header_style="bold cyan", border_style="cyan")
+            sources = Table(
+                expand=True, show_header=True, show_lines=True, box=box.SQUARE,
+                header_style="bold cyan", border_style="cyan",
+            )
             sources.add_column("论文与引用", ratio=2, overflow="fold")
             sources.add_column("论文阅读笔记", ratio=2, overflow="fold")
             sources.add_column("已用证据", ratio=3, overflow="fold")
@@ -982,12 +1771,46 @@ class CLIHumanInterface(HumanInterface):
                         str(paper.get("claim_used") or paper.get("claim") or ""),
                     )
             components.extend([Text("参考论文与阅读笔记", style="bold cyan"), sources])
+
+        artifact_index = item.get("artifact_index") if isinstance(item.get("artifact_index"), dict) else {}
+        artifact_paths = item.get("artifact_paths") if isinstance(item.get("artifact_paths"), list) else []
+        if artifact_index or artifact_paths:
+            artifacts = detail_table(style="bold dim", border_style="dim")
+            labels = {"candidate": "Candidate", "score": "评分", "lineage": "谱系", "round": "演化轮次", "population": "Population"}
+            for key, value in artifact_index.items():
+                if str(value).strip():
+                    artifacts.add_row(labels.get(str(key), str(key)), text(value))
+            for value in artifact_paths:
+                if str(value).strip():
+                    artifacts.add_row("附加产物", text(value))
+            components.extend([Text("产物路径", style="bold dim"), artifacts])
+
+        components.append(
+            Text(
+                f"可输入：选择 {candidate_id}；继续演化 {candidate_id}；只优化 {candidate_id}；"
+                f"查看 {candidate_id} 的评分 / 证据 / 谱系 / 假设 / 贡献。读取操作不调用模型；进化会创建新版本并保留当前候选。",
+                style="dim",
+                overflow="fold",
+            )
+        )
         return Panel(
             Group(*components),
-            title=f"[bold]{candidate_id} · {lane} · {title}[/bold]",
+            title=f"[bold]{candidate_id} · {title}[/bold]",
             border_style="bright_cyan" if lane == "主方向" else "cyan",
             expand=True,
         )
+
+    @staticmethod
+    def _t4_rich_candidate_summary(item: dict[str, Any]) -> Panel:
+        """Render every Gate overview through the shared CandidateCardRenderer."""
+
+        return CandidateCardRenderer.summary(CandidateViewModel.from_mapping(item))
+
+    @staticmethod
+    def _t4_rich_candidate_card(item: dict[str, Any]) -> Panel:
+        """Render explicit Candidate inspection through the shared full-card view."""
+
+        return CandidateCardRenderer.detail(CandidateViewModel.from_mapping(item))
 
     @staticmethod
     def _should_render_presentation_field(gate_id: str, key: str) -> bool:
@@ -1028,6 +1851,44 @@ class CLIHumanInterface(HumanInterface):
             return {"base_option": str(default_id)}
         return {}
 
+    @staticmethod
+    def _collect_t36_supplement_target(presentation: dict[str, Any]) -> str:
+        """Collect a bounded retrieval target with the computed default visible.
+
+        The corpus gate asks a researcher for an exploration *record target*,
+        not a citation quota.  Making the recommendation executable prevents
+        an empty Enter from silently falling back to an unrelated tool default
+        while preserving the researcher's explicit retrieval target.
+        """
+
+        recommendation = presentation.get("supplement_recommendation")
+        recommendation = recommendation if isinstance(recommendation, dict) else {}
+        suggested = recommendation.get("suggested_target_records")
+        try:
+            default = int(suggested)
+        except (TypeError, ValueError):
+            default = 18
+        default = max(1, default)
+
+        prompt = f"目标补充记录数（直接回车采用建议 {default}；也可输入任意正整数）"
+        for attempt in range(1, 4):
+            try:
+                raw = _read_cli_line(f"{prompt}: ").strip()
+            except EOFError as exc:
+                raise HumanInputUnavailable("确认步骤 t36_corpus_gate 需要补充检索目标数，但当前输入不可用。") from exc
+            if not raw:
+                return str(default)
+            try:
+                value = int(raw)
+            except ValueError:
+                value = -1
+            if value >= 1:
+                return str(value)
+            if attempt < 3:
+                print(f"请输入正整数，或直接回车使用建议值 {default}。")
+        print(f"未收到有效目标数，已采用建议值 {default}。")
+        return str(default)
+
     async def _interpret_t2_literature_param_text(self, raw_answer: str) -> dict[str, str]:
         """Interpret free text through an LLM, then enforce deterministic parsing.
 
@@ -1065,6 +1926,18 @@ class CLIHumanInterface(HumanInterface):
     def _format_presentation_value(key: str, value: Any, *, gate_id: str = "") -> str:
         """Render gate presentation values for humans instead of dumping JSON by default."""
 
+        if gate_id == "t36_assemble_recovery_gate":
+            rendered = _format_t36_assemble_recovery_field(key, value)
+            if rendered is not None:
+                return rendered
+        if gate_id == "t36_compile_recovery_gate":
+            rendered = _format_t36_compile_recovery_field(key, value)
+            if rendered is not None:
+                return rendered
+        if gate_id == "runtime_recovery_gate":
+            rendered = _format_runtime_recovery_field(key, value)
+            if rendered is not None:
+                return rendered
         if gate_id == "t2_coverage_gate":
             rendered = _format_t2_coverage_gate_field(key, value)
             if rendered is not None:
@@ -1073,6 +1946,8 @@ class CLIHumanInterface(HumanInterface):
             rendered = _format_t36_survey_gate_field(key, value)
             if rendered is not None:
                 return rendered
+        if gate_id == "t36_corpus_gate" and key == "supplement_recommendation":
+            return _format_t36_supplement_recommendation(value)
         if gate_id == "t2_literature_param_confirm_gate" and key == "selected_parameters":
             if isinstance(value, str):
                 return _format_t2_selected_parameters_summary(
@@ -1148,11 +2023,43 @@ class CLIHumanInterface(HumanInterface):
         option = next((item for item in options if str(item.get("id") or item.get("key") or "") == option_id), {})
         label = str(option.get("label") or option_id)
         captured = result.get("captured") if isinstance(result.get("captured"), dict) else {}
-        lines = [f"已确认选择：{label}（{option_id}）"]
-        if captured:
-            compact = "; ".join(f"{key}={value}" for key, value in captured.items() if value not in (None, ""))
-            if compact:
-                lines.append(f"记录的补充输入：{compact}")
+        directive = captured.get("parsed_directive") if isinstance(captured.get("parsed_directive"), dict) else {}
+        action = str(directive.get("action") or "")
+        read_only_actions = {
+            "show_more", "show_archive", "inspect_score", "inspect_evidence", "inspect_lineage",
+            "inspect_hypotheses", "inspect_contributions", "inspect_genome", "inspect_files", "compare_candidates",
+        }
+        is_t4_read_only = gate_id == "t4_gate1_selection_gate" and option_id == "t4_directive" and action in read_only_actions
+        is_t4_directive = gate_id == "t4_gate1_selection_gate" and option_id == "t4_directive"
+        action_label = _t4_action_public_label(action)
+        if is_t4_read_only:
+            lines = [f"已收到只读请求：{action_label}。不会确认操作、调用模型或改变 Candidate。"]
+        elif is_t4_directive and action == "pause":
+            lines = ["已收到暂停请求；系统会保存当前 Gate 状态。不会调用模型、生成新 Candidate 或改变 Population。"]
+        elif is_t4_directive:
+            lines = ["已收到研究指令；系统尚未调用模型、生成新 Candidate 或改变 Population。"]
+        else:
+            lines = [f"已确认选择：{label}（{option_id}）"]
+        if captured and not is_t4_read_only:
+            if is_t4_directive:
+                directive_text = " ".join(str(captured.get("directive") or "").split())
+                target_ids = directive.get("target_candidate_ids") if isinstance(directive.get("target_candidate_ids"), list) else []
+                parts: list[str] = []
+                if directive_text:
+                    parts.append(f"原始输入：{directive_text}")
+                if action:
+                    parts.append(f"识别操作：{action_label}")
+                if target_ids:
+                    parts.append("目标候选：" + "、".join(str(item) for item in target_ids))
+                requested_route = str(directive.get("requested_route") or "").strip()
+                if requested_route:
+                    parts.append(f"指定路线：{requested_route}")
+                if parts:
+                    lines.append("；".join(parts))
+            else:
+                compact = "; ".join(f"{key}={value}" for key, value in captured.items() if value not in (None, ""))
+                if compact:
+                    lines.append(f"记录的补充输入：{compact}")
         if gate_id == "t2_literature_param_gate":
             lines.append("将写入：literature/literature_params.json；下一步：确认检索参数")
         elif gate_id == "t2_literature_param_confirm_gate":
@@ -1163,17 +2070,33 @@ class CLIHumanInterface(HumanInterface):
             elif option_id == "stop_project":
                 lines.append("将结束当前项目，不启动 T2")
         elif gate_id == "t4_gate1_selection_gate":
-            lines.append("将写入：ideation/_gate1_user_selection.json 和 ideation/selected_idea_brief.md；下一步：展开选中方向")
+            if is_t4_read_only:
+                lines.append("正在打开已保存的 Candidate 详情；完成后将回到当前决策页。")
+            elif option_id == "t4_directive" and action == "pause":
+                lines.append("本次会暂停在 T4 决策页；下次 resume 会回到这里，不重复已完成的 T4 模型调用。")
+            elif option_id == "t4_directive":
+                if action:
+                    lines.append("已识别为研究操作；系统现在只会保存操作计划并进入清晰的二次确认，尚未执行该操作。")
+                else:
+                    lines.append("系统将解析这条指令；若涉及推进、优化、组合或再探索，会先展示二次确认，不会直接改写当前版本。")
+            elif option_id == "confirm":
+                lines.append("已确认操作；系统将按上方计划执行。若涉及演化，会生成新版本、独立重评，并保留当前 Population 以便回滚。")
+            elif option_id == "cancel":
+                lines.append("已取消操作；当前 Population 与所有历史版本保持不变。")
+            else:
+                lines.append("将记录该选择并按其类型继续；选择 Candidate 会生成 Pre-Novelty brief，演化类操作会先保存新版本再重新评分。")
         elif gate_id == "t36_post_survey_gate":
             lines.append("将写入：drafts/survey/post_survey_decision.json")
-        elif gate_id in {"t36_template_gate", "t8_style_template_gate"}:
+        elif gate_id in {"t36_template_gate", "t36_ccf_template_gate", "t8_style_template_gate", "t8_ccf_template_gate"}:
             target = "drafts/survey/writing_template.json" if gate_id == "t36_template_gate" else "drafts/writing_style.json"
+            if gate_id == "t36_ccf_template_gate":
+                target = "drafts/survey/writing_template.json"
             lines.append(f"将写入：{target}")
         return "\n".join(lines)
 
     @staticmethod
     def _parse_inline_gate_customization(gate_id: str, raw_answer: str, options: list[dict]) -> dict | None:
-        if gate_id in {"t36_template_gate", "t8_style_template_gate"}:
+        if gate_id in {"t36_template_gate", "t36_ccf_template_gate", "t8_style_template_gate", "t8_ccf_template_gate"}:
             return CLIHumanInterface._parse_template_gate_text(gate_id, raw_answer, options)
         if gate_id == "t4_gate1_selection_gate":
             return CLIHumanInterface._parse_t4_gate1_text(raw_answer, options)
@@ -1201,6 +2124,13 @@ class CLIHumanInterface(HumanInterface):
             parsed = self._parse_t4_gate1_text(raw_answer, options)
             if parsed is None or str(parsed.get("option_id") or "") != "t4_directive":
                 return parsed
+            captured = parsed.get("captured") if isinstance(parsed.get("captured"), dict) else {}
+            if captured.get("parser_source") == "deterministic_read_only":
+                print("[T4] 已识别为只读查看；将直接读取已保存的 Candidate 信息，不调用模型、不创建操作计划。")
+                return parsed
+            if captured.get("parser_source") == "deterministic_control":
+                print("[T4] 已识别为控制指令；不会调用模型。")
+                return parsed
             return await self._interpret_t4_gate1_text(raw_answer, parsed)
         if gate_id != "t2_literature_param_gate":
             return self._parse_inline_gate_customization(gate_id, raw_answer, options)
@@ -1227,6 +2157,7 @@ class CLIHumanInterface(HumanInterface):
         cleaned = _strip_terminal_control_sequences(raw_answer).strip()
         if not cleaned:
             return fallback
+        print("[T4] 正在理解这条研究指令；系统只会先生成操作计划，不会直接修改 Candidate 或 Population。")
         try:
             proposal = await self._t4_directive_interpreter(cleaned)
         except Exception:
@@ -1252,11 +2183,34 @@ class CLIHumanInterface(HumanInterface):
             return {"option_id": "confirm", "captured": {}}
         if lowered in {"cancel", "no", "n", "取消"} and "cancel" in option_ids:
             return {"option_id": "cancel", "captured": {}}
-        # Native Evolution Gate1 uses an LLM-first semantic parser followed by
-        # deterministic validation in StateMachine.  Preserve the researcher's
-        # original wording instead of prematurely collapsing it into the old
-        # select/merge/reanalyze branches.
-        if "t4_directive" not in option_ids and any(
+        if lowered in {"pause", "暂停", "暂不决定", "先暂停"}:
+            return {
+                "option_id": "t4_directive",
+                "captured": {
+                    "directive": normalized,
+                    "parsed_directive": {"action": "pause"},
+                    "parser_source": "deterministic_control",
+                },
+            }
+        if lowered in {"更多操作", "more", "more actions", "advanced", "高级操作"} and "more_actions" in option_ids:
+            return {"option_id": "more_actions", "captured": {}}
+        read_only_action = _t4_deterministic_read_only_action(normalized)
+        if read_only_action:
+            return {
+                "option_id": "t4_directive",
+                "captured": {
+                    "directive": normalized,
+                    "parsed_directive": {"action": read_only_action},
+                    "parser_source": "deterministic_read_only",
+                },
+            }
+        # Native Evolution Gate1 is LLM-first for every natural-language
+        # instruction.  Menu indices and the explicit confirm/cancel controls
+        # above remain deterministic.  Preserve all other wording (including
+        # multiline constraints) for the interpreter and StateMachine-level
+        # validation instead of prematurely collapsing it into legacy menu
+        # branches.
+        if any(
             option_id in option_ids
             for option_id in {
                 "proceed_candidate",
@@ -1276,6 +2230,8 @@ class CLIHumanInterface(HumanInterface):
         candidate_pattern = r"(?<![A-Za-z0-9])[DS]\d+(?![A-Za-z0-9])"
         candidates = [item.upper() for item in re.findall(candidate_pattern, normalized, flags=re.IGNORECASE)]
         unique_candidates = list(dict.fromkeys(candidates))
+        if unique_candidates and "t4_directive" in option_ids:
+            return {"option_id": "t4_directive", "captured": {"directive": normalized}}
 
         if "reanalyze" in lowered or "重新分析" in normalized or "重跑" in normalized:
             feedback = re.sub(r"(?i)\breanalyze\b\s*[:：-]?", "", normalized).strip()
@@ -1320,16 +2276,28 @@ class CLIHumanInterface(HumanInterface):
         )):
             captured.update({"template_family": "utd", "template_id": "informs", "writing_language": "en"})
             option_id = "utd_informs" if gate_id == "t36_template_gate" else "is_informs"
-        elif any(token in normalized for token in ("ccf", "neurips", "iclr", "icml", "kdd", "conference", "会议", "ccf-a", "ccf_a")):
-            if "kdd" in normalized or "sigkdd" in normalized:
-                template_id, option_id = "kdd", "ccf_kdd"
-            elif "icml" in normalized:
-                template_id, option_id = "icml", "ccf_icml"
-            elif "iclr" in normalized:
-                template_id, option_id = "iclr", "ccf_iclr"
+        elif any(token in normalized for token in ("ccf", "conference", "会议", "ccf-a", "ccf_a", *ccf_template_ids())):
+            detected_template = next(
+                (
+                    template_id
+                    for template_id in ccf_template_ids()
+                    if template_id in normalized
+                    or (template_id == "kdd" and "sigkdd" in normalized)
+                ),
+                "",
+            )
+            first_level_gate = gate_id in {"t36_template_gate", "t8_style_template_gate"}
+            if first_level_gate:
+                option_id = "ccf"
+                captured.update({"template_family": "ccf", "writing_language": "en"})
+                if detected_template in ccf_template_ids():
+                    captured["template_id"] = detected_template
             else:
-                template_id, option_id = "neurips", "ccf_neurips"
-            captured.update({"template_family": "ccf", "template_id": template_id, "writing_language": "en"})
+                template_id = normalize_ccf_template_id(detected_template)
+                if template_id not in ccf_template_ids():
+                    return None
+                option_id = ccf_template_option_id(template_id)
+                captured.update({"template_family": "ccf", "template_id": template_id, "writing_language": "en"})
         elif any(token in normalized for token in ("英文", "english", "basic_en", "不用模板", "不要模板", "no template")) or normalized == "en":
             captured.update({"template_family": "basic_en", "template_id": "basic_en", "writing_language": "en"})
             option_id = "basic_en"
@@ -1354,7 +2322,7 @@ class CLIHumanInterface(HumanInterface):
             if canonical:
                 captured[canonical] = value.strip()
 
-        if gate_id == "t8_style_template_gate":
+        if gate_id in {"t8_style_template_gate", "t8_ccf_template_gate"}:
             if "venue_style" not in captured:
                 if option_id == "is_informs":
                     captured["venue_style"] = "is"
@@ -1368,7 +2336,7 @@ class CLIHumanInterface(HumanInterface):
         # Older/custom gate definitions may expose only the generic CCF option.
         # Preserve the requested concrete template id, but route through that
         # generic option rather than incorrectly declaring the input invalid.
-        if option_id not in option_ids and option_id in {"ccf_iclr", "ccf_icml", "ccf_kdd"} and "ccf_neurips" in option_ids:
+        if option_id == "ccf" and option_id not in option_ids and "ccf_neurips" in option_ids:
             option_id = "ccf_neurips"
         if not option_id or option_id not in option_ids:
             option_id = "custom" if "custom" in option_ids else next(iter(option_ids), "")
@@ -1630,6 +2598,78 @@ class CLIHumanInterface(HumanInterface):
         return re.sub(r"[\s\[\]（）()。.!！,，:：;；\"'`]+", "", value.strip().lower())
 
 
+def _t4_deterministic_read_only_action(raw_answer: str) -> str:
+    """Recognize common Chinese/English inspection wording without an LLM.
+
+    This is intentionally conservative: a turn containing a mutation verb is
+    left to the semantic parser and confirmation flow. It covers natural
+    phrases such as “我想看一下 D1 的详情”, which should feel immediate in a
+    terminal conversation rather than wait silently for a model call.
+    """
+
+    normalized = " ".join(str(raw_answer or "").casefold().split())
+    if not normalized:
+        return ""
+    mutation_tokens = (
+        "推进", "选择", "选定", "确认", "优化", "修改", "重构", "组合", "合并", "交叉", "演化", "进化",
+        "重新生成", "重跑", "保留", "提交", "proceed", "select", "confirm", "refine", "merge", "compose",
+        "crossover", "evolve", "regenerate", "rollback",
+    )
+    if any(token in normalized for token in mutation_tokens):
+        return ""
+    inspection_signal = any(
+        token in normalized
+        for token in ("查看", "看一下", "想看", "看看", "详情", "view", "inspect", "show")
+    )
+    comparison_signal = any(token in normalized for token in ("对比", "比较", "compare"))
+    if not (inspection_signal or comparison_signal):
+        return ""
+    candidate_count = len(re.findall(r"(?<![A-Za-z0-9])[DS]\d+(?![A-Za-z0-9])", normalized, flags=re.IGNORECASE))
+    if comparison_signal:
+        return "compare_candidates" if candidate_count >= 2 else "show_more"
+    if any(token in normalized for token in ("文件", "产物", "artifact", "files", "路径")):
+        return "inspect_files" if candidate_count else "show_more"
+    if any(token in normalized for token in ("证据", "evidence")):
+        return "inspect_evidence" if candidate_count else "show_more"
+    if any(token in normalized for token in ("谱系", "lineage")):
+        return "inspect_lineage" if candidate_count else "show_more"
+    if any(token in normalized for token in ("假设", "hypotheses")):
+        return "inspect_hypotheses" if candidate_count else "show_more"
+    if any(token in normalized for token in ("贡献", "contributions")):
+        return "inspect_contributions" if candidate_count else "show_more"
+    if any(token in normalized for token in ("基因", "genome")):
+        return "inspect_genome" if candidate_count else "show_more"
+    return "inspect_score" if candidate_count else "show_more"
+
+
+def _t4_action_public_label(action: str) -> str:
+    """Translate internal T4 directive actions for the normal CLI surface."""
+
+    return {
+        "select_candidate": "推进候选进入 T4.5",
+        "select_multiple": "多候选选择，需要进一步澄清",
+        "keep_parallel": "并行保留多个候选",
+        "compose_from_components": "组合指定组件",
+        "continue_evolution": "再探索一轮",
+        "focus_candidate": "定向优化候选",
+        "merge_candidates": "合并或交叉候选",
+        "show_more": "查看更多候选",
+        "show_archive": "查看历史候选",
+        "inspect_score": "查看候选详情",
+        "inspect_evidence": "查看候选证据",
+        "inspect_lineage": "查看演化谱系",
+        "inspect_hypotheses": "查看假设",
+        "inspect_contributions": "查看贡献",
+        "inspect_genome": "查看完整结构",
+        "inspect_files": "查看关联文件",
+        "compare_candidates": "对比候选",
+        "regenerate_route": "重跑指定路线",
+        "rollback": "回到上一代",
+        "pause": "暂停",
+        "cancel": "取消",
+    }.get(str(action or "").strip(), str(action or "待解析"))
+
+
 def _is_path_summary(value: Any) -> bool:
     return (
         isinstance(value, dict)
@@ -1762,14 +2802,34 @@ def _t4_candidate_lane_description(item: dict[str, Any], candidate_id: str) -> s
 
 
 def _format_t4_candidate_overview(value: Any) -> str:
-    """Render complete, boxed Gate1 candidate cards from audited fields."""
+    """Render no-colour Gate1 output through the shared Candidate card surface."""
 
     if not isinstance(value, dict):
         return "候选方向概览暂不可用；请检查 ideation/_candidate_directions.json。"
     candidates = value.get("candidates") if isinstance(value.get("candidates"), list) else []
     if not candidates:
         return "候选方向概览暂不可用；请检查 ideation/_candidate_directions.json。"
-    return _format_t4_candidate_overview_model_authored(value)
+    cards: list[str] = []
+    missing_ids: list[str] = []
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        try:
+            cards.append(CandidateCardRenderer.plain_summary(CandidateViewModel.from_mapping(item), width=96))
+        except ValueError:
+            missing_ids.append(str(item.get("id") or "?"))
+    if missing_ids:
+        return "\n".join(
+            (
+                "T4 卡片修复",
+                "当前 Portfolio 尚未拥有完整的 LLM Idea Card；不会退回旧字段或固定模板。",
+                "缺少卡片：" + "、".join(missing_ids),
+            )
+        )
+    if not cards:
+        return "T4 卡片修复\n当前 Portfolio 没有可展示的完整 LLM Idea Card。"
+    comparison_hint = "先阅读上方简述卡；需要逐项判断时输入“查看 D1”。对比 D1 和 D3 只读且不会改变当前版本。"
+    return "\n\n".join([*cards, comparison_hint])
 
     # Kept below temporarily as a source-compatibility reference for older
     # integrations. The Gate1 path returns above so it can never render the
@@ -2002,87 +3062,92 @@ def _format_t4_candidate_overview(value: Any) -> str:
 
 
 def _format_t4_candidate_overview_model_authored(value: dict[str, Any]) -> str:
-    """Plain-terminal fallback that displays only LLM-authored candidate prose.
+    """Plain-terminal view with the same Final Card boundary as Rich.
 
-    Rich is the normal UI. This fallback exists for redirected output and
-    no-color terminals, so it follows the same ownership rule: labels, IDs,
-    counts, and scores are runtime facts; every research-facing sentence comes
-    directly from a validated candidate field.
+    Redirected/no-colour output must not get a weaker scientific contract. If
+    complete LLM Cards are unavailable, this function returns only an
+    operational recovery message and never substitutes legacy presentation
+    fields as a research explanation.
     """
 
     width = 96
     divider = "=" * width
-    score_labels = (
-        ("novelty", "新颖性"),
-        ("feasibility", "可行性"),
-        ("impact", "影响力"),
-        ("evaluability", "可评估性"),
-        ("differentiation", "差异化"),
-        ("cost", "资源成本"),
-        ("contribution_strength", "贡献强度"),
-    )
     candidates = [item for item in value.get("candidates", []) if isinstance(item, dict)]
+    incomplete = [
+        str(item.get("id") or "?")
+        for item in candidates
+        if _t4_complete_final_card(item.get("final_idea_card")) is None
+    ]
+    if incomplete:
+        return "\n".join(
+            [
+                divider,
+                "T4 卡片修复",
+                "当前 Portfolio 尚未拥有完整的 LLM Idea Card；不会显示旧字段或固定模板形成的半成品解释。",
+                "请在 T4 恢复决策中选择继续 LLM 卡片修复。",
+                "缺少卡片：" + "、".join(incomplete),
+                divider,
+            ]
+        )
     lines = [divider, f"Gate1 · 研究方向比较（{len(candidates)} 项）"]
     for item in candidates:
+        final_card = _t4_complete_final_card(item.get("final_idea_card"))
+        if final_card is None:
+            # ``incomplete`` above normally covers this.  Retain the guard so
+            # a mutable caller cannot race a plain-terminal render into an
+            # old-field fallback.
+            return "\n".join(
+                [
+                    divider,
+                    "T4 卡片修复",
+                    "当前 Portfolio 的 LLM Idea Card 在渲染前变为不完整；不会显示旧 Candidate 字段。",
+                    "请在 T4 恢复决策中选择继续 LLM 卡片修复。",
+                    divider,
+                ]
+            )
         candidate_id = str(item.get("id") or "")
         lane = str(item.get("lane") or "")
-        title = str(item.get("title") or "")
-        card = item.get("gate1_card") if isinstance(item.get("gate1_card"), dict) else {}
-        innovation = item.get("innovation") if isinstance(item.get("innovation"), dict) else {}
-        hypotheses = item.get("candidate_hypotheses") if isinstance(item.get("candidate_hypotheses"), list) else []
-        minimum = item.get("minimum_validation") if isinstance(item.get("minimum_validation"), dict) else {}
-        scores = item.get("scores") if isinstance(item.get("scores"), dict) else {}
-        rationales = item.get("score_rationale") if isinstance(item.get("score_rationale"), dict) else {}
+        title = str(final_card.get("short_title") or "")
         lines.extend([divider, f"{candidate_id} · {lane} · {title}"])
         for label, field in (
-            ("为何入选", "role_summary"),
-            ("研究问题", "target_problem"),
-            ("核心命题", "value"),
-            ("技术机制", "mechanism"),
-            ("可证伪预测", "prediction"),
-            ("反事实", "counterfactual"),
-            ("选择建议", "selection_advice"),
-            ("证据解读", "evidence_interpretation"),
-            ("主要风险", "risk_summary"),
-            ("可调整处", "user_edit_hint"),
+            ("一句话命题", "plain_language_summary"),
+            ("核心命题", "core_thesis"),
+            ("为何值得研究", "why_it_matters"),
+            ("当前问题", "current_failure"),
+            ("科学 / 技术核心", "scientific_technical_core"),
+            ("代表性场景", "representative_scenario"),
+            ("现实 / 应用意义", "real_world_significance"),
+            ("创新性质", "innovation_type"),
+            ("相对变化", "innovation_delta"),
+            ("非惯例理由", "non_routine_explanation"),
+            ("关系", "relationship_to_portfolio"),
+            ("组合建议", "composition_guidance"),
+            ("选择建议", "recommendation"),
+            ("瓶颈解释", "bottleneck_explanation"),
         ):
-            authored = card.get(field) if field in {"role_summary", "selection_advice", "evidence_interpretation", "risk_summary", "user_edit_hint"} else item.get(field)
-            lines.extend(_t4_wrap_terminal_field(label, authored, indent=2, width=width))
-        lines.append("  核心创新")
-        for label, field in (("创新", "summary"), ("类型", "type"), ("相对变化", "delta"), ("非增量理由", "non_incremental")):
-            lines.extend(_t4_wrap_terminal_field(label, innovation.get(field), indent=4, width=width))
-        lines.append("  候选假设")
+            lines.extend(_t4_wrap_terminal_field(label, final_card.get(field), indent=2, width=width))
+        hypotheses = item.get("candidate_hypotheses") if isinstance(item.get("candidate_hypotheses"), list) else []
         for hypothesis in hypotheses:
             if not isinstance(hypothesis, dict):
                 continue
-            lines.extend(_t4_wrap_terminal_field(str(hypothesis.get("id") or ""), hypothesis.get("statement"), indent=4, width=width))
-            lines.extend(_t4_wrap_terminal_field("机制", hypothesis.get("mechanism"), indent=6, width=width))
-            lines.extend(_t4_wrap_terminal_field("预测", hypothesis.get("prediction"), indent=6, width=width))
-            lines.extend(_t4_wrap_terminal_field("判别测试", hypothesis.get("test"), indent=6, width=width))
-        metric = minimum.get("metric")
-        metric_text = "、".join(str(entry) for entry in metric) if isinstance(metric, list) else metric
-        lines.extend(_t4_wrap_terminal_field(
-            "最小验证",
-            f"数据/任务：{minimum.get('dataset') or ''}；基线：{minimum.get('baseline') or ''}；指标：{metric_text or ''}；预期信号：{minimum.get('expected_signal') or ''}",
-            indent=2,
-            width=width,
-        ))
-        lines.append("  评分")
-        for key, label in score_labels:
-            if scores.get(key) is not None:
-                lines.extend(_t4_wrap_terminal_field(f"{label} {scores[key]}/5", rationales.get(key), indent=4, width=width))
-        evidence_chain = item.get("evidence_chain") if isinstance(item.get("evidence_chain"), list) else []
-        if evidence_chain:
-            lines.append("  论文阅读笔记")
-            for evidence in evidence_chain:
-                if not isinstance(evidence, dict):
-                    continue
-                lines.extend(_t4_wrap_terminal_field("来源", evidence.get("ref"), indent=4, width=width))
-                lines.extend(_t4_wrap_terminal_field("观察", evidence.get("observation"), indent=6, width=width))
-                lines.extend(_t4_wrap_terminal_field("设计含义", evidence.get("implication"), indent=6, width=width))
+            lines.extend(_t4_wrap_terminal_field(str(hypothesis.get("id") or ""), hypothesis.get("statement"), indent=2, width=width))
+            lines.extend(_t4_wrap_terminal_field("机制", hypothesis.get("mechanism"), indent=4, width=width))
+            lines.extend(_t4_wrap_terminal_field("预测", hypothesis.get("prediction") or hypothesis.get("observable_prediction"), indent=4, width=width))
+            lines.extend(_t4_wrap_terminal_field("判别测试", hypothesis.get("test") or hypothesis.get("discriminating_test"), indent=4, width=width))
+        for label, entries in (
+            ("主要风险", final_card.get("risks_and_boundaries")),
+        ):
+            if isinstance(entries, list):
+                lines.extend(_t4_wrap_terminal_field(label, "；".join(str(entry) for entry in entries if str(entry).strip()), indent=2, width=width))
     hint = str(value.get("input_hint") or "")
     if hint:
         lines.extend([divider, *_t4_wrap_terminal_prose(hint, width=width)])
+    lines.extend(
+        [
+            divider,
+            "如需核验文件路径或完整证据链，请输入“查看 D1 的证据 / 谱系 / 文件”。默认决策页不展开内部路径。",
+        ]
+    )
     lines.append(divider)
     return "\n".join(lines)
 
@@ -2093,6 +3158,40 @@ def _format_t36_survey_gate_field(key: str, value: Any) -> str | None:
     if key == "weak_evidence_preview":
         return _format_t36_weak_evidence_preview(value)
     return None
+
+
+def _format_t36_supplement_recommendation(value: Any) -> str:
+    """Turn the corpus-gap calculation into a researcher decision aid.
+
+    This is deliberately operational prose only.  It reports the existing
+    taxonomy/coverage calculation and does not claim that a particular record
+    will be relevant, citable, or sufficient evidence.
+    """
+
+    if not isinstance(value, dict):
+        return "暂时无法计算补充检索建议；选择补检后仍可输入任意正整数作为目标。"
+    suggested = value.get("suggested_target_records")
+    basis = value.get("basis") if isinstance(value.get("basis"), dict) else {}
+    purposes = value.get("coverage_purpose") if isinstance(value.get("coverage_purpose"), list) else []
+    lines = [
+        f"建议补充记录数：{suggested if suggested is not None else '未计算'}",
+        "这是覆盖建议，不是配额或可接受范围；你可输入任意正整数，实际检索仍受本次运行与检索服务可用资源约束。",
+    ]
+    if basis:
+        lines.append(
+            "依据：已有全文阅读 {} 篇；taxonomy 类 {} 个；计划章节 {} 个；明确薄弱类 {} 个。".format(
+                basis.get("deep_note_count", 0),
+                basis.get("taxonomy_class_count", 0),
+                basis.get("outline_section_count", 0),
+                basis.get("explicit_weak_class_count", 0),
+            )
+        )
+    if purposes:
+        lines.append("优先覆盖：" + "、".join(str(item) for item in purposes if str(item).strip()) + "。")
+    boundary = " ".join(str(value.get("boundary") or "").split())
+    if boundary:
+        lines.append("边界：" + boundary)
+    return "\n".join(lines)
 
 
 def _format_t36_synthesis_preview(value: Any) -> str:
@@ -2176,23 +3275,25 @@ def _format_t2_coverage_gate_field(key: str, value: Any) -> str | None:
 def _format_t2_search_log_summary(value: Any) -> str:
     path, text = _path_summary_text(value, default_path="literature/search_log.md")
     raw_count = _find_first_int(text, r"原始结果:\s*([0-9,]+)")
-    dedup_count = _find_first_int(text, r"去重后:\s*([0-9,]+)")
+    active_count = _find_first_int(text, r"当前阅读候选:\s*([0-9,]+)")
+    if active_count is None:
+        active_count = _find_first_int(text, r"去重后:\s*([0-9,]+)")
     retained = _find_first_int(text, r"\bretained=([0-9,]+)")
     backlog = _find_first_int(text, r"\bbacklog=([0-9,]+)")
     deep_target = _find_first_int(text, r"\bdeep_read_target=([0-9,]+)")
 
-    lines = [f"文件: {path}", "T2 已完成检索、去重、保留候选切分和 deep-read queue 构建。"]
+    lines = [f"文件: {path}", "本轮检索、信息核验和阅读安排已完成。"]
     metrics = []
     if raw_count is not None:
-        metrics.append(f"原始结果 {raw_count}")
-    if dedup_count is not None:
-        metrics.append(f"去重后 {dedup_count}")
+        metrics.append(f"检索记录 {raw_count}")
+    if active_count is not None:
+        metrics.append(f"当前阅读候选 {active_count}")
     if retained is not None:
-        metrics.append(f"保留候选 {retained}")
+        metrics.append(f"本轮保留 {retained}")
     if backlog is not None:
-        metrics.append(f"backlog {backlog}")
+        metrics.append(f"后续可回看 {backlog}")
     if deep_target is not None:
-        metrics.append(f"精读目标 {deep_target}")
+        metrics.append(f"优先精读 {deep_target}")
     if metrics:
         lines.append("- " + "；".join(metrics))
 
@@ -2200,9 +3301,9 @@ def _format_t2_search_log_summary(value: Any) -> str:
     bucket_bits = []
     for row in bucket_rows[:6]:
         if len(row) >= 4:
-            bucket_bits.append(f"{row[0]}: {row[3]} retained")
+            bucket_bits.append(f"{_display_t2_retrieval_topic(row[0])} {row[3]} 篇")
     if bucket_bits:
-        lines.append("- 覆盖桶: " + "；".join(bucket_bits))
+        lines.append("- 检索主题覆盖: " + "；".join(bucket_bits))
 
     bridge_rows = _extract_markdown_table_rows(text, "Bridge Domain Plan 覆盖")
     if bridge_rows:
@@ -2210,10 +3311,8 @@ def _format_t2_search_log_summary(value: Any) -> str:
         for row in bridge_rows:
             status = row[-1] if row else "unknown"
             status_counts[status] = status_counts.get(status, 0) + 1
-        lines.append(
-            "- Bridge plan: "
-            + "；".join(f"{status} {count}" for status, count in sorted(status_counts.items()))
-        )
+        status_labels = {"covered": "已覆盖", "missing": "待补充", "skipped_by_user": "已跳过"}
+        lines.append("- 跨领域检索计划: " + "；".join(f"{status_labels.get(status, status)} {count} 项" for status, count in sorted(status_counts.items())))
 
     for label in (
         "Active 切分前轻量补全",
@@ -2228,6 +3327,20 @@ def _format_t2_search_log_summary(value: Any) -> str:
 
     lines.append("详情保存在该文件；CLI 只展示摘要，不展开完整检索表。")
     return "\n".join(lines)
+
+
+def _display_t2_retrieval_topic(value: Any) -> str:
+    labels = {
+        "core": "核心主题",
+        "baseline": "基线方法",
+        "evaluation": "评估设计",
+        "adjacent_field": "相邻领域",
+        "theory_bridge": "理论桥接",
+        "snowball": "引用扩展",
+        "seed": "种子论文",
+    }
+    normalized = str(value or "").strip().casefold()
+    return labels.get(normalized, str(value or "未标注"))
 
 
 def _format_t2_diagnostic_line(label: str, line: str) -> str:

@@ -129,7 +129,7 @@ def main() -> int:
         output,
         ext / "implementation_change_contract.json",
         ext / "implementation_report.json",
-        ext / "workdir" / "implementation",
+        ext / "expr" / "implementation",
         ext / "result_pack.json",
     ]
     for path in write_targets:

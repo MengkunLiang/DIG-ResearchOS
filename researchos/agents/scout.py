@@ -36,6 +36,7 @@ from ..runtime.t2_config import (
     load_t2_finalize_config,
 )
 from ..runtime.literature_quality import include_chinese_literature, infer_manuscript_language
+from ..runtime.bridge_catalog import validate_active_bridge_catalogs
 from ..runtime.prompts import render_prompt
 from ..literature_identity import is_placeholder_text, paper_record_match_keys
 from ..tools.pdf_metadata import scan_seed_papers
@@ -234,7 +235,7 @@ class ScoutAgent(Agent):
             expansion_clause = (
                 "这是用户确认的补检轮次。先读取 literature/coverage_decision.json、"
                 "literature/search_log.md 和 literature/missing_areas.md，保留现有 papers_raw.jsonl；"
-                "只补当前缺失的 query bucket、时间窗口或来源，不要重放已覆盖的相似检索。"
+                "只补当前缺失的检索主题、时间窗口或来源，不要重放已覆盖的相似检索。"
             )
         return prepend_resume_prefix(
             ctx,
@@ -245,7 +246,7 @@ class ScoutAgent(Agent):
             "也请参考 seed_ideas.md 和 seed_external_resources.jsonl。"
             "如果 literature/bridge_domain_plan.json 存在，请把它作为跨领域召回计划使用；"
             "你负责完成高质量多源检索并让 raw 结果落盘；"
-            "raw 数量足够只是必要条件，你还要判断 query/source/bucket 覆盖是否足够；"
+            "raw 数量足够只是必要条件，你还要判断 query、来源和检索主题覆盖是否足够；"
             "覆盖足够后调用 finish_task，runtime 才会完成去重、metadata verification 和 deep_read_queue.jsonl，"
             "最终 papers_dedup 会按 config/system_config/agent_params.yaml 的 agents.scout.behavior.t2_finalize.active_pool_max 控制保留候选数。"
             f"{smoke_clause}{expansion_clause}"
@@ -361,6 +362,14 @@ class ScoutAgent(Agent):
             verified_records=verified_records,
             queue_records=queue_records,
         )
+        if not ok:
+            return False, err
+
+        # A configured bridge must leave behind a durable contextual catalog,
+        # but it is intentionally *not* a deep-reading quota.  The catalog
+        # keeps B1/B2/... usable by T3, T3.6 and T4 even when no bridge paper
+        # is promoted to the main reading queue.
+        ok, err = validate_active_bridge_catalogs(ctx.workspace_dir)
         if not ok:
             return False, err
 
@@ -639,37 +648,18 @@ def _validate_bridge_recall_and_screen_coverage(
     if not confirmed:
         return True, None
 
-    must_ids = {
-        str(item.get("bridge_id") or "").strip()
-        for item in confirmed
-        if str(item.get("priority") or "").strip() == "must_explore"
-    }
-    recalled_by_bridge = _bridge_hit_counts(raw_records)
-    screen_by_bridge = _bridge_screen_counts([*verified_records, *queue_records])
-    target_by_bridge = _bridge_target_counts(queue_records)
-
-    missing_recall = sorted(bridge_id for bridge_id in must_ids if recalled_by_bridge.get(bridge_id, 0) <= 0)
-    if missing_recall:
-        return False, (
-            "T2 bridge 召回层 FAIL：must_explore bridge 没有任何 raw 命中: "
-            + ", ".join(missing_recall)
-            + "。请为每个 must_explore bridge 使用带 bridge_id 的专属 query 重新检索。"
-        )
-
-    missing_screen = sorted(bridge_id for bridge_id in must_ids if screen_by_bridge.get(bridge_id, 0) <= 0)
-    if missing_screen:
-        return False, (
-            "T2 bridge screen 层 FAIL：must_explore bridge 有召回但没有任何 semantic_screen 允许进入 deep-read 的候选: "
-            + ", ".join(missing_screen)
-            + "。请让 Scout 基于标题/摘要/source_query 做语义筛选；不要只依赖 bridge_id。"
-        )
-
-    missing_target = sorted(bridge_id for bridge_id in must_ids if target_by_bridge.get(bridge_id, 0) <= 0)
-    if missing_target:
-        return False, (
-            "T2 bridge 队列层 FAIL：must_explore bridge 通过 screen 但没有进入非 triaged deep-read 目标: "
-            + ", ".join(missing_target)
-        )
+    # A bridge plan is a declared Cross-domain *information lane*, not a
+    # quota for deep reading or a promise that a provider will retrieve a
+    # matching paper.  Earlier code blocked T2 unless every ``must_explore``
+    # lane produced a raw hit, semantic-screen pass, and active deep-read
+    # target.  That conflated retrieval quality with the availability of
+    # structural inspiration and made an otherwise useful T2 run impossible.
+    #
+    # Preserve the factual diagnostics in the catalog/search ledger, but let
+    # the LLM use the bridge's name, rationale and planned queries as
+    # conjectural context when records are absent.  Direct empirical or
+    # mechanism claims still require a canonical reading note downstream.
+    del raw_records, verified_records, queue_records
     return True, None
 
 

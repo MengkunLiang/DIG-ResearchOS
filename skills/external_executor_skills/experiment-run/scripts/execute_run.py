@@ -114,6 +114,8 @@ def main() -> int:
         path.parent.mkdir(parents=True, exist_ok=True)
     environment_snapshot = snapshot()
     child_env, environment_pass = _environment(request)
+    child_env["RESEARCHOS_RAW_RESULTS_DIR"] = str(record_path.parent)
+    child_env["RESEARCHOS_OUTPUT_DIR"] = str(metric_path.parent)
     started_at = now_utc()
     started = time.monotonic()
     base_record: dict[str, Any] = {

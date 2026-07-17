@@ -61,12 +61,6 @@ interaction:
 # Claim Evidence Mapping
 
 Treat each submitted claim as unproven until an actual workspace artifact supports it.
-Use `grep_search` to locate candidate note sections, then `read_file` to inspect the
-specific section before assigning support. Record whether the evidence is direct,
-background-only, partial, abstract-only, experiment-backed, or absent. A citation key
-or paper title alone is not a sufficient anchor.
+Use `grep_search` to locate candidate note sections, then `read_file` to inspect the specific section before assigning support. Record whether the evidence is direct, background-only, partial, abstract-only, experiment-backed, or absent. A citation key or paper title alone is not a sufficient anchor.
 
-For every claim, write: source path(s), exact section/field, evidence level, what the
-source actually supports, allowed wording, disallowed overstatement, alternative
-explanation/boundary, and a concrete follow-up action. Never create citations or make
-an unsupported claim look supported merely because it fits the intended research story.
+For every claim, write: source path(s), exact section/field, evidence level, what the source actually supports, allowed wording, disallowed overstatement, alternative explanation/boundary, and a concrete follow-up action. Never create citations or make an unsupported claim look supported merely because it fits the intended research story.

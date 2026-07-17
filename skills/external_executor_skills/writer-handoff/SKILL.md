@@ -38,7 +38,7 @@ Write only:
 - `external_executor/writer_handoff_t7_index.json`;
 - `external_executor/writer_handoff_integrity.json`;
 - `external_executor/writer_handoff_report.json`;
-- versioned artifacts under `external_executor/workdir/writer_handoff/`;
+- versioned artifacts under `external_executor/writer_handoff/`;
 - `result_pack.json#writer_handoff` through the narrow apply script.
 
 Do not modify upstream evidence, runs, diagnoses, attributions, packages, figures, tables, claim boundaries, iteration decisions, executor status, manifest, budgets, drafts, or submission files. Return control to `research-execution` after applying the report.

@@ -23,6 +23,7 @@ from ..literature_citations import (
 )
 from ..literature_identity import canonical_note_id
 from ..literature_identity import is_paper_note_file
+from ..runtime.bridge_catalog import load_bridge_catalog_summaries
 from ..time_utils import recent_year_from
 from ..runtime.errors import ToolAccessDenied
 from .base import Tool, ToolResult
@@ -151,7 +152,7 @@ class BuildSynthesisWorkbenchParams(BaseModel):
 class BuildSynthesisWorkbenchTool(Tool):
     name = "build_synthesis_workbench"
     description = (
-        "Build staged T3.5 synthesis artifacts from deep_read_notes: structured evidence JSON, "
+        "Build staged T3.5 synthesis artifacts from paper notes plus bounded Cross-domain catalog context: structured evidence JSON, "
         "an outline, and optionally a baseline draft. Use before final LLM synthesis writing."
     )
     parameters_schema = BuildSynthesisWorkbenchParams
@@ -183,9 +184,38 @@ class BuildSynthesisWorkbenchTool(Tool):
         citation_map = citation_bundle.get("citation_map") if isinstance(citation_bundle, dict) else {}
         citation_lookup = citation_map_key_lookup(citation_map) if isinstance(citation_map, dict) else {}
 
-        note_paths = _iter_note_paths(notes_dir)
-        notes = [_parse_note(path, citation_map=citation_map, citation_lookup=citation_lookup) for path in note_paths[: params.max_notes]]
-        notes = [note for note in notes if note.get("paper_id")]
+        deep_note_paths = _iter_note_paths(notes_dir)
+        deep_notes = [
+            _parse_note(path, citation_map=citation_map, citation_lookup=citation_lookup)
+            for path in deep_note_paths[: params.max_notes]
+        ]
+        deep_notes = [note for note in deep_notes if note.get("paper_id")]
+
+        # Bridge paper notes are canonical FULL/PARTIAL evidence, not catalog
+        # metadata. T3.5 previously described them in its prompt but failed to
+        # put them into the workbench, leaving cross-domain mechanisms and
+        # comparison evidence unavailable to the synthesis writer. Keep this
+        # separate from ``cross_domain_catalogs`` below: catalogs are context
+        # and reading priorities, while these note cards can support claims at
+        # their recorded evidence level.
+        bridge_dir = notes_dir.parent / "bridge_notes"
+        bridge_notes: list[dict[str, Any]] = []
+        if bridge_dir.exists() and bridge_dir.is_dir():
+            bridge_notes = [
+                _parse_note(path, citation_map=citation_map, citation_lookup=citation_lookup)
+                for path in sorted(
+                    (path for path in bridge_dir.glob("**/*.md") if is_paper_note_file(path)),
+                    key=lambda path: path.as_posix(),
+                )
+            ]
+            bridge_notes = [note for note in bridge_notes if note.get("paper_id")]
+        # A deep note wins when an upgraded copy of the same paper exists in
+        # both roots; otherwise retain the Bridge note as a first-class
+        # full/partial source.
+        strong_by_paper_id: dict[str, dict[str, Any]] = {}
+        for note in [*deep_notes, *bridge_notes]:
+            strong_by_paper_id.setdefault(str(note.get("paper_id") or ""), note)
+        notes = [note for key, note in strong_by_paper_id.items() if key]
 
         # Read shallow notes as a distinct evidence layer. They expand corpus
         # coverage and comparison context; they do not become full-text proof.
@@ -205,6 +235,11 @@ class BuildSynthesisWorkbenchTool(Tool):
         missing_areas = missing_path.read_text(encoding="utf-8", errors="replace") if missing_path.exists() else ""
         metadata_triage = metadata_triage_path.read_text(encoding="utf-8", errors="replace") if metadata_triage_path.exists() else ""
         domain_map = _read_json(domain_map_path) if domain_map_path.exists() else {}
+        bridge_catalogs = load_bridge_catalog_summaries(
+            self.policy.workspace_dir,
+            records_per_bridge=3,
+            abstract_excerpt_chars=520,
+        )
         insights = params.llm_insights
         families = _build_method_families(notes, shallow_read_notes, llm_insights=insights)
         all_notes = notes + shallow_read_notes
@@ -216,6 +251,8 @@ class BuildSynthesisWorkbenchTool(Tool):
         citation_coverage_plan = _build_citation_coverage_plan(all_notes)
         workbench = {
             "note_count": len(notes),
+            "deep_read_note_count": len(deep_notes),
+            "bridge_note_count": len(bridge_notes),
             "abstract_note_count": len(shallow_read_notes),
             "total_note_count": len(all_notes),
             "shallow_reading_summary": {
@@ -246,7 +283,17 @@ class BuildSynthesisWorkbenchTool(Tool):
             "citation_graph_context": _build_citation_graph_context(domain_map),
             "domain_map_bucket_summary": _build_domain_map_bucket_summary(domain_map),
             "adjacent_transfers": _build_adjacent_transfers(domain_map, all_notes),
-            "bridge_transfer_drafts": _build_bridge_transfer_drafts(domain_map, all_notes),
+            "bridge_transfer_drafts": _build_bridge_transfer_drafts(domain_map, all_notes, bridge_catalogs),
+            "cross_domain_catalog_context": {
+                "semantics": "cross_domain_catalog_context_not_direct_claim_evidence",
+                "bridge_count": len(bridge_catalogs),
+                "bridges": bridge_catalogs,
+                "allowed_use": (
+                    "Use the catalog for historical framing, adjacent concepts, taxonomy boundaries, comparison dimensions, "
+                    "transfer hypotheses, and reading priority. A linked canonical note is required for direct mechanism, "
+                    "result, implementation, or strong comparative claims."
+                ),
+            },
             "trend_candidates": _build_trends(all_notes, llm_insights=insights),
             "research_question_candidates": _build_questions(all_notes, missing_areas, llm_insights=insights),
             "mechanism_claim_clusters": _build_mechanism_claim_clusters(all_notes),
@@ -255,6 +302,7 @@ class BuildSynthesisWorkbenchTool(Tool):
             # historical key. New prompts use shallow_reading_context.
             "weak_evidence_and_resource_upgrade": shallow_context,
             "notes": notes,
+            "bridge_notes": bridge_notes,
             "shallow_read_notes": shallow_read_notes,
             "all_note_cards": all_notes,
         }
@@ -283,7 +331,10 @@ class BuildSynthesisWorkbenchTool(Tool):
 
         data = {
             "note_count": len(notes),
+            "deep_read_note_count": len(deep_notes),
+            "bridge_note_count": len(bridge_notes),
             "abstract_note_count": len(shallow_read_notes),
+            "cross_domain_bridge_count": len(bridge_catalogs),
             "citation_coverage_target": citation_coverage_plan.get("recommended_min_unique_refs"),
             "citable_ref_count": citation_coverage_plan.get("coverage_ref_count"),
             "family_count": len(families),
@@ -299,7 +350,8 @@ class BuildSynthesisWorkbenchTool(Tool):
             ok=True,
             content=(
                 "Built staged synthesis workbench from "
-                f"{len(notes)} deep-reading notes and {len(shallow_read_notes)} shallow-reading notes into {data['outputs']['workbench']}, "
+                f"{len(deep_notes)} deep-reading notes, {len(bridge_notes)} Bridge paper notes, "
+                f"{len(shallow_read_notes)} shallow-reading notes, and {len(bridge_catalogs)} Cross-domain catalog tracks into {data['outputs']['workbench']}, "
                 f"{data['outputs']['outline']}, {data['outputs']['draft']}. "
                 f"Main-claim citation target: {data['citation_coverage_target']} deep-reading refs. "
                 "Final synthesis remains the Reader LLM's responsibility."
@@ -961,14 +1013,11 @@ def _build_adjacent_transfers(
 def _build_bridge_transfer_drafts(
     domain_map: dict[str, Any],
     all_notes: list[dict[str, Any]],
+    bridge_catalogs: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Expose theory_bridge transfer seeds for the Reader/Ideation LLM."""
 
-    if not isinstance(domain_map, dict):
-        return []
-    bridge_nodes = [item for item in domain_map.get("theory_bridge", []) if isinstance(item, dict)]
-    if not bridge_nodes:
-        return []
+    bridge_nodes = [item for item in domain_map.get("theory_bridge", []) if isinstance(item, dict)] if isinstance(domain_map, dict) else []
 
     note_by_id = {note.get("paper_id"): note for note in all_notes if note.get("paper_id")}
     title_to_note = {_normalize_title_key(note.get("title", "")): note for note in all_notes if note.get("title")}
@@ -1009,6 +1058,43 @@ def _build_bridge_transfer_drafts(
                 "semantics": "bridge_transfer_seed_for_llm_review_not_claim",
             }
         )
+    known_bridge_keys = {str(item.get("bridge_id") or "").strip().casefold() for item in drafts}
+    for catalog in bridge_catalogs or []:
+        if not isinstance(catalog, dict):
+            continue
+        bridge_id = str(catalog.get("bridge_id") or "").strip()
+        bridge_key = bridge_id.casefold()
+        if not bridge_id or bridge_key in known_bridge_keys:
+            continue
+        samples = catalog.get("sample_records") if isinstance(catalog.get("sample_records"), list) else []
+        sample_ids = [
+            str(item.get("paper_id") or "").strip()
+            for item in samples
+            if isinstance(item, dict) and str(item.get("paper_id") or "").strip()
+        ]
+        has_abstract = bool(catalog.get("abstract_record_count"))
+        drafts.append(
+            {
+                "bridge_id": bridge_id,
+                "bridge_name": str(catalog.get("name") or bridge_id),
+                "source_papers": sample_ids,
+                "relation_to_project": str(catalog.get("rationale") or ""),
+                "transferable_mechanism": (
+                    "LLM_REVIEW_REQUIRED: infer a candidate transfer only from the retrieved bridge context; do not turn a catalog lead into an established mechanism."
+                ),
+                "how_it_maps_to_project": str(catalog.get("rationale") or "")
+                or "LLM_REVIEW_REQUIRED: make the structural mapping explicit before using this bridge.",
+                "why_potentially_novel": "LLM_REVIEW_REQUIRED: Cross-domain origin alone is not novelty; compare the transfer against target-domain design rationales.",
+                "risk": "LLM_REVIEW_REQUIRED: test construct mismatch, measurement mismatch, and transfer failure before retaining the idea.",
+                "evidence_level": "abstract_catalog" if has_abstract else "metadata_catalog",
+                "allowed_use": "catalog_context_for_inspiration_taxonomy_boundary_and_reading_priority_not_claim",
+                "catalog_context_path": str(catalog.get("context_path") or ""),
+                "catalog_path": str(catalog.get("catalog_path") or ""),
+                "catalog_sample_records": samples[:3],
+                "semantics": "bridge_catalog_transfer_seed_for_llm_review_not_claim",
+            }
+        )
+        known_bridge_keys.add(bridge_key)
     return drafts
 
 
@@ -1386,6 +1472,22 @@ def _render_outline(workbench: dict[str, Any], missing_areas: str) -> str:
         )
         for item in (shallow_context.get("abstract_only_examples") or [])[:5]:
             lines.append(f"- {_ref(str(item.get('paper_id') or ''), citation_map)} {item.get('title')} — {item.get('bridge_point')}")
+    bridge_catalog_context = workbench.get("cross_domain_catalog_context") if isinstance(workbench.get("cross_domain_catalog_context"), dict) else {}
+    bridge_catalogs = bridge_catalog_context.get("bridges") if isinstance(bridge_catalog_context.get("bridges"), list) else []
+    if bridge_catalogs:
+        lines.extend(["", "## Cross-domain Catalog Context"])
+        lines.append(
+            "- These are retrieved metadata/abstract tracks, not paper-note citations. Use them to frame adjacent history, taxonomy boundaries, transfer questions, and reading priorities; a linked canonical note is required for direct scientific claims."
+        )
+        for item in bridge_catalogs[:8]:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"- {item.get('bridge_id')}: {item.get('name') or ''} | records={item.get('record_count', 0)} | status={item.get('status', '')}"
+            )
+            rationale = str(item.get("rationale") or "").strip()
+            if rationale:
+                lines.append(f"  - transfer question: {rationale}")
     lines.extend(["", "## Research Questions"])
     for item in workbench["research_question_candidates"]:
         lines.append(f"- {item['id']}: {item['question']}")

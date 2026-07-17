@@ -35,7 +35,7 @@ Use this structure for `external_executor/context_alignment_report.json` and `re
 ```json
 {
   "path": "workspace-relative/path",
-  "role": "control | compiled_handoff | hypothesis | protocol | novelty | literature | risk | optional_detail",
+  "role": "control | compiled_handoff | hypothesis | protocol | novelty | pre_novelty_context | literature | risk | optional_detail",
   "sha256": "",
   "status": "checked | missing | unreadable | not_needed",
   "fields_used": []

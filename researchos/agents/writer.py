@@ -76,6 +76,13 @@ class WriterAgent(Agent):
                         "drafts/",
                         "literature/",
                         "experiments/",
+                        # T8 only needs the controlled evidence interface from
+                        # the external stage.  Do not make an arbitrary
+                        # executor working directory readable by default.
+                        "external_executor/executor_research_report.md",
+                        "external_executor/raw_results/",
+                        "external_executor/expr/",
+                        "external_executor/configs/",
                         "ideation/",
                         "novelty/",
                         "evaluation/",
@@ -127,9 +134,9 @@ class WriterAgent(Agent):
         project = load_project(ctx)
         ws = ctx.workspace_dir
 
-        # 读取实验结果
-        results_summary = read_text_file(
-            ws / "experiments" / "results_summary.json", default="{}"
+        # 读取实验结果；T5->T8 的核心接口是 external_executor/executor_research_report.md。
+        executor_research_report = read_text_file(
+            ws / "external_executor" / "executor_research_report.md", default=""
         )
         synthesis = read_text_file(ws / "literature" / "synthesis.md", default="")
         related_work = read_text_file(ws / "literature" / "related_work.bib", default="")
@@ -187,7 +194,7 @@ class WriterAgent(Agent):
             self.spec.prompt_template,
             ctx,
             project=project,
-            results_summary=results_summary,
+            executor_research_report=executor_research_report,
             synthesis_preview=synthesis[:6000],
             related_work_preview=related_work[:4000],
             hypotheses_preview=hypotheses[:3000],
@@ -204,6 +211,7 @@ class WriterAgent(Agent):
             manuscript_audit_preview=manuscript_audit[:3000],
             craft_audit_preview=craft_audit[:3000],
             paper_claim_audit_preview=paper_claim_audit[:3000],
+            executor_research_report_preview=executor_research_report[:6000],
             experiment_evidence_pack_preview=experiment_evidence_pack[:4000],
             result_to_claim_preview=result_to_claim[:4000],
             paper_state_preview=paper_state[:5000],
@@ -239,12 +247,16 @@ class WriterAgent(Agent):
                 ctx,
                 (
                 "请执行 T8 Writer Phase 0: 构建写作资源索引。\n\n"
+                "T8 的前序核心输入是 external_executor/executor_research_report.md；"
+                "其他 external_executor/ 下文件可作为追溯材料按需读取。"
                 "调用 build_manuscript_resource_index 生成 drafts/manuscript_resource_index.json，"
                 "调用 plan_manuscript_sections 生成 drafts/section_plan.json，"
                 "调用 plan_manuscript_evidence 生成 drafts/evidence_plan.json 和 drafts/figure_table_plan.json，"
                 "再调用 build_manuscript_registries 生成 drafts/cdr_claim_ledger.json、"
                 "drafts/claim_ledger.json 和 drafts/figure_registry.json，最后调用 build_alignment_matrix "
-                "生成 drafts/alignment_matrix.json。"
+                "生成 drafts/alignment_matrix.json。完成这些 T8-RESOURCE 资源索引产物后必须立即调用 "
+                "finish_task；不要询问用户是否继续，不要调用 ask_human，不要调用 "
+                "initialize_manuscript_state，也不要开始写 outline、paper_state 或正文。"
                 ),
             )
         if phase == "style_gate":
@@ -254,7 +266,7 @@ class WriterAgent(Agent):
                 "请执行 T8 Writer Phase -1: 写作风格确认。\n\n"
                 "根据 target_venue 和系统建议，调用 ask_human 让用户确认写作风格与 LaTeX 模板。"
                 "写作风格为 is / ccf_a / both；模板族为 basic_zh / basic_en / ccf / utd / other。"
-                "CCF 可选 template_id=neurips/icml/iclr/kdd，UTD 默认 template_id=informs，也允许用户指定其它模板。"
+                "选择 CCF / CS 模板时，先进入会议模板清单；清单会显示所有本地已检测到的模板，并区分官方 LaTeX 入口和 class/style 模板包。UTD 默认 template_id=informs。"
                 "确认后需写入 venue_profile；它只描述内部叙事和篇幅目标，不是投稿官方页数规则。"
                 "如果当前运行环境不支持人工输入，runtime 会暂停等待 resume；不要写入伪造默认选择。"
                 "若 drafts/writing_style.json 已存在且 venue_style 与模板字段合法，可直接 finish_task。"
@@ -277,7 +289,8 @@ class WriterAgent(Agent):
                 (
                 "请执行 T8 Writer Phase 1: 生成论文大纲。\n\n"
                 "基于 drafts/manuscript_resource_index.json、drafts/section_plan.json、"
-                "drafts/alignment_matrix.json、实验结果和文献综述，生成 drafts/outline.md。"
+                "drafts/alignment_matrix.json、external_executor/executor_research_report.md "
+                "和文献综述，生成 drafts/outline.md。"
                 "大纲应包含：标题候选、Abstract要点、Introduction结构、"
                 "Related Work分类、Method结构、Experiments结构、Conclusion要点。"
                 "同时生成 drafts/writing_storyline.md，将问题、rationale/根本原因、核心洞见、"
@@ -324,7 +337,8 @@ class WriterAgent(Agent):
                 "如果 drafts/experiment_evidence_pack.json 存在，还必须调用 audit_paper_claims 生成 "
                 "drafts/paper_claim_audit.md/json。"
                 "**重要**: 所有实验数字必须来自 paper_state.shared_facts.result_metrics、"
-                "drafts/experiment_evidence_pack.json 或 experiments/results_summary.json，"
+                "external_executor/executor_research_report.md、drafts/experiment_evidence_pack.json "
+                "或被 resource index 收录的 external_executor 原始执行材料，"
                 "所有引用必须存在于 literature/related_work.bib。"
                 ),
             )
@@ -610,6 +624,17 @@ def _validate_resource_index_artifacts(ws: Path) -> tuple[bool, str | None]:
 
     if not isinstance(index.get("artifacts"), list):
         return False, "manuscript_resource_index.json 缺少 artifacts 列表"
+    if index.get("literature_manifest_path") != "literature/literature_manifest.json":
+        return False, "manuscript_resource_index.json 缺少 literature_manifest_path"
+    manifest_counts = index.get("literature_manifest_counts")
+    if not isinstance(manifest_counts, dict):
+        return False, "manuscript_resource_index.json 缺少 literature_manifest_counts"
+    try:
+        note_count = int(manifest_counts.get("note_cards") or 0)
+    except (TypeError, ValueError):
+        note_count = 0
+    if note_count <= 0:
+        return False, "manuscript_resource_index.json 的 literature_manifest_counts.note_cards 必须大于 0"
     sections = plan.get("sections")
     if not isinstance(sections, list):
         return False, "section_plan.json 缺少 sections 列表"

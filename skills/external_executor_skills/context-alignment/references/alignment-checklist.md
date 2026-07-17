@@ -5,7 +5,8 @@ Use this checklist before assigning the final gate.
 ## Preflight
 
 - Required control files exist and parse.
-- Handoff, expected-output, and result major versions are supported.
+- Handoff and expected-output major versions are supported by `preflight_context.py`.
+- `result_pack.json` exists before `apply_alignment_report.py`; checkpoint/final result-pack schema validation is handled by the root `research-execution` validators, not by context preflight.
 - Allowed paths contain usable workspace-local entries.
 - `context_reboost`, `method_intent`, acquisition policy, minimum loop, and claim boundary structures are present.
 - Required baseline names are internally consistent with the baseline matrix.

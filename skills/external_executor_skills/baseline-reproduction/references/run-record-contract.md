@@ -17,6 +17,8 @@ Every substantive baseline execution produces one immutable run record.
   "argv": [],
   "command_display": "",
   "working_directory": "",
+  "deployment_dir": "",
+  "result_dir": "",
   "exit_code": null,
   "termination_signal": null,
   "timeout_seconds": 0,
@@ -44,6 +46,7 @@ Every substantive baseline execution produces one immutable run record.
 
 - immutable source identity or package checksum;
 - exact command vector and working directory;
+- deployment directory under `external_executor/expr/` and result directory under `external_executor/raw_results/`;
 - config file hashes and parameter snapshot;
 - dataset identity, version, split, preprocessing, and checksum where available;
 - seed/repeat policy and actual values;

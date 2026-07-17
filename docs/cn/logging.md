@@ -43,7 +43,8 @@ python -m researchos.cli run-task T4 --workspace ./workspace/project-a --no-colo
 
 ```bash
 python -m researchos.cli status --workspace ./workspace/project-a
-python -m researchos.cli validate --task T3.6-SEC-INTRO --workspace ./workspace/project-a
+python -m researchos.cli validate --task T3.6-SEC-INTRO --scope outputs --workspace ./workspace/project-a
+python -m researchos.cli validate --task T3.6-VISUALS --scope inputs --workspace ./workspace/project-a
 python -m researchos.cli trace <run-id> --workspace ./workspace/project-a
 tail -n 120 ./workspace/project-a/_runtime/logs/researchos.log
 ```
@@ -58,7 +59,7 @@ tail -n 120 ./workspace/project-a/_runtime/logs/researchos.log
 | `DEGRADED` | 某个非阻塞源/工具失败，同时替代方案继续运行 | 阅读阶段总结和源健康状况表；不要假设覆盖率为零。 |
 | `unsupported` | 证据无法支持所请求的结论 | 添加指定的证据，削弱声明，或选择其他方向。 |
 | `waiting_evidence`（Skill 阶段） | 集成工作流在预检后存在已知的证据缺口 | 授权限定范围的检索，上传指定的源，或选择更窄/措辞更弱的输出。 |
-| 验证失败 | 产物存在但违反了其声明的契约 | 运行 `validate --task`，修复指定的文件/状态，然后恢复。 |
+| 验证失败 | 前置契约尚未就绪，或产物存在但违反了其声明的契约 | 用 `validate --task <task> --scope inputs` 检查前置材料，用 `--scope outputs` 检查已生成产物；修复指定的文件/状态后再恢复。 |
 
 ## T3.6 示例：章节验证
 

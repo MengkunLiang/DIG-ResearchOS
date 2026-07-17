@@ -49,7 +49,7 @@ python -m researchos.cli configure-llm \
 
 ## 缺少配置时的交互
 
-`run`、`resume`、`run-task` 与 `run-skill` 在创建 Agent 前发现连接未配置时，会直接停在 Rich 配置卡。若真实 `config/model_settings.yaml` 已存在且字段完整，系统会跳过该向导，不会要求重复填写。文件缺失、模板文件未复制，或 `provider`、`api_key`、`model` 等必要字段缺失时，才会展示以下选择：
+`run`、`resume`、`run-task` 与 `run-skill` 在创建 Agent 前发现连接未配置时，会直接停在 Rich 配置卡。若真实 `config/model_settings.yaml` 已存在且字段完整，系统会跳过该向导，不会要求重复填写。若只缺少一个字段，例如已有 `provider`、API URL 和 API key 但未填写 `model`，选择“现在配置”后只会询问 `model`；已有 API key 的环境变量引用会原样保留，不会重新显示、输入或写入配置文件。若主动切换 provider，系统会要求补充该 provider 的 API key 和 model，不会沿用旧 provider 的凭据或 model。文件缺失、模板文件未复制，或 `provider`、`api_key`、`model` 等必要字段缺失时，才会展示以下选择：
 
 1. 现在配置：在终端输入字段并立即检查连接。
 2. 自己编辑 `config/model_settings.yaml`：修改后让 ResearchOS 重新读取并检查。

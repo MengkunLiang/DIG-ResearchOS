@@ -13,7 +13,7 @@
 
 ## 1. Purpose and ownership
 
-Research reboost owns the transformation from Pre-T5 research artifacts into `external_executor/handoff_pack.json`. It does not own project-specific skill compilation, resource acquisition, code implementation, experiment execution, result interpretation, realized-method generation, or writer prose.
+Research reboost owns the transformation from Pre-T5 research artifacts into `external_executor/handoff_pack.json`, with validation and diagnostic receipts under `external_executor/report/`. It does not own project-specific skill compilation, resource acquisition, `external_executor/expr/` population, code implementation, experiment execution, result interpretation, realized-method generation, or writer prose.
 
 Reboost and Method Intent Drafting are one module with one output. The method-intent pass consumes the already reconciled context and cannot independently override it.
 
@@ -37,6 +37,8 @@ Required files:
 Optional backtracking sources:
 
 - `literature/deep_read_notes/`
+- `literature/bridge_notes/`
+- `literature/cross_domain_catalogs/`
 - `literature/shallow_read_notes/`
 - `resources/`
 - `user_seeds/seed_external_resources.jsonl`
@@ -45,7 +47,9 @@ Optional backtracking sources:
 - `ideation/selected/t45_search_targets.json`
 
 Read optional sources only to close a named evidence gap. Abstract-only notes may motivate retrieval or mark uncertainty, but cannot establish implementation details or strong mechanism claims.
+Cross-domain catalogs are retrieval context rather than paper-reading evidence: they may guide baseline discovery, mechanism contrasts, external-validity risks, and follow-up reading, but cannot establish a mechanism, baseline equivalence, implementation detail, or experimental result.
 Pre-Novelty selection files preserve Candidate lineage and the scope of the T4.5 review. They are trace context only: they never replace the post-T4.5 `hypotheses.md`, `exp_plan.yaml`, or novelty audit as authority for an executable handoff.
+Record these two files as `pre_novelty_context` entries in `source_manifest`, with `used=false` unless a named lineage or search-scope question required reading them.
 
 ## 3. Source precedence
 

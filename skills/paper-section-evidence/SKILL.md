@@ -61,19 +61,9 @@ interaction:
 # Paper Section Evidence
 
 Read the request and register the uploaded PDF through `process_seed_paper` with
-`source="pdf_path"` and the declared input path. Translate the request into a small
-set of target sections, then call `extract_paper_sections` before reading broader text.
-Use `extract_pdf_text` only to resolve a concrete missing fact, and record its
-page-coverage or truncation status.
+`source="pdf_path"` and the declared input path. Translate the request into a small set of target sections, then call `extract_paper_sections` before reading broader text.
+Use `extract_pdf_text` only to resolve a concrete missing fact, and record its page-coverage or truncation status.
 
-Answer only from text actually extracted from the PDF. For every substantive answer,
-retain the section heading and page or locator returned by the tool. Separate direct
-source facts, cautious interpretation, and unsupported requests. A method description
-does not prove a reported result; an abstract-only extraction does not justify a
-mechanism or causal claim. Do not manufacture quotations, numeric values, a DOI, or a
-BibTeX entry.
+Answer only from text actually extracted from the PDF. For every substantive answer, retain the section heading and page or locator returned by the tool. Separate direct source facts, cautious interpretation, and unsupported requests. A method description does not prove a reported result; an abstract-only extraction does not justify a mechanism or causal claim. Do not manufacture quotations, numeric values, a DOI, or a BibTeX entry.
 
-Write both declared outputs even when the requested evidence is unavailable. In that
-case name the exact unreadable or missing section and formulate the smallest useful
-human follow-up. This Skill is intentionally narrower than `pdf-note-card`: it must
-not claim to create a complete T3 note card.
+Write both declared outputs even when the requested evidence is unavailable. In that case name the exact unreadable or missing section and formulate the smallest useful human follow-up. This Skill is intentionally narrower than `pdf-note-card`: it must not claim to create a complete T3 note card.

@@ -12,7 +12,7 @@
   "iteration_id": "",
   "input_fingerprint": "",
   "contract_ref": "external_executor/implementation_change_contract.json",
-  "implementation_root": "external_executor/workdir/implementation/...",
+  "implementation_root": "external_executor/expr/implementation/...",
   "base_source": {},
   "approved_changes": {"status": "complete|partial|blocked|stale", "items": []},
   "implemented_changes": {"status": "complete|partial|blocked|stale", "items": []},

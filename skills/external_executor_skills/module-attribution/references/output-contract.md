@@ -7,7 +7,7 @@ external_executor/module_attribution_preflight.json
 external_executor/module_attribution_snapshot.json
 external_executor/module_attribution_facts.json
 external_executor/module_attribution_report.json
-external_executor/workdir/module_attribution/**
+external_executor/module_attribution/**
 ```
 
 The root owns manifest registration, executor status, scope gates and iteration decisions.

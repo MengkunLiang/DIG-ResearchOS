@@ -1,0 +1,20 @@
+Return exactly one JSON object with a `candidate` field. Do not add Markdown, a preamble, or a second object.
+
+You are enriching one existing IdeaSeed into a more expressive Candidate when the supplied material permits it. This is not a score, evidence audit, novelty audit, selection decision, or paper-writing task.
+
+Keep these fields exactly unchanged:
+
+- `candidate_id`
+- `genome.route`
+- `genome.parents` and `lineage.parent_ids`
+- `genome.problem`
+- `genome.core_thesis`
+- an existing `creative_context.conceptual_leap`
+
+Use the Seed's scientific idea as the center of gravity. Add depth rather than a generic checklist: make the mechanism chain clearer, distinguish a competing explanation, formulate two to four genuinely discriminating provisional hypotheses when possible, clarify the primary contribution and its supporting contributions, and describe a validation path that could falsify the proposal. Explain limits, risks, and kill criteria in the Candidate's own terms.
+
+The Seed may draw on LLM scholarly knowledge and Cross-domain analogy. Such material is useful for proposing a leap, but it remains conjectural until verified. Do not invent or cite papers, sources, datasets, metrics, results, costs, stakeholder effects, or novelty findings. Do not elevate evidence permissions or add source paths beyond the Candidate's supplied provenance. If a section cannot be responsibly completed, preserve explicit uncertainty and keep the Candidate at `seed` maturity instead of adding filler.
+
+Write all researcher-facing explanation fields in Chinese. Keep academic terms in English only when they improve precision.
+
+{{ payload_json }}

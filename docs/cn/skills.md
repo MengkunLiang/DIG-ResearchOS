@@ -4,6 +4,8 @@
 
 技能是存储在 `skills/<name>/SKILL.md` 中的可发现工作流。它们可以是原子性的，也可以是集成式的：集成式技能声明了持久的研究阶段、证据边界和人类决策点，同时复用与流水线智能体相同的工作区策略、ToolRegistry、追踪、事件、输出验证和恢复模型。受保护的 `skills/external_executor_skills/` 目录具有独立的所有权，不属于公共技能重写路径。
 
+仓库中的每个 Skill 都有执行范围约定。已有独立 Skill 保留兼容的 `standalone` 默认值，所有非独立的仓库 Skill 都会显式声明范围和归属。`list-skills`、`browse-skills` 和 `run-skill` 只展示并启动具有独立会话约定的 Skill。由流水线负责的 Skill 仍可由其所属阶段加载，但直接调用会在创建工作区和连接模型之前停止，并说明实际归属。具体而言，`research-reboost` 属于 `T5-REBOOST-GATE`，`project-skill-specialization` 属于 `T5-SPECIALIZE-EXECUTOR-SKILLS`，历史 `method-builder` 仅供项目专属 external-executor Skill Suite 内部使用。这样不会把依赖流水线 Artifact 的契约错误地当成空工作区中的自由提示词。
+
 ## 先发现再运行
 
 ```bash
@@ -124,7 +126,15 @@ python -m researchos.cli run-skill pdf-note-card \
 
 ## T4 与下游 Skill
 
-T4 在公开状态路径 `T4 -> T4-GATE1 -> T4 -> T4.5` 背后使用职责分离的 Generator、Scorer 和 Evolver。Generator 形成 Evidence-Routed Candidate；Scorer 独立评估已脱敏的 Candidate，绝不生成 Idea；Evolver 只能创建受 plan 约束的 Mutation Child 或通过 Compatibility Check 的 Crossover Child。若 Workspace 中没有可辩护的结构性迁移关系，Bridge Route 可以返回带 escape-hatch record 的 `unsupported`。
+T4 使用职责分离的 Generator、Scorer 和 Evolver，Gate1 后的状态路径取决于研究者确认的操作。选择已经准备好的 Candidate 走 `T4 -> T4-GATE1 -> T4.5`；演化、定向优化、重跑 Route 或确认后的组合走 `T4 -> T4-GATE1 -> T4`，完成新版本后再次回到 Gate1；查看和比较则是留在 Gate1 的只读操作。Generator 形成证据校准但可创造性发散的 Candidate；Scorer 独立评估已脱敏的 Candidate，绝不生成 Idea；Evolver 只能创建受 plan 约束的 Mutation Child 或通过 Compatibility Check 的 Crossover Child。证据不是封闭的 Idea 空间：正常 Generator Route 可以使用通用学术知识、反事实推演和结构性跨域类比，只要相关内容始终明确为 conjectural、需要验证。若 Workspace 中没有可辩护的结构性迁移关系，Bridge Route 可以返回带 escape-hatch record 的 `unsupported`。
+
+当研究者需要安全地进入原生 T4 时，使用 `t4-evolution`。它会检查当前的 Evidence Index、pre-run confirmation、Population、Portfolio 和 resume 状态，再用研究者能理解的语言说明下一步是新建 P0、恢复未完成的 Route 或评分批次、等待 Gate1，还是在确认选择后进入 T4.5。该 Skill 只写可读的启动说明，绝不编辑原生 T4 产物。新进入 T4 使用 `python -m researchos.cli run --workspace <workspace> --from-task T4`；中断或等待中的运行使用 `python -m researchos.cli resume --workspace <workspace>`。同一 workspace 不能并发运行多个命令。
+
+T4 把语义格式恢复与科研安全分开处理，并统一记录 `valid`、`repairable`、`degraded`、`blocked` 四种结果。`blocked` 仅保护 Hard Invariant：来源/证据权限越界、虚假或不可追溯引用、Candidate/Parent/Plan 谱系冲突、ID 覆盖、fingerprint 或工作区状态损坏，以及 Legacy 覆盖风险。Markdown fence、YAML、字段别名、对象/列表外层差异、非核心字段缺失、一个 Route 或评分调用失败、数量不足和 Crossover 不兼容不会直接终止整轮；它们依次经过 tolerant extraction、确定性归一、schema-only repair、定向语义 repair 和重新验证，仍不完整时以 `degraded` 连续运行并留下诊断。
+
+Generator 可以先提交最小 `IdeaSeed`，而非一次生成最终论文方案。Seed 只需问题、核心命题、候选机制、贡献草图、一条可证伪预测、主要不确定性和 Route 来源；详细展示、多条假设、完整 Evidence Map、实验与影响说明会在 Scoring、Mutation、Reading Upgrade 或 Final Card 阶段补全。`CreativeContext` 会保留概念跃迁、竞争解释、反直觉预测和研究纲领潜力，避免初始结构把非增量 Idea 压扁。LLM 参数知识只能以 `conjectural` / `verification_required=true` 提出待验证 Idea，不能充当 Citation、已证实机制、可用数据集、指标或实验结果。Scoring 将当前 `overall_readiness` 与 `scientific_upside` 分开；LLM 推荐的 Wildcard 只是保留给人类比较的选项，不是选择或证据认证的捷径。Scorer 在有限重试后仍失败时将 Candidate 标为 `unscored` 并保留，Mutation 失败保留 Parent，带清晰理由的 `no_improvement` defer 会保留 Parent 而不制造措辞型 Child，Crossover `incompatible` 是正常审查结果，Portfolio 可显示不足 3 个方向。验证器保护完整性；修复循环保护连续性；Evolution 处理不完整 Idea；Human Gate 保留最终决定权。
+
+Publication Orientation 现在明确区分内部 `utd_is` 与 `ccf_cs` 两种 lens。`utd_is` 强调 phenomenon、theoretical tension、explanatory mechanism、identification、boundary conditions 与 organizational implications；`ccf_cs` 强调精确的 computational problem、technical mechanism、evaluation discipline、robustness、efficiency 与 reproducibility。它们是可配置的研究评价 lens，并非对任一 venue 当前官方审稿规则的声明。为兼容已有 workspace，旧的 `management_is` 和 `technical_cs` 仍然可以读取。
 
 在 Gate1 选择完整 Candidate 后，系统会生成 Pre-Novelty brief 与 T4.5 search scope。`hypothesis-compiler`、`paper-outline` 及其它非执行型 Skill 可以用它们追溯已选方向或准备明确标为 provisional 的材料，但不能将其视为已验证的新颖性或可执行 protocol。组件级请求会先通过 Compatibility Check、Gene Donor Map、Independent Scoring 与第二次确认，形成 Human-composed Candidate；来源 Candidate 会完整保留。T5 与所有 executor Skill 在计划或运行实验之前，必须读取 T4.5 后的正式 hypotheses、experiment plan 和已接受的 novelty audit。
 
@@ -139,6 +149,7 @@ T4 在公开状态路径 `T4 -> T4-GATE1 -> T4 -> T4.5` 背后使用职责分离
 | `literature-review-studio` | 综述范围 -> 查询/检索 -> 阅读覆盖率 -> 综合/分类 -> 综述交接 | 语料库清单、查询组合、矩阵、综合、就绪报告 | 需要检索授权，之后询问是准备综述、补充阅读，还是停在领域综合阶段。 |
 | `survey-evidence-package` | 意图 -> 充分性 -> 补充决策 -> 交接 | 语料库充分性、分类候选、故事情节、证据包 | 不撰写综述稿件。它首先让综述证据决策变得可见。 |
 | `cross-domain-idea-studio` | 目标约定 -> 桥接检索 -> 迁移审计 -> 候选评审 | 桥接计划、迁移卡片、风险登记册、候选池 | 桥接类比并非证据。候选方案在假设编译前需要人类选择。 |
+| `t4-evolution` | 状态检查 -> 研究者意图确认 -> 原生 T4 交接 | 启动/恢复说明 | 解释唯一安全的原生 pipeline 操作并保留所有 Population 版本；绝不编辑原生 T4 产物。 |
 | `paper-reading-workbench` | 来源约定 -> 访问 -> 证据阅读 -> 跨论文学习 | 阅读索引、卡片、答案、跨论文摘要 | 按问题阅读 PDF/章节，并保留全文/部分/摘要/元数据状态。 |
 | `research-landscape-report` | 范围 -> 映射/覆盖 -> 机会决策 | 景观报告/数据、覆盖率、机会登记册 | 检索空白和图谱信号与研究方向分开报告。 |
 | `related-work-builder` | 定位 -> 证据绑定 -> 章节草稿 | TeX 章节、证据映射、引用/声明审计 | 无来源时不创建引用或直接基线声明。 |
@@ -154,6 +165,10 @@ python -m researchos.cli run-skill domain-synthesis-studio \
 python -m researchos.cli run-skill cross-domain-idea-studio \
   "用已审计桥接证据生成跨域候选，不要未验证实验配置" \
   --workspace ./workspace/project-a --session-id bridge-ideas
+
+python -m researchos.cli run-skill t4-evolution \
+  "检查当前 T4 状态，并告诉我唯一安全的恢复命令" \
+  --workspace ./workspace/project-a --session-id native-t4
 ```
 
 集成式会话会在就绪、完成和 `skill-status` 视图中显示阶段表。有效状态为 `pending`、`running`、`completed`、`waiting_input`、`waiting_evidence` 和 `skipped`。技能会在阶段边界调用受限的 `update_skill_workflow` 工具；这仅记录面向用户的研究进展，而非模型推理或原始提示。

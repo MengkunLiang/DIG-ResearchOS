@@ -72,21 +72,11 @@ interaction:
 
 Read the identifier list line by line. Normalize prefixes such as `doi:`, DOI URLs,
 `arXiv:`, and provider URLs without changing their original text. Treat
-`10.48550/arXiv.<id>` as an arXiv identifier and resolve it through the arXiv route
-before attempting Crossref: it is a registered arXiv DOI but is not necessarily a
-Crossref work. For recognized DOI and arXiv IDs, call `process_seed_paper` with
-`source="doi"` or `source="arxiv_id"`; use `arxiv_search` only for broader title/topic
-fallback, never by passing its provider-only `id:` syntax. For every item, use the most
-direct registered provider tool first and record the provider, requested ID, returned ID,
-timestamp-independent metadata fields, and match confidence. A title search is only a
-candidate match until title/author/year evidence makes the match unambiguous.
+`10.48550/arXiv.<id>` as an arXiv identifier and resolve it through the arXiv route before attempting Crossref: it is a registered arXiv DOI but is not necessarily a Crossref work. For recognized DOI and arXiv IDs, call `process_seed_paper` with
+`source="doi"` or `source="arxiv_id"`; use `arxiv_search` only for broader title/topic fallback, never by passing its provider-only `id:` syntax. For every item, use the most direct registered provider tool first and record the provider, requested ID, returned ID, timestamp-independent metadata fields, and match confidence. A title search is only a candidate match until title/author/year evidence makes the match unambiguous.
 
-For a confirmed DOI/arXiv/title, call `process_seed_paper` to register the source as a
-reusable seed record. Do not silently treat an API/network failure as a missing paper.
+For a confirmed DOI/arXiv/title, call `process_seed_paper` to register the source as a reusable seed record. Do not silently treat an API/network failure as a missing paper.
 Write one JSONL record for every input item, including unresolved and ambiguous items.
-The report must list exact identifiers requiring human confirmation. Produce BibTeX only
-from fields actually returned by a provider; preserve missing fields rather than guessing
-venue, pages, author order, or publication year. Do not download PDFs in this Skill.
+The report must list exact identifiers requiring human confirmation. Produce BibTeX only from fields actually returned by a provider; preserve missing fields rather than guessing venue, pages, author order, or publication year. Do not download PDFs in this Skill.
 
-Finish only after the three declared outputs exist and the report names the verified,
-ambiguous, and unresolved counts.
+Finish only after the three declared outputs exist and the report names the verified, ambiguous, and unresolved counts.

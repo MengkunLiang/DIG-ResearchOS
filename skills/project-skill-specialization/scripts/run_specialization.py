@@ -168,7 +168,7 @@ def main() -> int:
         repo_root = resolve_repo_root(args.repo_root, workspace)
         preflight = run_preflight(workspace, repo_root, mode=args.mode)
         if preflight.get("status") == "fail":
-            existing_report_path = workspace / "external_executor/skill_specialization_report.json"
+            existing_report_path = workspace / "external_executor/report/skill_specialization_report.json"
             existing_report: dict[str, Any] | None = None
             if existing_report_path.is_file():
                 try:
@@ -197,7 +197,7 @@ def main() -> int:
         )
         result = normalize_result(result_object)
 
-        report_path = workspace / "external_executor/skill_specialization_report.json"
+        report_path = workspace / "external_executor/report/skill_specialization_report.json"
         candidate = result.get("report_path")
         if candidate:
             candidate_path = Path(str(candidate))

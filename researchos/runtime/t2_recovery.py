@@ -48,6 +48,9 @@ from .t2_config import (
     load_literature_quality_policy,
     load_t2_finalize_config,
 )
+from .t3_notes_manifest import refresh_bridge_catalogs
+from .pdf_acquisition import acquire_retained_pdfs, attach_pdf_acquisition, repair_access_only_evidence_levels
+from .literature_contract import build_literature_manifest
 from ..time_utils import current_utc_year, format_year_window, recent_year_from
 
 try:
@@ -537,6 +540,7 @@ def write_t2_finalize_manifest(workspace_dir: Path, summary: dict[str, Any]) -> 
         "summary": {
             "raw_count": summary.get("raw_count"),
             "dedup_count": summary.get("dedup_count"),
+            "deduplication": summary.get("deduplication"),
             "backlog_count": summary.get("backlog_count"),
             "query_count": summary.get("query_count"),
             "t2_finalize_config": summary.get("t2_finalize_config"),
@@ -3193,12 +3197,44 @@ async def finalize_t2_outputs(
         }
 
     verified_papers = _build_recovered_verified_papers(enriched_papers, workspace_dir)
+    verified_papers, legacy_evidence_repairs = repair_access_only_evidence_levels(workspace_dir, verified_papers)
+    # PDF availability is a shared fact for T3/T3.5/T3.6/T4/T5/T8.  Attempt
+    # acquisition for every retained verified record, not just the later
+    # deep-read shortlist.  The receipt explicitly keeps acquisition separate
+    # from evidence_level; Reader coverage remains the only promotion path.
+    if t2_config.pdf_acquisition_enabled:
+        pdf_acquisition = await acquire_retained_pdfs(
+            workspace_dir,
+            verified_papers,
+            max_concurrency=t2_config.pdf_acquisition_max_concurrency,
+            retry_terminal_failures=t2_config.pdf_acquisition_retry_terminal_failures,
+            skip_known_books=t2_config.pdf_acquisition_skip_known_books,
+            max_auto_read_pages=t2_config.pdf_acquisition_max_auto_read_pages,
+            source_pool="papers_verified",
+        )
+        verified_papers = attach_pdf_acquisition(verified_papers, pdf_acquisition)
+    else:
+        pdf_acquisition = {
+            "disabled": True,
+            "reason": "t2_finalize.pdf_acquisition_enabled=false",
+            "counts": {},
+        }
     verified_path = workspace_dir / "literature" / "papers_verified.jsonl"
     failures_path = workspace_dir / "literature" / "verification_failures.jsonl"
     _write_jsonl(verified_path, verified_papers)
     _write_jsonl(failures_path, [])
     raw_cache_merge = _merge_enriched_records_back_to_raw(raw_path, enriched_papers)
     raw_papers = _load_jsonl(raw_path)
+    unique_raw_papers = deduplicate_papers(
+        raw_papers,
+        doi_dedup=True,
+        title_threshold=t2_config.dedup_title_threshold,
+    )
+    deduplication_summary = {
+        "input_count": len(raw_papers),
+        "unique_count": len(unique_raw_papers),
+        "merged_count": max(0, len(raw_papers) - len(unique_raw_papers)),
+    }
 
     recovered_citation_edges = _build_recovered_citation_edges(verified_papers)
     citation_edges_path = workspace_dir / "literature" / "citation_edges.json"
@@ -3256,6 +3292,31 @@ async def finalize_t2_outputs(
     _write_jsonl(access_audit_jsonl_path, audit_records)
     access_audit_path.write_text(audit_markdown, encoding="utf-8")
 
+    # Cross-domain retrieval is useful before any selected paper receives a
+    # deep-reading note.  Publish the B1/B2/... catalogs as part of T2's
+    # durable output so T3, T3.5, T3.6, T4, and executor Skills all see the
+    # same bounded metadata/abstract track.  This projection must never make
+    # T2 fail: canonical notes remain authoritative, and a later T3 refresh
+    # can rebuild the catalog from the same source records.
+    try:
+        bridge_catalogs = refresh_bridge_catalogs(
+            workspace_dir,
+            queue_records=queue_records,
+            source_queue="literature/deep_read_queue.jsonl",
+        )
+    except Exception as exc:  # pragma: no cover - defensive auxiliary projection
+        bridge_catalogs = {
+            "index_path": "",
+            "bridge_count": 0,
+            "retrieved_record_count": 0,
+            "warning": f"bridge_catalog_refresh_failed:{type(exc).__name__}",
+        }
+    # Publish one shared manifest even before T3 has written a note.  It makes
+    # PDF availability and canonical roots discoverable to direct resumes;
+    # downstream validators still require real readable note cards where
+    # strong evidence is mandatory.
+    build_literature_manifest(workspace_dir, write=True)
+
     history_paths = trace_paths if trace_paths is not None else _iter_t2_trace_paths(workspace_dir)
     queries, query_results, trace_count, search_records = extract_t2_search_history(history_paths)
     raw_search_records = _search_records_from_raw(raw_papers)
@@ -3307,6 +3368,7 @@ async def finalize_t2_outputs(
         query_results=query_results,
         search_records=search_records,
         bridge_plan=_load_bridge_domain_plan(workspace_dir),
+        unique_count=deduplication_summary["unique_count"],
     )
     search_log += "\n## 说明\n\n"
     search_log += "- 此文件由 runtime 基于当前 `papers_raw.jsonl` 和可解析的 T2 trace 自动重建。\n"
@@ -3488,9 +3550,16 @@ async def finalize_t2_outputs(
         "ok": True,
         "raw_count": len(raw_papers),
         "dedup_count": len(enriched_papers),
+        "deduplication": deduplication_summary,
         "backlog_count": len(backlog_papers),
         "active_pool": active_pool_meta,
         "t2_finalize_config": t2_config.to_dict(),
+        "pdf_acquisition": {
+            "manifest": "literature/pdf_acquisition_manifest.json",
+            "receipts": "literature/pdf_acquisition_receipts.jsonl",
+            "counts": pdf_acquisition.get("counts") if isinstance(pdf_acquisition, dict) else {},
+            "legacy_access_only_evidence_repairs": legacy_evidence_repairs,
+        },
         "deep_read_queue_config": queue_config.to_dict(),
         "literature_quality_policy": literature_quality_policy.to_dict(),
         "literature_quality": literature_quality_meta,
@@ -3508,6 +3577,7 @@ async def finalize_t2_outputs(
         "post_snowball_crossref_backfill": post_snowball_crossref_backfill,
         "citation_backfill": citation_backfill,
         "raw_cache_merge": raw_cache_merge,
+        "bridge_catalogs": bridge_catalogs,
         "paths": {
             "papers_dedup": str(workspace_dir / "literature" / "papers_dedup.jsonl"),
             "papers_verified": str(verified_path),
@@ -3519,6 +3589,9 @@ async def finalize_t2_outputs(
             "access_audit": str(access_audit_path),
             "search_log": str(search_log_path),
             "missing_areas": str(missing_areas_path),
+            "bridge_catalog_index": str(workspace_dir / "literature" / "cross_domain_catalogs" / "index.json"),
+            "bridge_notes_dir": str(workspace_dir / "literature" / "bridge_notes"),
+            "cross_domain_catalogs_dir": str(workspace_dir / "literature" / "cross_domain_catalogs"),
         },
     }
     write_t2_finalize_manifest(workspace_dir, summary)

@@ -7,8 +7,11 @@ external_executor/resource_preflight.json
 external_executor/resource_requirement_matrix.json
 external_executor/resource_local_inventory.json
 external_executor/resource_search_records.json
+external_executor/resource_source_report.json
+external_executor/resource_source_report.md
 external_executor/resource_preparation_report.json
-external_executor/workdir/resources/**
+resources/**
+resource/**
 ```
 
 The root owns manifest registration and executor status.
@@ -35,6 +38,14 @@ The root owns manifest registration and executor status.
   "baseline_candidates": {"status": "complete|partial|blocked|stale", "items": []},
   "dataset_inventory": {"status": "complete|partial|blocked|stale", "items": []},
   "reimplementations": {"status": "not_needed|complete|partial|blocked|stale", "items": []},
+  "resource_source_report": {
+    "status": "not_started|complete|partial|blocked|stale",
+    "json_path": "external_executor/resource_source_report.json",
+    "markdown_path": "external_executor/resource_source_report.md",
+    "source_roots": ["resources", "resource"],
+    "counts": {"byhand": 0, "Remote_acquisition": 0, "reproduction": 0},
+    "categories": {"byhand": [], "Remote_acquisition": [], "reproduction": []}
+  },
   "resource_reviews": {"status": "complete|partial|blocked|stale", "items": []},
   "material_gaps": {"status": "complete|partial|blocked|stale", "items": []},
   "resource_risks": {"status": "complete|partial|blocked|stale", "items": []},
@@ -69,6 +80,7 @@ resources <- {
   staged_resources,
   acquired_resources,
   reimplementations,
+  resource_source_report,
   resource_reviews,
   artifact_refs
 }
@@ -84,6 +96,9 @@ resource_readiness <- report.resource_readiness
 - Every requirement ID is unique.
 - Every candidate references known requirement IDs.
 - Every review references a known candidate and known requirement IDs.
+- No candidate may use `external_executor/expr/` as its source path; that directory is the formal execution area, not the Phase B resource pool.
+- Staged local products must be under `resources/byhand/`, remote acquisitions under `resource/Remote_acquisition/`, and baseline reimplementations under `resource/reproduction/`.
+- The final resource source report must classify by-hand products under `resources/` and acquired/reimplemented products under `resource/` as `byhand`, `Remote_acquisition`, or `reproduction`.
 - Every required baseline requirement is represented by a candidate, a material gap, or a blocker.
 - `ready` requires all minimum-loop blocking requirements to be satisfied by passing reviews with suitable approvals.
 - `partial` requires `minimum_loop_feasible=true` and at least one documented constraint/gap/risk.

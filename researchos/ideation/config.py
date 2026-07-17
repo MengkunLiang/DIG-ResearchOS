@@ -16,6 +16,7 @@ class _ConfigModel(BaseModel):
 
 
 class RouteQuota(_ConfigModel):
+    """Exploration budget for one LLM perspective, not a Candidate obligation."""
     route: str = Field(min_length=1)
     minimum: int = Field(ge=0, le=20)
     maximum: int = Field(ge=0, le=20)
@@ -30,7 +31,10 @@ class RouteQuota(_ConfigModel):
 
 
 class PopulationDefaults(_ConfigModel):
-    max_initial_population: int = Field(default=14, ge=6, le=30)
+    # This is a scheduling ceiling, not a minimum viable scientific
+    # population. A constrained workspace may safely continue with one
+    # evidence-bounded Candidate and record the diversity limitation.
+    max_initial_population: int = Field(default=14, ge=1, le=30)
     active_population_target: int = Field(default=7, ge=1, le=20)
     active_population_minimum: int = Field(default=6, ge=1, le=20)
     active_population_maximum: int = Field(default=8, ge=1, le=20)
@@ -41,8 +45,11 @@ class PopulationDefaults(_ConfigModel):
     def population_bounds(self) -> "PopulationDefaults":
         if not self.active_population_minimum <= self.active_population_target <= self.active_population_maximum:
             raise ValueError("active population target must be inside configured bounds")
-        if self.active_population_maximum > self.max_initial_population:
-            raise ValueError("active population maximum cannot exceed initial population")
+        # P0 is only the initial generation budget.  A later active
+        # population can legitimately be larger after offspring are admitted;
+        # conversely it may be smaller when routes are unsupported.  These
+        # values guide scheduling and must not make a safe recovery config
+        # unparsable.
         return self
 
 
@@ -70,9 +77,15 @@ class T4EvolutionSettings(_ConfigModel):
     opportunity_minimum: int = Field(default=3, ge=1, le=10)
     opportunity_maximum: int = Field(default=6, ge=1, le=12)
     maximum_rounds: int = Field(default=3, ge=1, le=5)
+    # Token similarity only recalls possible sibling Families; it cannot
+    # decide that two causal programmes are duplicates.
     family_similarity_threshold: float = Field(default=0.45, ge=0, le=1)
     complexity_growth_ratio_limit: float = Field(default=1.8, ge=1, le=5)
     one_repair_attempt_per_route: bool = True
+    route_max_concurrency: int = Field(default=2, ge=1, le=4)
+    # Score reports are evidence-dense. Small sequential batches keep a long
+    # population from truncating its later candidates at the provider boundary.
+    scoring_batch_size: int = Field(default=3, ge=1, le=6)
     bridge_policy_default: str = "allow_abstract_with_upgrade"
     scoring_rubric_path: str = "config/system_config/idea_scoring_rubric.yaml"
     evidence_permissions_path: str = "config/system_config/idea_evidence_permissions.yaml"

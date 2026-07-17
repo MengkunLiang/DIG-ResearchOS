@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -16,13 +15,19 @@ from _common import (
     load_json,
     redact_url,
     relpath,
-    resolve_in_workspace,
     resolve_workspace,
     tree_manifest,
     utc_now,
 )
 
-GITHUB_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$")
+GIT_RESOURCE_HOSTS = {
+    "github.com",
+    "gitlab.com",
+    "bitbucket.org",
+    "huggingface.co",
+    "modelscope.cn",
+    "www.modelscope.cn",
+}
 
 
 def git_env() -> dict[str, str]:
@@ -54,7 +59,7 @@ def load_policy(workspace: Path) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Acquire one immutable GitHub revision without executing repository content.")
+    parser = argparse.ArgumentParser(description="Acquire one immutable public Git revision without executing content.")
     parser.add_argument("--workspace")
     parser.add_argument("--repo-url", required=True)
     parser.add_argument("--revision", required=True, help="Commit SHA or immutable tag; resolved commit is recorded")
@@ -65,20 +70,22 @@ def main() -> int:
     workspace = resolve_workspace(args.workspace)
     policy = load_policy(workspace)
     if policy.get("effective_mode") not in {"github_allowed", "github_and_reimplementation"}:
-        raise SystemExit("Acquisition mode does not permit GitHub")
+        raise SystemExit("Acquisition mode does not permit public Git acquisition")
     if not policy.get("effective_network_allowed"):
         raise SystemExit("network_allowed is false")
 
     url = redact_url(args.repo_url)
-    match = GITHUB_RE.match(url)
-    if not match:
-        raise SystemExit("Only public HTTPS github.com owner/repo URLs are accepted")
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.netloc or not parsed.path.strip("/"):
+        raise SystemExit("Only public HTTPS Git repository URLs are accepted")
     hostname = urlparse(url).hostname or ""
     allowed_domains = {str(x).lower() for x in policy.get("allowed_domains", [])}
     if hostname.lower() not in allowed_domains:
         raise SystemExit(f"Domain {hostname} is not allowed")
+    if hostname.lower() not in GIT_RESOURCE_HOSTS:
+        raise SystemExit(f"Domain {hostname} is allowed for search but not supported by this Git acquisition helper")
 
-    destination = workspace / "external_executor" / "workdir" / "resources" / "github" / args.candidate_id
+    destination = workspace / "resource" / "Remote_acquisition" / args.candidate_id
     assert_write_allowed(workspace, destination)
     if destination.exists():
         if not args.force:
@@ -98,9 +105,11 @@ def main() -> int:
 
     manifest = tree_manifest(destination)
     provenance = {
-        "schema_version": "github_resource_acquisition.v1",
+        "schema_version": "remote_resource_acquisition.v1",
         "candidate_id": args.candidate_id,
         "created_at": utc_now(),
+        "source_category": "Remote_acquisition",
+        "platform_host": hostname.lower(),
         "source_url": url,
         "requested_revision": args.revision,
         "resolved_commit": commit,

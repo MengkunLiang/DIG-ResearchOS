@@ -5,7 +5,7 @@ import argparse
 import re
 from pathlib import Path
 
-from _common import dump_json_atomic, load_json, stable_id, utc_now
+from _common import dump_json_atomic, find_workspace, is_within, load_json, stable_id, utc_now
 
 RULES = [
     ("security_license_block", "block_execution", 0.95, [r"license.*(prohibit|forbid|not permitted)", r"security review.*blocked", r"permission denied.*restricted"]),
@@ -29,6 +29,10 @@ def main() -> int:
     ap.add_argument("--stderr", required=True)
     ap.add_argument("--output", required=True)
     args = ap.parse_args()
+    output = Path(args.output).resolve()
+    workspace = find_workspace(output)
+    if not is_within(output, workspace / "external_executor" / "raw_results"):
+        raise SystemExit("Failure classifications must be written under external_executor/raw_results")
     run = load_json(Path(args.run_record).resolve())
     text = "\n".join([Path(args.stdout).read_text(errors="replace") if Path(args.stdout).exists() else "", Path(args.stderr).read_text(errors="replace") if Path(args.stderr).exists() else ""])[-200000:]
     if run.get("status") == "timed_out":
@@ -55,7 +59,7 @@ def main() -> int:
         "confidence": confidence, "heuristic": True, "evidence_snippets": evidence,
         "review_required": True, "notes": ["This is a heuristic proposal; inspect direct evidence before accepting."],
     }
-    dump_json_atomic(Path(args.output).resolve(), payload)
+    dump_json_atomic(output, payload)
     print(f"{category}: {action}")
     return 0
 

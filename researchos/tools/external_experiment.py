@@ -21,6 +21,12 @@ import yaml
 from pydantic import BaseModel, Field
 
 from ..runtime.environment import workspace_host_hint
+from ..runtime.bridge_catalog import (
+    iter_bridge_catalog_paths,
+    load_bridge_catalog_summaries,
+    resolve_catalog_canonical_note_path,
+)
+from ..runtime.literature_contract import build_literature_manifest, iter_literature_note_cards
 from ..skills.project_specialization import specialize_project_skills
 from ..skills.project_specialization.policies import (
     default_executor_capabilities,
@@ -28,6 +34,12 @@ from ..skills.project_specialization.policies import (
 )
 from .base import Tool, ToolResult
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
+
+
+EXECUTOR_SELECTION_PATH = "external_executor/report/executor_selection.json"
+EXECUTOR_CAPABILITIES_PATH = "external_executor/report/executor_capabilities.json"
+LEGACY_EXECUTOR_SELECTION_PATH = "external_executor/executor_selection.json"
+LEGACY_EXECUTOR_CAPABILITIES_PATH = "external_executor/executor_capabilities.json"
 
 
 def _sha256(path: Path) -> str:
@@ -74,6 +86,28 @@ def _read_text(path: Path, *, max_chars: int | None = None) -> str:
     return text[:max_chars] if max_chars is not None else text
 
 
+def _first_existing_external_report_path(workspace: Path, canonical: str, legacy: str) -> Path:
+    canonical_path = workspace / canonical
+    if canonical_path.exists():
+        return canonical_path
+    return workspace / legacy
+
+
+def _executor_selection_path(workspace: Path) -> Path:
+    return _first_existing_external_report_path(workspace, EXECUTOR_SELECTION_PATH, LEGACY_EXECUTOR_SELECTION_PATH)
+
+
+def _executor_capabilities_path(workspace: Path) -> Path:
+    return _first_existing_external_report_path(workspace, EXECUTOR_CAPABILITIES_PATH, LEGACY_EXECUTOR_CAPABILITIES_PATH)
+
+
+def _workspace_relative(workspace: Path, path: Path) -> str:
+    try:
+        return path.relative_to(workspace).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
 def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -103,26 +137,59 @@ def _artifact_record(workspace: Path, rel_path: str, *, role: str, kind: str = "
 def _paper_card_evidence_index(workspace: Path) -> dict[str, Any]:
     """Locate literature cards without elevating them into experimental evidence."""
 
-    roots = (
-        ("full_or_partial", workspace / "literature" / "deep_read_notes"),
-        ("bridge", workspace / "literature" / "bridge_notes"),
-        ("abstract_only", workspace / "literature" / "shallow_read_notes"),
-    )
+    manifest = build_literature_manifest(workspace, write=True)
+    card_type_by_root = {
+        "deep_read_notes": "full_or_partial",
+        "bridge_notes": "bridge",
+        "shallow_read_notes": "abstract_only",
+    }
     cards: list[dict[str, Any]] = []
-    for card_type, root in roots:
-        if not root.is_dir():
+    for card in iter_literature_note_cards(workspace, include_shallow=True):
+        cards.append(
+            {
+                "paper_id": card.paper_id,
+                "path": card.rel_path,
+                "card_type": card_type_by_root.get(card.root_type, card.root_type),
+                "root_type": card.root_type,
+                "evidence_level": card.evidence_level,
+                "bytes": card.size,
+                "sha256": card.sha256,
+            }
+        )
+    bridge_catalogs: list[dict[str, Any]] = []
+    for catalog_path in iter_bridge_catalog_paths(workspace):
+        try:
+            catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
             continue
-        for path in sorted(item for item in root.rglob("*.md") if item.is_file()):
-            cards.append(
-                {
-                    "path": path.relative_to(workspace).as_posix(),
-                    "card_type": card_type,
-                    "bytes": path.stat().st_size,
-                }
-            )
+        records = catalog.get("records") if isinstance(catalog.get("records"), list) else []
+        bridge_catalogs.append(
+            {
+                "bridge_id": str(catalog.get("bridge_id") or catalog_path.parent.name),
+                "path": catalog_path.relative_to(workspace).as_posix(),
+                "record_count": len(records),
+                "abstract_leads": sum(bool(str(item.get("abstract") or "").strip()) for item in records if isinstance(item, dict)),
+                "claim_usable_notes": sum(
+                    resolve_catalog_canonical_note_path(workspace, item.get("canonical_note_path")) is not None
+                    for item in records
+                    if isinstance(item, dict)
+                ),
+                "usage_boundary": "supplementary_transfer_context_not_experiment_evidence",
+            }
+        )
+    bridge_catalog_context = load_bridge_catalog_summaries(
+        workspace,
+        records_per_bridge=2,
+        abstract_excerpt_chars=320,
+    )
     return {
         "version": "1.0",
         "semantics": "paper_card_evidence_index",
+        "literature_manifest_path": "literature/literature_manifest.json",
+        "literature_manifest_sha256": _sha256(workspace / "literature" / "literature_manifest.json")
+        if (workspace / "literature" / "literature_manifest.json").is_file()
+        else "",
+        "literature_manifest_counts": manifest.get("counts") if isinstance(manifest.get("counts"), dict) else {},
         "purpose": "Locate literature evidence for rationale, baseline provenance, and claim boundaries.",
         "allowed_uses": [
             "mechanism and design-rationale context",
@@ -136,6 +203,15 @@ def _paper_card_evidence_index(workspace: Path) -> dict[str, Any]:
         ],
         "card_count": len(cards),
         "cards": cards,
+        "bridge_catalogs": bridge_catalogs,
+        "bridge_catalog_context": {
+            "semantics": "cross_domain_catalog_context_not_experiment_evidence",
+            "tracks": bridge_catalog_context,
+            "usage_boundary": (
+                "Catalogs may guide baseline discovery, mechanism contrasts, external-validity risks, and follow-up reading. "
+                "They do not establish a mechanism, baseline equivalence, implementation detail, or experimental result."
+            ),
+        },
     }
 
 
@@ -250,6 +326,9 @@ PRE_T5_SOURCE_FILES = [
     "literature/synthesis.md",
     "literature/synthesis_workbench.json",
     "literature/domain_map.json",
+    "literature/bridge_domain_plan.json",
+    "literature/literature_manifest.json",
+    "literature/cross_domain_catalogs/index.json",
     "literature/comparison_table.csv",
     "ideation/hypotheses.md",
     "ideation/exp_plan.yaml",
@@ -257,11 +336,13 @@ PRE_T5_SOURCE_FILES = [
     "ideation/risks.md",
     "ideation/novelty_audit.md",
     "novelty/novelty_audit.md",
+    "resource/baseline_candidates.jsonl",
     "resources/baseline_candidates.jsonl",
     "literature/baseline_map.json",
     "literature/notes_manifest.json",
     "literature/deep_read_notes",
     "literature/bridge_notes",
+    "literature/cross_domain_catalogs",
     "literature/shallow_read_notes",
     "user_seeds/seed_external_resources.jsonl",
     "user_seeds/bridge_domains.yaml",
@@ -541,7 +622,7 @@ def _source_role(rel_path: str) -> str:
         return "ideation_context"
     if rel_path.startswith("novelty/"):
         return "novelty_context"
-    if rel_path.startswith("resources/"):
+    if rel_path.startswith("resource/") or rel_path.startswith("resources/"):
         return "resource_hint"
     if rel_path.startswith("user_seeds/"):
         return "user_seed_hint"
@@ -961,7 +1042,7 @@ def _claim_boundaries_from_context(
     if "must not" in novelty_audit.lower() or "不能" in novelty_audit:
         boundaries.append(
             {
-                "boundary": "Novelty audit contains explicit must-not-claim language; preserve it in result pack and T7 claims.",
+                "boundary": "Novelty audit contains explicit must-not-claim language; preserve it in the executor report and T8 claim boundaries.",
                 "source": "novelty_audit",
                 "affected_claims": ["novelty", "contribution"],
             }
@@ -992,6 +1073,7 @@ def _build_expected_outputs_schema() -> dict[str, Any]:
         "semantics": "expected_external_executor_outputs_schema",
         "required": EXTERNAL_RESULT_REQUIRED_FIELDS,
         "required_files": [
+            "external_executor/executor_research_report.md",
             "external_executor/result_pack.json",
             "external_executor/executor_status.json",
             "external_executor/run_manifest.json",
@@ -1006,14 +1088,14 @@ def _build_expected_outputs_schema() -> dict[str, Any]:
         "field_semantics": {
             "method_intent": "T5 draft intent only; never final method source.",
             "realized_method_package": "External executor's implemented method package after runs and diagnosis.",
-            "final_framework_figure": "Framework figure candidate that T7 must audit before T8 use.",
-            "writer_handoff": "Structured method/experiment/figure handoff for T7 and T8.",
+            "final_framework_figure": "Framework figure candidate that final handoff validation must preserve before T8 use.",
+            "writer_handoff": "Structured method/experiment/figure handoff for T8.",
         },
     }
 
 
 def _executor_selection_payload(workspace: Path) -> tuple[dict[str, Any], str]:
-    path = workspace / "external_executor" / "executor_selection.json"
+    path = _executor_selection_path(workspace)
     selection = _read_json(path)
     return selection, _sha256(path) if path.exists() and path.is_file() else ""
 
@@ -1437,7 +1519,7 @@ def _build_reboost_claims(exp_plan: dict[str, Any], metrics: list[str], baseline
                         "dataset_or_setting": _compact_text(name, limit=160),
                         "metric_or_observation": metric_text or "unknown_metric_requires_protocol",
                         "comparison": "Compare against every required baseline under the same split, seed policy, and metric definition.",
-                        "acceptance_criterion": "Support only if raw metrics, configs, logs, and baseline coverage pass T7 audit.",
+                        "acceptance_criterion": "Support only if raw metrics, configs, logs, and baseline coverage are preserved in the final T8 handoff materials.",
                     }
                 ],
                 "support_criteria": [
@@ -1472,8 +1554,9 @@ def _build_reboost_writer_contract() -> dict[str, Any]:
                 "artifact_id": f"WA{idx}",
                 "artifact_type": artifact_type,
                 "description": f"Audited {artifact_type.replace('_', ' ')} from external execution.",
-                "source_of_truth": "external_executor/result_pack.json after T7 ingest/audit",
+                "source_of_truth": "external_executor/executor_research_report.md with supporting external_executor artifacts",
                 "requires_t7_audit": True,
+                "requires_handoff_validation": True,
                 "required_fields": ["path_or_json_pointer", "provenance", "audit_status"],
             }
             for idx, artifact_type in enumerate(RESEARCH_REBOOST_WRITER_ARTIFACT_TYPES, start=1)
@@ -1657,7 +1740,7 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 "module_ids": [module_id],
                 "claim_ids": claim_ids,
                 "seed_policy": _exp_plan_seed_policy(project),
-                "pass_conditions": ["Formal metrics, configs, logs, and hashes are complete enough for T7 audit."],
+                "pass_conditions": ["Formal metrics, configs, logs, and hashes are complete enough for final T8 handoff validation."],
                 "failure_interpretation": "Report a negative or narrowed result; do not invent support.",
                 "required": True,
             },
@@ -1681,7 +1764,7 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 "statement": goal,
                 "success_criteria": [
                     "External executor returns audited result_pack/status/manifest artifacts.",
-                    "Every strong claim remains tied to required baselines, metrics, and T7 audit evidence.",
+                    "Every strong claim remains tied to required baselines, metrics, and the final T8 handoff evidence.",
                 ],
                 "out_of_scope": [
                     "Writing paper prose during T5",
@@ -1702,7 +1785,7 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 "falsification_criteria": [
                     "Required baselines outperform or match the proposed method under the predeclared metrics.",
                     "Core component ablations fail to show the claimed mechanism contribution.",
-                    "T7 audit finds provenance, fairness, or scope violations that block the claim.",
+                    "Final handoff validation or T8 claim audit finds provenance, fairness, or scope violations that block the claim.",
                 ],
                 "source_refs": [
                     _source_ref("SRC_HYPOTHESES", "selected hypothesis / mechanism sections", "Hypotheses define the central claim"),
@@ -1723,7 +1806,7 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                     "Keep evaluation protocol and metric definitions fixed across baselines.",
                 ],
                 "exclusions": [
-                    "No paper claims before T7 ingest/audit/result-to-claim.",
+                    "No paper claims before external_executor/executor_research_report.md exists and T8 validates the evidence boundary.",
                     "No unapproved scope change to task, benchmark, or contribution type.",
                 ],
                 "source_refs": [_source_ref("SRC_EXP_PLAN", "datasets/metrics/experiments", "Experiment plan defines scope")],
@@ -1933,7 +2016,7 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 {
                     "claim_id": claim_id,
                     "maximum_strength": "moderate",
-                    "conditions": ["T7 audit passes", "required baselines and ablations are covered"],
+                    "conditions": ["final T8 handoff validation passes", "required baselines and ablations are covered"],
                 }
                 for claim_id in claim_ids
             ],
@@ -1941,21 +2024,33 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 {
                     "boundary_id": "BND1",
                     "statement": "Do not use method_intent or mock-only outputs as final paper evidence.",
-                    "reason": "T5 reboost is a draft execution contract; final facts require external execution and T7 audit.",
+                    "reason": "T5 reboost is a draft execution contract; final facts require external execution and T8 handoff validation.",
                     "source_refs": [_source_ref("SRC_NOVELTY", "claim boundaries", "Novelty audit and T5 protocol constrain final claims", "reconciled")],
                 }
             ],
             "narrowing_triggers": [
                 "required baseline missing or weaker than expected",
                 "ablation fails to support the claimed mechanism",
-                "T7 integrity audit reports provenance or fairness failure",
+                "Final handoff validation reports provenance or fairness failure",
             ],
         },
         "writer_handoff_contract": _build_reboost_writer_contract(),
-        "execution_contract": {
-            "allowed_paths": [
-                "external_executor/",
-                "external_executor/workdir/",
+            "execution_contract": {
+                "allowed_paths": [
+                    "external_executor/",
+                    "external_executor/raw_results/",
+                "external_executor/configs/",
+                "external_executor/logs/",
+                "external_executor/patches/",
+                "external_executor/figures/",
+                    "external_executor/tables/",
+                    "external_executor/expr/",
+                    "resource/",
+                    "resources/",
+                "literature/",
+                "ideation/",
+            ],
+            "write_paths": [
                 "external_executor/raw_results/",
                 "external_executor/configs/",
                 "external_executor/logs/",
@@ -1963,25 +2058,23 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 "external_executor/figures/",
                 "external_executor/tables/",
                 "external_executor/expr/",
+                "resource/",
                 "resources/",
-                "literature/",
-                "ideation/",
-            ],
-            "write_paths": [
-                "external_executor/workdir/",
-                "external_executor/raw_results/",
-                "external_executor/configs/",
-                "external_executor/logs/",
-                "external_executor/patches/",
-                "external_executor/figures/",
-                "external_executor/tables/",
                 "external_executor/result_pack.json",
                 "external_executor/executor_status.json",
                 "external_executor/run_manifest.json",
             ],
-            "prohibited_paths": ["researchos/", "config/", "drafts/", "submission/", "_runtime/"],
+            "prohibited_paths": [
+                "researchos/",
+                "config/",
+                "drafts/",
+                "submission/",
+                "_runtime/",
+            ],
             "authority_rules": [
-                {"action": "implement within external_executor/workdir", "authority": "allowed"},
+                {"action": "deploy method and baseline code under external_executor/expr", "authority": "allowed"},
+                {"action": "place by-hand local resources under resources", "authority": "allowed"},
+                {"action": "place remote acquisitions and baseline reimplementations under resource", "authority": "allowed"},
                 {"action": "change task, benchmark, or contribution type", "authority": "human_approval"},
                 {"action": "write paper claims", "authority": "forbidden"},
             ],
@@ -2037,15 +2130,15 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
             if item.get("requirement") == "optional_backtrack" and item.get("availability") != "available"
         ],
         "known_context_mismatches": mismatch_records,
-        "validation_report": "external_executor/reboost_validation_report.json",
+        "validation_report": REBOOST_VALIDATION_REPORT_PATH,
     }
     return pack, report
 
 
 def _allowed_path_rules_for_external_executor() -> list[str]:
     return [
-        "rw  external_executor/workdir/",
-        "rw  external_executor/workdir/resources/",
+        "rw  resources/",
+        "rw  resource/",
         "rw  external_executor/raw_results/",
         "rw  external_executor/configs/",
         "rw  external_executor/logs/",
@@ -2064,6 +2157,8 @@ def _allowed_path_rules_for_external_executor() -> list[str]:
         "rw  external_executor/resource_requirement_matrix.json",
         "rw  external_executor/resource_local_inventory.json",
         "rw  external_executor/resource_search_records.json",
+        "rw  external_executor/resource_source_report.json",
+        "rw  external_executor/resource_source_report.md",
         "rw  external_executor/resource_preparation_report.json",
         "rw  external_executor/baseline_reproduction_preflight.json",
         "rw  external_executor/baseline_reproduction_plan.json",
@@ -2082,6 +2177,7 @@ def _allowed_path_rules_for_external_executor() -> list[str]:
         "rw  external_executor/method_intent_contract.json",
         "rw  external_executor/method_implementation_spec.json",
         "rw  external_executor/method_implementation_spec_validation.json",
+        "rw  external_executor/method_implementation_brief.md",
         "rw  external_executor/method_spec_fingerprint.json",
         "rw  external_executor/method_delta.json",
         "rw  external_executor/method_scope_assessment.json",
@@ -2096,10 +2192,12 @@ def _allowed_path_rules_for_external_executor() -> list[str]:
         "rw  external_executor/module_attribution_snapshot.json",
         "rw  external_executor/module_attribution_facts.json",
         "rw  external_executor/module_attribution_report.json",
+        "rw  external_executor/module_attribution/",
         "rw  external_executor/result_diagnosis_preflight.json",
         "rw  external_executor/diagnosis_evidence_snapshot.json",
         "rw  external_executor/diagnosis_statistics.json",
         "rw  external_executor/result_diagnosis_report.json",
+        "rw  external_executor/result_diagnosis/",
         "rw  external_executor/final_evidence_snapshot.json",
         "rw  external_executor/final_evidence_snapshot_validation.json",
         "rw  external_executor/evidence_packaging_preflight.json",
@@ -2113,19 +2211,20 @@ def _allowed_path_rules_for_external_executor() -> list[str]:
         "rw  external_executor/writer_handoff_integrity.json",
         "rw  external_executor/writer_handoff_t7_index.json",
         "rw  external_executor/writer_handoff_report.json",
+        "rw  external_executor/writer_handoff/",
         "rw  external_executor/input_fingerprint.json",
-        "rw  external_executor/executor_capabilities.json",
+        "rw  external_executor/executor_research_report.md",
         "rw  external_executor/result_pack.json",
         "rw  external_executor/executor_status.json",
         "rw  external_executor/run_manifest.json",
         "rw  external_executor/job_state.json",
         "ro  external_executor/handoff_pack.json",
         "ro  external_executor/expected_outputs_schema.json",
-        "ro  external_executor/executor_selection.json",
+        f"ro  {EXECUTOR_SELECTION_PATH}",
+        f"ro  {EXECUTOR_CAPABILITIES_PATH}",
         "ro  external_executor/project_skill_context.yaml",
-        "ro  external_executor/skill_specialization_report.json",
+        "ro  external_executor/report/skill_specialization_report.json",
         "ro  novelty/",
-        "ro  resources/",
         "ro  literature/",
         "ro  ideation/",
         "ro  user_seeds/",
@@ -2163,6 +2262,7 @@ def _guide_view_from_reboost_pack(pack: dict[str, Any], project: dict[str, Any],
         "allowed_paths": _allowed_path_rules_for_external_executor(),
         "executor_outputs_contract": {
             "must_write": [
+                "external_executor/executor_research_report.md",
                 "external_executor/result_pack.json",
                 "external_executor/executor_status.json",
                 "external_executor/run_manifest.json",
@@ -2197,26 +2297,22 @@ def build_executor_selection_payload(
         "fallback_order": [item for item in ["mock_dry_run", "claude_code_window", "manual"] if item != selected_executor],
         "notes": notes or _default_executor_selection_note(selected_executor),
     }
-    if selected_executor == "claude_code_window":
-        payload["prompt_to_copy"] = "external_executor/claude_code_prompt.md"
     if selected_executor == "codex_cli":
-        payload["prompt_file"] = "external_executor/codex_prompt.md"
-        payload["allowed_workdir"] = "external_executor/workdir"
-        payload["workspace_relative_workdir"] = "external_executor/workdir"
-        payload["workspace_relative_prompt"] = "external_executor/codex_prompt.md"
+        payload["executor_root"] = "."
+        payload["workspace_relative_workdir"] = "."
+        payload["workspace_relative_executor_root"] = "."
+        payload["workspace_relative_deployment_dir"] = "external_executor/expr"
         payload["codex_user_input"] = (
             "请读取 external_executor/AGENTS.md，并执行 "
             "external_executor/skills/research-execution/SKILL.md。"
         )
         payload["launch_instruction"] = (
-            "On the host, enter the <workspace> root, start Codex CLI, and paste codex_user_input."
+            "On the host, enter the <workspace> root, start Codex CLI there, and paste codex_user_input."
         )
         payload["resume_instruction"] = (
-            "After Codex writes external_executor/result_pack.json, executor_status.json, "
-            "and run_manifest.json, run: python -m researchos.cli resume --workspace <workspace>"
+            "After Codex writes external_executor/executor_research_report.md, result_pack.json, "
+            "executor_status.json, and run_manifest.json, run: python -m researchos.cli resume --workspace <workspace>"
         )
-    if selected_executor == "manual":
-        payload["prompt_to_copy"] = "external_executor/manual_instructions.md"
     return payload
 
 
@@ -2224,10 +2320,10 @@ def _default_executor_selection_note(selected_executor: str) -> str:
     if selected_executor == "mock_dry_run":
         return "Protocol-only dry run selected; no real experiment evidence will be produced."
     if selected_executor == "codex_cli":
-        return "Codex CLI selected for external real execution inside allowed workdir."
+        return "Codex CLI selected; launch it from the workspace root and deploy runnable method/baseline code under external_executor/expr."
     if selected_executor == "claude_code_window":
-        return "Claude Code window selected; user must copy prompt and resume after result_pack.json exists."
-    return "Manual external execution selected; ResearchOS waits for result_pack.json."
+        return "Claude Code window selected; user must provide AGENTS.md/CLAUDE.md and resume after executor_research_report.md exists."
+    return "Manual external execution selected; ResearchOS waits for executor_research_report.md."
 
 
 def patch_external_executor_files_with_selection(workspace: Path, selection: dict[str, Any]) -> None:
@@ -2254,10 +2350,6 @@ def patch_external_executor_files_with_selection(workspace: Path, selection: dic
         "external_executor/AGENTS.md",
         "external_executor/CLAUDE.md",
         "external_executor/README.md",
-        "external_executor/executor_prompt.md",
-        "external_executor/codex_prompt.md",
-        "external_executor/claude_code_prompt.md",
-        "external_executor/manual_instructions.md",
     ):
         path = workspace / rel
         if not path.exists():
@@ -2287,7 +2379,7 @@ def patch_external_executor_files_with_selection(workspace: Path, selection: dic
         )
         _write_json(workspace / "external_executor" / "job_state.json", job_state)
     _write_json(
-        workspace / "external_executor" / "executor_capabilities.json",
+        workspace / EXECUTOR_CAPABILITIES_PATH,
         default_executor_capabilities(selected),
     )
 
@@ -2296,10 +2388,11 @@ def validate_external_executor_ready(
     workspace: Path,
     result_pack_rel: str,
     status_rel: str,
+    executor_report_rel: str = "external_executor/executor_research_report.md",
     *,
     allow_partial_results: bool = False,
 ) -> dict[str, Any]:
-    missing = [rel for rel in (result_pack_rel, status_rel) if not (workspace / rel).exists()]
+    missing = [rel for rel in (executor_report_rel, result_pack_rel, status_rel) if not (workspace / rel).exists()]
     if missing:
         report = {
             "version": "1.0",
@@ -2316,7 +2409,9 @@ def validate_external_executor_ready(
         return report
     result_pack = _read_json(workspace / result_pack_rel)
     status = _read_json(workspace / status_rel)
+    executor_report_path = workspace / executor_report_rel
     selection, selection_hash = _executor_selection_payload(workspace)
+    selection_rel = _workspace_relative(workspace, _executor_selection_path(workspace)) if selection else ""
     selected_executor = _selection_selected_executor(selection)
     manifest_rel = str(result_pack.get("run_manifest") or status.get("run_manifest") or "external_executor/run_manifest.json")
     manifest = _read_json(workspace / manifest_rel)
@@ -2333,7 +2428,7 @@ def validate_external_executor_ready(
     if missing_required_fields:
         issues.append("result_pack missing required fields: " + ", ".join(missing_required_fields))
     if selection.get("semantics") != "external_executor_selection" or not selected_executor:
-        issues.append("executor_selection.json missing or semantics invalid")
+        issues.append(f"{EXECUTOR_SELECTION_PATH} missing or semantics invalid")
     else:
         issues.extend(
             _validate_executor_identity_binding(
@@ -2353,6 +2448,8 @@ def validate_external_executor_ready(
                 issues.append("real external executor selection cannot ingest mock_only/dry_run executor_status")
     if status.get("accepted") is True:
         issues.append("executor_status.accepted cannot be true; external executor done is not ResearchOS accepted")
+    if not executor_report_path.is_file() or executor_report_path.stat().st_size <= 0:
+        issues.append("executor_research_report.md missing or empty")
     current_state = status.get("current_state") or status.get("status")
     allowed_terminal_states = {"done", "COMPLETED", "completed"}
     if allow_partial_results:
@@ -2415,10 +2512,10 @@ def validate_external_executor_ready(
             "version": "1.0",
             "semantics": "external_executor_wait_acceptance_report",
             "ok": False,
-            "message": "WAITING_EXTERNAL: external result pack exists but is not valid: " + "; ".join(issues),
+            "message": "WAITING_EXTERNAL: external handoff materials exist but are not valid: " + "; ".join(issues),
             "issues": issues,
             "selected_executor": selected_executor,
-            "executor_selection": "external_executor/executor_selection.json" if selection else "",
+            "executor_selection": selection_rel,
             "selection_sha256": selection_hash,
         }
         _write_wait_rejection_report(workspace, report)
@@ -2427,13 +2524,15 @@ def validate_external_executor_ready(
         "version": "1.0",
         "semantics": "external_executor_wait_acceptance_report",
         "ok": True,
-        "message": "External executor result pack is present and schema-compatible.",
+        "message": "External executor T8 handoff materials are present and schema-compatible.",
+        "executor_research_report": executor_report_rel,
         "result_pack": result_pack_rel,
         "executor_status": status_rel,
         "run_manifest": manifest_rel,
-        "executor_selection": "external_executor/executor_selection.json" if selection else "",
+        "executor_selection": selection_rel,
         "selected_executor": selected_executor,
         "selection_sha256": selection_hash,
+        "executor_research_report_sha256": _sha256(workspace / executor_report_rel),
         "result_pack_sha256": _sha256(workspace / result_pack_rel),
         "executor_status_sha256": _sha256(workspace / status_rel),
         "dry_run": bool(result_pack.get("dry_run")),
@@ -2509,6 +2608,7 @@ def _write_external_executor_guides(
     handoff: dict[str, Any],
     *,
     selection: dict[str, Any],
+    include_legacy_control_files: bool = True,
 ) -> None:
     ext_dir = policy.workspace_dir / "external_executor"
     ext_dir.mkdir(parents=True, exist_ok=True)
@@ -2520,13 +2620,12 @@ def _write_external_executor_guides(
     ) or "- unknown; a source-backed metric definition is required before execution"
     baselines = handoff.get("required_baselines") or []
     baselines_block = _format_required_baselines_block(baselines)
-    allowed_paths = "\n".join(f"- {path}" for path in handoff.get("allowed_paths", []))
     resource_policy = handoff.get("resource_acquisition_policy") or default_resource_acquisition_policy()
     resource_policy_block = json.dumps(resource_policy, ensure_ascii=False, indent=2)
     required_outputs = "\n".join(f"- `{path}`" for path in (handoff.get("executor_outputs_contract") or {}).get("must_write", []))
     seeds = ", ".join(str(seed) for seed in handoff.get("seeds", []) or []) or "unknown; require a declared seed policy"
     common_header = (
-        "> EXECUTION MODE NOT YET SELECTED - see executor_selection.json after T5-EXECUTOR-GATE\n\n"
+        "> EXECUTION MODE NOT YET SELECTED - see external_executor/report/executor_selection.json after T5-EXECUTOR-GATE\n\n"
         f"- dry_run: UNSET\n- mock_only: UNSET\n- real_experiment_allowed: UNSET\n\n"
     )
     agents = (
@@ -2542,20 +2641,21 @@ def _write_external_executor_guides(
         "1. external_executor/handoff_pack.json\n"
         "2. external_executor/expected_outputs_schema.json\n"
         "3. external_executor/allowed_paths.txt\n"
-        "4. external_executor/executor_selection.json\n"
-        "5. external_executor/executor_capabilities.json, if present\n"
-        "6. external_executor/skill_specialization_report.json\n"
+        "4. external_executor/report/executor_selection.json\n"
+        "5. external_executor/report/executor_capabilities.json, if present\n"
+        "6. external_executor/report/skill_specialization_report.json\n"
         "7. external_executor/project_skill_context.yaml\n"
         "8. novelty/required_baselines.json, if present\n"
         "9. ideation/novelty_audit.md\n\n"
         "## Read if present\n"
+        "- resource/baseline_candidates.jsonl\n"
         "- resources/baseline_candidates.jsonl\n"
         "- literature/baseline_map.json\n"
         "- user_seeds/seed_external_resources.jsonl\n\n"
         "Missing optional resource or baseline map files are not blockers. Use the handoff, project context, and Phase B acquisition workflow.\n\n"
-        "## Human-provided experiment materials\n"
-        "Inspect `external_executor/expr/` before real execution. This directory may contain only README/checklist scaffolding. "
-        "An empty materials gate is not a blocker; acquire public datasets/baselines from authorized sources or reimplement baselines under the policy below.\n\n"
+        "## Resource materials\n"
+        "Do not search `external_executor/expr/` for baseline, benchmark, dataset, checkpoint, or evaluation resources. "
+        "Place by-hand local resources under `resources/`; place public remote acquisitions and baseline reimplementations under `resource/`; `external_executor/expr/` is the formal execution area for deployed method and baseline code after resources are prepared.\n\n"
         "## Resource acquisition policy\n"
         "Dataset downloads, GitHub access, and baseline reimplementation are allowed within `allowed_paths.txt` and license/security review constraints.\n\n"
         "```json\n"
@@ -2568,11 +2668,12 @@ def _write_external_executor_guides(
         "## Seeds\n"
         f"Run required configurations over seeds: {seeds}\n\n"
         "## Hard boundaries\n"
-        f"{allowed_paths}\n\n"
+        "Read and obey `external_executor/allowed_paths.txt`; it is the authoritative path policy. "
+        "Do not rely on any copied whitelist in this file, and do not write outside paths allowed there.\n\n"
         "Do not fabricate datasets, baselines, metrics, or results. Every metric must trace to a raw file, config, run id, log, and sha256.\n\n"
         "## Required outputs\n"
         f"{required_outputs}\n\n"
-        "Write external_executor/result_pack.json last. Do not write paper text or final claims.\n"
+        "Write external_executor/executor_research_report.md as the final T8 handoff report, then stop. Do not write paper text or final claims.\n"
     )
     claude = (
         f"# Claude Code External Execution Guide - project {project_id}\n\n"
@@ -2582,9 +2683,9 @@ def _write_external_executor_guides(
         "1. Read handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt.\n"
         "2. Read optional baseline/resource maps only if they exist; missing maps are not blockers.\n"
         "3. If mock_only=true, emit schema-valid mock artifacts with mock_only=true and dry_run=true.\n"
-        "4. If real, clone/inspect baseline repos only inside external_executor/workdir and acquire/reimplement resources under the policy in AGENTS.md.\n"
+        "4. If real, put by-hand local resources under resources/, acquire or reimplement external resources under resource/, and deploy runnable baseline/method code under external_executor/expr/.\n"
         f"5. Run required configs over seeds {seeds}.\n"
-        "6. Write all required outputs and stop after result_pack.json.\n\n"
+        "6. Write all required outputs and stop after executor_research_report.md.\n\n"
         "## Metrics\n"
         f"{metrics_block}\n\n"
         "## Required baselines\n"
@@ -2596,7 +2697,7 @@ def _write_external_executor_guides(
         f"# External Executor Workspace - {project_id}\n\n"
         + common_header
         + "ResearchOS writes experiment contracts here. External executors write auditable result artifacts here.\n\n"
-        "Key files: handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt, AGENTS.md, CLAUDE.md, result_pack.json.\n"
+        "Key files: handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt, AGENTS.md, CLAUDE.md, report/executor_selection.json, result_pack.json.\n"
     )
     dir_guide = (
         "# Workspace Directory Guide\n\n"
@@ -2604,7 +2705,7 @@ def _write_external_executor_guides(
         "|---|---|\n"
         "| 目录用途 | ResearchOS 与 Codex/Claude/manual 外部实验执行器的边界目录。 |\n"
         "| 生成阶段/来源 | T5-REBOOST/T5-HANDOFF, T5-EXECUTOR-GATE, external executor, T5-DRY-RUN. |\n"
-        "| 下游使用方 | T5-EXTERNAL-WAIT, T7-INGEST, T7-AUDIT, T7-POST-NOVELTY, T7-CLAIMS, T8-RESOURCE. |\n"
+        "| 下游使用方 | T5-EXTERNAL-WAIT, T8-RESOURCE and later T8 writing/review tasks. |\n"
         "| 人工可编辑范围 | Manual executor outputs only. |\n"
         "| Agent 可写范围 | External executor may write only paths allowed by allowed_paths.txt. |\n"
         "| 不应放入 | Paper text, unsupported claims, API keys, or unrelated notebooks. |\n"
@@ -2619,13 +2720,16 @@ def _write_external_executor_guides(
         "| `allowed_paths.txt` | 外部执行器可读写路径边界。 |\n"
         "| `skills/` | Project-specific external executor Skill Suite published by `T5-SPECIALIZE-EXECUTOR-SKILLS`. Use `researchos specialize-executor-skills --deterministic` only for offline preview, repair, or validation. |\n"
         "| `expr/` | Human-provided experimental materials gate directory. |\n"
-        "| `result_pack.json` | 外部执行器写回的核心结果包，T7 只从这里摄取实验结果。 |\n"
+        "| `executor_research_report.md` | T5 直接交给 T8 的核心外部执行研究报告。 |\n"
+        "| `result_pack.json` | 外部执行器写回的支持性结果包，供 T8 需要时回查。 |\n"
         "| `executor_status.json` | 外部执行器状态、accepted/mock/dry-run 标记。 |\n"
         "| `run_manifest.json` | 运行记录、raw/config/log 路径和 provenance。 |\n\n"
         "Generated by ResearchOS workspace initialization.\n"
     )
     _write_text(policy.resolve_write("external_executor/AGENTS.md"), agents)
     _write_text(policy.resolve_write("external_executor/CLAUDE.md"), claude)
+    if not include_legacy_control_files:
+        return
     _write_text(policy.resolve_write("external_executor/README.md"), readme)
     _write_text(policy.resolve_write("external_executor/_DIR_GUIDE.md"), dir_guide)
     _write_json(
@@ -2664,49 +2768,6 @@ def _write_external_executor_guides(
             json.dumps({"time": _now_iso(), "state": "CREATED", "message": "Handoff files generated."}, ensure_ascii=False)
             + "\n",
             encoding="utf-8",
-        )
-
-
-def _write_expr_materials_scaffold(policy: WorkspaceAccessPolicy, handoff: dict[str, Any]) -> None:
-    expr_dir = policy.workspace_dir / "external_executor" / "expr"
-    expr_dir.mkdir(parents=True, exist_ok=True)
-    checklist = {
-        "version": "1.0",
-        "semantics": "external_executor_expr_materials_checklist",
-        "created_at": _now_iso(),
-        "purpose": (
-            "Optional human-provided materials gate. This directory may contain only "
-            "the generated README/checklist; absence of data, repos, weights, or access "
-            "notes does not block Phase A/B."
-        ),
-        "expected_materials": [
-            "datasets or dataset access instructions",
-            "baseline model repositories or paths",
-            "pretrained weights or download notes",
-            "environment constraints and credentials notes without secrets",
-            "README describing material provenance",
-        ],
-        "required_baselines": handoff.get("required_baselines", []),
-        "minimum_experiment_loop": (handoff.get("context_reboost") or {}).get("minimum_experiment_loop", []),
-        "resource_acquisition_policy": handoff.get("resource_acquisition_policy") or default_resource_acquisition_policy(),
-        "absence_policy": (
-            "If materials are absent, the external executor should continue by using "
-            "authorized GitHub/public dataset acquisition and baseline reimplementation."
-        ),
-        "next_step": "Proceed with context alignment and Phase B resource acquisition under the policy.",
-    }
-    checklist_path = expr_dir / "MATERIALS_CHECKLIST.json"
-    if not checklist_path.exists():
-        _write_json(checklist_path, checklist)
-    readme_path = expr_dir / "README.md"
-    if not readme_path.exists():
-        _write_text(
-            readme_path,
-            "# External Experiment Materials\n\n"
-            "Place optional baseline models, datasets, repositories, pretrained weights, and material notes here.\n"
-            "This directory may remain scaffold-only. If no materials are present, continue with the authorized "
-            "GitHub/public dataset acquisition and baseline reimplementation workflow.\n"
-            "Do not commit secrets or credential-bearing access notes.\n",
         )
 
 
@@ -3213,6 +3274,14 @@ def _format_limitations_from_experiments(result: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+REBOOST_REPORT_PATH = "external_executor/report/reboost_report.json"
+REBOOST_VALIDATION_REPORT_PATH = "external_executor/report/reboost_validation_report.json"
+LLM_REBOOST_CANDIDATE_PATH = "external_executor/report/reboost_llm_candidate_handoff_pack.json"
+LLM_REBOOST_CANDIDATE_VALIDATION_REPORT_PATH = (
+    "external_executor/report/reboost_llm_candidate_validation_report.json"
+)
+
+
 class CompileResearchReboostHandoffParams(BaseModel):
     handoff_pack: dict[str, Any] | None = Field(
         default=None,
@@ -3223,26 +3292,16 @@ class CompileResearchReboostHandoffParams(BaseModel):
         ),
     )
     output_path: str = Field(default="external_executor/handoff_pack.json")
-    report_path: str = Field(default="external_executor/reboost_report.json")
-    validation_report_path: str = Field(default="external_executor/reboost_validation_report.json")
+    report_path: str = Field(default=REBOOST_REPORT_PATH)
+    validation_report_path: str = Field(default=REBOOST_VALIDATION_REPORT_PATH)
     expected_schema_path: str = Field(default="external_executor/expected_outputs_schema.json")
     allowed_paths_path: str = Field(default="external_executor/allowed_paths.txt")
-    executor_selection_path: str = Field(default="external_executor/executor_selection.json")
-    input_manifest_path: str = Field(default="external_executor/input_manifest.json")
-    prompt_output_path: str = Field(default="external_executor/executor_prompt.md")
-    codex_prompt_path: str = Field(default="external_executor/codex_prompt.md")
-    claude_prompt_path: str = Field(default="external_executor/claude_code_prompt.md")
-    manual_instructions_path: str = Field(default="external_executor/manual_instructions.md")
 
 
 class SpecializeExecutorSkillsParams(BaseModel):
     """Parameters for the deterministic T5 project-Skill publication step."""
 
-    report_path: str = Field(default="external_executor/skill_specialization_report.json")
-
-
-LLM_REBOOST_CANDIDATE_PATH = "external_executor/reboost_llm_candidate_handoff_pack.json"
-LLM_REBOOST_CANDIDATE_VALIDATION_REPORT_PATH = "external_executor/reboost_llm_candidate_validation_report.json"
+    report_path: str = Field(default="external_executor/report/skill_specialization_report.json")
 
 
 def _validation_findings_summary(report: dict[str, Any], *, limit: int = 8) -> list[dict[str, Any]]:
@@ -3266,14 +3325,14 @@ class BuildExperimentHandoffPackParams(BaseModel):
         description="Initial executor mode. T5-EXECUTOR-GATE patches the real selection later.",
     )
     output_path: str = Field(default="external_executor/handoff_pack.json")
-    prompt_output_path: str = Field(default="external_executor/executor_prompt.md")
+    prompt_output_path: str = Field(default="external_executor/executor_prompt.md", description="Deprecated; executor prompt files are no longer generated.")
     expected_schema_path: str = Field(default="external_executor/expected_outputs_schema.json")
     allowed_paths_path: str = Field(default="external_executor/allowed_paths.txt")
-    executor_selection_path: str = Field(default="external_executor/executor_selection.json")
+    executor_selection_path: str = Field(default=EXECUTOR_SELECTION_PATH)
     input_manifest_path: str = Field(default="external_executor/input_manifest.json")
-    codex_prompt_path: str = Field(default="external_executor/codex_prompt.md")
-    claude_prompt_path: str = Field(default="external_executor/claude_code_prompt.md")
-    manual_instructions_path: str = Field(default="external_executor/manual_instructions.md")
+    codex_prompt_path: str = Field(default="external_executor/codex_prompt.md", description="Deprecated; executor prompt files are no longer generated.")
+    claude_prompt_path: str = Field(default="external_executor/claude_code_prompt.md", description="Deprecated; executor prompt files are no longer generated.")
+    manual_instructions_path: str = Field(default="external_executor/manual_instructions.md", description="Deprecated; executor prompt files are no longer generated.")
     specialize_skills: bool = Field(
         default=False,
         description=(
@@ -3288,18 +3347,19 @@ class SelectExternalExecutorParams(BaseModel):
         default="mock_dry_run",
         description="Executor selected by the T5-EXECUTOR-GATE human decision.",
     )
-    executor_selection_path: str = Field(default="external_executor/executor_selection.json")
+    executor_selection_path: str = Field(default=EXECUTOR_SELECTION_PATH)
     selected_by: str = Field(default="human")
     notes: str = Field(default="")
 
 
 class WaitForExternalExecutorResultParams(BaseModel):
+    executor_report_path: str = Field(default="external_executor/executor_research_report.md")
     result_pack_path: str = Field(default="external_executor/result_pack.json")
     status_path: str = Field(default="external_executor/executor_status.json")
     output_path: str = Field(default="external_executor/wait_acceptance_report.json")
     allow_partial_results: bool = Field(
         default=False,
-        description="默认不允许 PARTIAL_RESULTS_READY 进入 T7；只有显式打开时才接受部分结果。",
+        description="默认不允许 PARTIAL_RESULTS_READY 进入 T8 handoff；只有显式打开时才接受部分结果。",
     )
 
 
@@ -3365,7 +3425,7 @@ class CompileResearchReboostHandoffTool(Tool):
         "Publish and validate the handoff_pack compiled by the LLM while executing "
         "skills/research-reboost. If no handoff_pack argument is supplied, fall back "
         "to the deterministic recovery compiler. The tool writes the pretty-printed "
-        "external_executor/handoff_pack.json and the T5 handoff control files. "
+        "external_executor/handoff_pack.json and the minimal T5 handoff control files. "
         "Project-specific executor Skills are published separately by "
         "T5-SPECIALIZE-EXECUTOR-SKILLS."
     )
@@ -3446,6 +3506,10 @@ class CompileResearchReboostHandoffTool(Tool):
             else:
                 pack, report = _build_reboost_pack(ws)
                 report["generation_source"] = "deterministic_recovery_compiler"
+            # This compact index is part of the research handoff, not an
+            # executor-selection prompt. Keep it available before the later
+            # specialization task so executor Skills can trace literature
+            # rationale without treating paper notes as empirical results.
             paper_card_index_path = "external_executor/paper_card_evidence_index.json"
             paper_card_index = _paper_card_evidence_index(ws)
             _write_json(self.policy.resolve_write(paper_card_index_path), paper_card_index)
@@ -3473,57 +3537,14 @@ class CompileResearchReboostHandoffTool(Tool):
                 )
 
             guide_handoff = _guide_view_from_reboost_pack(pack, project, metrics)
-            source_artifacts = [
-                {
-                    "path": item.get("path"),
-                    "role": item.get("category"),
-                    "sha256": item.get("content_sha256"),
-                    "used": item.get("used"),
-                }
-                for item in pack.get("source_manifest", [])
-                if isinstance(item, dict)
-            ]
-            source_artifacts.append(_artifact_record(ws, paper_card_index_path, role="paper_card_evidence_index"))
             _write_json(self.policy.resolve_write(params.expected_schema_path), _build_expected_outputs_schema())
             _write_text(self.policy.resolve_write(params.allowed_paths_path), "\n".join(_allowed_path_rules_for_external_executor()) + "\n")
-            placeholder_next_state = "T5-SPECIALIZE-EXECUTOR-SKILLS"
-            executor_selection = {
-                "version": "1.0",
-                "semantics": "external_executor_selection",
-                "selected_executor": "UNSET",
-                "real_experiment_allowed": False,
-                "requires_user_copy_paste": False,
-                "selected_by": "system_placeholder",
-                "selected_at": None,
-                "next_state": placeholder_next_state,
-                "fallback_order": ["mock_dry_run", "claude_code_window", "manual"],
-                "notes": (
-                    "Execution mode is intentionally UNSET until T5-EXECUTOR-GATE; "
-                    "the project Skill Suite is generated by "
-                    "T5-SPECIALIZE-EXECUTOR-SKILLS before executor selection."
-                ),
-            }
-            _write_json(self.policy.resolve_write(params.executor_selection_path), executor_selection)
-            _write_json(
-                self.policy.resolve_write(params.input_manifest_path),
-                {
-                    "version": "1.0",
-                    "semantics": "external_executor_input_manifest",
-                    "handoff_pack": params.output_path,
-                    "reboost_skill": "skills/research-reboost/SKILL.md",
-                    "source_artifacts": source_artifacts,
-                    "paper_card_evidence_index": paper_card_index_path,
-                    "paper_card_evidence_policy": pack["paper_card_evidence_policy"],
-                    "required_executor_outputs": guide_handoff["executor_outputs_contract"]["must_write"],
-                },
+            _write_external_executor_guides(
+                self.policy,
+                guide_handoff,
+                selection={"selected_executor": "UNSET"},
+                include_legacy_control_files=False,
             )
-            _write_external_executor_guides(self.policy, guide_handoff, selection=executor_selection)
-            _write_expr_materials_scaffold(self.policy, guide_handoff)
-            _write_text(self.policy.resolve_write(params.prompt_output_path), _render_executor_prompt(pack, executor="UNSET"))
-            _write_text(self.policy.resolve_write(params.codex_prompt_path), _render_executor_prompt(pack, executor="codex_cli"))
-            _write_text(self.policy.resolve_write(params.claude_prompt_path), _render_executor_prompt(pack, executor="claude_code_window"))
-            _write_text(self.policy.resolve_write(params.manual_instructions_path), _render_manual_instructions(guide_handoff))
-
             _write_json(self.policy.resolve_write(params.report_path), report)
         except ToolAccessDenied as exc:
             return ToolResult(ok=False, content=str(exc), error="access_denied")
@@ -3609,7 +3630,7 @@ class SpecializeExecutorSkillsTool(Tool):
 
 class BuildExperimentHandoffPackTool(Tool):
     name = "build_experiment_handoff_pack"
-    description = "Compile a protocol pack and executor prompt for external experiment execution."
+    description = "Compile a protocol pack and AGENTS/CLAUDE control instructions for external experiment execution."
     parameters_schema = BuildExperimentHandoffPackParams
     timeout_seconds = 20.0
 
@@ -3668,7 +3689,8 @@ class BuildExperimentHandoffPackTool(Tool):
                 context_reboost=context_reboost,
             )
             host_workspace = workspace_host_hint(ws)
-            host_workdir = str(Path(host_workspace) / "external_executor" / "workdir") if host_workspace else ""
+            host_workdir = host_workspace
+            host_deployment_dir = str(Path(host_workspace) / "external_executor" / "expr") if host_workspace else ""
             handoff = {
                 "version": "1.0",
                 "schema_version": "external_executor_handoff.v1",
@@ -3686,10 +3708,12 @@ class BuildExperimentHandoffPackTool(Tool):
                 "project_id": project.get("project_id") or project.get("name") or "unknown",
                 "experiment_intent_oneliner": _infer_experiment_intent(project, hypotheses),
                 "executor_special_notes": "Use structure and provenance from this contract; do not write paper claims.",
-                "workspace_relative_workdir": "external_executor/workdir",
-                "workspace_relative_prompt": "external_executor/codex_prompt.md",
+                "workspace_relative_workdir": ".",
+                "workspace_relative_executor_root": ".",
+                "workspace_relative_deployment_dir": "external_executor/expr",
                 "host_workspace_hint": host_workspace,
                 "host_workdir_hint": host_workdir,
+                "host_deployment_dir_hint": host_deployment_dir,
                 "resource_acquisition_policy": default_resource_acquisition_policy(),
                 "context_reboost": context_reboost,
                 "method_intent": method_intent,
@@ -3723,6 +3747,7 @@ class BuildExperimentHandoffPackTool(Tool):
                     "prohibited_uses": paper_card_index["prohibited_uses"],
                 },
                 "executor_outputs": {
+                    "executor_research_report": "external_executor/executor_research_report.md",
                     "result_pack": "external_executor/result_pack.json",
                     "status": "external_executor/executor_status.json",
                     "run_manifest": "external_executor/run_manifest.json",
@@ -3733,6 +3758,7 @@ class BuildExperimentHandoffPackTool(Tool):
                 "allowed_paths": _allowed_path_rules_for_external_executor(),
                 "executor_outputs_contract": {
                     "must_write": [
+                        "external_executor/executor_research_report.md",
                         "external_executor/result_pack.json",
                         "external_executor/executor_status.json",
                         "external_executor/run_manifest.json",
@@ -3784,12 +3810,7 @@ class BuildExperimentHandoffPackTool(Tool):
             )
             _write_external_executor_guides(self.policy, handoff, selection=executor_selection)
             specialization_status = "deferred_to_T5-SPECIALIZE-EXECUTOR-SKILLS"
-            _write_expr_materials_scaffold(self.policy, handoff)
-            prompt = _render_executor_prompt(handoff, executor=params.executor)
-            _write_text(self.policy.resolve_write(params.prompt_output_path), prompt)
-            _write_text(self.policy.resolve_write(params.codex_prompt_path), _render_executor_prompt(handoff, executor="codex_cli"))
-            _write_text(self.policy.resolve_write(params.claude_prompt_path), _render_executor_prompt(handoff, executor="claude_code_window"))
-            _write_text(self.policy.resolve_write(params.manual_instructions_path), _render_manual_instructions(handoff))
+            (self.policy.workspace_dir / "external_executor" / "expr").mkdir(parents=True, exist_ok=True)
         except ToolAccessDenied as exc:
             return ToolResult(ok=False, content=str(exc), error="access_denied")
         except Exception as exc:
@@ -3834,7 +3855,7 @@ class SelectExternalExecutorTool(Tool):
 
 class WaitForExternalExecutorResultTool(Tool):
     name = "wait_for_external_executor_result"
-    description = "Validate that an external executor result pack exists before T7 ingest."
+    description = "Validate that external executor handoff materials exist before T8."
     parameters_schema = WaitForExternalExecutorResultParams
     timeout_seconds = 10.0
 
@@ -3848,6 +3869,7 @@ class WaitForExternalExecutorResultTool(Tool):
                 self.policy.workspace_dir,
                 params.result_pack_path,
                 params.status_path,
+                params.executor_report_path,
                 allow_partial_results=params.allow_partial_results,
             )
             if not report["ok"]:
@@ -3862,7 +3884,7 @@ class WaitForExternalExecutorResultTool(Tool):
 
 class BuildPostExperimentNoveltyCheckTool(Tool):
     name = "build_post_experiment_novelty_check"
-    description = "Build a conservative post-experiment novelty/collision check artifact for T7-POST-NOVELTY."
+    description = "Build a conservative optional post-experiment novelty/collision check artifact for T8."
     parameters_schema = BuildPostExperimentNoveltyCheckParams
     timeout_seconds = 10.0
 
@@ -3912,10 +3934,10 @@ class BuildPostExperimentNoveltyCheckTool(Tool):
                 "claim_downgrades_required": claim_downgrades,
                 "additional_baselines_required": (audit.get("required_baseline_coverage") or {}).get("missing_baselines", []),
                 "required_baselines": required.get("required_baselines", []),
-                "recommended_next_task": "T7-CLAIMS",
+                "recommended_next_task": "T8-RESOURCE",
                 "notes": (
                     "This tool performs deterministic evidence-status checks only. "
-                    "LLM novelty interpretation should read this artifact before T7.5/T8."
+                    "LLM novelty interpretation should read this artifact before T8."
                 ),
             }
             _write_json(self.policy.resolve_write(params.output_path), check)
@@ -3951,7 +3973,7 @@ class MockExternalDryRunTool(Tool):
             ws = self.policy.workspace_dir
             handoff_path = self.policy.resolve_read(params.handoff_pack_path)
             handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
-            selection = _read_json(ws / "external_executor" / "executor_selection.json")
+            selection = _read_json(_executor_selection_path(ws))
             executor_type = str(selection.get("selected_executor") or handoff.get("executor") or "mock_dry_run")
             if executor_type == "UNSET":
                 executor_type = "mock_dry_run"
@@ -4764,54 +4786,6 @@ class AuditPaperClaimsTool(Tool):
         except Exception as exc:
             return ToolResult(ok=False, content=f"paper claim audit failed: {exc}", error="paper_claim_audit_failed")
         return ToolResult(ok=True, content=f"Wrote paper claim audit to {params.output_path}.", data=audit["summary"])
-
-
-def _render_executor_prompt(handoff: dict[str, Any], *, executor: str) -> str:
-    executor_label = {
-        "codex_cli": "Codex CLI",
-        "claude_code_window": "Claude Code",
-        "manual": "Manual External Executor",
-        "mock_dry_run": "Mock Dry-Run Executor",
-        "UNSET": "Unselected External Executor",
-    }.get(executor, executor)
-    return (
-        f"# External Experiment Executor Prompt ({executor_label})\n\n"
-        "> EXECUTION MODE NOT YET SELECTED - see executor_selection.json after T5-EXECUTOR-GATE\n\n"
-        "- dry_run: UNSET\n"
-        "- mock_only: UNSET\n"
-        "- real_experiment_allowed: UNSET\n\n"
-        "You are an external executor for ResearchOS. Do not modify the ResearchOS main repo outside allowed paths.\n\n"
-        "## Required Output\n"
-        "- Write `external_executor/result_pack.json` matching `external_executor/expected_outputs_schema.json`.\n"
-        "- Write `external_executor/run_manifest.json` with raw result/config/log artifact paths and hashes.\n"
-        "- Write `external_executor/executor_status.json` with `status: done` and `accepted: false`.\n"
-        "- Write raw logs under `external_executor/logs/`.\n"
-        "- Mark dry-run outputs with `mock_only: true`.\n\n"
-        "## Integrity Rules\n"
-        "- Do not summarize results without raw files.\n"
-        "- Do not write outside `external_executor/` or other allowed paths listed in the handoff pack.\n"
-        "- Executor completion is only `done`; ResearchOS ingest/audit decides whether evidence is accepted.\n\n"
-        "## Handoff Pack\n\n"
-        "```json\n"
-        + json.dumps(handoff, ensure_ascii=False, indent=2)
-        + "\n```\n"
-    )
-
-
-def _render_manual_instructions(handoff: dict[str, Any]) -> str:
-    return (
-        "# Manual External Executor Instructions\n\n"
-        "Use this file when a human or non-integrated external agent runs the experiment outside ResearchOS.\n\n"
-        "1. Read `external_executor/handoff_pack.json` and `external_executor/expected_outputs_schema.json`.\n"
-        "2. Implement/run only inside the allowed paths.\n"
-        "3. Place raw metrics in `external_executor/raw_results/` and configs in `external_executor/configs/`.\n"
-        "4. Write `external_executor/run_manifest.json`, `external_executor/result_pack.json`, and "
-        "`external_executor/executor_status.json`.\n"
-        "5. Keep `executor_status.accepted=false`; ResearchOS will set acceptance through ingest/audit.\n\n"
-        "Allowed paths:\n\n"
-        + "\n".join(f"- `{path}`" for path in handoff.get("allowed_paths", []))
-        + "\n"
-    )
 
 
 def _format_iteration_log(summary: dict[str, Any], audit: dict[str, Any], claims: dict[str, Any]) -> str:

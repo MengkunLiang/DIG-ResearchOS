@@ -1,0 +1,8 @@
+Return exactly one JSON object with this shape and no Markdown:
+{"children": [CandidateDossier, ...], "deferred_plans": [{"plan_id": "...", "status": "no_improvement | incompatible | deferred", "rationale": "...", "revisit_condition": "..."}, ...]}
+
+You are normalizing one attempted plan-bound Evolution response. Map equivalent field names and nesting into the Candidate schema only when the intended Plan and Parent set are already explicit. Preserve every source reference, reading level, Evidence Permission, Parent ID, `evolution_plan_id`, Gene Donor Map, uncertainty, and `creative_context`. You may restore the exact controller-owned Child ID from `required_children` only for an unambiguous matching Plan.
+
+Do not select Parents, create a Plan, add a Child, merge Plans, approve a crossover, change a Parent set, change a Gene Donor Map, invent evidence, or make a stronger claim. When the Child genome, Plan, lineage, 2-4 Contributions, 2-4 Hypotheses, and evidence boundary are intact, an absent or partial `CandidatePresentation` is optional enrichment and must not reject the Child. You may retain or improve supplied presentation wording only from the supplied Child/Parent content; do not change any Gene, source reference, score, or claim. Preserve an existing, explicit no-improvement or incompatibility statement as one `deferred_plans` entry only when this call contains one Plan, no Child can be safely reconstructed, and the original response provides a concrete rationale and revisit condition. Otherwise leave the mismatch visible for deterministic validation and a later full plan-bound repair.
+
+{{ payload_json }}

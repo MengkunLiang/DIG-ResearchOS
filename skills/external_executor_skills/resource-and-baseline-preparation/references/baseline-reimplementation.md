@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Reimplementation is a controlled fallback for a required baseline whose usable implementation cannot be obtained. It is not a shortcut to a simpler comparator.
+Reimplementation is the third and final controlled fallback for a required baseline whose usable implementation cannot be obtained from local `resources/` material or from authorized public remote sources. It is not a shortcut to a simpler comparator.
 
 ## Preconditions
 
@@ -10,8 +10,8 @@ All must hold:
 
 - policy mode is `github_and_reimplementation`;
 - `baseline_reimplementation_allowed=true`;
-- local search is complete;
-- authorized remote search is complete;
+- local resource search is complete and did not inspect `external_executor/expr`;
+- authorized public remote search and acquisition attempts are complete;
 - search and rejection records exist;
 - paper/supplement/protocol sources are available;
 - core algorithm, training objective, data/split, metric, and evaluation protocol are recoverable;
@@ -22,7 +22,7 @@ All must hold:
 ## Package layout
 
 ```text
-external_executor/workdir/resources/reimplementations/<baseline>/
+resource/reproduction/<baseline>/
   README.md
   REIMPLEMENTATION_SPEC.md
   provenance.json
@@ -97,6 +97,8 @@ A candidate package needs:
 - explicit approval scope.
 
 The later `baseline-reproduction` skill must still execute, repair, and compare the baseline.
+
+If the package cannot pass candidate validation or independent review, mark the requirement blocked or unavailable. Do not loop into another approximate implementation unless the root approves a scope or baseline decision.
 
 ## Stop rules
 

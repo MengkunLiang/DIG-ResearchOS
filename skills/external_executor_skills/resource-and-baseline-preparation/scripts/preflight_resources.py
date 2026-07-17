@@ -46,10 +46,44 @@ def default_resource_acquisition_policy() -> dict:
             "kaggle.com",
             "openml.org",
             "archive.ics.uci.edu",
+            "openreview.net",
+            "gitlab.com",
+            "bitbucket.org",
+            "modelscope.cn",
+            "www.modelscope.cn",
+            "dataverse.harvard.edu",
+            "datacite.org",
+            "api.datacite.org",
+            "codabench.org",
+            "eval.ai",
+            "evalai.cloudcv.org",
+            "crfm.stanford.edu",
+            "ogb.stanford.edu",
+            "mteb-leaderboard.huggingface.co",
+            "opencompass.org.cn",
+        ],
+        "remote_platform_priority": {
+            "baseline": ["Hugging Face", "OpenReview", "GitLab", "Bitbucket", "ModelScope", "Zenodo"],
+            "dataset": ["Hugging Face", "OpenML", "Kaggle", "UCI", "Zenodo", "Dataverse", "DataCite"],
+            "benchmark": [
+                "OpenML",
+                "Hugging Face Leaderboards",
+                "Codabench",
+                "EvalAI",
+                "HELM",
+                "domain_specific_platforms",
+            ],
+        },
+        "local_resource_roots": [
+            "resources",
+            "resource",
+            "user_seeds",
         ],
         "material_absence_policy": (
-            "external_executor/expr may contain only README/checklist scaffolding; "
-            "continue by authorized acquisition or reimplementation when local materials are absent."
+            "Do not inspect external_executor/expr for baseline, benchmark, or dataset resources. "
+            "It is the formal execution area after baseline and method construction. "
+            "Check resources/ for by-hand local materials first; continue by authorized acquisition "
+            "into resource/ or baseline reimplementation into resource/ when local materials are absent."
         ),
     }
 
@@ -158,8 +192,11 @@ def main() -> int:
         ext / "resource_requirement_matrix.json",
         ext / "resource_local_inventory.json",
         ext / "resource_search_records.json",
+        ext / "resource_source_report.json",
+        ext / "resource_source_report.md",
         ext / "resource_preparation_report.json",
-        ext / "workdir" / "resources",
+        workspace / "resources",
+        workspace / "resource",
     ]
     for target in write_targets:
         try:

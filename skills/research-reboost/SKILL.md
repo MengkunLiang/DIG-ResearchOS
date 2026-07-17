@@ -1,5 +1,7 @@
 ---
 name: research-reboost
+execution_scope: state_machine
+execution_owner: T5-REBOOST-GATE
 description: Compile ResearchOS Pre-T5 research artifacts into a source-traceable, schema-valid external_executor/handoff_pack.json. Use when T5-HANDOFF must re-boost project, literature, hypothesis, novelty, risk, and experiment-plan artifacts into executable context; when Method Intent Drafting must be performed inside reboost; or when an existing handoff pack must be reconciled, repaired, or validated before project-specific skill compilation or external execution. Do not run experiments, implement the method, compile the executor skill suite, or produce the final realized method.
 tools:
   - read_file
@@ -44,11 +46,11 @@ python3 scripts/inventory_sources.py \
 
 Treat the inventory as discovery evidence, not semantic interpretation. If a required source is missing, continue only far enough to produce a blocked diagnosis; do not invent its content.
 
-When this Skill is executed inside the ResearchOS T5 state machine, use the registered `compile_research_reboost_handoff` tool instead of shelling out. First read the required sources and compile the full `handoff_pack` object yourself under this Skill contract; then pass that object as the tool's `handoff_pack` argument. The tool is only the publication and validation boundary: it writes the pretty-printed JSON, runs the bundled validator, and publishes the T5 executor control files. If the argument is omitted, the tool may fall back to its deterministic repair compiler for legacy or offline recovery, but the normal T5 path should provide the LLM-compiled pack.
+When this Skill is executed inside the ResearchOS T5 state machine, use the registered `compile_research_reboost_handoff` tool instead of shelling out. First read the required sources and compile the full `handoff_pack` object yourself under this Skill contract; then pass that object as the tool's `handoff_pack` argument. The tool is only the publication and validation boundary: it writes the pretty-printed JSON, runs the bundled validator, publishes the T5 executor control files, and stores reboost diagnostics under `external_executor/report/`. It does not create or populate `external_executor/expr/`; workspace initialization owns that directory. If the argument is omitted, the tool may fall back to its deterministic repair compiler for legacy or offline recovery, but the normal T5 path should provide the LLM-compiled pack.
 
 ### 2. Read sources by decision relevance
 
-Read all available required sources. Backtrack into optional paper notes, resources, or user seeds only when a required source leaves a concrete decision unsupported or ambiguous. Record every actually consulted file in `source_manifest`; set `used=false` for discovered but unread optional files.
+Read all available required sources. Backtrack into optional paper notes, Cross-domain catalogs, resources, or user seeds only when a required source leaves a concrete decision unsupported or ambiguous. Record every actually consulted file in `source_manifest`; set `used=false` for discovered but unread optional files. A Cross-domain catalog is retrieval context, not direct experiment evidence: it can guide a baseline or follow-up reading decision but cannot certify a mechanism, implementation detail, baseline equivalence, or result.
 
 Load `references/reboost-protocol.md` before resolving conflicts or deciding whether optional backtracking is required.
 

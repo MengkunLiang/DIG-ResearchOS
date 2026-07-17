@@ -31,7 +31,7 @@ def build_specialization_paths(*, workspace: Path, repo_root: Path | None = None
         output_context_path=external_root / "project_skill_context.yaml",
         output_schema_path=external_root / "schemas" / "project_skill_context.schema.json",
         output_skills_path=external_root / "skills",
-        output_report_path=external_root / "skill_specialization_report.json",
+        output_report_path=external_root / "report" / "skill_specialization_report.json",
     )
 
 

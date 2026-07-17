@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections import Counter
 import hashlib
+import json
 from pathlib import Path
 import re
 from typing import Any
@@ -16,6 +17,8 @@ from typing import Any
 import yaml
 
 from ..pydantic_compat import model_dump
+from ..runtime.bridge_catalog import iter_bridge_catalog_paths
+from ..runtime.literature_contract import build_literature_manifest, iter_literature_note_cards
 from ..runtime.system_config import system_config_path
 from .models import DomainRole, EvidenceAtom, EvidencePermission, EvidenceStatus, ReadingLevel
 from .state import T4ArtifactStore
@@ -42,55 +45,59 @@ def build_idea_evidence_index(
     """Build and persist section-level EvidenceAtoms from all note tracks."""
 
     workspace = Path(workspace_dir)
+    build_literature_manifest(workspace, write=True)
     policy = _load_permission_policy(permissions_path)
     atoms: list[EvidenceAtom] = []
     seen: set[tuple[str, str, str]] = set()
     visited: set[Path] = set()
-    for relative_root, domain_role in _NOTE_ROOTS:
-        root = workspace / relative_root
-        if not root.is_dir():
+    indexed_note_paths: set[str] = set()
+    for card in iter_literature_note_cards(workspace, include_shallow=True):
+        note_path = workspace / card.rel_path
+        domain_role = DomainRole.BRIDGE if card.root_type == "bridge_notes" else DomainRole.CORE
+        resolved = note_path.resolve()
+        if resolved in visited:
             continue
-        for note_path in sorted(root.rglob("*.md")):
-            if not note_path.is_file() or note_path.name.startswith("_") or note_path.name.casefold() == "readme.md":
+        visited.add(resolved)
+        try:
+            text = note_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        relative_path = card.rel_path
+        indexed_note_paths.add(relative_path)
+        reading_level = _reading_level(note_path, text)
+        for section_key, section_title, content in _extract_sections(text):
+            content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            duplicate_key = (relative_path, section_key, content_hash)
+            if duplicate_key in seen:
                 continue
-            resolved = note_path.resolve()
-            if resolved in visited:
-                continue
-            visited.add(resolved)
-            try:
-                text = note_path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            reading_level = _reading_level(note_path, text)
-            for section_key, section_title, content in _extract_sections(text):
-                content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-                relative_path = note_path.relative_to(workspace).as_posix()
-                duplicate_key = (relative_path, section_key, content_hash)
-                if duplicate_key in seen:
-                    continue
-                seen.add(duplicate_key)
-                allowed, forbidden = _permissions_for(policy, reading_level)
-                status = _status_for(reading_level)
-                atom_id = "EA-" + hashlib.sha256(
-                    f"{relative_path}\0{section_key}\0{content_hash}".encode("utf-8")
-                ).hexdigest()[:16]
-                atoms.append(
-                    EvidenceAtom(
-                        atom_id=atom_id,
-                        paper_id=note_path.stem,
-                        source_path=relative_path,
-                        section_key=section_key,
-                        section_title=section_title,
-                        content=content,
-                        domain_role=domain_role,
-                        reading_level=reading_level,
-                        evidence_status=status,
-                        allowed_uses=allowed,
-                        forbidden_uses=forbidden,
-                        requires_original_section_check=True,
-                        content_fingerprint=content_hash,
-                    )
+            seen.add(duplicate_key)
+            allowed, forbidden = _permissions_for(policy, reading_level)
+            status = _status_for(reading_level)
+            atom_id = "EA-" + hashlib.sha256(
+                f"{relative_path}\0{section_key}\0{content_hash}".encode("utf-8")
+            ).hexdigest()[:16]
+            atoms.append(
+                EvidenceAtom(
+                    atom_id=atom_id,
+                    paper_id=Path(relative_path).stem,
+                    source_path=relative_path,
+                    section_key=section_key,
+                    section_title=section_title,
+                    content=content,
+                    domain_role=domain_role,
+                    reading_level=reading_level,
+                    evidence_status=status,
+                    allowed_uses=allowed,
+                    forbidden_uses=forbidden,
+                    requires_original_section_check=True,
+                    content_fingerprint=content_hash,
                 )
+            )
+    # A bridge catalog preserves material that was retrieved but deliberately
+    # not deep-read.  Those records are valid creative fuel, but their atoms
+    # retain abstract/metadata permissions so the controller cannot turn them
+    # into direct scientific support.
+    atoms.extend(_bridge_catalog_atoms(workspace, policy, seen, indexed_note_paths))
     atoms.sort(key=lambda item: item.atom_id)
     summary = _index_summary(atoms)
     target_store = store or T4ArtifactStore(workspace)
@@ -103,6 +110,100 @@ def build_idea_evidence_index(
         "atoms_path": "ideation/evidence/evidence_index.jsonl",
         "summary_path": "ideation/evidence/evidence_index_summary.json",
     }
+
+
+def _bridge_catalog_atoms(
+    workspace: Path,
+    policy: dict[str, Any],
+    seen: set[tuple[str, str, str]],
+    indexed_note_paths: set[str],
+) -> list[EvidenceAtom]:
+    atoms: list[EvidenceAtom] = []
+    for catalog_path in iter_bridge_catalog_paths(workspace):
+        try:
+            catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        bridge_id = str(catalog.get("bridge_id") or catalog_path.parent.name).strip()
+        records = catalog.get("records") if isinstance(catalog.get("records"), list) else []
+        for index, raw in enumerate(records, start=1):
+            if not isinstance(raw, dict):
+                continue
+            note_path = str(raw.get("canonical_note_path") or "").strip()
+            # Canonical notes are already indexed above.  A duplicate catalog
+            # entry would create two atoms for the same scientific content.
+            # A stale catalog link is different: retaining it as a bounded
+            # abstract/metadata lead is safer than silently dropping all
+            # Cross-domain material merely because its linked note was moved
+            # or has not yet been materialized in this workspace.
+            if note_path and _catalog_note_is_indexed(workspace, note_path, indexed_note_paths):
+                continue
+            abstract = str(raw.get("abstract") or "").strip()
+            title = str(raw.get("title") or raw.get("paper_id") or "Untitled retrieved bridge record").strip()
+            reading_level = ReadingLevel.ABSTRACT_ONLY if abstract else ReadingLevel.METADATA_ONLY
+            content = _catalog_content(raw, title, abstract)
+            content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            relative_path = catalog_path.relative_to(workspace).as_posix()
+            section_key = f"catalog_{index}"
+            duplicate_key = (relative_path, section_key, content_hash)
+            if duplicate_key in seen:
+                continue
+            seen.add(duplicate_key)
+            allowed, forbidden = _permissions_for(policy, reading_level)
+            atom_id = "EA-" + hashlib.sha256(
+                f"{relative_path}\0{section_key}\0{content_hash}".encode("utf-8")
+            ).hexdigest()[:16]
+            atoms.append(
+                EvidenceAtom(
+                    atom_id=atom_id,
+                    paper_id=str(raw.get("paper_id") or raw.get("canonical_id") or f"{bridge_id}-{index}"),
+                    source_path=relative_path,
+                    section_key=section_key,
+                    section_title=f"Bridge catalog: {title}",
+                    content=content,
+                    domain_role=DomainRole.BRIDGE,
+                    reading_level=reading_level,
+                    evidence_status=_status_for(reading_level),
+                    allowed_uses=allowed,
+                    forbidden_uses=forbidden,
+                    bridge_ids=[bridge_id] if bridge_id else [],
+                    requires_original_section_check=True,
+                    content_fingerprint=content_hash,
+                )
+            )
+    return atoms
+
+
+def _catalog_note_is_indexed(workspace: Path, note_path: str, indexed_note_paths: set[str]) -> bool:
+    normalized = note_path.replace("\\", "/").lstrip("./")
+    if normalized in indexed_note_paths:
+        return True
+    candidate = Path(note_path)
+    if candidate.is_absolute():
+        try:
+            normalized = candidate.resolve().relative_to(workspace.resolve()).as_posix()
+        except ValueError:
+            return False
+        return normalized in indexed_note_paths
+    # Legacy catalog records occasionally persisted just a filename.  Do not
+    # assume that name means a note exists; only skip it when the exact live
+    # chain has indexed the same basename.
+    return any(Path(path).name == candidate.name for path in indexed_note_paths)
+
+
+def _catalog_content(record: dict[str, Any], title: str, abstract: str) -> str:
+    """Render only retrieved metadata/abstract, never a synthetic conclusion."""
+
+    parts = [f"Retrieved cross-domain record: {title}."]
+    venue = str(record.get("venue") or "").strip()
+    year = str(record.get("year") or "").strip()
+    if venue or year:
+        parts.append("Metadata: " + ", ".join(value for value in (venue, year) if value) + ".")
+    if abstract:
+        parts.append("Abstract-only content: " + abstract)
+    else:
+        parts.append("Metadata-only record. Use it to locate or prioritize reading, not to support a claim.")
+    return " ".join(parts)
 
 
 def _load_permission_policy(path: Path | None) -> dict[str, Any]:

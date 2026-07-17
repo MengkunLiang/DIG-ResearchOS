@@ -109,6 +109,15 @@ Check:
   "findings": [],
   "required_fixes": [],
   "evidence_refs": [],
+  "executable_baseline_criteria": {
+    "accessible_code_or_model": {"status": "pass|missing|unknown", "evidence_refs": []},
+    "revision_locked": {"status": "pass|missing|unknown", "evidence_refs": []},
+    "license_clear": {"status": "pass|missing|unknown", "evidence_refs": []},
+    "environment_or_dependencies": {"status": "pass|missing|unknown", "evidence_refs": []},
+    "dataset_version_and_split": {"status": "pass|missing|unknown", "evidence_refs": []},
+    "metric_implementation": {"status": "pass|missing|unknown", "evidence_refs": []},
+    "traceable_result_record": {"status": "pass|missing|unknown", "evidence_refs": []}
+  },
   "approved_for": []
 }
 ```
@@ -129,3 +138,5 @@ none
 ```
 
 `formal_comparison` requires passing identity, protocol, fairness, license/access, and security review. Phase B approval does not prove executed reproducibility.
+
+For baseline requirements, `baseline_reproduction` and `formal_comparison` also require every `executable_baseline_criteria` field to pass. If any criterion is missing or unknown, the candidate can still be documented, but it is not an executable baseline.

@@ -14,16 +14,19 @@ import json
 import os
 from pathlib import Path
 import tempfile
-from typing import Any, TypeVar
+from typing import Any, Mapping, TypeVar
 
 from pydantic import BaseModel
 
 from ..pydantic_compat import model_dump, model_validate
-from ..runtime.artifact_fingerprints import build_input_fingerprints, validate_input_fingerprints
+from ..runtime.artifact_fingerprints import build_input_fingerprints
+from ..runtime.bridge_catalog import cross_domain_catalogs_are_plan_only
 from .models import CandidateDossier, EvolutionPhase, PopulationSnapshot, RoundArtifact, T4InternalState, T4RunConfig
 
 
 T4_STATE_REL_PATH = "ideation/evolution/state.json"
+T4_FINAL_CARD_REPAIR_STATE_REL_PATH = "ideation/evolution/final_card_repair_state.json"
+T4_LITERATURE_MANIFEST_FINGERPRINT_SCHEMA = "t4_literature_evidence_contract_v1"
 T4_INPUT_FINGERPRINT_PATHS: dict[str, str] = {
     "project": "project.yaml",
     "synthesis": "literature/synthesis.md",
@@ -31,9 +34,11 @@ T4_INPUT_FINGERPRINT_PATHS: dict[str, str] = {
     "domain_map": "literature/domain_map.json",
     "comparison_table": "literature/comparison_table.csv",
     "bridge_domain_plan": "literature/bridge_domain_plan.json",
+    "literature_manifest": "literature/literature_manifest.json",
     "core_deep_notes": "literature/deep_read_notes",
     "core_abstract_notes": "literature/shallow_read_notes",
     "bridge_notes": "literature/bridge_notes",
+    "cross_domain_catalogs": "literature/cross_domain_catalogs",
     "seed_ideas": "user_seeds/seed_ideas.md",
     "seed_constraints": "user_seeds/seed_constraints.md",
     "survey_insights": "ideation/survey_insights.json",
@@ -52,7 +57,99 @@ class ArtifactWriteResult:
 def build_t4_input_fingerprints(workspace_dir: Path) -> dict[str, dict[str, Any]]:
     """Fingerprint all scientific inputs that can invalidate a T4 population."""
 
-    return build_input_fingerprints(Path(workspace_dir), T4_INPUT_FINGERPRINT_PATHS)
+    workspace = Path(workspace_dir)
+    fingerprints = build_input_fingerprints(workspace, T4_INPUT_FINGERPRINT_PATHS)
+    fingerprints["literature_manifest"] = _t4_literature_manifest_fingerprint(
+        workspace,
+        fallback=fingerprints["literature_manifest"],
+    )
+    # Workspace entry points create the standard reading directories lazily.
+    # An absent route-specific directory and an empty one carry the same
+    # scientific meaning: no evidence is available from that route.  Normalize
+    # that operational distinction here, rather than making a later
+    # ``run-task`` invocation invalidate a human-confirmed T4 configuration.
+    # Any actual note remains represented by its directory digest and still
+    # invalidates the Population when it changes.
+    for label in ("core_deep_notes", "core_abstract_notes", "bridge_notes", "cross_domain_catalogs"):
+        item = fingerprints[label]
+        if item.get("exists") and item.get("kind") == "dir" and int(item.get("file_count") or 0) == 0:
+            fingerprints[label] = {"path": str(item["path"]), "exists": False}
+    # A catalog with no records and no linked reading note is only a
+    # deterministic projection of bridge_domain_plan.json, which is already
+    # fingerprinted above.  It must not invalidate an otherwise identical T4
+    # Population merely because a resume materialized the B1/B2 directory.
+    # Once a catalog contains a retrieved paper or a linked note, it becomes
+    # genuine new scientific context and its byte-level fingerprint remains
+    # mandatory.
+    if _cross_domain_catalogs_are_plan_only(workspace):
+        item = fingerprints["cross_domain_catalogs"]
+        fingerprints["cross_domain_catalogs"] = {"path": str(item["path"]), "exists": False}
+    return fingerprints
+
+
+def _t4_literature_manifest_fingerprint(
+    workspace_dir: Path,
+    *,
+    fallback: dict[str, Any],
+) -> dict[str, Any]:
+    """Fingerprint literature evidence, not mutable PDF-availability receipts.
+
+    The shared manifest deliberately records PDF acquisition so later readers
+    can discover an accessible copy.  That receipt is operational evidence of
+    availability only: it does not change a note card, its reading level, or
+    the Cross-domain material T4 is allowed to use.  T4 runs PDF acquisition
+    after its human pre-run Gate for legacy-resume coverage.  Hashing the
+    entire manifest here therefore made a confirmed run invalidate itself
+    before its first provider call.
+
+    Keep the manifest in T4's contract, but bind the population only to the
+    fields that can alter its scientific evidence surface.  Note-card content,
+    evidence levels, aliases and catalog file records remain covered.  The
+    manifest timestamp, migration report, derived counts and `pdf_acquisition`
+    are excluded because they are runtime bookkeeping or availability data.
+    """
+
+    manifest_path = workspace_dir / "literature" / "literature_manifest.json"
+    if not manifest_path.is_file():
+        return fallback
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return fallback
+    if not isinstance(manifest, dict):
+        return fallback
+
+    note_cards = manifest.get("note_cards")
+    catalog = manifest.get("cross_domain_catalogs")
+    if not isinstance(note_cards, list) or not isinstance(catalog, dict):
+        return fallback
+    semantic_payload = {
+        "schema": T4_LITERATURE_MANIFEST_FINGERPRINT_SCHEMA,
+        "manifest_schema_version": manifest.get("schema_version"),
+        "manifest_semantics": manifest.get("semantics"),
+        "canonical_roots": manifest.get("canonical_roots"),
+        "note_cards": note_cards,
+        "cross_domain_catalogs": {
+            "root": catalog.get("root"),
+            "index_path": catalog.get("index_path"),
+            "files": catalog.get("files"),
+            "file_records": catalog.get("file_records"),
+            "usage_boundary": catalog.get("usage_boundary"),
+        },
+    }
+    return {
+        "path": str(fallback.get("path") or "literature/literature_manifest.json"),
+        "exists": True,
+        "kind": "literature_manifest_evidence_contract",
+        "schema": T4_LITERATURE_MANIFEST_FINGERPRINT_SCHEMA,
+        "sha256": stable_fingerprint(semantic_payload),
+    }
+
+
+def _cross_domain_catalogs_are_plan_only(workspace_dir: Path) -> bool:
+    """Return whether catalog files add no material beyond the bridge plan."""
+
+    return cross_domain_catalogs_are_plan_only(workspace_dir)
 
 
 def t4_input_fingerprint(workspace_dir: Path) -> str:
@@ -66,6 +163,69 @@ def run_config_fingerprint(run_config: T4RunConfig) -> str:
 def stable_fingerprint(payload: Any) -> str:
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _replace_input_fingerprint(value: Any, old: str, new: str) -> bool:
+    """Update only exact T4 input-fingerprint fields in durable JSON artifacts."""
+
+    changed = False
+    if isinstance(value, dict):
+        for key, item in list(value.items()):
+            if key == "input_fingerprint" and item == old:
+                value[key] = new
+                changed = True
+            elif _replace_input_fingerprint(item, old, new):
+                changed = True
+    elif isinstance(value, list):
+        for item in value:
+            if _replace_input_fingerprint(item, old, new):
+                changed = True
+    return changed
+
+
+def _fingerprint_maps_match_except_manifest(
+    previous: Mapping[str, Any],
+    current: Mapping[str, Any],
+) -> bool:
+    """Return whether only the T4 manifest fingerprint schema differs."""
+
+    previous_keys = set(previous)
+    current_keys = set(current)
+    if previous_keys != current_keys:
+        return False
+    for key in current_keys - {"literature_manifest"}:
+        if previous.get(key) != current.get(key):
+            return False
+    return True
+
+
+def t4_operation_identity(operation: Mapping[str, Any] | None) -> str:
+    """Return a durable identity for one human-requested T4 operation.
+
+    A Gate1 operation remains in the workflow state while its T4 execution is
+    in progress.  That is useful for an interrupted controller call, but it is
+    dangerous after the controller has already persisted a new Population and
+    only the LLM Final Card compilation failed: blindly seeing the request
+    again would run the same evolution a second time.  The identity deliberately
+    excludes transport-only fields such as ``path`` and ``queued_at`` so it is
+    stable across process restarts while retaining the directive, source
+    Population, and profile/composition inputs that define the operation.
+    """
+
+    if not isinstance(operation, Mapping):
+        return stable_fingerprint({"kind": "initial_t4_run"})
+    directive = operation.get("directive")
+    directive_payload = directive if isinstance(directive, Mapping) else {}
+    payload = {
+        "kind": "native_t4_operation",
+        "action": str(operation.get("action") or ""),
+        "directive_path": str(operation.get("directive_path") or ""),
+        "requested_from_population": str(operation.get("requested_from_population") or ""),
+        "directive": dict(directive_payload),
+        "composition_plan_path": str(operation.get("composition_plan_path") or ""),
+        "target_profile": operation.get("target_profile") if isinstance(operation.get("target_profile"), Mapping) else {},
+    }
+    return stable_fingerprint(payload)
 
 
 class T4ArtifactStore:
@@ -176,6 +336,279 @@ class T4ArtifactStore:
     def read_state(self) -> T4InternalState:
         return self.read_model(T4_STATE_REL_PATH, T4InternalState)
 
+    def migrate_t4_input_fingerprint_schema(self) -> dict[str, Any]:
+        """Migrate safe T4 input-fingerprint schema changes without changing science.
+
+        Early native T4 workspaces used ``core_shallow_read_notes`` and had no
+        catalog fingerprint.  The current schema separates the Cross-domain
+        catalog, but a zero-record catalog is derived entirely from the already
+        fingerprinted bridge plan.  This migration updates all T4 receipts that
+        bind the old fingerprint to the new schema and writes an explicit
+        receipt.  It refuses migration as soon as the catalog contains an
+        actual retrieved record or canonical note, because that is new research
+        context and must receive a new T4 confirmation.
+        """
+
+        try:
+            state = self.read_state()
+        except ValueError as exc:
+            return {"migrated": False, "reason": f"state_unavailable:{type(exc).__name__}"}
+
+        current_fingerprints = build_t4_input_fingerprints(self.workspace_dir)
+        current_fingerprint = stable_fingerprint(current_fingerprints)
+        old_fingerprint = state.input_fingerprint
+        if old_fingerprint == current_fingerprint and state.input_fingerprints == current_fingerprints:
+            return {"migrated": False, "reason": "already_current"}
+
+        legacy = {str(key): value for key, value in state.input_fingerprints.items()}
+        migrated_fields: list[str] = []
+        old_shallow = legacy.pop("core_shallow_read_notes", None)
+        if old_shallow is not None and "core_abstract_notes" not in legacy:
+            legacy["core_abstract_notes"] = old_shallow
+            migrated_fields.append("core_shallow_read_notes_to_core_abstract_notes")
+
+        if "cross_domain_catalogs" not in legacy:
+            if not _cross_domain_catalogs_are_plan_only(self.workspace_dir):
+                return {
+                    "migrated": False,
+                    "reason": "catalog_contains_new_retrieved_context_requires_confirmation",
+                }
+            legacy["cross_domain_catalogs"] = current_fingerprints["cross_domain_catalogs"]
+            migrated_fields.append("add_plan_only_cross_domain_catalogs")
+
+        if "literature_manifest" not in legacy:
+            legacy["literature_manifest"] = current_fingerprints["literature_manifest"]
+            migrated_fields.append("add_literature_manifest")
+
+        # T4 now fingerprints the evidence-bearing projection of the shared
+        # Literature Manifest.  The older whole-file hash also covered PDF
+        # availability receipts, timestamps and derived counters.  Migrate it
+        # only when every other scientific T4 input still matches; a changed
+        # note, catalog, synthesis or seed must still require a fresh Gate.
+        current_manifest = current_fingerprints["literature_manifest"]
+        prior_manifest = legacy.get("literature_manifest")
+        if (
+            isinstance(prior_manifest, dict)
+            and prior_manifest.get("schema") != T4_LITERATURE_MANIFEST_FINGERPRINT_SCHEMA
+            and _fingerprint_maps_match_except_manifest(legacy, current_fingerprints)
+        ):
+            legacy["literature_manifest"] = current_manifest
+            migrated_fields.append("literature_manifest_raw_to_evidence_contract_v1")
+
+        if legacy != current_fingerprints:
+            return {
+                "migrated": False,
+                "reason": "legacy_fingerprints_differ_beyond_derived_catalog_schema",
+            }
+
+        updated_paths: list[str] = []
+        receipt_path = self.path("ideation/evolution/migrations/t4_input_schema_v3.json")
+        state_path = self.path(T4_STATE_REL_PATH)
+        confirmation_path = self.path("ideation/evolution/pre_run_confirmation.json")
+        for path in sorted((self.workspace_dir / "ideation").rglob("*.json")):
+            if path in {receipt_path, state_path, confirmation_path}:
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict) or not _replace_input_fingerprint(payload, old_fingerprint, current_fingerprint):
+                continue
+            self.write_json(path.relative_to(self.workspace_dir), payload)
+            updated_paths.append(path.relative_to(self.workspace_dir).as_posix())
+
+        try:
+            confirmation = json.loads(confirmation_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            confirmation = None
+        if isinstance(confirmation, dict) and confirmation.get("input_fingerprint") == old_fingerprint:
+            confirmation["input_fingerprint"] = current_fingerprint
+            confirmation.setdefault("compatibility_migrations", []).append("t4_input_schema_v3")
+            self.write_json(confirmation_path.relative_to(self.workspace_dir), confirmation)
+            updated_paths.append(confirmation_path.relative_to(self.workspace_dir).as_posix())
+
+        updated_state = state.model_copy(
+            update={
+                "input_fingerprint": current_fingerprint,
+                "input_fingerprints": current_fingerprints,
+            }
+        )
+        self.write_state(updated_state)
+        updated_paths.append(T4_STATE_REL_PATH)
+        receipt = {
+            "schema_version": "1.0.0",
+            "semantics": "t4_input_schema_migration",
+            "migration": "t4_input_schema_v3",
+            "old_input_fingerprint": old_fingerprint,
+            "new_input_fingerprint": current_fingerprint,
+            "migrated_fields": migrated_fields,
+            "rationale": (
+                "The migration changes only fingerprint representation: an empty Cross-domain catalog is derived from the "
+                "already-fingerprinted bridge plan, and the Literature Manifest now excludes PDF-availability bookkeeping "
+                "while retaining note-card and catalog evidence. No scientific input was added."
+            ),
+            "updated_artifacts": updated_paths,
+            "migrated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.write_json(receipt_path.relative_to(self.workspace_dir), receipt)
+        return {"migrated": True, "receipt_path": receipt_path.relative_to(self.workspace_dir).as_posix(), **receipt}
+
+    def migrate_derived_catalog_input_schema(self) -> dict[str, Any]:
+        """Backward-compatible alias for the generalized T4 fingerprint migration."""
+
+        return self.migrate_t4_input_fingerprint_schema()
+
+
+    def read_final_card_repair_checkpoint(self) -> dict[str, Any] | None:
+        """Read the durable Final Card recovery marker without trusting it yet.
+
+        The caller should use :meth:`current_final_card_repair_checkpoint` for
+        an execution decision.  Keeping this low-level reader separate makes
+        diagnostics and Human Recovery Gate presentation possible even when a
+        marker has become stale after a rollback or input change.
+        """
+
+        path = self.path(T4_FINAL_CARD_REPAIR_STATE_REL_PATH)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("semantics") != "t4_final_card_repair_checkpoint":
+            return None
+        return payload
+
+    def write_final_card_repair_checkpoint(
+        self,
+        *,
+        population: PopulationSnapshot,
+        operation: Mapping[str, Any] | None,
+        status: str = "pending_llm_card_compilation",
+        reason: str = "",
+        attempts: list[dict[str, Any]] | None = None,
+    ) -> ArtifactWriteResult:
+        """Persist that scientific work is consumed and only cards remain.
+
+        This marker is created immediately after a controller operation has
+        written and activated its Population, before the Final Card Compiler is
+        called.  It is therefore the durable boundary that prevents a resumed
+        process from running Generator, Scorer, or Evolver a second time when
+        LLM-authored explanatory card prose is incomplete.
+        """
+
+        state = self.read_state()
+        if state.current_population_id != population.population_id:
+            raise ValueError(
+                "cannot create a Final Card repair checkpoint for an inactive Population"
+            )
+        existing = self.read_final_card_repair_checkpoint()
+        operation_payload = operation if isinstance(operation, Mapping) else {}
+        directive = operation_payload.get("directive")
+        directive_payload = directive if isinstance(directive, Mapping) else {}
+        now = datetime.now(timezone.utc).isoformat()
+        payload: dict[str, Any] = {
+            "schema_version": "1.0.0",
+            "semantics": "t4_final_card_repair_checkpoint",
+            "population_id": population.population_id,
+            "population_generation": population.generation,
+            "input_fingerprint": population.input_fingerprint,
+            "run_config_fingerprint": population.run_config_fingerprint,
+            "operation_consumed": True,
+            "operation_identity": t4_operation_identity(operation),
+            "operation_action": str(operation_payload.get("action") or "initial_t4_run"),
+            "operation_directive_path": str(operation_payload.get("directive_path") or ""),
+            "operation_directive_id": str(directive_payload.get("directive_id") or ""),
+            "operation_requested_from_population": str(
+                operation_payload.get("requested_from_population") or ""
+            ),
+            "status": str(status),
+            "reason": str(reason),
+            "attempts": list(attempts or []),
+            "created_at": (
+                str(existing.get("created_at") or now)
+                if isinstance(existing, dict)
+                and existing.get("population_id") == population.population_id
+                and existing.get("operation_identity") == t4_operation_identity(operation)
+                else now
+            ),
+            "updated_at": now,
+        }
+        return self.write_json(T4_FINAL_CARD_REPAIR_STATE_REL_PATH, payload)
+
+    def update_final_card_repair_checkpoint(
+        self,
+        *,
+        status: str,
+        reason: str | None = None,
+        attempts: list[dict[str, Any]] | None = None,
+        projection_completed: bool | None = None,
+    ) -> ArtifactWriteResult:
+        """Advance the current checkpoint without losing its operation link."""
+
+        payload = self.read_final_card_repair_checkpoint()
+        if payload is None:
+            raise ValueError("cannot update a missing Final Card repair checkpoint")
+        state = self.read_state()
+        if payload.get("population_id") != state.current_population_id:
+            raise ValueError("cannot update a Final Card checkpoint for an inactive Population")
+        payload["status"] = str(status)
+        if reason is not None:
+            payload["reason"] = str(reason)
+        if attempts is not None:
+            payload["attempts"] = list(attempts)
+        if projection_completed is not None:
+            payload["projection_completed"] = bool(projection_completed)
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return self.write_json(T4_FINAL_CARD_REPAIR_STATE_REL_PATH, payload)
+
+    def current_final_card_repair_checkpoint(
+        self,
+        *,
+        operation: Mapping[str, Any] | None = None,
+        pending_only: bool = True,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Return a checkpoint only when it belongs to the active operation.
+
+        A recovery gate may no longer retain the original operation in its
+        transient state after a restart or a local rollback.  In that case the
+        durable ``operation_consumed`` receipt is sufficient to resume the
+        card-only path.  When a new operation *is* queued, its identity must
+        match exactly; a stale card checkpoint must never suppress a newly
+        requested evolution round.
+        """
+
+        payload = self.read_final_card_repair_checkpoint()
+        if payload is None:
+            return None, "missing Final Card repair checkpoint"
+        state = self.read_state()
+        try:
+            population = self.read_population(state.current_population_id)
+        except ValueError as exc:
+            return None, str(exc)
+        required = {
+            "population_id": population.population_id,
+            "population_generation": population.generation,
+            "input_fingerprint": population.input_fingerprint,
+            "run_config_fingerprint": population.run_config_fingerprint,
+        }
+        for key, expected in required.items():
+            if payload.get(key) != expected:
+                return None, f"Final Card repair checkpoint has stale {key}"
+        if payload.get("operation_consumed") is not True:
+            return None, "Final Card repair checkpoint does not prove the operation was consumed"
+        if pending_only and str(payload.get("status") or "") not in {
+            "pending_llm_card_compilation",
+            "llm_repair_required",
+            "cards_compiled_projection_pending",
+        }:
+            return None, "Final Card repair checkpoint is not pending"
+        if isinstance(operation, Mapping):
+            expected_operation = t4_operation_identity(operation)
+            if payload.get("operation_identity") != expected_operation:
+                return None, "Final Card repair checkpoint belongs to a different T4 operation"
+        return payload, None
+
     def initialize_state(self, *, config: T4RunConfig, population: PopulationSnapshot) -> T4InternalState:
         current_input_fingerprints = build_t4_input_fingerprints(self.workspace_dir)
         current_input = stable_fingerprint(current_input_fingerprints)
@@ -247,15 +680,33 @@ class T4ArtifactStore:
         return all(self.path(str(path)).exists() for path in paths)
 
     def validate_state_inputs(self, state: T4InternalState) -> tuple[bool, str | None]:
-        ok, error = validate_input_fingerprints(
-            self.workspace_dir,
-            state.input_fingerprints,
-            T4_INPUT_FINGERPRINT_PATHS,
-            label_for_error="T4 population",
-        )
-        if not ok:
-            return False, error
-        current = t4_input_fingerprint(self.workspace_dir)
+        migration = self.migrate_derived_catalog_input_schema()
+        if migration.get("migrated"):
+            state = self.read_state()
+        # T4 deliberately normalizes empty reading directories and plan-only
+        # Cross-domain catalogs in ``build_t4_input_fingerprints``.  Calling
+        # the generic directory validator here used a different representation
+        # and could mark a Population stale solely because runtime-created
+        # ``_DIR_GUIDE.md`` files made an empty bridge directory exist.  The
+        # recovery path must compare exactly the scientific-input semantics
+        # used when the Population and its state were written.
+        if not isinstance(state.input_fingerprints, dict):
+            return False, "T4 population 缺少 input_fingerprints，必须刷新"
+        current_fingerprints = build_t4_input_fingerprints(self.workspace_dir)
+        stale: list[str] = []
+        for label, current_item in current_fingerprints.items():
+            previous = state.input_fingerprints.get(label)
+            if not isinstance(previous, dict):
+                stale.append(label)
+                continue
+            if bool(previous.get("exists")) != bool(current_item.get("exists")):
+                stale.append(label)
+                continue
+            if current_item.get("exists") and str(previous.get("sha256") or "") != str(current_item.get("sha256") or ""):
+                stale.append(label)
+        if stale:
+            return False, "T4 population 对应输入已变化，必须刷新: " + ", ".join(stale)
+        current = stable_fingerprint(current_fingerprints)
         if state.input_fingerprint != current:
             return False, "T4 population input fingerprint is stale"
         try:

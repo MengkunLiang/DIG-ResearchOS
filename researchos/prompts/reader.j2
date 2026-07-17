@@ -61,11 +61,21 @@
 {% endif %}
 - `literature/access_audit.md`: T2 生成的可读性审计，帮助判断哪些论文值得硬读
 - `literature/pdfs/`: 可能包含部分论文的PDF文件
+- `{{ reading_upgrade_queue_path }}`: 已有浅层笔记且本地 PDF 可用的升级候选。它只记录可用性、页数和建议范围；PDF 文件存在绝不等于已经阅读。
 {% if seed_paper_count > 0 %}
 - `user_seeds/seed_papers.jsonl`: 用户明确指定的种子论文，必须最高优先级处理
 {% endif %}
 {% if has_seed_outline_profile %}
 - `user_seeds/seed_outline_profile.json`: 用户综述/研究提纲的结构化 profile，只作阅读维度和覆盖检查先验，不是论文证据
+{% endif %}
+{% if bridge_catalog_preview %}
+
+## Cross-domain 检索上下文（不是待填满的阅读笔记目录）
+{% for bridge in bridge_catalog_preview %}
+- {{ bridge.get('bridge_id', '') }} · {{ bridge.get('name', '未命名方向') }}：检索记录={{ bridge.get('record_count', 0) }}，已关联阅读笔记={{ bridge.get('canonical_note_count', 0) }}，意图={{ bridge.get('rationale', '') or '提供结构类比和待验证迁移问题。' }}
+{% endfor %}
+- 可将其中与当前问题直接相关的记录作为**可选**阅读升级优先级；不要因为 catalog-only 记录没有 Markdown note 而判定 bridge 失败。
+- catalog 的摘要/元数据只能提出问题、比较维度、边界或后续阅读计划。只有实际保存的 canonical note 才能支撑机制、结果、实现或可引用的比较主张。
 {% endif %}
 
 {% if seed_paper_count > 0 %}
@@ -135,9 +145,7 @@
 - 每篇读完立即写note，不要累积在context中
 - **保存新 note 必须优先调用 `save_paper_note(queue_rank=..., content=...)`**：工具会从队列解析论文、生成 `deep_read_notes` 文件名、即时校验19节结构并刷新 `notes_manifest.json`。不要自己手抄 `noopenalex__...` 或手动拼文件名。
 - **bridge_deep 笔记要写迁移边界**：如果当前 queue record 带 `bridge_id` 且未通过 core screen，§6、§14、§18、§19 必须明确“该外域论文的机制/方法/评价视角如何迁移到本项目，以及哪些部分不能迁移”。不要把跨域论文伪装成 target-domain core 论文。
-- **禁止整池读取 metadata**：处理队列论文时优先用 `lookup_paper_record(queue_rank=...)`
-  查单条记录；只有没有 queue rank 时才用 `paper_id` / `title`。不要用 `read_file`
-  分页读取整份 `papers_verified.jsonl` / `papers_dedup.jsonl`
+- **禁止整池读取 metadata**：处理队列论文时优先用 `lookup_paper_record(queue_rank=...)` 查单条记录；只有没有 queue rank 时才用 `paper_id` / `title`。不要用 `read_file` 分页读取整份 `papers_verified.jsonl` / `papers_dedup.jsonl`
 {% if resume_mode or existing_note_count > 0 %}
 - **恢复运行优先**：先扫描 `literature/deep_read_notes/` 现有文件，建立“已完成论文ID集合”
 - **恢复时先修质量**：如果已有 note 的 `Key Results` 中存在包含数字但同一行没有 `[Evidence: ...]` 的结果，必须先修订该 note；这种 note 不能视为已完成
@@ -156,12 +164,15 @@
 4. 检查 `comparison_table.csv` 与 `related_work.bib` 是否落后于已有笔记；如果缺少某些已有论文的记录，先从已有 note 中提取必要信息并补齐
 5. 用 `lookup_paper_record(queue_rank=<当前队列rank>)` 读取当前待处理论文的 metadata；如果 manifest 显示该 queue rank 已完成，则跳过这篇，继续下一篇
 6. 尝试获取全文：
-   - **PDF路径检查**：优先使用 queue/lookup 返回的 `seed_pdf_path`，其次检查 `literature/pdfs/{normalized_id}.pdf` 或与 record ID 对应的 PDF
+   - **PDF路径检查**：优先使用 queue/lookup 返回的 `local_pdf_path` 或 `pdf_acquisition.pdf_path`（这是 runtime 已验证可解析的本地 PDF），其次使用 `seed_pdf_path`，最后检查 `literature/pdfs/{normalized_id}.pdf` 或与 record ID 对应的 PDF
+   - `pdf_acquisition` 只表示系统已经尝试并记录可得性：`acquired_parseable` / `existing_parseable` 表示可以选择阅读；`unavailable`、`access_denied`、`acquired_unparseable` 必须尊重 receipt，不要无限重试，更不能把它当作 FULL-TEXT
    - `normalized_id` 只用于查找 PDF，不用于你手写 note 文件名；note 文件名由 `save_paper_note` 生成
-   - 如果存在，必须使用 `extract_pdf_text` 覆盖 PDF 的全部页面；不能只读前几页或“足以写笔记”的章节就停止
+   - 先看文献类型、总页数与当前研究问题。普通论文在 {{ max_auto_full_text_pages }} 页以内且要支撑核心机制、方法或结果时，应尽量覆盖全文，不能只读前几页就把它写成全文依据；只有覆盖全部页面且最终无截断才能标为 **[FULL-TEXT]**。
+   - 已知书籍、专著、book chapter、edited volume，或超过 {{ max_auto_full_text_pages }} 页的资料，不要仅为了通用 PDF 检查下载或通读。围绕当前问题选择定义、理论、方法或结果所在章节，记录实际页码范围，并标为 **[PARTIAL-TEXT]**。
+   - 对任何 PDF，如果你只读了与研究问题相关的部分页面，这不是失败；必须如实记录范围、未读范围和该范围能支持的有限主张，不能把 PARTIAL-TEXT 写成全文证据。
    - `extract_pdf_text` 返回开头会包含 `total_pages`、`extracted_page_range`、`preview_truncated_by_max_chars`、`complete_pdf_read` 等覆盖信息
    - 短论文可一次读取：`extract_pdf_text(pdf_path=..., start_page=1, max_pages=null, max_chars=50000)`；只有当 `complete_pdf_read=true` 且未被 runtime 截断时，才可标记 **[FULL-TEXT]**
-   - 长论文必须按页分块读取到最后一页：例如 `start_page=1, max_pages=8`，再根据 `total_pages` 和 `next_start_page` 继续读 `9, 17, ...`，直到覆盖 `1-total_pages`
+   - 需要全文的长论文可按页分块读取到最后一页：例如 `start_page=1, max_pages=8`，再根据 `total_pages` 和 `next_start_page` 继续读 `9, 17, ...`，直到覆盖 `1-total_pages`；长资料的定向阅读只读取与明确问题相关的范围即可
    - 如果任一分块出现 `preview_truncated_by_max_chars=true` 或 runtime 截断提示，必须缩小 `max_pages` 重读该范围；否则该范围不能算作已全文阅读
    - 如果需要快速定位 abstract/method/results 等位置，可以辅助调用 `extract_paper_sections`，但不要把它作为默认阅读路径
    - 如果 PDF 可获取但只完成了部分页面或存在截断，Status 必须标为 **[PARTIAL-TEXT]**，并在 Reading Coverage 说明缺口
@@ -364,8 +375,8 @@ BibTeX 只保存可发表引用元数据：title、author、year、journal/bookt
 1. **禁止编造数据**：如果PDF读不到，只基于abstract写笔记，并在Status字段标注 **[ABSTRACT-ONLY]**
 2. **已核验保留候选优先**：如果 `papers_verified.jsonl` 存在，优先从已核验保留候选和 queue 里读取；不要默认消费未核验 dedup 论文
 3. **单篇 metadata 查询**：需要论文详情时优先调用 `lookup_paper_record(queue_rank=...)`；除非 queue 文件不存在且没有其他选择，不要读取完整 `papers_verified.jsonl` 或 `papers_dedup.jsonl`
-4. **PDF可用必须全文覆盖**：只要本地存在 PDF 或 `fetch_paper_pdf` 下载成功，就必须用 `extract_pdf_text` 读到 `total_pages` 的最后一页；不能只读前 8-10 页
-5. **FULL-TEXT判定要严格**：只有所有页面都读过且最终没有未解决的 `preview_truncated_by_max_chars=true` / runtime 截断时，Status 才能写 **[FULL-TEXT]**；如果初次调用被截断，必须分块重读直到全篇覆盖并在 `Truncation` 说明已解决；否则写 **[PARTIAL-TEXT]**
+4. **按资料长度选择阅读范围**：本地 PDF 或下载成功只说明资源可用。普通论文若作为核心证据应完成全文覆盖；书籍、专著和超过 {{ max_auto_full_text_pages }} 页的长资料默认定向阅读相关章节，并记录页码与问题，不要求为了形式完整通读。
+5. **FULL-TEXT判定要严格**：只有所有页面都读过且最终没有未解决的 `preview_truncated_by_max_chars=true` / runtime 截断时，Status 才能写 **[FULL-TEXT]**；定向阅读或存在未读页面时写 **[PARTIAL-TEXT]**，并说明该证据只覆盖哪些主张。
 6. **section 只作辅助定位**：`extract_paper_sections` 可用于快速找方法、实验、结论等位置，但最终笔记应基于全文或明确标注为部分阅读
 7. **数字必须具体**：不能写"显著提升"、"大幅改进"，必须写具体数值
 8. **数字必须有证据锚点**：`Key Results` 中每一条包含数字的 bullet/表格行，必须在同一行包含精确格式 `[Evidence: ...]`；全文可写 `[Evidence: p.3]` / `[Evidence: Section 4.2]`，摘要笔记可写 `[Evidence: Abstract]`；没有证据就不要写成确定性数字
@@ -414,6 +425,7 @@ BibTeX 只保存可发表引用元数据：title、author、year、journal/bookt
 ## 输入
 - `literature/deep_read_notes/`: 包含 {{ note_count }} 篇论文的结构化笔记（full-text 精读）
 - `literature/bridge_notes/`: 跨领域或理论桥接论文的全文/部分全文笔记（如存在）；它们与 full-text 笔记同属强证据层，但必须保留其跨领域来源和适用边界
+- `literature/cross_domain_catalogs/<bridge-id>/bridge_context.json` 与 `paper_catalog.json`：T2 已检索的 Cross-domain 补充轨道。它与 `literature/bridge_notes/` 中真实的 Bridge 阅读笔记分开；即使该方向暂未深读，catalog 仍可用于梳理历史发展、前沿线索、相邻概念、taxonomy 边界、比较维度、反例和后续阅读优先级，但不能被直接写成机制、结果、实现细节或强比较证据，也不能作为正式 citation anchor
 - `literature/shallow_read_notes/`: {% if abstract_note_count %}{{ abstract_note_count }} 篇 abstract-only 笔记（证据较弱）{% else %}abstract-only 笔记（如有，由 runtime 自动补读）{% endif %}
 - `literature/notes_manifest.json`: 包含每篇 deep note 的 completion 状态和 citation_quality_score/citation_use（如已刷新）
 - `literature/metadata_triage.md`: metadata-only 候选的批量补资源/升级阅读线索；不是 family、trend、mechanism 或 claim 的证据
@@ -433,6 +445,19 @@ BibTeX 只保存可发表引用元数据：title、author、year、journal/bookt
 
 ### metadata_triage.md 预览（metadata-only，不能作为证据）
 {{ metadata_triage_preview }}
+{% endif %}
+{% if bridge_catalog_preview %}
+
+### Cross-domain catalog 预览（独立交叉信息层，不是阅读笔记）
+{% for bridge in bridge_catalog_preview %}
+- {{ bridge.get('bridge_id', '') }} · {{ bridge.get('name', '未命名方向') }}：检索记录={{ bridge.get('record_count', 0) }}，已关联阅读笔记={{ bridge.get('canonical_note_count', 0) }}，状态={{ bridge.get('status', '') }}
+  - 用途：{{ bridge.get('rationale', '') or '作为结构类比、边界发现和后续阅读优先级的线索。' }}
+{% for record in bridge.get('sample_records', [])[:2] %}
+  - 线索：{{ record.get('title', record.get('paper_id', '未命名记录')) }}（{{ record.get('usage_boundary', 'supplementary_context') }}）
+{% endfor %}
+{% endfor %}
+
+使用规则：catalog 可支持历史脉络、taxonomy 边界、比较维度、迁移假设和待验证问题；没有链接的 canonical note 时，不能把其中的摘要或元数据写成机制、结果、实现细节或直接可引用的结论。
 {% endif %}
 {% if note_id_preview %}
 - 已发现的 paper note ID（前 {{ note_id_preview|length }} 个）：`{{ note_id_preview|join('`, `') }}`
@@ -619,7 +644,7 @@ build_synthesis_workbench(
 8. **论文ID与文件名区分**：文件路径继续使用稳定规范化 ID（特殊字符替换为下划线，例如 `arxiv_2301.12345.md`），不要为了可读性重命名 note 文件；用户可读正文优先使用论文标题语义和 `\cite{bibkey}`，必要时才用 `[note:...]`，validator 会通过 citation_map/title/DOI/ID 做兼容匹配
 9. **粗读与精读协作**：`deep_read_notes/` 用于确认机制、设计理由、实验和核心论断；`shallow_read_notes/` 基于 abstract，可补充 corpus coverage、taxonomy、trend、comparison、bridge discovery 和 research-question discovery。写作中必须把其表述限定为 abstract-level description，不能把它单独升级为机制、因果或实现细节的确认；`metadata_triage.md` 仍只是 metadata-only 的补资源线索，不能用于综合论断。
 10. **引用质量分使用**：优先使用 Citation Quality Score ≥0.55 且 Citation Use 为 `core_evidence`/`supporting_context` 的论文形成 synthesis 主体；0.25-0.54 只能做背景或补检线索；`do_not_cite`、citation_allowed=false 或中文英文稿不匹配的论文不得支撑核心结论。
-11. **CDR 输出对齐 T4 Pass 1**：`synthesis_workbench.json` 和最终 `synthesis.md` 必须包含 contribution_space / cross_paper_tensions / adjacent_transfers / bridge_transfer_drafts 素材；这些是生成燃料，不是 provenance gate
+11. **CDR 输出对齐 T4 Pass 1**：`synthesis_workbench.json` 和最终 `synthesis.md` 必须包含 contribution_space / cross_paper_tensions / adjacent_transfers / bridge_transfer_drafts / cross_domain_catalog_context 素材；这些是生成燃料，不是 provenance gate。对于 catalog-only bridge，应明确写为待验证的历史、相邻概念或迁移问题，不能假装已有深读机制证据
 12. **引用图骨架**：使用 `domain_map.citation_edges` 理解论文之间的关系，但不要把 `core/theory_bridge/adjacent/boundary` review buckets 当成最终学术结论；最终解释仍由你基于笔记和领域知识判断。
 13. **引用密度**：不要把论文都塞进“代表论文”列表后正文不引用。每个方法家族、共同假设、趋势/矛盾、邻接迁移和研究问题都要在论证句中出现真实 note anchor 或 `\cite{}`，让 T3.6/T8 可以继承证据池。
 14. **引用覆盖计划**：如果 `synthesis_workbench.json` 有 `citation_coverage_plan`，最终 `synthesis.md` 至少覆盖其中建议数量的 unique deep-reading refs，并把 citation 分散到各个 claim-bearing 章节；`coverage_refs` 用于广覆盖，`main_claim_refs` 用于核心 claim，abstract-level refs 可以补充 taxonomy、trend、comparison 和范围表述，但不得成为中心机制的唯一依据。

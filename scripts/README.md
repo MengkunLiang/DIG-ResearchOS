@@ -33,6 +33,7 @@ By default, pytest only collects `tests/unit/`. Real-environment tests under
 | `validate_artifact.py` | Validate one artifact file while debugging a workspace |
 | `validate_llm_model.py` | Probe a model routing profile/tier without running the full pipeline |
 | `recover_t2_papers_raw_from_trace.py` | Recovery helper for reconstructing T2 raw paper data from traces |
+| `check_docs.py` | Read-only documentation quality gate for Markdown links/anchors, CLI examples, task IDs, legacy paths, and terminology |
 
 New files in this directory should be maintained utilities. If a check is
 repeatable and should be part of the supported contract, put it under
@@ -60,4 +61,5 @@ Examples:
 python scripts/validate_llm_model.py --profile deepseek --tier medium
 python scripts/validate_artifact.py --workspace ./workspace/dev --task T2
 python scripts/recover_t2_papers_raw_from_trace.py --help
+python scripts/check_docs.py --report tmp/debug/08_documentation_audit/docs_quality.json
 ```

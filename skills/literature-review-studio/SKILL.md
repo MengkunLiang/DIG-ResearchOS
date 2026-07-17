@@ -140,18 +140,9 @@ workflow:
 
 # Literature Review Studio
 
-This is a staged review workflow, not a promise of a publishable Survey from a topic
-string. First ask the human to confirm the review scope and whether network retrieval
-is authorized. Show the query portfolio, deduplication, source contribution, failed
-verification, and evidence coverage before making synthesis claims.
+This is a staged review workflow, not a promise of a publishable Survey from a topic string. First ask the human to confirm the review scope and whether network retrieval is authorized. Show the query portfolio, deduplication, source contribution, failed verification, and evidence coverage before making synthesis claims.
 
-For every retained paper preserve stable identifiers and source provenance. Full and
-partial text can support bounded substantive claims when their cards have anchors;
-abstract-only and metadata-only records may support coverage, trend, discovery, or
-upgrade priorities only. Never turn a retrieval count, citation count, or tool ranking
-into a scholarly verdict.
+For every retained paper preserve stable identifiers and source provenance. Full and partial text can support bounded substantive claims when their cards have anchors;
+abstract-only and metadata-only records may support coverage, trend, discovery, or upgrade priorities only. Never turn a retrieval count, citation count, or tool ranking into a scholarly verdict.
 
-At the final gate, ask whether to prepare Survey writing. If the corpus is insufficient,
-offer a targeted retrieval/reading plan rather than forcing taxonomy prose. Do not write
-the Survey manuscript in this Skill; hand off only after a human has approved the
-taxonomy and corpus scope.
+At the final gate, ask whether to prepare Survey writing. If the corpus is insufficient, offer a targeted retrieval/reading plan rather than forcing taxonomy prose. Do not write the Survey manuscript in this Skill; hand off only after a human has approved the taxonomy and corpus scope.

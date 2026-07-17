@@ -9,6 +9,7 @@
 | 安装、初始化、运行、恢复 | [QUICKSTART.md](QUICKSTART.md) | [../../README.zh-CN.md](../../README.zh-CN.md) |
 | 检查哪些工作空间处于活跃状态 | [QUICKSTART.md](QUICKSTART.md) | `workspace-status --workspace-root ./workspace` |
 | 理解 T1-T9、门控、分支和产物 | [agent_pipeline.md](agent_pipeline.md) | [agent_pipeline_detail.md](agent_pipeline_detail.md) |
+| 深入理解 T4 的 Population Evolution、Prompt、校验与恢复 | [t4_idea_evolution.md](t4_idea_evolution.md) | [runtime.md](runtime.md) · [skills.md](skills.md) |
 | 诊断日志、跟踪、Survey/T4/T5 失败 | [logging.md](logging.md) | [runtime.md](runtime.md) |
 | 运行基于 DOI/arXiv/URL/主题的技能 | [skills.md](skills.md) | [QUICKSTART.md](QUICKSTART.md) |
 | 配置 provider/model 或查看系统默认值 | [config.md](config.md) | `config/README.md` |
@@ -16,6 +17,7 @@
 | 理解仓库/工作空间所有权 | [project_structure.md](project_structure.md) | [runtime.md](runtime.md) |
 | 扩展工具、智能体、模式、状态机或技能 | [dev.md](dev.md) | [runtime.md](runtime.md) |
 | 查看部署、配置示例或维护脚本 | [../../deploy/README.md](../../deploy/README.md) | [../../config/README.md](../../config/README.md) · [../../scripts/README.md](../../scripts/README.md) |
+| 统一术语或检查文档质量 | [../STYLE_AND_TERMINOLOGY_GUIDE.md](../STYLE_AND_TERMINOLOGY_GUIDE.md) | `python scripts/check_docs.py` |
 
 ## 操作原则
 

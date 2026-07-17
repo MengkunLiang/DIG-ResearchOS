@@ -28,16 +28,21 @@ from .model_settings import (
 
 
 def _pre_suppress_litellm_import_logs() -> None:
-    """Suppress LiteLLM import-time provider probes before importing litellm.
+    """Suppress LiteLLM import-time network work before importing litellm.
 
     LiteLLM can emit Bedrock/SageMaker preload warnings during module import,
     before ResearchOS has a chance to call `configure_logging`.  Those warnings
     are not actionable for normal OpenAI-compatible routes and they make even
     config-only CLI commands look broken, so suppress them at the boundary.
+    LiteLLM can also fetch a model-cost map synchronously during import.  Cost
+    metadata must never delay a workspace command or prevent Ctrl+C from being
+    installed, so use LiteLLM's bundled map unless an operator explicitly
+    overrides this environment variable before starting ResearchOS.
     """
 
     os.environ.setdefault("LITELLM_LOG", "ERROR")
     os.environ.setdefault("LITELLM_VERBOSE", "False")
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
     for name in (
         "LiteLLM",
         "litellm",

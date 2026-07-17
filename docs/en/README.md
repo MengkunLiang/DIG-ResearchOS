@@ -9,6 +9,7 @@ This is a maintained English documentation set, not a pointer-only reference. Th
 | Install, initialize, run, resume | [QUICKSTART.md](QUICKSTART.md) | [../../README.md](../../README.md) |
 | Check which workspaces are actually active | [QUICKSTART.md](QUICKSTART.md) | `workspace-status --workspace-root ./workspace` |
 | Understand T1-T9, gates, branches, and artifacts | [agent_pipeline.md](agent_pipeline.md) | [agent_pipeline_detail.md](agent_pipeline_detail.md) |
+| Study T4 Population Evolution, prompts, validation, and recovery in depth | [t4_idea_evolution.md](t4_idea_evolution.md) | [runtime.md](runtime.md) · [skills.md](skills.md) |
 | Diagnose logs, traces, Survey/T4/T5 failures | [logging.md](logging.md) | [runtime.md](runtime.md) |
 | Run DOI/arXiv/URL/topic based Skills | [skills.md](skills.md) | [QUICKSTART.md](QUICKSTART.md) |
 | Configure a provider/model or inspect system defaults | [config.md](config.md) | `config/README.md` |
@@ -16,6 +17,7 @@ This is a maintained English documentation set, not a pointer-only reference. Th
 | Understand repository/workspace ownership | [project_structure.md](project_structure.md) | [runtime.md](runtime.md) |
 | Extend tools, agents, schemas, state machine, or Skills | [dev.md](dev.md) | [runtime.md](runtime.md) |
 | Inspect deployment, configuration examples, or maintenance scripts | [../../deploy/README.md](../../deploy/README.md) | [../../config/README.md](../../config/README.md) · [../../scripts/README.md](../../scripts/README.md) |
+| Use consistent terms or audit documentation quality | [../STYLE_AND_TERMINOLOGY_GUIDE.md](../STYLE_AND_TERMINOLOGY_GUIDE.md) | `python scripts/check_docs.py` |
 
 ## Operating Principles
 

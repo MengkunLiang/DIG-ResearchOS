@@ -652,6 +652,8 @@ def generate_search_log(
     query_results: dict[str, int] | None = None,
     search_records: list[dict[str, Any]] | None = None,
     bridge_plan: dict[str, Any] | None = None,
+    *,
+    unique_count: int | None = None,
 ) -> str:
     """生成检索日志（基于实际数据，不允许编造）。
 
@@ -788,8 +790,12 @@ def generate_search_log(
     # 统计数据
     log += "\n## 检索统计\n\n"
     log += f"- 原始结果: {raw_count} 篇\n"
-    log += f"- 去重后: {dedup_count} 篇\n"
-    log += f"- 去重率: {(1 - dedup_count / max(1, raw_count)) * 100:.1f}%\n"
+    if unique_count is not None:
+        unique_count = max(0, min(int(unique_count), raw_count))
+        log += f"- 去重后唯一记录: {unique_count} 篇\n"
+        log += f"- 已合并重复记录: {max(0, raw_count - unique_count)} 篇\n"
+    log += f"- 当前阅读候选: {dedup_count} 篇\n"
+    log += "- 说明: 当前阅读候选按本轮阅读计划选择；未进入本轮的候选仍会保留，供后续回看。\n"
 
     return log
 

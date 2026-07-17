@@ -1,5 +1,7 @@
 ---
 name: project-skill-specialization
+execution_scope: state_machine
+execution_owner: T5-SPECIALIZE-EXECUTOR-SKILLS
 description: 从 T5 reboost 或 legacy handoff 及其权威来源构建、预览或校验项目专属 external-executor Skill Suite。适用于 Suite 缺失、过期、恢复前核验或发布失败诊断；不会补造项目事实、执行实验或替换运行中的 Suite。
 tools:
   - read_file
@@ -49,7 +51,7 @@ This Skill owns:
 - resolving the repository and workspace passed to the compiler;
 - choosing `build`, `dry-run`, or `validate-only` mode from the request;
 - running deterministic preflight and specialization wrappers;
-- reading `skill_specialization_report.json`;
+- reading `external_executor/report/skill_specialization_report.json`;
 - returning a compact status and actionable failure surface.
 
 The Project Skill Specializer owns:
@@ -131,7 +133,7 @@ Use the wrapper rather than calling internal builder, renderer, validation, or p
 For a published build or validation, read:
 
 ```text
-<workspace>/external_executor/skill_specialization_report.json
+<workspace>/external_executor/report/skill_specialization_report.json
 ```
 
 Produce a compact summary with:
@@ -202,7 +204,7 @@ status=ready|incomplete|failed
 workspace=<workspace>
 context=external_executor/project_skill_context.yaml|not_published
 skills=13/13|<count>/13
-report=external_executor/skill_specialization_report.json|not_published
+report=external_executor/report/skill_specialization_report.json|not_published
 required_uncertain_fields=<paths>
 errors=<codes>
 next_action=continue_to_gate|resolve_uncertain_context|repair_specializer|stop

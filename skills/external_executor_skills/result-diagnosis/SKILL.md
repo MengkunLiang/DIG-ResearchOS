@@ -28,7 +28,8 @@ Act as the evidence-bound analyst for one completed or partially completed Resea
    - `<skill-dir>/references/diagnosis-policy.md`;
    - `<skill-dir>/references/evidence-and-run-eligibility.md`;
    - `<skill-dir>/references/output-contract.md`.
-4. Stop with `blocked` when no iteration can be identified, the run set is absent, protocol/metric direction is indeterminate, formal records are presented without minimum provenance, or the writable boundary cannot be determined.
+   Raw logs, metric files, run records, checkpoints, and run-produced artifacts referenced by those records must resolve under `<workspace>/external_executor/raw_results/`.
+4. Stop with `blocked` when no iteration can be identified, the run set is absent, protocol/metric direction is indeterminate, formal records are presented without minimum provenance, raw evidence is outside `external_executor/raw_results/`, or the writable boundary cannot be determined.
 
 Write only:
 
@@ -36,7 +37,7 @@ Write only:
 - `external_executor/diagnosis_evidence_snapshot.json`;
 - `external_executor/diagnosis_statistics.json`;
 - `external_executor/result_diagnosis_report.json`;
-- versioned analysis artifacts under `external_executor/workdir/result_diagnosis/`;
+- versioned analysis artifacts under `external_executor/result_diagnosis/`;
 - `result_pack.json#result_diagnoses` through the narrow apply script.
 
 Do not change run records, raw results, configs, logs, protocol fingerprints, reviews, iteration plans/decisions, method specifications, module attributions, executor status, manifest, budget, or sibling-owned sections. Return control to `research-execution` after applying the report.
@@ -85,7 +86,7 @@ Never diagnose from a conversational summary when a run record or metric artifac
 ```bash
 python <skill-dir>/scripts/normalize_run_metrics.py \
   --snapshot <workspace>/external_executor/diagnosis_evidence_snapshot.json \
-  --output <workspace>/external_executor/workdir/result_diagnosis/<iteration-id>/metric_observations.json
+  --output <workspace>/external_executor/result_diagnosis/<iteration-id>/metric_observations.json
 ```
 
 Each observation records:
@@ -105,12 +106,12 @@ Read `references/metric-and-statistics.md`, then run:
 ```bash
 python <skill-dir>/scripts/aggregate_results.py \
   --observations <metric-observations.json> \
-  --output <workspace>/external_executor/workdir/result_diagnosis/<iteration-id>/metric_aggregates.json
+  --output <workspace>/external_executor/result_diagnosis/<iteration-id>/metric_aggregates.json
 
 python <skill-dir>/scripts/compare_methods.py \
   --aggregates <metric-aggregates.json> \
   --observations <metric-observations.json> \
-  --output <workspace>/external_executor/workdir/result_diagnosis/<iteration-id>/method_comparisons.json
+  --output <workspace>/external_executor/result_diagnosis/<iteration-id>/method_comparisons.json
 ```
 
 Only aggregate observations that agree on the declared comparability key:
@@ -134,7 +135,7 @@ python <skill-dir>/scripts/detect_anomalies.py \
   --observations <metric-observations.json> \
   --aggregates <metric-aggregates.json> \
   --comparisons <method-comparisons.json> \
-  --output <workspace>/external_executor/workdir/result_diagnosis/<iteration-id>/anomalies.json
+  --output <workspace>/external_executor/result_diagnosis/<iteration-id>/anomalies.json
 ```
 
 Inspect at least:

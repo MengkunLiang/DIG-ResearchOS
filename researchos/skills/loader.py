@@ -15,7 +15,7 @@ from ..runtime.errors import ConfigurationError
 from ..tools.base import Tool
 from ..tools.registry import ToolRegistry
 from .capabilities import expand_skill_tools, resolve_capability_profiles
-from .contracts import validate_skill_metadata
+from .contracts import skill_execution_scope, skill_execution_owner, validate_skill_metadata
 
 
 @dataclass
@@ -29,6 +29,8 @@ class Skill:
     skill_dir: Path
     metadata: dict[str, Any] = field(default_factory=dict)
     capability_profiles: tuple[str, ...] = ()
+    execution_scope: str = "standalone"
+    execution_owner: str = ""
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -77,7 +79,15 @@ def load_skill(skill_dir: Path) -> Skill:
         skill_dir=skill_dir,
         metadata=resolved_metadata,
         capability_profiles=profiles,
+        execution_scope=skill_execution_scope(resolved_metadata),
+        execution_owner=skill_execution_owner(resolved_metadata),
     )
+
+
+def is_standalone_skill(skill: Skill) -> bool:
+    """Whether a Skill has a complete direct CLI execution contract."""
+
+    return skill.execution_scope == "standalone"
 
 
 def discover_skills(skills_root: Path) -> dict[str, Skill]:

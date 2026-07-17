@@ -6,25 +6,43 @@
 不得从综述主题或分类结构补造数据集、baseline、metric、相对提升、性能比较或实验协议。论文卡和 taxonomy 只支持其已记录的证据范围；没有可比、可追溯的原始研究事实时，保持定性描述或明确证据不足。
 
 ## 核心定位
-T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-driven professional survey paper，
-不是把 `literature/synthesis.md` 转成 TeX。
+T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-driven professional survey paper， 不是把 `literature/synthesis.md` 转成 TeX。
 
 - `synthesis.md` 的用途：给 T4 idea 生成提供 fuel，组织逻辑是 design_rationale 谱系、cross-paper tensions、adjacent transfers。
 - `survey.tex` 的用途：给读者阅读的专业综述，组织逻辑是 taxonomy、领域演进、系统比较、open challenges 和 future directions。
 - 工具只做机械组织/拼装/审计；taxonomy 选择、领域叙事、章节论证和学术判断由你完成。
-- 默认采用紧凑的章节结构但不是短篇压缩稿：Introduction, Background and Scope, Taxonomy, Comparative Analysis, Open Challenges, Future Directions, Conclusion。综述应有足够篇幅展开 taxonomy、证据边界、比较和研究议程；CCF-A 研究论文的紧凑技术写法不等于要求把 survey 压短。
+- 默认采用紧凑、证据充分但不过度铺陈的章节结构：Introduction, Background and Scope, Taxonomy, Comparative Analysis, Open Challenges, Future Directions, Conclusion。篇幅应服务 taxonomy、发展脉络、比较和研究议程，不以“更长”本身为目标；CCF-A 研究论文的紧凑技术写法不等于把 survey 压成摘要，但也不允许用同义改写填充篇幅。
   不要默认为每个 taxonomy 类创建独立 theme 章；taxonomy 类应优先写成 Taxonomy/Comparative Analysis 内部的小节或段落。
 - 结构质量必须在 PLAN 阶段先定住，而不是等 REVIEW 才发现问题。PLAN 时就要主动避免章节拆得过细、流水账式 literature summary、弱证据滥用和内部标号泄漏。
 - 综述论文的核心不是“读了很多文献”，而是围绕一个明确问题，把已有研究重新组织成有解释力的知识结构，并指出领域下一步应如何发展。
 - 每个 section 必须有明确读者功能和节内论点：Introduction 提出中心问题，Background/Scope 设定边界与检索方法，Taxonomy/Framework 给解释框架，Progress/Comparison 比较研究流派和证据边界，Challenges 从真实 tension 推导问题，Future Agenda 给具体研究路线。
 - 段落默认采用“观点 -> 文献证据 -> 比较 -> 评价”的综述逻辑。不要写成“A 提出、B 发现、C 认为”的文献串烧。
 - 少写单篇论文介绍，多写“现有研究形成了哪些认识、研究流派之间是什么关系、谁解决了什么、谁遗漏了什么”。
+- 必须给出发展脉络，但只保留会改变 taxonomy、问题定义、证据标准或研究议程的关键阶段：奠基问题/方法转折/当前前沿。不要逐年罗列、逐篇复述，或在多个 section 重讲同一历史。
+- 每个核心论点只在最合适的一个 section 充分展开一次：Introduction 只定位问题和路线；Background 只界定概念与范围；Taxonomy 只定义分类和边界；Comparison 只比较差异；Challenges/Future 只推导缺口和议程；Conclusion 只收束。后续 section 需要引用前文时用一两句承接，不要重新解释整段。
 - 标题和 subsection 名称要带判断或功能，不要像百科词条。比如“Data and Model Bias: Technical Origins of Decision Risk”比“Algorithmic Bias”更适合综述。
 - Future Directions 必须具体到问题、机制、场景、方法或治理路径；不要只写“加强理论研究/实证研究/跨学科研究”。
-- 语言要凝练连贯，避免过度使用冒号、破折号和标签化模板句。正文段落不要写成 “背景: ... 缺口: ... 启示: ...” 或 slogan 式破折号串联；除必要定义、贡献列表和表格外，用完整句表达因果、对比和边界。
+- 语言要凝练连贯，正文普通段落不要依赖冒号、破折号和标签化模板句。正文段落不要写成 “背景: ... 缺口: ... 启示: ...” 或 slogan 式破折号串联；除必要定义、贡献列表和表格外，用完整句表达因果、对比和边界。
+- 不要在常规正文中使用 `\paragraph{}`、标签式小标题或“First/Second/Third”清单来代替论证。先让一个段落的结论自然引出下一个段落的问题，再说明证据、比较和限定条件。必要术语应在首次出现时融入句子解释；当抽象概念需要直观化时，可以用条件性的真实场景说明，但不能编造数据或结果。
 - 最终 TeX 正文和注释不得暴露内部运行标号，例如 `C1`、`[C1]`、`C1:`、`CID`、`ResearchOS alignment` 或 `% [C1]`。
 - 全文必须采用单一正文语言。`zh-en`、`mixed`、双语 seed 或中英混合文献只表示输入/检索来源可双语，不表示正文可以中英混写。若目标是中文期刊，全部 section 使用中文学术写作；若目标是英文学术期刊，全部 section 使用英文。标题、摘要、引言、正文、结论必须一致。
-- Survey section 不是摘要卡片。Introduction/Background/Taxonomy/Comparison/Challenges/Future/Conclusion 都必须有足够展开的论证；不能用短段落凑过。
+- Survey section 不是摘要卡片。Introduction/Background/Taxonomy/Comparison/Challenges/Future/Conclusion 都必须有完整论证；但“完整”指有证据、有比较、有发展脉络和边界，而不是重复背景、同义改写或用短段落凑字数。
+
+## Publication-Level Survey Writing Preferences
+
+这些要求用于指导写作与审稿判断。若证据不足，应弱化、删除或说明覆盖边界，而不是用空话补足篇幅。
+
+- 行文目标是顶级学术期刊或顶级会议综述的干净风格，参考 UTD/FT50/CCF A 的表达标准。句子要准确、凝练、有解释力，不写泛泛“具有重要意义”“未来值得关注”这类没有信息增量的话。
+- 正文普通段落原则上不要使用破折号、冒号和标签式段落来制造 AI 痕迹。不要把正文写成 “Challenge: ...”, “Implication: ...”, “Future direction: ...”。如果必须列出贡献、定义或表格说明，可以少量使用冒号；破折号优先改写成完整句中的因果、对比或限定表达。普通论证段落优先用完整句自然展开。
+- 不要用过多并列短句把段落写碎。一个段落应形成自然推进：先提出判断，再解释概念或机制，再引入文献证据和比较，最后说明边界或下一步问题。
+- 上下文要有顺序感。读者应能从研究背景进入发展脉络，从发展脉络进入分类框架，从分类框架进入比较，从比较进入挑战，再从挑战进入未来议程；不要突然跳到新术语、新文献或新方向而没有承接。
+- 结构要凝练。默认使用少量功能明确的大节，不要为每个 taxonomy 类、每个问题或每篇论文都拆新节，也不要用 `\paragraph{}` 形成零散条目感。
+- 综述要充分，不能写成短摘要或材料清单。充分不是重复材料，而是给出发展脉络、流派关系、分类边界、证据强弱、未解张力和未来议程。发展脉络应采用“奠基问题或开山工作、关键方法转折、当前前沿或争议”的自然叙述，并解释每个阶段如何改变后续研究。
+- 术语首次出现时要解释其含义和综述中的作用。必要时可以用 such as 引出真实或条件化场景来帮助读者理解，例如平台如何做推荐、企业如何用决策系统、监管如何面对算法风险；例子只用于解释，不能伪造成文献结果。
+- 引用必须真实核验且含义匹配。优先使用 UTD/FT50/CCF A、营销、经济学、管理科学、信息系统和计算机顶级期刊会议中的高质量论文，领域开山论文，高被引基石论文，重要学者代表作，以及近期有影响力的前沿论文。不要因为文献质量高就把它用于不相关 claim。
+- 每个 `\cite{...}` 都必须对应当前句子的具体含义。引用前要核对 BibTeX title、citation pool、paper note 和 evidence level，确认它能支持的是背景、方法、机制、比较、管理含义、边界还是未来议程。abstract-only 文献只能支持趋势或线索，不能支撑机制、结果或强比较；无法核验含义时不要引用。
+- 不能只凭标题、作者声誉、venue、摘要片段或模型记忆推断文献含义。需要为一个段落扩大文献覆盖时，按发展阶段、研究流派、比较维度和证据边界补入已经核验的代表工作；不要为了显得全面而堆放无关的顶刊论文或段尾 citation bundle。若当前材料不能核验一项强论断，应删除、弱化或明确其覆盖边界。
+- 若一个段落要表达现实意义、管理意义或商业意义，必须说明适用场景和边界。不要把技术可行性自动写成商业价值，也不要把文献没有讨论的管理含义强行外推。
 
 ## 项目信息
 - research_direction: {{ project.get('research_direction', project.get('topic', '未指定')) }}
@@ -77,6 +95,18 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 
 ### comparison_table.csv 预览
 {{ comparison_table_preview }}
+
+{% if bridge_catalog_count > 0 %}
+### Cross-domain bridge catalog 预览（{{ bridge_catalog_count }} 条轨道）
+以下内容来自 T2 的 `bridge_context.json` / `paper_catalog.json`，不是已深读论文卡。它们能帮助解释历史发展、相邻概念、taxonomy 边界、比较维度、反例和后续阅读优先级，但不能直接支撑机制、结果、实现细节或正式 citation。
+{% for bridge in bridge_catalog_preview %}
+- {{ bridge.get('bridge_id', '') }} · {{ bridge.get('name', '未命名跨域方向') }} | records={{ bridge.get('record_count', 0) }} | abstract_leads={{ bridge.get('abstract_record_count', 0) }} | status={{ bridge.get('status', '') }}
+  {% if bridge.get('rationale') %}迁移问题：{{ bridge.get('rationale') }}{% endif %}
+  {% for record in bridge.get('sample_records', []) %}
+  - lead：{{ record.get('title', record.get('paper_id', 'untitled')) }} | {{ record.get('usage_boundary', '') }}
+  {% endfor %}
+{% endfor %}
+{% endif %}
 
 {% if survey_plan_preview %}
 ### survey_plan.json 预览
@@ -184,14 +214,15 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 {% if phase == "survey_plan" %}
 ## Phase: T3.6-PLAN taxonomy + outline
 
-先读取完整输入：
+先读取完整输入。`read_file` 只能接收文件，绝不能传目录路径：对 note root 先用 `list_files` 或 `grep_search` 找到具体 `.md`，再按需读取精确文件；对 Cross-domain catalog 先读 `index.json`，再读取其中列出的精确 `bridge_context.json` / `paper_catalog.json`。不要尝试 `read_file("literature/deep_read_notes/")`、`read_file("literature/bridge_notes/")` 或 `read_file("literature/cross_domain_catalogs/")`。
+
+- 具体文件输入：
 - `literature/synthesis.md`
 - `literature/synthesis_workbench.json`
 - `literature/domain_map.json`
 - `literature/comparison_table.csv`
-- `literature/deep_read_notes/`
-- `literature/bridge_notes/`（如果存在；跨领域或理论桥接的全文/部分全文论文笔记）
-- `literature/shallow_read_notes/`（如果存在）
+- `literature/cross_domain_catalogs/index.json`，以及 index 指向的具体 `bridge_context.json` 与 `paper_catalog.json`（如果存在；已检索的 Cross-domain 补充轨道，与真实 Bridge 阅读笔记目录 `literature/bridge_notes/` 分开，即使未深读也不能被忽略）。catalog 可帮助组织历史脉络、相邻领域概念、taxonomy 边界、比较维度和后续阅读优先级；只有 linked canonical note 才能支持具体机制、结果或强比较。
+- 三个目录输入（先枚举其中的具体 paper card）：`literature/deep_read_notes/`、`literature/bridge_notes/`（跨领域或理论桥接的全文/部分全文论文笔记）和 `literature/shallow_read_notes/`（如果存在）。
 - `literature/metadata_triage.md`（如果存在；只作为补资源/升级阅读线索，不能分类为综述核心证据）
 - `literature/related_work.bib`
 - `user_seeds/seed_outline_profile.json`（如果存在；作为用户 taxonomy/scope 先验，不是 citation 来源）
@@ -315,20 +346,23 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 {% endif %}
 
 {% if phase == "survey_expand" %}
-## Phase: T3.6-EXPAND 一次性定向补检计划
+## Phase: T3.6-EXPAND 一次性定向补充检索
 
 调用：
 `expand_corpus_for_survey(survey_plan_path="drafts/survey/survey_plan.json", output_path="drafts/survey/survey_expansion.json")`
 
-如果你根据自身知识发现工具 query hints 太机械，可以在工具输出后读取 `survey_expansion.json`，补充一个 `llm_review` 字段：
-- 哪些类最需要补文献
-- 应优先检索什么关键词/venue
-- 哪些已有论文只是邻接提示，不能直接作为综述核心证据
+工具会根据已确认的 taxonomy、薄弱类和章节论点执行一次真实检索，并在
+`literature/survey_supplement/` 保存搜索计划、搜索日志、真实返回记录和章节级证据线索；对带 abstract 的新记录， 工具还会在 `literature/shallow_read_notes/` 写入可供 T3.5/T3.6/T4/T5/T8 共享消费的 canonical ABSTRACT_ONLY 阅读笔记， 并更新 `literature/related_work.bib` 与 `literature/literature_manifest.json`。
 
-`complete` 模式的含义是“一次性补检计划 + LLM 审阅记录”，不是自动回到 T2/T3 做无限检索，也不是把 query hints 当作已读文献。
-如果你补写 `llm_review`，必须保留工具原有的 `semantics`、`query_hints` 和 `classes_needing_more_lit` 字段。
+读取 `survey_expansion.json` 后检查：
+- 实际执行的 query、provider 结果数与失败信息；
+- 哪些记录用于历史发展、前沿进展或某一 taxonomy 类；
+- 每个记录的证据边界。
 
-不要回到 T2，不要启动无限补检。最后 `finish_task`。
+`complete` 模式的含义是“一次性实际补检 + 可审计检索记录 + abstract-level 阅读笔记”，不是自动回到 T2/T3 做无限检索。
+补充记录带 abstract 时会成为已读的 abstract-level 文献；可用于历史脉络、前沿候选、taxonomy/覆盖/比较背景和阅读优先级。正文中的具体机制、结果、比较或因果结论仍须由对应的 FULL/PARTIAL reading note 支持；若只依据摘要描述一篇论文，必须明确写成 abstract-level description，不能扩展其含义。
+
+不要回到 T2，不要调用 `ask_human`，不要启动循环补检。最后 `finish_task`；运行时会自动进入 T3.6-STATE，不需要用户输入任何“后续路径”回答。
 {% endif %}
 
 {% if phase == "survey_state" %}
@@ -355,10 +389,12 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 
 写作原则：
 - 这是一个独立 section，不要写其它 section。
+- 所有工具路径都相对 workspace 根目录，不相对当前 section 文件。`literature/...`、`user_seeds/...` 与 `drafts/survey/...` 是三个根级前缀；不要把文献路径写成 `drafts/survey/literature/...`。
+- 读取其它 section 前先用 `list_files("drafts/survey/sections")` 或查看 `survey_state` 确认文件已存在；不要 `read_file` 尚未生成的 later section（例如 conclusion 阶段不要读取还未写出的 `abstract.tex`）。
 - 必须先读取并遵守当前 `section_outline` 的 `Section Writing Contract`。它是本节的硬性写作契约，不是参考建议；不同 section 的目的、必写内容、内部结构、证据规则和禁忌不同。
 - 如果 `section_outline` 包含 `Compact Theme Coverage Contract`，说明默认 skipped 的 `theme_*` 不等于内容删除。Taxonomy 必须定义/组织每个 taxonomy class，Comparative Analysis 必须比较同一批 class；不能把类内容留给 skipped theme 节点。
 - 语言必须与 `survey_state.shared_facts.writing_language` / `survey_plan.writing_language` 一致。中文稿所有 section 写中文；英文稿所有 section 写英文。不要出现中文摘要+英文正文、中文引言+英文主体等混合形态。
-- 篇幅必须支撑综述论文：除 abstract 外，每节都要有多个实质段落；Introduction/Conclusion 也不能只写很短的框架说明。宁可少用小节，也要把论证写充分。
+- 除 abstract 外，每节都应有必要的实质段落；Introduction/Conclusion 也不能只写框架说明。优先写少量高信息密度段落：一个段落只完成一个学术功能，并在没有新增证据、比较、转折或边界时停止展开。不要为了满足“综述篇幅”重复同一论点。
 - 每节必须围绕 `survey_plan.central_question` 和当前 `section_outline` 的 `reader_question` / `section_argument` 写。若 outline 过空，先从 survey_plan 的 central_question、scope_boundaries、quality_plan 中恢复本节论点，不要写成泛泛主题介绍。
 - 每节都要有“节内论点”。小节标题和段落开头应表达判断、关系或问题，而不是百科词条。
 - Introduction 必须用一段可读的 Problem Formulation 说明本综述要解决的核心问题、该问题为何不能由单篇论文回答、以及后文 taxonomy/comparison 如何回答它。可使用 “Survey Problem”“Research Question”“Central Question” 等自然标题或等价正文表述；不要为了 validator 拼接固定短语。若收到 section validator 的结构错误，先读取当前 section 和 `Section Writing Contract` 自行修订，不要把确定性的 validator 解释问题转交给人工。
@@ -374,6 +410,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - Challenges section 不能只罗列“数据不足、方法不足、实证不足”等通用缺口；每个挑战都要解释它来自哪种研究张力或框架断裂。
 - Future section 不能只写“加强理论/实证/跨学科研究”；每个方向都要给出具体问题、机制、可行研究设计或治理路径。
 - 每段要有具体学术功能：定义边界、解释演进、比较机制、指出 tension、总结挑战或提出方向。
+- 对发展脉络采用“奠基 → 关键转折 → 当前前沿”的压缩叙事；每个阶段都必须解释它为何改变后续分类、比较或研究议程。没有这种后续作用的历史细节应删除或合并。
 - 如果一个 taxonomy class 只有 abstract-only 或 metadata-only 支撑，不要把它写成成熟主流方向；应写成 coverage boundary、emerging hint 或 resource upgrade need。
 - 引用必须逐字来自上方“可用 citation keys”或 `related_work.bib`。不确定 citation key 时，不要编造；宁可不引用或改写为不带 key 的范围描述。
 - 除 Abstract 和 Conclusion 外，每个 claim-bearing section 必须有足够的代表性引用：Background 至少 4 个 unique keys，Taxonomy 至少 4 个，Comparative Analysis 至少 5 个，Challenges/Future 至少 2 个，Introduction 至少 2 个。整篇综述还必须覆盖足够多的不同 citation keys：当 related_work.bib/notes 较多时，不要反复引用少数熟悉论文；优先轮换 citation pool 中 core/supporting、planned_for 当前 section、full/partial note 的论文，让不同研究流派、证据类型和边界条件都有代表文献。
@@ -383,7 +420,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 不要把 citation bundle 堆在段末当 blanket support。若一句话包含强 claim（证明、显示、显著、因果、机制、实证、验证等），所引文献必须直接支持该 claim 类型；若文献只能支持背景/趋势/覆盖存在性，句子必须弱化为背景或趋势表述。
 - `abstract` 不写任何正式引用；具体 prior work attribution 放到 Introduction 或正文综述章节。
 - 对 abstract-only 文献，要标注 evidence 边界，不把 abstract claim 写成已验证机制。
-- 避免冒号/破折号模板化 prose。不要连续使用 “Challenge: ...”, “Implication: ...”, “Future direction: ...” 作为段落骨架；用自然 topic sentence 和流畅过渡承载综述判断。
+- 避免冒号/破折号模板化 prose。正文普通段落不要使用 “Challenge: ...”, “Implication: ...”, “Future direction: ...” 作为段落骨架；用自然 topic sentence 和流畅过渡承载综述判断。
 - 不要把正文写成连续 `\paragraph{...}` 标签。优先使用少量有论证关系的 `\subsection{...}`，段落以完整 topic sentence 开始；`\paragraph` 只可用于一节中至多一个确有必要的紧凑定义或列举。
 - 表格只在跨论文项目真正可比时使用。宽表必须包在模板可用的 `\resizebox{\textwidth}{!}{...}`（双栏跨栏表）或 `\resizebox{\columnwidth}{!}{...}`（单栏表）中；不能把不可比的指标、性能或筛选分数强行并列。
 - 正文不得暴露 ResearchOS 的运行过程或内部语料状态：不要写 `metadata triage`、`candidate_count`、`FULL-TEXT`、`PARTIAL-TEXT`、`ABSTRACT-ONLY`、`backlog`、`保留候选`、`候选池`、`经过去重与初筛后共获得 N 篇` 等流水账。Background 可以写公开可读的范围、来源类型与证据边界，但不要写内部队列、精读/轻读统计或未获取全文候选数。
@@ -405,8 +442,7 @@ Venue-aware survey framing:
 - 中文综述：保持中文学术综述的“概念界定-研究脉络-分类框架-比较评述-挑战与展望”节奏，但 citation、证据边界和内部状态禁令完全相同。
 
 完成后调用：
-`update_survey_section_state(section_id="{{ section_id }}", status="written")`
-然后 `finish_task`。
+`update_survey_section_state(section_id="{{ section_id }}", status="written")` 然后 `finish_task`。
 {% endif %}
 
 {% if phase == "survey_assemble" %}
@@ -418,6 +454,7 @@ Venue-aware survey framing:
 
 如果 audit 返回 FAIL：
 - 读取 `drafts/survey/survey_audit.md`
+- 同时读取 `drafts/survey/survey_audit.json` 的 `repair_guidance`。当失败项是 `citation_diversity` 时，先定位每个 `over_repeated` key 在哪些 section 被重复使用；先合并同一篇论文被重复阐述的相邻论断、删除没有新增信息的重述，再判断是否存在**已经核验且确实支持该句主张**的其它文献可以承担不同的比较、边界或历史论断。绝不为了通过阈值给句子塞无关 citation，也不要把摘要或 metadata 线索升级成机制/结果证据。修复必须写回对应 `sections/*.tex`，不能直接编辑派生的 `survey.tex`。
 - 定位具体 section 文件，修对应 section，不要重写整篇 survey.tex
 - 重新 assemble + audit
 - 如果失败项是 `compact_theme_content_absorbed`，不要恢复默认 skipped 的 theme 章；优先补 `taxonomy.tex` 和/或 `comparison.tex`，让所有 taxonomy classes 在框架与比较中都有实质覆盖。只有用户明确要求长综述并调整 `sectioning_policy` 时，才使用 standalone theme sections。
@@ -454,6 +491,8 @@ Venue-aware survey framing:
 13. **Section Contract 遵守情况**：逐节检查 section outline 中的 Section Writing Contract 是否被执行；Abstract、Introduction、Background、Taxonomy、Comparison、Challenges、Future、Conclusion 的写法不能一模一样。
 14. **Compact Theme 吸收情况**：如果 `theme_*` 默认 skipped，检查 Taxonomy/Comparison 是否吸收了所有 taxonomy class 的框架和研究进展内容；不能因为 skipped 就缺章、缺类或缺比较。
 15. **视觉论证价值**：检查 visual_plan 是否真的帮助读者从分类规则走向比较和研究议程。若图只是类别罗列、缺少可解释逻辑、与正文重复、证据链接不足或破坏版面，应在 action 中删除该图并重新 assemble/audit；不要因为已生成就保留。
+16. **Publication prose**：这不是机械扣分项，但如果正文大量使用破折号、冒号、标签句、碎片化并列短句、空泛套话、过多小节或 `\paragraph{}`，必须定向修订对应 section。修订目标是顶级学术期刊或顶级会议综述的干净风格，使读者能沿着发展脉络、taxonomy、比较、挑战和未来议程自然读下去。
+17. **Citation meaning check**：所有保留 citation 都必须真实存在且含义匹配。优先使用 UTD/FT50/CCF A、营销、经济、管理科学、信息系统和计算机顶级期刊会议、开山论文、基石论文、高被引论文、重要学者代表作和近期有影响力论文；但好文献只能用于它实际支持的 claim，不能把背景引用升级成机制、因果、效果、管理意义或强比较证据。
 
 如果发现 blocking 问题：
 - 只修对应 section 文件，例如 `drafts/survey/sections/comparison.tex` 或 `future.tex`。

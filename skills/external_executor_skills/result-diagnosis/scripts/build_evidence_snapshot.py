@@ -34,6 +34,19 @@ def has_metric(run: dict[str, Any]) -> bool:
     return bool(run.get("metrics") or run.get("metric_output") or run.get("metric_outputs") or run.get("metric_output_ref"))
 
 
+def raw_ref_path(value: Any) -> str:
+    if isinstance(value, dict) and isinstance(value.get("path"), str):
+        return value["path"]
+    if isinstance(value, str):
+        return value
+    return ""
+
+
+def is_raw_results_ref(value: Any) -> bool:
+    path = raw_ref_path(value).lstrip("./")
+    return path == "external_executor/raw_results" or path.startswith("external_executor/raw_results/")
+
+
 def formal_provenance_missing(run: dict[str, Any]) -> list[str]:
     checks = {
         "config_ref": run.get("config_ref") or run.get("config") or run.get("config_path"),
@@ -50,7 +63,7 @@ def formal_provenance_missing(run: dict[str, Any]) -> list[str]:
 
 def classify(run: dict[str, Any]) -> tuple[str, list[str]]:
     reasons = []
-    status = str(run.get("status") or "unknown")
+    status = str(run.get("run_status") or run.get("status") or "unknown")
     rtype = run_type(run)
     mid, _ = method_identity(run)
     if status not in TERMINAL:
@@ -126,7 +139,7 @@ def main() -> int:
             "method_role": role,
             "run_type": run_type(run),
             "analysis_role": str(run.get("analysis_role") or "unknown"),
-            "status": run.get("status"),
+            "status": run.get("run_status") or run.get("status"),
             "eligibility": eligibility,
             "exclusion_reasons": reasons,
             "setting": run.get("setting") or run.get("setting_id") or run.get("subset") or "default",
@@ -149,6 +162,10 @@ def main() -> int:
             "artifact_refs": run.get("artifact_refs", []),
             "source_record": run,
         }
+        for key in ("metric_output_ref", "raw_log_ref"):
+            if item.get(key) and not is_raw_results_ref(item[key]):
+                item["eligibility"] = "excluded"
+                item["exclusion_reasons"].append(f"{key}_outside_raw_results")
         items.append(item)
 
     included = [x["run_id"] for x in items if x["eligibility"] != "excluded"]

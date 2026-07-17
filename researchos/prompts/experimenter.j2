@@ -20,7 +20,7 @@
 `{{ mode }}`
 
 {% if mode == "reboost" %}
-使用仓库根目录的 `skills/research-reboost` 协议执行 T5 reboost。必须把 Method Intent Drafting 放在同一个 reboost 输出中，写出 schema-valid 的 `external_executor/handoff_pack.json` 和 `external_executor/reboost_report.json`。先按 Skill 契约读取 Pre-T5 源文件并由当前 LLM 编译完整 `handoff_pack` 对象，再调用 `compile_research_reboost_handoff(handoff_pack=...)` 发布和校验；该工具会按 `skills/research-reboost/references/handoff_pack.schema.json` 验证并格式化 JSON，同时补全 Codex/Claude/manual prompt、expected schema、allowed paths 与 AGENTS/CLAUDE。项目专属 executor Skill Suite 会在下一步 `T5-SPECIALIZE-EXECUTOR-SKILLS` 独立发布。只做执行语境重排与 handoff 编译，不运行实验、不实现方法、不选择执行器、不写 result_pack。
+使用仓库根目录的 `skills/research-reboost` 协议执行 T5 reboost。必须把 Method Intent Drafting 放在同一个 reboost 输出中，写出 schema-valid 的 `external_executor/handoff_pack.json` 和 `external_executor/report/reboost_report.json`。先按 Skill 契约读取 Pre-T5 源文件并由当前 LLM 编译完整 `handoff_pack` 对象，再调用 `compile_research_reboost_handoff(handoff_pack=...)` 发布和校验；该工具会按 `skills/research-reboost/references/handoff_pack.schema.json` 验证并格式化 JSON，同时补全 `external_executor/report/reboost_validation_report.json`、paper card evidence index、expected schema、allowed paths 和 AGENTS/CLAUDE。T5-REBOOST 不创建或填充 `external_executor/expr/`；该目录由 workspace 初始化预建，后续材料门和外部执行阶段使用。`external_executor/report/executor_selection.json` 由后续 executor gate 按所选执行器生成；不再生成 executor-specific prompt 文件。项目专属 executor Skill Suite 会在下一步 `T5-SPECIALIZE-EXECUTOR-SKILLS` 独立发布。只做执行语境重排与 handoff 编译，不运行实验、不实现方法、不选择执行器、不写 result_pack。
 
 ## Research Reboost Skill Contract
 
@@ -28,9 +28,9 @@
 {{ research_reboost_skill }}
 ```
 {% elif mode == "handoff" %}
-调用 `build_experiment_handoff_pack`，生成 `external_executor/handoff_pack.json`、`external_executor/executor_prompt.md`、`external_executor/expected_outputs_schema.json` 和 `external_executor/allowed_paths.txt`。只编译外部执行协议，不运行真实实验。
+调用 `build_experiment_handoff_pack`，生成 `external_executor/handoff_pack.json`、`external_executor/expected_outputs_schema.json`、`external_executor/allowed_paths.txt` 和 AGENTS/CLAUDE。只编译外部执行协议，不运行真实实验，不生成 executor-specific prompt 文件。
 {% elif mode == "executor_gate" %}
-这是 immediate gate 模式。若被直接运行，只能调用 `select_external_executor` 写入选择并 patch handoff 文件；不要运行实验。
+这是 immediate gate 模式。若被直接运行，只能调用 `select_external_executor` 写入 `external_executor/report/executor_selection.json` 并 patch handoff/AGENTS/CLAUDE 文件；不要运行实验。
 {% elif mode == "external_wait" %}
 调用 `wait_for_external_executor_result` 检查外部执行器是否已写回 result pack。缺结果时不要伪造，应暂停等待用户运行外部执行器后 resume。
 {% elif mode == "dry_run" %}
@@ -173,13 +173,13 @@
 {% endif %}
 
 {% elif mode == "full" %}
-## T7 Full 模式核心要求（legacy 兼容节点）
+## 旧内部完整实验兼容模式核心要求
 
-注意：默认完整主链现在使用 `T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-EXECUTOR-GATE -> T5-DRY-RUN/T5-EXTERNAL-WAIT -> T7-INGEST -> T7-AUDIT -> T7-POST-NOVELTY -> T7-CLAIMS` 外部实验链。T5 reboost 与项目 Skill Suite 发布是可恢复的独立步骤；`specialize-executor-skills` 是同一 Suite 编译器的显式 CLI 入口。普通 `run-task T7` 也会映射到新版入口；只有显式 `run-task LEGACY-T7-FULL` 或旧 workspace 恢复到 legacy T7 时，才执行本内部完整实验模式。
+注意：默认完整主链现在使用 `T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-EXECUTOR-GATE -> T5-DRY-RUN/T5-EXTERNAL-WAIT -> T8-STYLE-GATE`。T5 reboost 与项目 Skill Suite 发布是可恢复的独立步骤；`specialize-executor-skills` 是同一 Suite 编译器的显式 CLI 入口。`run-task T7` 和 `run-task LEGACY-T7-FULL` 已移除；本内部完整实验模式只保留为旧 workspace/测试代码的兼容提示，当前主链不应进入这里。
 
 {% if direct_full_mode %}
 ### 0. Legacy Direct-Full 入口
-当前运行是在旧配置/显式调试中从 T4.5 的 `Final Gate Verdict` 进入 legacy T7；T5 pilot 与 T6 novelty-final 可能不存在：
+当前运行是在旧配置/显式调试中从 T4.5 的 `Final Gate Verdict` 进入旧内部完整实验兼容模式；T5 pilot 与 T6 novelty-final 可能不存在：
 {% if skipped_optional_tasks %}
 - 跳过节点：{{ skipped_optional_tasks | join(', ') }}
 {% endif %}

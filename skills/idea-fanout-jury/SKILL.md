@@ -1,6 +1,6 @@
 ---
 name: idea-fanout-jury
-description: Generate, compare, and score evidence-bounded research directions from a problem brief and ResearchOS literature artifacts. Use when a researcher wants a transparent idea fan-out and human-readable jury report before choosing a direction.
+description: Generate, compare, and score evidence-calibrated research directions from a problem brief and ResearchOS literature artifacts. Use when a researcher wants a transparent, creativity-enabled idea fan-out and human-readable jury report before choosing a direction.
 tools:
   - read_file
   - write_file
@@ -68,7 +68,7 @@ Read the verified brief and only the selected/declared project artifacts. Genera
 
 Before generating candidates, read the intake packet and the actual selected problem/literature inputs. Do not probe unrelated conventional filenames. If the problem brief lacks a decision-critical constraint, or literature materials are required for the requested certainty but absent, write `user_inputs/idea-fanout-jury/_followup_request.md`, call `ask_human`, and wait. The follow-up must name the missing fact, explain why it matters, and give an upload path or answer format.
 
-When literature synthesis or paper cards are absent, the only permitted result is an explicitly labelled **preliminary, evidence-insufficient concept set**. It must not state or imply novelty, rank candidates by unsupported scores, or invent a current-project dataset, benchmark, split, baseline, metric, AUUC/Qini value, compute budget, seed, command, or expected numerical improvement. Use `unknown` or `proposed_not_verified`, state the evidence needed, and ask the human whether to add literature evidence before treating a concept as selectable. Concrete metrics and experimental details remain allowed when an allowed input or audited artifact explicitly supplies them; record the exact path and section/field.
+When literature synthesis or paper cards are absent, produce an explicitly labelled **preliminary, evidence-insufficient concept set**. General scholarly knowledge, counterfactual reasoning, and structural cross-domain analogy may still create a genuinely non-obvious concept, but every such element must be marked `conjectural` and `verification_required=true` with a concrete reading or validation upgrade. Do not state or imply novelty, rank candidates by unsupported scores, or invent a current-project dataset, benchmark, split, baseline, metric, AUUC/Qini value, compute budget, seed, command, or expected numerical improvement. Use `unknown` or `proposed_not_verified`, state the evidence needed, and ask the human whether to add literature evidence before treating a concept as selectable. Concrete metrics and experimental details remain allowed when an allowed input or audited artifact explicitly supplies them; record the exact path and section/field.
 
 For each evidence-supported candidate, report: the problem it changes, causal or mechanistic rationale, exact source artifact and note/section anchor, falsifiable hypothesis, smallest viable test, expected failure mode, overlap risk, and 1–5 scores for evidence grounding, novelty plausibility, testability, impact, and risk. Call `compute_idea_novelty_signal` only when `literature/domain_map.json` is available. Call `analyze_idea_concentration` after building the candidate set and explain any origin/family imbalance. For evidence-insufficient concepts, replace the scorecard with an explicit missing-evidence ledger rather than fabricating scores.
 
@@ -76,13 +76,11 @@ Write both declared outputs. The Markdown report must be complete enough for a h
 
 ## Native T4 boundary
 
-This Skill is an exploratory input to T4, not a replacement for the native
-Evolutionary Pipeline. Its outputs may be supplied to Evidence Routing as
-researcher-provided Seeds, but it must not create, modify, or claim to select
+This Skill is an exploratory input to T4, not a replacement for the native Evolutionary Pipeline. Its outputs may be supplied to Evidence Routing as researcher-provided Seeds, but it must not create, modify, or claim to select
 `ideation/evidence/`, `ideation/populations/`, `ideation/evolution/`,
-`ideation/portfolio.json`, or `ideation/final_cards/`. Native T4 alone forms
-multi-route P0, creates Mutation/Crossover Children O0, independently scores
-the union, updates P1, and presents the MMR Portfolio. If a researcher wants
-to combine pieces from different native Candidates, direct them to Gate1: the
-runtime first requires a Compatibility Check and Gene Donor Map, then a second
-confirmation before a Human-composed Candidate can be scored.
+`ideation/portfolio.json`, or `ideation/final_cards/`. Native T4 alone forms multi-route P0, creates Mutation/Crossover Children O0, independently scores the union, updates P1, and presents the MMR Portfolio. If a researcher wants to combine pieces from different native Candidates, direct them to Gate1: the runtime first requires a Compatibility Check and Gene Donor Map, then a second confirmation before a Human-composed Candidate can be scored.
+
+For starting, resuming, inspecting, or safely handing off native T4 itself, use the `t4-evolution` Skill. This exploratory Skill remains an optional Seed producer and never becomes a substitute for the native Population workflow.
+
+When handing off an exploratory concept, label parametric-knowledge content as
+`conjectural` and `verification_required=true`. A minimal IdeaSeed may contain only problem, thesis, candidate mechanism, contribution sketch, one falsifiable prediction, main uncertainty, and Route origin. It must never present a model memory as a citation, supported mechanism, verified dataset, metric, result, or novelty conclusion. Native T4 may repair format differences, retain degraded or unscored Candidates, and continue other Routes, but this Skill must not claim that such recovery has verified the concept.

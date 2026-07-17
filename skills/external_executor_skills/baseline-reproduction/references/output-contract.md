@@ -107,6 +107,8 @@ It does not modify `experiment_runs`; later general experiment execution owns th
 }
 ```
 
+Artifact refs with `evidence_level=raw_result` must point under `external_executor/raw_results/baseline_reproduction/`. Deployment/source references point under `external_executor/expr/baseline_reproduction/`; approved input resources remain under `resources/` for by-hand local material or `resource/` for acquired/reimplemented material. `external_executor/workdir/` is not an approved input resource root.
+
 ## Child return
 
 ```text

@@ -17,6 +17,7 @@ import yaml
 
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
+from ..runtime.bridge_catalog import load_bridge_catalog_summaries
 from ..runtime.prompts import render_prompt
 from ..schemas.validator import validate_record
 from ..tools.ideation_analysis import analyze_ideation_coverage
@@ -31,6 +32,7 @@ from ._common import (
     validate_files_exist,
 )
 from .guidance import load_agent_guidance
+from ..ideation.final_card_readiness import validate_t4_portfolio_final_cards
 
 
 CROSS_DOMAIN_RELATIONS = {
@@ -55,6 +57,7 @@ T4_GATE1_ARTIFACTS: tuple[tuple[str, str], ...] = (
     ("ideation/_family_distribution.md", "候选谱系与集中度检查"),
     ("ideation/_gate1_candidate_cards.md", "Gate1 完整候选卡片"),
     ("ideation/_gate1_selection_brief.md", "Gate1 选择简报"),
+    ("ideation/final_cards/portfolio_cards.json", "Portfolio 完整 LLM Idea Card"),
 )
 T4_BRIDGE_COVERAGE_PATH = "ideation/bridge_coverage_review.json"
 
@@ -592,6 +595,11 @@ def prepare_t4_context_pack(workspace_dir: Path) -> dict[str, object]:
 
     bridge_plan = _read_json_file(workspace_dir / "literature" / "bridge_domain_plan.json")
     domain_map = _read_json_file(workspace_dir / "literature" / "domain_map.json")
+    bridge_catalogs = load_bridge_catalog_summaries(
+        workspace_dir,
+        records_per_bridge=2,
+        abstract_excerpt_chars=480,
+    )
     pack: dict[str, object] = {
         "version": "1.0",
         "semantics": "t4_compact_ideation_context_pack",
@@ -600,6 +608,7 @@ def prepare_t4_context_pack(workspace_dir: Path) -> dict[str, object]:
             "Use ideation/t4_context_pack.md or this JSON before broad-scanning deep_read_notes.",
             "Open individual note files only when a specific claim or citation needs verification.",
             "Keep abstract-only material as weak idea fuel, not as strong claim evidence.",
+            "Use Cross-domain catalogs for structural analogy, history, boundary discovery, and reading priority; do not cite a catalog as direct proof.",
         ],
         "source_files": [
             _source_file_info(workspace_dir, rel)
@@ -610,6 +619,7 @@ def prepare_t4_context_pack(workspace_dir: Path) -> dict[str, object]:
                 "literature/comparison_table.csv",
                 "literature/domain_map.json",
                 "literature/bridge_domain_plan.json",
+                "literature/cross_domain_catalogs/index.json",
                 "ideation/survey_insights.json",
             )
         ],
@@ -688,6 +698,11 @@ def prepare_t4_context_pack(workspace_dir: Path) -> dict[str, object]:
         }
         if bridge_plan
         else {},
+        "cross_domain_catalogs": bridge_catalogs,
+        "cross_domain_catalog_usage_boundary": (
+            "Catalog records remain metadata/abstract-level transfer context. They can inspire a distinct mechanism, boundary, "
+            "comparison, or validation question, but they never prove a mechanism, result, baseline equivalence, or external novelty claim."
+        ),
         "domain_map_preview": {
             "bucket_summary": domain_map.get("bucket_summary") or domain_map.get("domain_map_bucket_summary"),
             "theory_bridge": domain_map.get("theory_bridge"),
@@ -859,6 +874,25 @@ def _render_t4_context_pack_markdown(pack: dict[str, object]) -> str:
             if not isinstance(item, dict):
                 continue
             lines.append(f"- {item.get('bridge_id', '')}: {_shorten(str(item.get('bridge_name') or item.get('transferable_mechanism') or ''), 220)}")
+    bridge_catalogs = pack.get("cross_domain_catalogs") if isinstance(pack.get("cross_domain_catalogs"), list) else []
+    if bridge_catalogs:
+        lines.extend(["", "## Cross-domain Catalog Context"])
+        lines.append("- Catalog items are inspiration, comparison, and reading-priority context only; a linked canonical note is required for direct claim use.")
+        for item in bridge_catalogs[:8]:
+            if not isinstance(item, dict):
+                continue
+            label = item.get("name") or item.get("bridge_id") or "Cross-domain bridge"
+            lines.append(
+                f"- {item.get('bridge_id', '')} · {label}: records={item.get('record_count', 0)}, "
+                f"abstract_leads={item.get('abstract_record_count', 0)}, status={item.get('status', '')}"
+            )
+            rationale = str(item.get("rationale") or "").strip()
+            if rationale:
+                lines.append(f"  - intent: {rationale}")
+            for record in item.get("sample_records", [])[:2] if isinstance(item.get("sample_records"), list) else []:
+                if not isinstance(record, dict):
+                    continue
+                lines.append(f"  - lead: {record.get('title') or record.get('paper_id') or 'untitled'} ({record.get('usage_boundary', '')})")
     mechanisms = pack.get("mechanism_claim_clusters") if isinstance(pack.get("mechanism_claim_clusters"), list) else []
     if mechanisms:
         lines.extend(["", "## Mechanism Challenge Seeds"])
@@ -1034,10 +1068,26 @@ def refresh_t4_gate1_progress(
         "ideation/t4_context_pack.md",
     )
     compact_pack_ready = all((workspace_dir / path).exists() for path in compact_pack_paths)
-    completed_count = sum(1 for rel_path, _label in T4_GATE1_ARTIFACTS if (workspace_dir / rel_path).exists())
+    final_cards_ready, final_cards_error = validate_t4_portfolio_final_cards(workspace_dir)
+    completed_count = sum(
+        1
+        for rel_path, _label in T4_GATE1_ARTIFACTS
+        if (
+            final_cards_ready
+            if rel_path == "ideation/final_cards/portfolio_cards.json"
+            else (workspace_dir / rel_path).exists()
+        )
+    )
     total_count = len(T4_GATE1_ARTIFACTS)
     bridge_required = _t4_bridge_coverage_required(workspace_dir)
+    bridge_payload = _read_json_file(workspace_dir / T4_BRIDGE_COVERAGE_PATH)
     bridge_exists = (workspace_dir / T4_BRIDGE_COVERAGE_PATH).exists()
+    bridge_reviews = bridge_payload.get("bridge_reviews") if isinstance(bridge_payload.get("bridge_reviews"), list) else []
+    unreviewed_bridges = [
+        str(item.get("bridge_id") or "bridge")
+        for item in bridge_reviews
+        if isinstance(item, dict) and str(item.get("review_status") or "").strip() == "unreviewed"
+    ]
     events = _read_t4_execution_events(workspace_dir)
     supplement_states = _t4_supplement_channel_states(events)
 
@@ -1046,7 +1096,7 @@ def refresh_t4_gate1_progress(
         [
             "## 通道说明（公开执行角色，不含模型内部推理）",
             "- **D 主线**：面向论文主贡献的候选路线；可被选择、合并或重构。",
-            "- **Bridge**：跨领域机制迁移路线；后半段必须回查 bridge 文献笔记 section。",
+            "- **Cross-domain 候选**：来自已确认跨领域方向的机制迁移或结构类比；选择后必须回查相应文献笔记 section。",
             "- **证据不足**：保留可见性，但补足明确证据前不应作为最终主张。",
             "- **S 补充**：反证、失败分析或消融路线；默认服务于 D 主线，不单独承担论文主贡献。",
             "",
@@ -1074,7 +1124,11 @@ def refresh_t4_gate1_progress(
     next_artifact_label = "compact context pack"
     first_incomplete_seen = False
     for index, (rel_path, label) in enumerate(T4_GATE1_ARTIFACTS, start=1):
-        exists = (workspace_dir / rel_path).exists()
+        exists = (
+            final_cards_ready
+            if rel_path == "ideation/final_cards/portfolio_cards.json"
+            else (workspace_dir / rel_path).exists()
+        )
         if exists:
             state = "done"
         elif not compact_pack_ready:
@@ -1096,12 +1150,22 @@ def refresh_t4_gate1_progress(
         if not exists and next_artifact_label == "compact context pack" and compact_pack_ready:
             next_artifact_label = f"{index}/{total_count} {label}"
         lines.append(f"- [{state}] {index}/{total_count} {label}：`{rel_path}`")
+        if rel_path == "ideation/final_cards/portfolio_cards.json" and not exists and final_cards_error:
+            lines.append(f"  - 卡片状态：{str(final_cards_error)[:500]}")
 
-    bridge_state = "done" if bridge_exists else ("queued" if bridge_required else "not_required")
-    bridge_note = "T1/T3 已声明 bridge domain，Gate1 必须留下覆盖审计。" if bridge_required else "上游没有 bridge domain；仅在候选实际采用跨域桥接时生成。"
+    if unreviewed_bridges:
+        bridge_state = "degraded"
+        bridge_note = (
+            "已记录 Cross-domain 路线未返回 LLM 复核："
+            + ", ".join(unreviewed_bridges)
+            + "。现有候选仍可进入 Gate1；可请求该路线重新探索。"
+        )
+    else:
+        bridge_state = "done" if bridge_exists else ("queued" if bridge_required else "not_required")
+        bridge_note = "上游已声明 Cross-domain 方向，Gate1 会保留覆盖说明与后续复核入口。" if bridge_required else "上游没有 Cross-domain 方向；仅在候选实际采用跨域类比时生成。"
     lines.extend(
         [
-            f"- [{bridge_state}] bridge coverage review：`{T4_BRIDGE_COVERAGE_PATH}`（{bridge_note}）",
+            f"- [{bridge_state}] Cross-domain 候选覆盖说明：`{T4_BRIDGE_COVERAGE_PATH}`（{bridge_note}）",
             "",
             "## Gate1 后半段（等待人工选择后才开始）",
             "- [waiting_human] 用户可选择、合并、重构候选，或请求重新分析。",
@@ -1295,8 +1359,14 @@ class IdeationAgent(Agent):
 
         ws = ctx.workspace_dir
         hyp_text = read_text_file(ws / "ideation" / "hypotheses.md")
-        if len(hyp_text) < 500:
-            return False, f"hypotheses.md 过短({len(hyp_text)} 字符)"
+        if not _t4_substantive_text(hyp_text):
+            return False, "hypotheses.md 为空或仍是占位内容"
+        # This legacy validation is only reached for the formal hypothesis
+        # handoff.  Keep its explicit content floor ahead of structural
+        # checks so a truncated write is diagnosed as such rather than as an
+        # unrelated missing-anchor error.
+        if len(hyp_text.strip()) < 500:
+            return False, f"hypotheses.md 过短({len(hyp_text.strip())} 字符)，至少需要500字符的正式假设说明"
 
         # 提取假设anchors（支持 ## H1, ## H2 等格式）
         anchors = re.findall(r"^#+\s*(H\d+)", hyp_text, re.MULTILINE)
@@ -1382,8 +1452,8 @@ class IdeationAgent(Agent):
                     "analogy_basis/grounding_checks，不能为通过 gate 伪造文献来源"
                 )
             reasoning = str(idea.get("reasoning") or "").strip()
-            if len(reasoning) < 10:
-                return False, f"idea_rationales.json 第{i}条idea的reasoning过短"
+            if not _t4_substantive_text(reasoning):
+                return False, f"idea_rationales.json 第{i}条idea的reasoning为空或仍是占位内容"
 
         missing_rationales = sorted(anchor_set - covered_refs)
         if missing_rationales:
@@ -1481,7 +1551,7 @@ class IdeationAgent(Agent):
                     idea.get("contribution_strength")
                     or item.get("scores", {}).get("contribution_strength")
                 )
-                if not design_rationale:
+                if not _t4_substantive_text(design_rationale):
                     return False, (
                         f"idea_scorecard.yaml idea {idea_id} 缺少 CDR design_rationale；"
                         "选中或进入最终假设的 idea 必须说明为什么 artifact 应该这样设计"
@@ -1491,7 +1561,7 @@ class IdeationAgent(Agent):
                         f"idea_scorecard.yaml idea {idea_id} 的 contribution_type 不能为 "
                         f"{contribution_type or '空'}；selected idea 不能是 routine"
                     )
-                if len(contribution_character) < 20:
+                if not _t4_substantive_text(contribution_character):
                     return False, (
                         f"idea_scorecard.yaml idea {idea_id} 缺少 contribution_character："
                         "必须回答如果成立领域会怎样不同"
@@ -1522,16 +1592,13 @@ class IdeationAgent(Agent):
                             "必须在 rejection_reason 中说明机制未成形或无法形成可检验反事实"
                         )
 
-        # R2: _family_distribution.md 必须存在且长度 > 100
+        # R2: family distribution must remain readable and non-placeholder.
         family_dist_path = ws / "ideation" / "_family_distribution.md"
         if not family_dist_path.exists():
             return False, "缺少 ideation/_family_distribution.md，必须在生成 scorecard 前写入 family distribution"
         family_dist_text = read_text_file(family_dist_path)
-        if len(family_dist_text.strip()) < 100:
-            return False, (
-                f"ideation/_family_distribution.md 过短({len(family_dist_text.strip())} 字符)，"
-                "至少需要 100 字符的 family 分布描述"
-            )
+        if not _t4_substantive_text(family_dist_text):
+            return False, "ideation/_family_distribution.md 为空或仍是占位内容"
 
         known_idea_ids: set[str] = set()
         selected_idea_ids: set[str] = set()
@@ -1605,8 +1672,8 @@ class IdeationAgent(Agent):
         rejected_text = read_text_file(rejected_path)
         if not rejected_path.exists():
             return False, "缺少 ideation/rejected_ideas.md，无法记录淘汰idea原因"
-        if len(rejected_text.strip()) < 100:
-            return False, "rejected_ideas.md 过短，必须解释被淘汰/暂缓idea的原因"
+        if not _t4_substantive_text(rejected_text):
+            return False, "rejected_ideas.md 为空或仍是占位内容"
         missing_rejected_mentions = [
             idea_id for idea_id in sorted(rejected_or_deferred_ids) if idea_id not in rejected_text
         ]
@@ -1732,8 +1799,8 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
     except Exception as exc:
         return False, f"_candidate_directions.json 解析失败: {exc}"
     candidates = candidate_data.get("candidates") if isinstance(candidate_data, dict) else None
-    if not isinstance(candidates, list) or len(candidates) < 4:
-        return False, "_candidate_directions.json 必须包含至少4个候选方向"
+    if not isinstance(candidates, list) or not candidates:
+        return False, "_candidate_directions.json 至少需要一个可供人工查看的候选方向"
 
     cdr_schema = load_cdr_schema()
     origins = cdr_schema.get("idea_origins") or {}
@@ -1771,16 +1838,32 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
         ids.add(idea_id)
         origin = str(candidate.get("idea_origin") or candidate.get("origin") or "").strip()
         status = str(candidate.get("constraint_status") or "").strip()
-        basis = str(candidate.get("basis_summary") or candidate.get("basis") or "").strip()
         if not origin:
             return False, f"_candidate_directions.json 第{idx}条候选缺少 idea_origin"
         if not status:
             return False, f"_candidate_directions.json 第{idx}条候选缺少 constraint_status"
-        if not _t4_substantive_text(basis, min_chars=60):
-            return False, (
-                f"_candidate_directions.json 候选 {idea_id} 的 basis_summary 必须由 LLM 写成至少60字符的"
-                "证据归纳（观察 -> 设计含义），不能是占位语或通用模板"
-            )
+        # ``basis_summary`` is valuable LLM-authored explanation, but it is
+        # not a prerequisite for keeping an exploratory, traceable Candidate
+        # visible.  Informed-brainstorm and cross-domain routes are allowed
+        # to arrive as conjectural idea fuel; the UI labels a missing basis as
+        # an enrichment/evidence task instead of falsely treating the idea as
+        # evidence-supported or pausing the whole Population.
+        # Projection can retain a traceable Candidate whose optional Gate1
+        # presentation, legacy score view, or card translation was incomplete.
+        # The projection marks that fact explicitly and the Gate UI prevents
+        # direct T4.5 selection.  Treating this local display gap as a global
+        # artifact failure used to hide every other valid Candidate and pause
+        # the whole evolution run. Identity and route metadata remain
+        # mandatory; research prose is never synthesized here.
+        projection_status = str(candidate.get("projection_status") or "").strip().lower()
+        if projection_status == "degraded":
+            diagnostics = candidate.get("projection_diagnostics")
+            if not isinstance(diagnostics, list) or not any(str(item).strip() for item in diagnostics):
+                return False, (
+                    f"_candidate_directions.json 候选 {idea_id} 标记为 degraded，"
+                    "但未记录可追溯的展示诊断"
+                )
+            continue
         ok, err = _validate_t4_candidate_authored_content(candidate, idea_id, status)
         if not ok:
             return False, err
@@ -1839,11 +1922,9 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
                     "只能可见上桌、暂缓、淘汰或作为资源升级计划"
                 )
 
-    if confirmed_bridge_ids and bridge_candidate_count == 0:
-        return False, (
-            "_candidate_directions.json 零 bridge_synthesis 候选；"
-            "T1 已确认 bridge_domain_plan 时，T4 必须至少把一个桥接综合候选放到 Gate1 桌面。"
-        )
+    # Bridge coverage is visible through the durable escape-hatch review. A
+    # missing bridge Candidate is an evidence-upgrade signal, not a reason to
+    # throw away an otherwise usable P0/P1 population.
     missing_must = sorted(must_bridge_ids - bridge_covered_ids)
     if missing_must:
         coverage_path = ws / "ideation" / "bridge_coverage_review.json"
@@ -1864,19 +1945,10 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
                 f"{missing_must}"
             )
 
-    if mainline_count < 2:
-        return False, (
-            "_candidate_directions.json 至少需要2个 CDR 主线候选，不能只靠四类补充；"
-            f"合法主线 origins: {sorted(mainline_origins)}"
-        )
-    if not cross_domain_candidate_ids:
-        return False, (
-            "_candidate_directions.json 必须包含至少1个 Gate1 可见的领域交叉候选；"
-            "请在四类补充候选之外生成 idea_origin=cross_domain_analogy 的主线候选，"
-            "或在已确认 bridge 有足够素材时生成 idea_origin=bridge_synthesis 的候选。"
-        )
-    if supplement_count > mainline_count + 4:
-        return False, "_candidate_directions.json 四类补充候选过多，主线推理被覆盖"
+    # Route mix is a portfolio-quality signal. It is intentionally not a
+    # correctness gate: a constrained project can have a small viable
+    # mainline or a deferred Bridge while still providing useful Candidates
+    # for a human to compare, refine, or regenerate.
     return True, None
 
 
@@ -1885,32 +1957,19 @@ _T4_PLACEHOLDER_RE = re.compile(
     r"candidate[_ -]?draft|see\s+(?:core_claim|above)|未提供|未标注)$",
     flags=re.IGNORECASE,
 )
-_T4_SCORE_KEYS = (
-    "novelty",
-    "feasibility",
-    "impact",
-    "evaluability",
-    "differentiation",
-    "cost",
-    "contribution_strength",
-)
-_T4_HYPOTHESIS_EVIDENCE_STATUSES = {"supported", "proposed_not_verified", "unknown"}
-_T4_GATE1_CARD_FIELDS: tuple[tuple[str, int], ...] = (
-    ("role_summary", 24),
-    ("evidence_interpretation", 24),
-    ("selection_advice", 24),
-    ("risk_summary", 24),
-    ("user_edit_hint", 18),
+_T4_CORE_SCORE_KEYS = (
+    "research_value",
+    "mechanism_integrity",
+    "contribution_distinctiveness",
 )
 
 
 def _t4_substantive_text(value: Any, *, min_chars: int = 16) -> bool:
-    """Reject empty/template fields without trying to author missing research text."""
+    """Reject empty/template fields; prose length is a quality signal, not a gate."""
 
+    del min_chars
     text = " ".join(str(value or "").split())
-    if len(text) < min_chars:
-        return False
-    return not bool(_T4_PLACEHOLDER_RE.fullmatch(text))
+    return bool(text) and not bool(_T4_PLACEHOLDER_RE.fullmatch(text))
 
 
 def _validate_t4_candidate_authored_content(
@@ -1918,110 +1977,70 @@ def _validate_t4_candidate_authored_content(
     idea_id: str,
     constraint_status: str,
 ) -> tuple[bool, str | None]:
-    """Require the LLM-authored content that the Gate1 renderer may display.
+    """Validate only the Gate1 safety boundary, never a paper-completeness quota.
 
-    The function validates presence, provenance shape, and basic distinctness;
-    it intentionally does not create a substitute hypothesis, evidence summary,
-    title, or score explanation. A failed validation returns the task to the
-    model's normal retry loop, where the model must repair its own candidate.
+    Gate1 is intentionally an exploration and human-comparison surface.  A
+    Candidate may arrive there as a useful Seed, with one provisional
+    hypothesis, an incomplete final-card explanation, a missing legacy score
+    grid, or a not-yet-enriched evidence interpretation.  Those are visible
+    *diagnostics* for focused evolution; they must not discard a traceable
+    Candidate Population or force the model to invent prose merely to satisfy
+    a serializer.
+
+    The canonical ``CandidateDossier`` / ``ScoreReport`` models enforce the
+    richer native contracts when those artifacts are created.  This legacy
+    projection validator therefore retains only what cannot be safely
+    recovered later: a Candidate must still contain a real conceptual anchor.
+    Source/claim boundaries, identity, lineage, and any explicitly-supported
+    experimental claim are checked by the surrounding validator.
     """
 
-    display_title = candidate.get("display_title") or candidate.get("title_short_zh") or candidate.get("short_title")
-    if not _t4_substantive_text(display_title, min_chars=4):
-        return False, f"_candidate_directions.json 候选 {idea_id} 缺少 LLM 撰写的简短标题"
-    if not _t4_substantive_text(candidate.get("title"), min_chars=12):
-        return False, f"_candidate_directions.json 候选 {idea_id} 缺少 LLM 撰写的完整方向描述"
-
-    gate1_card = candidate.get("gate1_card") if isinstance(candidate.get("gate1_card"), dict) else {}
-    for field, min_chars in _T4_GATE1_CARD_FIELDS:
-        if not _t4_substantive_text(gate1_card.get(field), min_chars=min_chars):
-            return False, (
-                f"_candidate_directions.json 候选 {idea_id} 缺少 LLM 撰写的 gate1_card.{field}；"
-                "Gate1 展示层不会以模板补写研究性内容"
-            )
-
-    innovation = candidate.get("innovation") if isinstance(candidate.get("innovation"), dict) else {}
-    for field, min_chars in (
-        ("summary", 10),
-        ("type", 3),
-        ("novelty_delta", 10),
-        ("non_incremental_reason", 10),
-    ):
-        if not _t4_substantive_text(innovation.get(field), min_chars=min_chars):
-            return False, f"_candidate_directions.json 候选 {idea_id} 缺少模型归纳的 innovation.{field}"
-
-    for field in ("target_problem", "mechanism", "prediction", "counterfactual", "practical_implication"):
-        if not _t4_substantive_text(candidate.get(field), min_chars=18):
-            return False, f"_candidate_directions.json 候选 {idea_id} 缺少可展示的模型字段: {field}"
-
-    hypotheses = candidate.get("candidate_hypotheses")
-    if not isinstance(hypotheses, list) or not 2 <= len(hypotheses) <= 4:
+    del constraint_status
+    conceptual_anchor_fields = (
+        "title",
+        "display_title",
+        "pitch",
+        "core_claim",
+        "target_problem",
+        "mechanism",
+    )
+    if not any(_t4_substantive_text(candidate.get(field)) for field in conceptual_anchor_fields):
         return False, (
-            f"_candidate_directions.json 候选 {idea_id} 必须由 LLM 提供2-4条候选假设；"
-            "展示层不会再自动补写假设内容"
+            f"_candidate_directions.json 候选 {idea_id} 没有可追溯的研究命题；"
+            "至少保留 title、pitch、core_claim、target_problem 或 mechanism 中的一项真实 Candidate 内容"
         )
-    seen_hypotheses: set[str] = set()
-    for position, hypothesis in enumerate(hypotheses, start=1):
-        if not isinstance(hypothesis, dict):
-            return False, f"_candidate_directions.json 候选 {idea_id} 的第{position}条假设必须是对象"
-        hypothesis_id = str(hypothesis.get("id") or "").strip()
-        if not hypothesis_id.startswith(f"{idea_id}-H"):
-            return False, f"_candidate_directions.json 候选 {idea_id} 的假设ID必须以 {idea_id}-H 开头"
-        statement = hypothesis.get("statement") or hypothesis.get("hypothesis")
-        normalized_statement = " ".join(str(statement or "").casefold().split())
-        if not _t4_substantive_text(statement, min_chars=18):
-            return False, f"_candidate_directions.json 候选 {idea_id} 的 {hypothesis_id} 缺少可证伪命题"
-        if normalized_statement in seen_hypotheses:
-            return False, f"_candidate_directions.json 候选 {idea_id} 的假设命题重复: {hypothesis_id}"
-        seen_hypotheses.add(normalized_statement)
-        for field in ("mechanism", "observable_prediction", "discriminating_test"):
-            value = hypothesis.get(field)
-            if value is None and field == "observable_prediction":
-                value = hypothesis.get("prediction")
-            if value is None and field == "discriminating_test":
-                value = hypothesis.get("test")
-            if not _t4_substantive_text(value, min_chars=18):
-                return False, f"_candidate_directions.json 候选 {idea_id} 的 {hypothesis_id} 缺少 {field}"
-        evidence_status = str(hypothesis.get("evidence_status") or "").strip().lower()
-        if evidence_status not in _T4_HYPOTHESIS_EVIDENCE_STATUSES:
-            return False, (
-                f"_candidate_directions.json 候选 {idea_id} 的 {hypothesis_id} evidence_status 无效；"
-                f"应为 {sorted(_T4_HYPOTHESIS_EVIDENCE_STATUSES)}"
-            )
 
-    basis_sources = candidate.get("basis_sources")
-    minimum_sources = 2 if constraint_status in {"mainline", "bridge"} else 1
-    if not isinstance(basis_sources, list) or len(basis_sources) < minimum_sources:
-        return False, (
-            f"_candidate_directions.json 候选 {idea_id} 至少需要{minimum_sources}条模型归纳的 basis_sources；"
-            "每条必须说明来源观察如何导向该设计"
-        )
-    for position, source in enumerate(basis_sources, start=1):
-        if not isinstance(source, dict):
-            return False, f"_candidate_directions.json 候选 {idea_id} 的第{position}条 basis_source 必须是对象"
-        for field, min_chars in (("ref", 3), ("claim", 18), ("implication", 18)):
-            if not _t4_substantive_text(source.get(field), min_chars=min_chars):
-                return False, f"_candidate_directions.json 候选 {idea_id} 的 basis_source 缺少 {field}"
+    # The three native scores are authoritative when available.  Do not
+    # demand them here: scorer outages or an optional display projection may
+    # leave a Candidate visibly unscored.  But a value that *is* supplied must
+    # not masquerade as a valid score outside the documented 1--5 range.
+    evolution_score = candidate.get("evolution_score")
+    if isinstance(evolution_score, dict):
+        dimensions = evolution_score.get("dimensions")
+        if isinstance(dimensions, dict):
+            for key in _T4_CORE_SCORE_KEYS:
+                if key not in dimensions:
+                    continue
+                try:
+                    value = float(dimensions[key])
+                except (TypeError, ValueError):
+                    return False, (
+                        f"_candidate_directions.json 候选 {idea_id} 的正式评分 {key} 不是数值；"
+                        "请修复该分数或将 Candidate 标为未评分，不能把损坏数值展示为科学判断"
+                    )
+                if not 1.0 <= value <= 5.0:
+                    return False, (
+                        f"_candidate_directions.json 候选 {idea_id} 的正式评分 {key} 超出 1-5 范围；"
+                        "请修复该分数或将 Candidate 标为未评分"
+                    )
 
-    scores = candidate.get("scores") if isinstance(candidate.get("scores"), dict) else {}
-    rationales = candidate.get("score_rationale") if isinstance(candidate.get("score_rationale"), dict) else {}
-    missing_scores = [key for key in _T4_SCORE_KEYS if scores.get(key) is None]
-    if missing_scores:
-        return False, f"_candidate_directions.json 候选 {idea_id} 缺少七维评分: {', '.join(missing_scores)}"
-    seen_rationales: set[str] = set()
-    for key in _T4_SCORE_KEYS:
-        try:
-            score = int(scores[key])
-        except (TypeError, ValueError):
-            return False, f"_candidate_directions.json 候选 {idea_id} 的 {key} 评分必须为1-5整数"
-        if not 1 <= score <= 5:
-            return False, f"_candidate_directions.json 候选 {idea_id} 的 {key} 评分超出1-5范围"
-        rationale = " ".join(str(rationales.get(key) or "").split())
-        if not _t4_substantive_text(rationale, min_chars=18):
-            return False, f"_candidate_directions.json 候选 {idea_id} 缺少 {key} 的独立评分依据"
-        if rationale.casefold() in seen_rationales:
-            return False, f"_candidate_directions.json 候选 {idea_id} 不能用同一段文字解释多个评分维度"
-        seen_rationales.add(rationale.casefold())
+    # ``scores`` / ``score_rationale`` deliberately are not inspected here.
+    # They are a deprecated seven-dimension compatibility view.  Likewise,
+    # title-card prose, innovation explanation, basis-source interpretation,
+    # hypothesis count, Profile Fit, and qualitative diagnostics are all
+    # enrichment work.  The renderer must disclose their absence rather than
+    # fabricate a generic explanation, while evolution/Human Gate can request
+    # a focused LLM enrichment.
     return True, None
 
 
@@ -2183,7 +2202,7 @@ def _candidate_card_lane_description(candidate: dict, idea_id: str) -> str:
     if "not_supported" in lane or ("evidence" in lane and "not" in lane):
         return "证据不足候选：保留可见性以供讨论；补足对应笔记 section 的机制证据前，不应升级为最终主张。"
     if "bridge" in lane or "bridge" in origin:
-        return "桥接候选：来自已确认的跨领域机制；选择后必须重新核验 bridge 文献笔记 section 的可迁移边界。"
+        return "Cross-domain 候选：来自已确认的跨领域方向；选择后必须重新核验相应文献笔记 section 的可迁移边界。"
     if idea_id.upper().startswith("S") or "supplement" in lane:
         return "补充候选：用于反证、失败分析或消融；默认服务于 D 主线，而非单独承担论文主贡献。"
     return "主线候选：可作为论文主贡献路线被选择、合并或重构；仍需完成后半段的定向证据回查。"
@@ -3025,8 +3044,8 @@ def _validate_pass_stage_artifacts(ws: Path) -> tuple[bool, str | None]:
         return False, f"_candidate_directions.json 解析失败: {exc}"
 
     pass1_candidates = pass1_data.get("candidates") if isinstance(pass1_data, dict) else None
-    if not isinstance(pass1_candidates, list) or len(pass1_candidates) < 4:
-        return False, "_pass1_forward_candidates.json 必须包含至少4个 Pass1 原始候选"
+    if not isinstance(pass1_candidates, list) or not pass1_candidates:
+        return False, "_pass1_forward_candidates.json 至少需要一个 Pass1 原始候选"
 
     pass1_ids: set[str] = set()
     for idx, candidate in enumerate(pass1_candidates, start=1):
@@ -3092,16 +3111,13 @@ def _validate_pass_stage_artifacts(ws: Path) -> tuple[bool, str | None]:
             f"{missing_gate_candidates}"
         )
 
-    ok, err = _validate_gate1_candidate_cards(candidate_cards_path, pass1_ids)
+    ok, err = _validate_gate1_candidate_cards(candidate_cards_path)
     if not ok:
         return False, err
 
     brief_text = read_text_file(gate_brief_path)
-    if len(brief_text.strip()) < 300:
-        return False, "_gate1_selection_brief.md 过短，必须展示全量候选、Pass2风险和合并建议"
-    missing_from_brief = [idea_id for idea_id in sorted(pass1_ids) if idea_id not in brief_text]
-    if missing_from_brief:
-        return False, f"_gate1_selection_brief.md 必须提到所有候选ID，缺少: {missing_from_brief}"
+    if not _t4_substantive_text(brief_text):
+        return False, "_gate1_selection_brief.md 为空或仍是占位内容"
     if not re.search(r"合并|merge|D\d+\+D\d+", brief_text, re.IGNORECASE):
         return False, "_gate1_selection_brief.md 必须说明可合并多个候选，例如 合并 D1+D3"
     required_soft_sections = [
@@ -3119,47 +3135,27 @@ def _validate_pass_stage_artifacts(ws: Path) -> tuple[bool, str | None]:
     return True, None
 
 
-def _validate_gate1_candidate_cards(path: Path, pass1_ids: set[str]) -> tuple[bool, str | None]:
+def _validate_gate1_candidate_cards(path: Path) -> tuple[bool, str | None]:
     """Validate the reader-facing Gate1 card deck.
 
-    `_candidate_directions.json` remains the machine-readable source of truth,
-    but the runtime gate should show a compact Markdown card deck first. This
-    check keeps the human-facing artifact from degrading into a short pointer or
-    a raw JSON dump.
+    `_candidate_directions.json` remains the complete active-Population record.
+    This Markdown deck covers only the visible Portfolio. Exact LLM Card
+    coverage and semantic completeness are verified separately at the
+    human-facing Gate boundary, so exploratory non-Portfolio Candidates do not
+    need a fake final-card narrative merely to satisfy this compatibility check.
     """
 
     text = read_text_file(path)
     stripped = text.strip()
-    if len(stripped) < 800:
-        return False, (
-            "ideation/_gate1_candidate_cards.md 过短，必须用 Markdown 卡片展示每个候选的"
-            "技术机制、现实含义、评分依据、核心论文依赖和推荐动作"
-        )
+    if not _t4_substantive_text(stripped):
+        return False, "ideation/_gate1_candidate_cards.md 为空或仍是占位内容"
     if re.search(r"^\s*[\{\[]", stripped):
         return False, "ideation/_gate1_candidate_cards.md 不能是 raw JSON，必须是给用户阅读的 Markdown"
     if T4_GATE1_CARD_SCHEMA_MARKER not in text:
         return False, (
-            "ideation/_gate1_candidate_cards.md 不是当前 LLM 撰写的 Gate1 card schema v3；"
-            "请由 T4 重新分析并完整写入卡片，不会在 resume 时自动套模板。"
+            "ideation/_gate1_candidate_cards.md 不是当前 native Gate1 card schema v3；"
+            "请由 T4 重新生成当前 Population 的卡片投影，不会在 resume 时静默套用旧版内容。"
         )
-    missing = [idea_id for idea_id in sorted(pass1_ids) if idea_id not in text]
-    if missing:
-        return False, f"_gate1_candidate_cards.md 必须提到所有候选ID，缺少: {missing}"
-    required_sections = [
-        ("排序/推荐动作", r"排序|rank|推荐动作|recommended action|建议动作"),
-        ("技术机制", r"技术机制|technical mechanism|mechanism"),
-        ("现实含义", r"现实含义|管理含义|商业含义|业务含义|practical|managerial|business"),
-        ("评分依据", r"评分依据|score rationale|评分|scores"),
-        ("核心论文依赖", r"核心论文依赖|paper dependencies|core paper|supporting papers|核心文献"),
-        ("风险/kill criteria", r"kill criteria|停止条件|关键风险|risk"),
-        ("文件路径提示", r"_candidate_directions\.json|_pass2_grounding_review\.json|机器可读|完整 JSON"),
-    ]
-    missing_sections = [
-        label for label, pattern in required_sections
-        if not re.search(pattern, text, flags=re.IGNORECASE)
-    ]
-    if missing_sections:
-        return False, "_gate1_candidate_cards.md 缺少用户选择所需字段: " + ", ".join(missing_sections)
     return True, None
 
 
@@ -3194,8 +3190,8 @@ def _validate_selected_idea_brief(ws: Path) -> tuple[bool, str | None]:
             "缺少 ideation/selected_idea_brief.md；Gate1 后必须写用户可读的最终 idea/假设确认摘要"
         )
     text = read_text_file(path)
-    if len(text.strip()) < 400:
-        return False, "selected_idea_brief.md 过短，必须说明用户选择、最终 idea、现实含义和下一步假设范围"
+    if not _t4_substantive_text(text):
+        return False, "selected_idea_brief.md 为空或仍是占位内容"
     if re.search(r"待\s*T4|待.*后半段|待.*补全|待.*写入|TBD|TODO", text, flags=re.IGNORECASE):
         return False, "selected_idea_brief.md 仍是 Gate1 stub 或占位内容，T4 后半段必须补全最终选择摘要"
     required = [
@@ -3300,6 +3296,20 @@ def _validate_bridge_coverage_review(ws: Path) -> tuple[bool, str | None]:
     must_bridge_ids = set(_must_explore_bridge_ids(bridge_plan))
     for bridge_id in sorted(must_bridge_ids):
         item = by_bridge.get(bridge_id) or {}
+        review_status = str(item.get("review_status") or "llm_reviewed").strip()
+        if review_status == "unreviewed":
+            # This is a recoverable coverage gap, not a scientific verdict.
+            # The projection must identify it explicitly, but Gate1 may still
+            # compare the valid non-bridge Population and request a new Route.
+            diagnostic = item.get("review_diagnostic") if isinstance(item.get("review_diagnostic"), dict) else {}
+            if not str(diagnostic.get("code") or "").strip() or not str(diagnostic.get("message") or "").strip():
+                return False, f"bridge {bridge_id} 的 unreviewed 状态缺少可追溯诊断码"
+            warnings = " ".join(str(entry) for entry in review.get("warnings") or [])
+            if bridge_id not in warnings:
+                return False, f"bridge {bridge_id} 未审阅但 warnings 未显式记录。"
+            continue
+        if review_status != "llm_reviewed":
+            return False, f"bridge {bridge_id} 的 review_status 无效: {review_status or '空'}"
         escape = item.get("escape_hatch") if isinstance(item.get("escape_hatch"), dict) else {}
         escape_status = str(escape.get("status") or "").strip()
         if not item.get("visible_to_gate") and not item.get("candidate_ids"):
@@ -3336,7 +3346,17 @@ def _normalize_bridge_coverage_review_for_schema(review: dict, bridge_plan: dict
     if review.get("semantics") == "bridge_candidate_visibility_and_escape_hatch_review" and isinstance(
         review.get("bridge_reviews"), list
     ):
-        return review
+        # Status was added after the first retained Bridge artifact.  An old
+        # complete entry is still an LLM review; preserve its prose and only
+        # attach the structural discriminator needed by the current schema.
+        if all(isinstance(item, dict) and str(item.get("review_status") or "").strip() for item in review["bridge_reviews"]):
+            return review
+        normalized = dict(review)
+        normalized["bridge_reviews"] = [
+            ({**item, "review_status": str(item.get("review_status") or "llm_reviewed")} if isinstance(item, dict) else item)
+            for item in review["bridge_reviews"]
+        ]
+        return normalized
 
     legacy_items = review.get("bridge_reviews")
     if not isinstance(legacy_items, list):
@@ -3380,6 +3400,7 @@ def _normalize_bridge_coverage_review_for_schema(review: dict, bridge_plan: dict
                 "visible_to_gate": bool(item.get("visible_to_gate", bool(candidate_ids))),
                 "forced_surfaced": bool(item.get("forced_surfaced", False)),
                 "selected_into_hypotheses": bool(item.get("selected_into_hypotheses", False)),
+                "review_status": "llm_reviewed",
                 "decision_summary": str(item.get("decision_summary") or item.get("summary") or reason),
                 "escape_hatch": {
                     "status": status,
@@ -3494,8 +3515,8 @@ def _validate_pass2_soft_diagnostics(review: dict, idea_id: str) -> tuple[bool, 
             "Pass2 必须在 Gate1 前标注该软信号或说明 insufficient_evidence"
         )
     counterfactual_note = str(review.get("counterfactual_note") or "").strip()
-    if len(counterfactual_note) < 8:
-        return False, f"_pass2_grounding_review.json review {idea_id} counterfactual_note 过短"
+    if not _t4_substantive_text(counterfactual_note):
+        return False, f"_pass2_grounding_review.json review {idea_id} counterfactual_note 为空或仍是占位内容"
     nearest = review.get("nearest_prior_work")
     if not isinstance(nearest, dict):
         return False, f"_pass2_grounding_review.json review {idea_id} 缺少 nearest_prior_work"
@@ -3531,8 +3552,8 @@ def _validate_soft_novelty_fields(item: dict, idea_id: str) -> tuple[bool, str |
             "该字段是软提示，可取 collapses/survives_weakened/independent/insufficient_evidence"
         )
     counterfactual_note = str(item.get("counterfactual_note") or idea.get("counterfactual_note") or "").strip()
-    if len(counterfactual_note) < 8:
-        return False, f"idea_scorecard.yaml idea {idea_id} counterfactual_note 过短"
+    if not _t4_substantive_text(counterfactual_note):
+        return False, f"idea_scorecard.yaml idea {idea_id} counterfactual_note 为空或仍是占位内容"
     nearest = item.get("nearest_prior_work") or idea.get("nearest_prior_work")
     if not isinstance(nearest, dict):
         return False, f"idea_scorecard.yaml idea {idea_id} 缺少 nearest_prior_work"

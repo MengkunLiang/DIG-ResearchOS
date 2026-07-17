@@ -260,9 +260,10 @@ def enrich_papers(
 def _normalize_seed_pdf_evidence_hint(paper: dict[str, Any]) -> None:
     """Normalize local seed PDF records before they reach T2/T3 artifacts.
 
-    `evidence_level` is a reading/evidence-strength enum, so it should remain
-    `FULL_TEXT` rather than a source label like `seed_pdf`. The seed PDF source
-    is represented by `has_seed_pdf`, `seed_pdf_path`, and `access_level_hint`.
+    ``evidence_level`` is a reading/evidence-strength enum, never a source or
+    availability label. A seed PDF is represented by ``has_seed_pdf``,
+    ``seed_pdf_path`` and ``access_level_hint``; it does *not* mean somebody
+    has read every page.
     """
 
     has_seed_pdf = bool(paper.get("has_seed_pdf") or str(paper.get("seed_pdf_path") or "").strip())
@@ -275,8 +276,8 @@ def _normalize_seed_pdf_evidence_hint(paper: dict[str, Any]) -> None:
     paper["access_level_hint"] = "FULL_TEXT_LOCAL"
     paper["access_score"] = 1.0
     paper["access_score_estimate"] = max(float(paper.get("access_score_estimate") or 0.0), 1.0)
-    paper["evidence_level"] = "FULL_TEXT"
-    paper.pop("_needs_reader_evidence_level", None)
+    # Keep the existing reading level (normally ABSTRACT_ONLY / METADATA_ONLY)
+    # until Reader writes a note with actual page coverage.
 
 
 def _normalize_author_names(authors: Any) -> list[str]:
@@ -600,6 +601,42 @@ def _select_must_explore_bridge_records(
     return selected
 
 
+def _select_confirmed_bridge_probe_records(
+    ranked_records: list[dict[str, Any]],
+    *,
+    confirmed_bridge_ids: list[str],
+    limit: int,
+    already_selected: set[int],
+) -> list[dict[str, Any]]:
+    """Reserve one bounded Reader probe per confirmed bridge when possible."""
+
+    if limit <= 0:
+        return []
+    selected: list[dict[str, Any]] = []
+    for bridge_id in confirmed_bridge_ids:
+        if len(selected) >= limit:
+            break
+        pool = [
+            record
+            for record in ranked_records
+            if record.get("bridge_id") == bridge_id
+            and record.get("confirmed_bridge_probe_candidate")
+            and id(record) not in already_selected
+        ]
+        if not pool:
+            continue
+        pool.sort(
+            key=lambda item: (
+                -float(item.get("read_priority") or 0.0),
+                -float(item.get("access_score") or 0.0),
+                str(item.get("title") or "").casefold(),
+            )
+        )
+        selected.append(pool[0])
+        already_selected.add(id(pool[0]))
+    return selected
+
+
 def _bridge_pool_count(records: list[dict[str, Any]], bridge_id: str) -> int:
     if not bridge_id:
         return 0
@@ -611,6 +648,12 @@ def _target_bucket_for_record(record: dict[str, Any], *, active_target: bool) ->
         return "seed"
     if record.get("bridge_id") and record.get("cross_domain_candidate"):
         return "bridge_deep" if active_target else "bridge_screened"
+    # A confirmed Cross-domain plan is an exploration instruction. A readable
+    # query hit may enter T3 as a *probe*, distinct from a screened bridge: the
+    # Reader must still establish what it actually supports before it can be
+    # used as evidence downstream.
+    if record.get("confirmed_bridge_probe_candidate"):
+        return "bridge_probe" if active_target else "bridge_screened"
     if record.get("unscreened_bridge_backlog_candidate"):
         return "bridge_screened"
     if record.get("semantic_screen_excluded_candidate") and record.get("bridge_id"):
@@ -633,6 +676,8 @@ def _can_enter_active_target(record: dict[str, Any]) -> bool:
     if bool(record.get("is_citation_hub")) and bool(record.get("citation_hub_protected_slot")):
         return True
     if bool(record.get("cross_domain_candidate")):
+        return True
+    if bool(record.get("confirmed_bridge_probe_candidate")):
         return True
     if bool(record.get("semantic_screen", {}).get("can_enter_deep_read")):
         return True
@@ -911,7 +956,6 @@ def build_deep_read_queue(
         access_level_hint = str(paper.get("access_level_hint", _estimate_access_level_hint(paper)))
         if has_seed_pdf:
             access_level_hint = "FULL_TEXT_LOCAL"
-            evidence_level = "FULL_TEXT"
         relevance_score = float(paper.get("relevance_score", 0.0))
         verification_confidence = float(paper.get("verification_confidence", 0.0))
         verification_bonus = 0.25 if verification_status in {"metadata_verified", "pdf_verified"} else 0.0
@@ -966,6 +1010,24 @@ def build_deep_read_queue(
             and has_semantic_screen
             and not can_enter_deep_read
         )
+        # Do not let a lightweight Scout label erase a user-confirmed
+        # Cross-domain direction.  A probe requires a real retrieved record
+        # and some readable content/access signal; it is sent to T3 only so
+        # the Reader can assess it.  It is not treated as a screened bridge or
+        # as evidence merely because its domain name sounds relevant.
+        confirmed_bridge_probe_candidate = (
+            not is_seed
+            and bool(raw_bridge_id)
+            and raw_bridge_id in confirmed_bridge_ids
+            and is_cross_domain_retrieval
+            and not cross_domain_candidate
+            and (
+                bool(paper.get("abstract"))
+                or has_local_pdf
+                or bool(paper.get("pdf_url"))
+                or access_score >= 0.4
+            )
+        )
         hub = _lookup_citation_hub(paper, canonical_id, citation_hub_index)
         is_citation_hub = bool(hub) and (
             is_seed
@@ -1007,6 +1069,7 @@ def build_deep_read_queue(
                 else "screened_cross_domain_candidate" if cross_domain_candidate
                 else "semantic_screen_deep_read_candidate" if can_enter_deep_read
                 else "metadata_fallback_candidate" if metadata_fallback_candidate
+                else "confirmed_bridge_reader_probe" if confirmed_bridge_probe_candidate
                 else "unscreened_bridge_backlog_candidate" if unscreened_bridge_backlog_candidate
                 else "semantic_screen_excluded_candidate" if semantic_screen_excluded_candidate
                 else "backlog_not_screened_for_deep_read"
@@ -1031,6 +1094,7 @@ def build_deep_read_queue(
             "semantic_screen": semantic_screen,
             "cross_domain_retrieval_candidate": bool(paper.get("cross_domain_retrieval_candidate")),
             "cross_domain_candidate": cross_domain_candidate,
+            "confirmed_bridge_probe_candidate": confirmed_bridge_probe_candidate,
             "metadata_fallback_candidate": metadata_fallback_candidate,
             "unscreened_bridge_backlog_candidate": unscreened_bridge_backlog_candidate,
             "semantic_screen_excluded_candidate": semantic_screen_excluded_candidate,
@@ -1063,6 +1127,7 @@ def build_deep_read_queue(
             or can_enter_deep_read
             or metadata_fallback_candidate
             or unscreened_bridge_backlog_candidate
+            or confirmed_bridge_probe_candidate
             or semantic_screen_excluded_candidate
         ):
             ranked_records.append(record)
@@ -1104,15 +1169,39 @@ def build_deep_read_queue(
         record["bridge_must_protected_slot"] = True
         record["promoted_reason"] = "must_explore_bridge_deep_floor"
 
+    # Each user-confirmed bridge gets one chance to be actually read when
+    # retrievable material exists. This is still bounded by the ordinary T3
+    # target and does not manufacture coverage for bridges with no material.
+    readable_confirmed_bridges = {
+        str(record.get("bridge_id") or "")
+        for record in ranked_records
+        if record.get("confirmed_bridge_probe_candidate")
+    }
+    seed_count = sum(1 for record in ranked_records if record.get("seed_priority"))
+    confirmed_probe_capacity = min(
+        len(readable_confirmed_bridges),
+        max(0, int(deep_read_target) - seed_count),
+    )
+    probe_reservations = _select_confirmed_bridge_probe_records(
+        ranked_records,
+        confirmed_bridge_ids=confirmed_bridge_ids,
+        limit=confirmed_probe_capacity,
+        already_selected={id(record) for record in bridge_must_records},
+    )
+    for record in probe_reservations:
+        record["protected_slot"] = True
+        record["promoted_reason"] = "confirmed_bridge_reader_probe"
+    cross_domain_slot_count = max(cross_domain_slot_count, len(probe_reservations))
+
     protected_records = [
         record
         for record in ranked_records
         if (
-            record.get("cross_domain_candidate")
+            (record.get("cross_domain_candidate") or record.get("confirmed_bridge_probe_candidate"))
             and not record.get("seed_priority")
-            and id(record) not in {id(item) for item in bridge_must_records}
+            and id(record) not in {id(item) for item in [*bridge_must_records, *probe_reservations]}
         )
-    ][:cross_domain_slot_count]
+    ][:max(0, cross_domain_slot_count - len(probe_reservations))]
     for record in protected_records:
         record["protected_slot"] = True
     citation_hub_records = [
@@ -1133,8 +1222,8 @@ def build_deep_read_queue(
     citation_hub_records = citation_hub_records[:citation_hub_slot_count]
     for record in citation_hub_records:
         record["citation_hub_protected_slot"] = True
-    protected_ids = {id(record) for record in [*bridge_must_records, *protected_records, *citation_hub_records]}
-    queue_records: list[dict[str, Any]] = [*bridge_must_records, *protected_records, *citation_hub_records]
+    protected_ids = {id(record) for record in [*bridge_must_records, *probe_reservations, *protected_records, *citation_hub_records]}
+    queue_records: list[dict[str, Any]] = [*bridge_must_records, *probe_reservations, *protected_records, *citation_hub_records]
 
     # --- venue diversity bonus: 动态选择，避免同一 venue 占据过多 queue 名额 ---
     venue_counts: dict[str, int] = {}
@@ -1156,7 +1245,7 @@ def build_deep_read_queue(
         record["final_priority"] += float(record.get("citation_hub_bonus") or 0.0)
         queue_records.append(record)
         venue_counts[venue] = same_venue + 1
-    for record in [*bridge_must_records, *protected_records, *citation_hub_records]:
+    for record in [*bridge_must_records, *probe_reservations, *protected_records, *citation_hub_records]:
         record["final_priority"] = _final_priority(record)
 
     # 重新按 final_priority 排序（seed 不参与 venue bonus，保持 seed 最高优先）
@@ -1744,7 +1833,6 @@ def build_access_audit(
         access_level_hint = str(paper.get("access_level_hint", _estimate_access_level_hint(paper)))
         if has_seed_pdf:
             access_est = 1.0
-            evidence_level = "FULL_TEXT"
             access_level_hint = "FULL_TEXT_LOCAL"
         records.append(
             {

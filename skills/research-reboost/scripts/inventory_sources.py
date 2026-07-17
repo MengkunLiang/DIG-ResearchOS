@@ -40,6 +40,7 @@ REQUIRED_SOURCES = (
 OPTIONAL_PATHS = (
     ("literature/deep_read_notes", "paper_note", "Detailed paper evidence"),
     ("literature/bridge_notes", "bridge_paper_note", "Cross-domain paper evidence"),
+    ("literature/cross_domain_catalogs", "cross_domain_catalog", "Cross-domain retrieval context; not direct claim evidence"),
     ("literature/shallow_read_notes", "abstract_note", "Abstract-only retrieval hints"),
     ("resources", "resource", "Existing local resources"),
     ("user_seeds/seed_external_resources.jsonl", "user_seed", "User-provided external resource hints"),

@@ -21,12 +21,28 @@ T45_INPUT_FINGERPRINT_PATHS = {
     "synthesis_workbench": "literature/synthesis_workbench.json",
     "comparison_table": "literature/comparison_table.csv",
     "bridge_domain_plan": "literature/bridge_domain_plan.json",
+    "literature_manifest": "literature/literature_manifest.json",
+    "cross_domain_catalogs": "literature/cross_domain_catalogs",
     "agent_params_config": "config/system_config/agent_params.yaml",
-    "model_settings_config": "config/model_settings.yaml",
 }
 
 T45_FINGERPRINT_REPORT_REL_PATH = "ideation/novelty_audit_fingerprints.json"
 T45_FINGERPRINT_SEMANTICS = "t45_novelty_audit_input_fingerprints"
+
+
+def _is_operational_directory_guide(path: Path) -> bool:
+    """Return whether a file is runtime scaffolding rather than research input.
+
+    Workspaces are initialized lazily by several public entry points.  That
+    initialization writes ``_DIR_GUIDE.md`` into standard artifact directories.
+    Treating those generated guides as contents of a scientific-input directory
+    made an unchanged T4 confirmation stale merely because a user invoked
+    ``run-task`` after creating a workspace by hand.  The guide is explicitly
+    runtime-owned documentation, so exclude only this exact filename; all
+    actual note/resource files remain fingerprinted byte-for-byte.
+    """
+
+    return path.name == "_DIR_GUIDE.md"
 
 
 def file_fingerprint(workspace_dir: Path, rel_path: str) -> dict[str, Any]:
@@ -40,7 +56,11 @@ def file_fingerprint(workspace_dir: Path, rel_path: str) -> dict[str, Any]:
         item["sha256"] = digest.hexdigest()
         item["size"] = path.stat().st_size
     elif path.exists() and path.is_dir():
-        children = [child for child in path.rglob("*") if child.is_file()]
+        children = [
+            child
+            for child in path.rglob("*")
+            if child.is_file() and not _is_operational_directory_guide(child)
+        ]
         item["kind"] = "dir"
         item["file_count"] = len(children)
         digest = hashlib.sha256()
@@ -71,6 +91,14 @@ def _resolve_fingerprint_path(workspace_dir: Path, rel_path: str) -> Path:
 
 def build_input_fingerprints(workspace_dir: Path, paths: dict[str, str]) -> dict[str, dict[str, Any]]:
     workspace_dir = workspace_dir.resolve()
+    if "literature/literature_manifest.json" in paths.values():
+        # Consumers that declare the shared Literature Artifact Contract should
+        # fingerprint the actual manifest, not a stale or missing copy.  The
+        # manifest writer preserves bytes when note/catalog inputs are
+        # semantically unchanged, so this refresh is safe for resume checks.
+        from .literature_contract import build_literature_manifest
+
+        build_literature_manifest(workspace_dir, write=True)
     return {label: file_fingerprint(workspace_dir, rel_path) for label, rel_path in paths.items()}
 
 

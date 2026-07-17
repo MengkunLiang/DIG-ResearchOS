@@ -36,6 +36,7 @@ def main() -> int:
         "staged_resources": report["staged_resources"],
         "acquired_resources": report["acquired_resources"],
         "reimplementations": report["reimplementations"],
+        "resource_source_report": report["resource_source_report"],
         "resource_reviews": report["resource_reviews"],
         "artifact_refs": report["artifact_refs"],
     }

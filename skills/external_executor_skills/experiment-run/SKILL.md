@@ -56,7 +56,7 @@ Require all of the following:
 3. The latest review has `review_status=pass` and `approved_for` covers the requested execution level.
 4. Formal execution has explicit `approved_for=formal` and matching input/protocol fingerprints.
 5. Estimated run cost fits within the budget snapshot supplied by the root.
-6. Command, working directory, logs, metrics, record, checkpoint, config, and declared outputs resolve inside allowed paths.
+6. Command, working directory, and run config resolve inside `external_executor/expr/`; raw logs, metrics, records, checkpoints, environment snapshots, and declared run outputs resolve inside `external_executor/raw_results/`.
 7. Required code, data, split, resource, config, and protocol identities are pinned.
 8. The execution environment provides the isolation required by project policy. Formal execution requires enforced filesystem isolation and either enforced network isolation or explicitly authorized network access.
 
@@ -83,7 +83,7 @@ Capture the environment before launching:
 ```bash
 python <skill>/scripts/capture_environment.py \
   --workspace <workspace> \
-  --output <workspace-relative-environment.json>
+  --output external_executor/raw_results/<run-id>/environment.json
 ```
 
 This records platform, Python, packages, CPU/memory, selected accelerator metadata, and a deterministic environment fingerprint. It does not dump credentials or the complete process environment. Add project-specific framework/runtime versions to the request dependencies when they matter.
@@ -146,7 +146,7 @@ Build an atomic run-scoped checkpoint:
 python <skill>/scripts/build_run_checkpoint.py \
   --workspace <workspace> \
   --record <workspace-relative-run-record.json> \
-  --output <workspace-relative-run-checkpoint.json>
+  --output external_executor/raw_results/<run-id>/checkpoint.json
 ```
 
 The checkpoint contains the run record, artifact references, actual budget consumption, input fingerprint, recovery state, and root update recommendations. It is not a Git commit and does not claim global phase completion.
@@ -165,6 +165,7 @@ The root remains responsible for registering manifest entries, updating global b
 ## Evidence rules
 
 - Preserve command arguments, config, protocol fingerprint, seed/repeat, dataset split, code/resource identities, environment, hardware, timestamps, exit information, raw log, metric output, and checksums.
+- Read deployed baseline/method code from `external_executor/expr/` and persist all run-produced evidence under `external_executor/raw_results/`.
 - Keep `run_type`, `execution_level`, and `analysis_role` independent.
 - Smoke and small-scale outputs remain engineering or diagnostic evidence even when successful.
 - Toy/synthetic/dry-run output is never a pre-audit claim candidate.

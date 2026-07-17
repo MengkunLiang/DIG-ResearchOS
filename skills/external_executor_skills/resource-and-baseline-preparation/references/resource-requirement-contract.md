@@ -68,6 +68,16 @@ For baseline implementations, capture as available:
 - expected training and inference entry points;
 - expected output semantics.
 
+An executable baseline requires all of these to be independently evidenced before it can receive `baseline_reproduction` or `formal_comparison` approval:
+
+- accessible code or model;
+- immutable revision or version lock;
+- clear license;
+- environment or dependency information;
+- dataset version and split;
+- metric implementation;
+- at least one traceable result record.
+
 For datasets/benchmarks, capture:
 
 - official name and version;

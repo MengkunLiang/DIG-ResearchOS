@@ -14,6 +14,13 @@ from pathlib import Path
 import re
 from typing import Any
 
+from ..bridge_catalog import (
+    CROSS_DOMAIN_CATALOG_INDEX_REL_PATH,
+    LEGACY_BRIDGE_CATALOG_INDEX_REL_PATH,
+)
+from ..literature_contract import iter_literature_note_cards
+from ...tools.survey_tools import _validate_input_fingerprint_map
+
 
 def extract_stage_insights(task_id: str, workspace: Path, *, detailed: bool = False) -> list[dict[str, Any]]:
     if task_id == "T1":
@@ -32,8 +39,6 @@ def extract_stage_insights(task_id: str, workspace: Path, *, detailed: bool = Fa
         return _t45_insights(workspace)
     if task_id.startswith("T5"):
         return _t5_insights(workspace, task_id=task_id)
-    if task_id.startswith("T7"):
-        return _t7_insights(workspace, task_id=task_id)
     if task_id.startswith("T8"):
         return _t8_insights(workspace, task_id=task_id)
     if task_id == "T9":
@@ -65,28 +70,32 @@ def _t2_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
     search_log = _read(workspace / "literature" / "search_log.md")
     insights: list[dict[str, Any]] = []
     if raw or dedup or verified:
-        dedup_rate = _pct(len(raw) - len(dedup), len(raw)) if raw else None
         rows = [
-            ("原始检索命中", str(len(raw))),
-            ("去重后候选", str(len(dedup))),
-            ("已核验 metadata", str(len(verified))),
-            ("Backlog", str(len(backlog))),
-            ("核验失败", str(len(failures))),
+            ("已保存检索记录", f"{len(raw)} 篇"),
+            ("当前优先阅读", f"{len(dedup)} 篇"),
+            ("可进入阅读", f"{len(verified)} 篇"),
+            ("暂存候选", f"{len(backlog)} 篇，可在后续按需回看"),
+            ("信息核验未通过", f"{len(failures)} 篇"),
         ]
-        if dedup_rate is not None:
-            rows.append(("去重率", dedup_rate))
-        insights.append(_insight("检索、去重与核验", "这些数字说明文献池如何从召回结果收敛为可阅读候选；核验失败不等于论文不存在。", rows))
-    query_rows = _query_portfolio_rows(raw, detailed=detailed)
-    query_rows.extend(_query_audit_rows(search_log, detailed=detailed))
-    if query_rows:
-        insights.append(_insight("Query Portfolio", "展示持久化 query 的召回、来源与 bucket。词面重叠只用于发现重复风险；没有持久化 merge action 时，不会声称系统已合并某条 query。", _dedupe_rows(query_rows, limit=18 if detailed else 8), kind="table"))
-    source_rows = _paper_distribution_rows(verified or dedup, detailed=detailed)
-    if source_rows:
-        insights.append(_insight("Source, Year & Venue Distribution", "分布来自候选元数据，用于检查检索覆盖与时间/venue 偏置，不代表论文质量。", source_rows, kind="table"))
-    score_rows = _top_score_rows(dedup, detailed=detailed)
-    if score_rows:
-        insights.append(_insight("候选评分与阅读处置", "排名由工具信号和已持久化字段组成，是阅读优先级提示，不是最终学术判断。", score_rows, kind="table"))
-    if isinstance(domain, dict):
+        insights.append(
+            _insight(
+                "文献池与阅读安排",
+                "本轮检索记录已保存。系统已选出当前优先阅读的论文；其余候选仍保留在工作区，可在后续阅读、补检或人工选择时回看。",
+                rows,
+            )
+        )
+    if detailed:
+        query_rows = _query_portfolio_rows(raw, detailed=True)
+        query_rows.extend(_query_audit_rows(search_log, detailed=True))
+        if query_rows:
+            insights.append(_insight("Query Portfolio", "展示已执行的检索主题与来源。词面重叠只用于发现重复风险；没有持久化 merge action 时，不会声称系统已合并某条 query。", _dedupe_rows(query_rows, limit=18), kind="table"))
+        source_rows = _paper_distribution_rows(verified or dedup, detailed=True)
+        if source_rows:
+            insights.append(_insight("Source, Year & Venue Distribution", "分布来自候选元数据，用于检查检索覆盖与时间/venue 偏置，不代表论文质量。", source_rows, kind="table"))
+        score_rows = _top_score_rows(dedup, detailed=True)
+        if score_rows:
+            insights.append(_insight("候选评分与阅读处置", "排名由工具信号和已持久化字段组成，是阅读优先级提示，不是最终学术判断。", score_rows, kind="table"))
+    if detailed and isinstance(domain, dict):
         rows = []
         for key, label in (("core", "Core"), ("theory_bridge", "Theory bridge"), ("adjacent", "Adjacent"), ("boundary", "Boundary")):
             value = domain.get(key)
@@ -100,10 +109,10 @@ def _t2_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
             rows.append(("图谱警告", "; ".join(str(item) for item in warnings[:3])))
         if rows:
             insights.append(_insight("Citation Graph & Domain Map", "引用结构用于发现语义排序可能漏掉的结构节点，不直接决定论文重要性。", rows))
-    hub_rows = _citation_hub_rows(queue, detailed=detailed)
+    hub_rows = _citation_hub_rows(queue, detailed=detailed) if detailed else []
     if hub_rows:
         insights.append(_insight("Citation-structure Priority Hints", "这些论文因 seed 邻居、bridge 或 citation hub 被提升阅读优先级；进入 T3 后仍必须以实际证据卡复核。", hub_rows, kind="table"))
-    if queue or isinstance(queue_meta, dict):
+    if detailed and (queue or isinstance(queue_meta, dict)):
         reasons = Counter(_first_text(item, "queue_reason", "disposition", "reading_reason", "queue_bucket") or "未标注" for item in queue)
         rows = [("Deep-read queue", str(len(queue))), *[(reason, str(count)) for reason, count in reasons.most_common(5)]]
         for key in ("deep_read_target", "probe_pool", "protected_count", "bridge_shortfall_count"):
@@ -114,9 +123,22 @@ def _t2_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
 
 
 def _t3_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
-    notes = sorted((workspace / "literature" / "deep_read_notes").glob("*.md")) if (workspace / "literature" / "deep_read_notes").is_dir() else []
-    shallow_read_notes = sorted((workspace / "literature" / "shallow_read_notes").glob("*.md")) if (workspace / "literature" / "shallow_read_notes").is_dir() else []
+    note_cards = iter_literature_note_cards(workspace, include_shallow=True)
+    notes = [
+        workspace / card.rel_path
+        for card in note_cards
+        if card.evidence_level == "FULL_OR_PARTIAL_TEXT"
+    ]
+    shallow_read_notes = [
+        workspace / card.rel_path
+        for card in note_cards
+        if card.evidence_level == "ABSTRACT_ONLY"
+    ]
     manifest = _load_json(workspace / "literature" / "notes_manifest.json")
+    shallow_manifest = _load_json(workspace / "literature" / "shallow_read_manifest.json")
+    bridge_index = _load_json(workspace / CROSS_DOMAIN_CATALOG_INDEX_REL_PATH)
+    if not bridge_index:
+        bridge_index = _load_json(workspace / LEGACY_BRIDGE_CATALOG_INDEX_REL_PATH)
     evidence = Counter()
     mechanism_evidence = Counter()
     tension_count = 0
@@ -146,27 +168,70 @@ def _t3_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
                 f"机制证据: {mechanism_type or '未标注'}"
             )
             previews.append((path.stem, preview))
-    if not notes and not shallow_read_notes:
+    if not notes and not shallow_read_notes and not isinstance(bridge_index, dict):
         return []
-    rows = [(level, str(count)) for level, count in evidence.most_common()]
-    rows.extend([
-        ("Abstract-only notes", str(len(shallow_read_notes))),
-        ("页码覆盖", f"{pages_read_total}/{pages_total}" if pages_total else "未在 note 中解析到完整页码"),
-        ("Extraction calls", str(extraction_calls)),
-        ("Truncation resolved", str(truncation_resolved)),
-        ("边界/局限提示", str(boundary_count)),
-        ("跨论文张力提示", str(tension_count)),
-    ])
+    # Queue completion and the number of actual reading cards are separate:
+    # after a resume an empty pending queue must not make already-read cards
+    # look like zero work. The first number is the researcher-facing count.
+    complete = max(len(notes), _to_int(manifest.get("complete_count")) if isinstance(manifest, dict) else 0)
+    strong_target = _to_int(manifest.get("target_entry_count")) if isinstance(manifest, dict) else 0
+    incomplete = _to_int(manifest.get("incomplete_count")) if isinstance(manifest, dict) else 0
+    missing = _to_int(manifest.get("missing_count")) if isinstance(manifest, dict) else 0
+    primary_evidence = sum(evidence.get(level, 0) for level in ("FULL-TEXT", "PARTIAL-TEXT"))
+    mainline_strong = sum(1 for card in note_cards if card.root_type == "deep_read_notes")
+    bridge_strong = sum(1 for card in note_cards if card.root_type == "bridge_notes")
+    shallow_actual = max(
+        len(shallow_read_notes),
+        _to_int(shallow_manifest.get("actual_shallow_read_count")) if isinstance(shallow_manifest, dict) else 0,
+    )
+    shallow_target = shallow_manifest.get("target") if isinstance(shallow_manifest, dict) else None
+    shallow_coverage = (
+        f"{shallow_actual}/{shallow_target}"
+        if shallow_target not in (None, "", "all_readable")
+        else str(shallow_actual)
+    )
+    rows = [
+        ("强证据阅读（主线 + 跨域）", f"{complete}/{strong_target}" if strong_target else str(complete)),
+        ("其中主线 / 跨域", f"{mainline_strong} / {bridge_strong}"),
+        ("可作为主线依据", str(primary_evidence)),
+        ("摘要轻读覆盖", shallow_coverage),
+        ("尚未完成阅读", f"{incomplete} 篇结构待补；{missing} 篇尚未形成笔记"),
+    ]
+    if isinstance(bridge_index, dict):
+        bridges = bridge_index.get("bridges") if isinstance(bridge_index.get("bridges"), list) else []
+        bridge_counts = Counter(
+            str(item.get("status") or "unknown")
+            for item in bridges
+            if isinstance(item, dict)
+        )
+        bridge_status = "；".join(
+            part
+            for part in (
+                f"已关联/已读 {bridge_counts.get('read', 0)}",
+                f"待精读 {bridge_counts.get('queued_for_read', 0)}",
+                f"已检索待排期 {bridge_counts.get('retrieved_but_deferred', 0)}",
+                f"暂无可读材料 {bridge_counts.get('no_retrieved_material', 0)}",
+            )
+            if not part.endswith(" 0")
+        ) or "未配置 Cross-domain 计划"
+        rows.append(("Cross-domain 候选方向", bridge_status))
+    rows.append(("后续可用范围", "T3.5/T4 只能把已实际阅读的内容作为依据；其余 Cross-domain 方向保留为待验证探索。"))
+    if detailed:
+        rows.extend([
+            ("阅读层级分布", "；".join(f"{level} {count}" for level, count in evidence.most_common()) or "未标注"),
+            ("页码覆盖", f"{pages_read_total}/{pages_total}" if pages_total else "未在 note 中解析到完整页码"),
+            ("抽取调用", str(extraction_calls)),
+            ("截断已解决", str(truncation_resolved)),
+            ("边界/局限提示", str(boundary_count)),
+            ("跨论文张力提示", str(tension_count)),
+        ])
     if isinstance(manifest, dict):
         for key, label in (
-            ("complete_count", "Manifest complete"),
-            ("incomplete_count", "Manifest incomplete"),
-            ("missing_count", "Manifest missing"),
-            ("invalid_note_file_count", "Invalid note files"),
+            ("invalid_note_file_count", "无效/重复笔记"),
         ):
-            if manifest.get(key) is not None:
+            if detailed and manifest.get(key) is not None:
                 rows.append((label, str(manifest[key])))
-    insights = [_insight("Reading & Evidence Coverage", "每篇卡片只允许在其实际阅读覆盖与证据等级范围内支持后续综合和引用。", rows)]
+    insights = [_insight("阅读结果与后续可用范围", "已完成的论文阅读可以进入综合和后续论证；未完成或 Cross-domain 待补材料会保留为明确的下一步，不会被误当作已读证据。", rows)]
     evidence_rows = [(label, str(count)) for label, count in mechanism_evidence.most_common()]
     if evidence_rows:
         insights.append(_insight("Mechanism Evidence Types", "Mechanism Claim 的 evidence type 来自每张 paper card 的 §13；它描述证据性质，不自动确认机制为真。", evidence_rows[:12 if detailed else 6], kind="table"))
@@ -218,9 +283,26 @@ def _survey_insights(workspace: Path, *, task_id: str) -> list[dict[str, Any]]:
         count = _list_count(payload, *keys)
         if count is not None:
             rows.append((label, str(count)))
-    if isinstance(visual, dict) and str(visual.get("status") or "").lower() == "skipped":
-        rows.append(("Visual status", "skipped：数据不足时不生成装饰图"))
+    if isinstance(visual, dict):
+        visual_issue = _survey_visual_fingerprint_issue(workspace, visual)
+        status = str(visual.get("status") or "").lower()
+        if visual_issue:
+            rows.append(("Visual status", "stale：输入已变化，需重新生成图表 manifest"))
+        elif status == "skipped":
+            rows.append(("Visual status", "skipped：数据不足时不生成装饰图"))
     return [_insight("Survey Branch", "Survey 分支独立评估语料与 taxonomy 覆盖，不会替代主线 Idea 流程。", rows)]
+
+
+def _survey_visual_fingerprint_issue(workspace: Path, visual: dict[str, Any]) -> str | None:
+    fingerprints = visual.get("input_fingerprints")
+    if not isinstance(fingerprints, dict):
+        return "missing input_fingerprints"
+    required = {"survey_plan", "deep_read_notes_dir", "shallow_read_notes_dir", "bridge_notes_dir"}
+    missing = sorted(required - set(fingerprints))
+    if missing:
+        return "missing " + ", ".join(missing)
+    ok, err = _validate_input_fingerprint_map(workspace, fingerprints, "survey_visual_manifest.json")
+    return None if ok else err or "stale input_fingerprints"
 
 
 def _t4_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
@@ -235,9 +317,10 @@ def _t4_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
     if records:
         origin = Counter(str(item.get("idea_origin") or item.get("origin") or item.get("origin_type") or "未标注") for item in records)
         family = Counter(str(item.get("mechanism_family") or item.get("family") or "未标注") for item in records)
-        mainline_total = sum(1 for item in records if str(item.get("constraint_status") or "") == "mainline")
-        bridge_total = sum(1 for item in records if str(item.get("constraint_status") or "") == "bridge")
-        supplement_total = sum(1 for item in records if str(item.get("constraint_status") or "") == "supplement")
+        lane_counts = Counter(_t4_candidate_lane(item) for item in records)
+        mainline_total = lane_counts["mainline"]
+        bridge_total = lane_counts["bridge"]
+        supplement_total = lane_counts["supplement"]
         unsupported_total = sum(1 for item in records if str(item.get("constraint_status") or "") == "not_supported_by_current_evidence")
         rows.extend([
             ("候选总数", str(len(records))),
@@ -250,20 +333,20 @@ def _t4_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
         count = _list_count(payload, "candidates", "reviews", "items")
         if count is not None:
             rows.append((label, str(count)))
-    insights = [_insight("Mainline Candidate Governance", "主线候选来自综合、seed、证据和 bridge；四类 supplement 只用于覆盖检查，不替代主线推理。", rows)] if rows else []
+    insights = [_insight("T4 Candidate Population", "按实际生成路线展示候选集结构；路线与数量是探索预算，不是 Candidate 合法性条件。", rows)] if rows else []
     if pass_one_records or pass_two_records:
         pass_rows = _pass_transition_rows(pass_one_records, pass_two_records)
         if pass_rows:
             insights.append(_insight("Pass 1 -> Pass 2 Grounding", "Pass 2 只改变推荐与风险说明，不应静默删除 Pass 1 候选；prior_art=none 表示高不确定性，而非自动证明新颖。", pass_rows, kind="table"))
-    supplement_rows = _supplement_channel_rows(records)
+    supplement_rows = _supplement_channel_rows(records) if records else []
     if supplement_rows:
         insights.append(_insight("Coverage Supplements", "Coverage supplements do not replace mainline reasoning. 每行是可追溯的覆盖检查，不是强制生成 idea 的模板。", supplement_rows, kind="table"))
-    cross_domain_rows = _cross_domain_rows(records)
+    cross_domain_rows = _cross_domain_rows(records) if records else []
     if cross_domain_rows:
         insights.append(_insight("Cross-domain Sources", "bridge/cross-domain 候选显示持久化的迁移来源和风险状态；类比本身不构成机制证据。", cross_domain_rows, kind="table"))
-    if isinstance(bridge, dict):
+    if records and isinstance(bridge, dict):
         reviews = bridge.get("bridge_reviews") or bridge.get("reviews")
-        bridge_rows = [("Bridge reviews", str(len(reviews))) if isinstance(reviews, list) else ("Bridge reviews", "未记录")]
+        bridge_rows = [("Cross-domain reviews", str(len(reviews))) if isinstance(reviews, list) else ("Cross-domain reviews", "未记录")]
         warnings = bridge.get("warnings")
         if isinstance(warnings, list) and warnings:
             bridge_rows.append(("Unsupported / warnings", str(len(warnings))))
@@ -271,9 +354,14 @@ def _t4_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
             if not isinstance(review, dict):
                 continue
             bridge_id = str(review.get("bridge_id") or "bridge")
+            review_status = str(review.get("review_status") or "llm_reviewed")
+            if review_status == "unreviewed":
+                diagnostic = review.get("review_diagnostic") if isinstance(review.get("review_diagnostic"), dict) else {}
+                bridge_rows.append((bridge_id, f"待 LLM 复核 · {_short(str(diagnostic.get('message') or ''), 72)}"))
+                continue
             escape = review.get("escape_hatch") if isinstance(review.get("escape_hatch"), dict) else {}
             bridge_rows.append((bridge_id, f"{escape.get('status') or 'visible'} · { _short(str(escape.get('reason') or review.get('decision_summary') or ''), 72)}"))
-        insights.append(_insight("Bridge Coverage Review", "Bridge 只在证据足够时形成候选；deferred/no_candidate_available 是显式结果，不是失败后被隐藏。", bridge_rows, kind="table"))
+        insights.append(_insight("Cross-domain 候选覆盖", "Cross-domain 方向的未审阅、deferred 和 no_candidate_available 都是可见的降级状态；它们不会隐藏有效 Candidate 或终止 Gate1。", bridge_rows, kind="table"))
     if detailed and records:
         table = []
         for item in records[:12]:
@@ -284,6 +372,36 @@ def _t4_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
             table.append((str(item.get("id") or "?"), f"{title} | {item.get('idea_origin') or item.get('origin') or '-'} | H={len(hypotheses)} | 新颖={score.get('novelty', '-')} | 创新={_short(str(innovation.get('type') or '未标注'), 22)}"))
         insights.append(_insight("Candidate Top List", "Detailed 模式显示前 12 个持久化候选。完整的创新、H1/H2/H3、组合关系、证据锚点与评分依据在 ideation/_gate1_candidate_cards.md。", table, kind="table"))
     return insights
+
+
+def _t4_candidate_lane(candidate: dict[str, Any]) -> str:
+    """Classify a persisted Candidate for display without changing its science.
+
+    Native T4 Seeds retain their actual Route as ``idea_origin``.  The older
+    Gate1 projection labels only used ``mainline``/``bridge``/``supplement``;
+    treating an unfamiliar native origin as zero made a healthy Population look
+    empty in the UI.  This adapter is display-only and deliberately leaves
+    ``not_supported_by_current_evidence`` as an independent warning axis.
+    """
+
+    status = str(candidate.get("constraint_status") or "").strip().casefold()
+    if status in {"mainline", "bridge", "supplement"}:
+        return status
+    origin = str(candidate.get("idea_origin") or candidate.get("origin") or "").strip().casefold()
+    if origin in {"cross_domain_bridge", "cross_domain_analogy", "bridge_synthesis"}:
+        return "bridge"
+    if origin in {
+        "mechanism_challenge",
+        "reverse_operation",
+        "subgroup_failure",
+        "gap_exploration",
+        "missing_area_exploration",
+    }:
+        return "supplement"
+    # Literature, informed brainstorming, seed refinement, and an unfamiliar
+    # native route remain ordinary main research directions until their own
+    # LLM-authored Candidate says otherwise.
+    return "mainline"
 
 
 def _t45_insights(workspace: Path) -> list[dict[str, Any]]:
@@ -308,8 +426,8 @@ def _t45_insights(workspace: Path) -> list[dict[str, Any]]:
 
 def _t5_insights(workspace: Path, *, task_id: str) -> list[dict[str, Any]]:
     handoff = _load_json(workspace / "external_executor" / "handoff_pack.json")
-    report = _load_json(workspace / "external_executor" / "skill_specialization_report.json")
-    execution = _load_json(workspace / "external_executor" / "skill_specialization_execution.json")
+    report = _load_json(workspace / "external_executor" / "report" / "skill_specialization_report.json")
+    execution = _load_json(workspace / "external_executor" / "report" / "skill_specialization_execution.json")
     status = _load_json(workspace / "external_executor" / "executor_status.json")
     rows = [("当前节点", task_id)]
     if task_id == "T5-SPECIALIZE-EXECUTOR-SKILLS":
@@ -437,7 +555,7 @@ def _query_portfolio_rows(records: list[dict[str, Any]], *, detailed: bool) -> l
         source = _first_text(record, "source", "source_tool") or "unknown"
         values[(bucket, source)] += 1
     limit = 12 if detailed else 6
-    return [(f"{bucket} / {source}", str(count)) for (bucket, source), count in values.most_common(limit)]
+    return [(f"{_display_retrieval_intent(bucket)} / {source}", str(count)) for (bucket, source), count in values.most_common(limit)]
 
 
 def _query_audit_rows(text: str, *, detailed: bool) -> list[tuple[str, str]]:
@@ -458,17 +576,34 @@ def _query_audit_rows(text: str, *, detailed: bool) -> list[tuple[str, str]]:
         # Expected columns: #, Query, Bucket, Bridge, Tool/Source, Calls,
         # Results, Persisted. Older logs may contain fewer fields.
         query = row[1] if len(row) > 1 else row[0]
-        bucket = row[2] if len(row) > 2 else "未标注"
+        bucket = _display_retrieval_intent(row[2] if len(row) > 2 else "")
         source = row[4] if len(row) > 4 else "unknown"
         result_count = row[6] if len(row) > 6 else "?"
         persisted = row[7] if len(row) > 7 else "?"
-        result.append((f"q{index} · {_short(query, 44)}", f"bucket={bucket}; source={source}; results={result_count}; persisted={persisted}"))
+        result.append((f"q{index} · {_short(query, 44)}", f"主题={bucket}；来源={source}；返回={result_count}；已保存={persisted}"))
         queries.append(query)
     overlap = _top_query_overlap(queries)
     if overlap is not None:
         left, right, score = overlap
         result.append(("词面重叠提示", f"q{left} / q{right}: {score:.2f}；这是重复风险提示，未持久化 merge action。"))
     return result
+
+
+def _display_retrieval_intent(value: Any) -> str:
+    """Translate internal retrieval buckets for researcher-facing summaries."""
+
+    normalized = str(value or "").strip().casefold()
+    labels = {
+        "core": "核心主题",
+        "baseline": "基线方法",
+        "evaluation": "评估设计",
+        "adjacent_field": "相邻领域",
+        "theory_bridge": "理论桥接",
+        "bridge": "跨领域桥接",
+        "snowball": "引用扩展",
+        "seed": "种子论文",
+    }
+    return labels.get(normalized, str(value or "未标注"))
 
 
 def _paper_distribution_rows(records: list[dict[str, Any]], *, detailed: bool) -> list[tuple[str, str]]:

@@ -12,6 +12,20 @@
 # 这里不承担日常模型路由、预算或 provider 配置；所有 Agent 都使用
 # config/model_settings.yaml 中的同一连接。工具、prompt 和机械行为仍是系统契约。
 
+# Recovery exhaustion is a decision point, not a silent terminal condition.
+# The runtime first makes bounded validation/tool repairs. When those are used,
+# it presents a Human Gate that can continue targeted repair, preserve artifacts
+# and pause, or stop. The historical key name is kept for compatibility; current
+# default runs do not impose ordinary ResearchOS step/token caps.
+budget_escalation:
+  enabled: true
+  max_extensions_per_run: null
+  max_validation_extensions_per_run: null
+  validation_retry_increase: 3
+  steps_increase_ratio: 0.25
+  token_increase_ratio: 0.5
+  wall_seconds_increase_ratio: 0.5
+
 agents:
   hello:
     tools:
@@ -150,6 +164,17 @@ agents:
         dedup_title_threshold: 0.95
         # access_audit.md 展示 top N，方便排查 PDF/摘要/DOI 获取情况。
         access_audit_top_n: 50
+        # 对每一篇保留且已验证的候选实际尝试一次开放 PDF 获取，并记录 receipt。
+        # 这是 access（可获得性）而不是阅读：下载成功绝不自动改成 FULL_TEXT。
+        pdf_acquisition_enabled: true
+        # 并发保持保守，避免对开放服务造成压力；不是候选总数上限。
+        pdf_acquisition_max_concurrency: 4
+        # 已记录的终态失败默认不在每次 resume 重试；显式修复时才打开。
+        pdf_acquisition_retry_terminal_failures: false
+        # 书籍、专著和已知超过此页数的长篇资料默认不自动下载。它们不是被丢弃，
+        # 而是保留 metadata/abstract 与获取建议；需要时再按章节、定义或理论段落定向阅读。
+        pdf_acquisition_skip_known_books: true
+        pdf_acquisition_max_auto_read_pages: 100
         # 保留候选/backlog 切分前先对全 dedup 池前 N 篇做轻量标题/DOI/OA/摘要补全。
         # 0 表示关闭；-1 表示不限量。避免只有早选保留候选才拿到资源补全导致排序偏。
         pre_active_light_backfill_max: 220
@@ -273,7 +298,8 @@ agents:
           abstract_sweep:
             # false 可完全关闭 T3 后置轻量补读。
             enabled: true
-            # 每轮最多处理多少个候选；含 abstract note 和 metadata-only triage，总 cap。
+            # 研究者要求的实际摘要级阅读覆盖数。只有结构合格的 ABSTRACT-ONLY
+            # 笔记计入该数；metadata-only triage 是资源线索，永不占用该配额。
             lite_paper_num: 120
             # 最低 relevance_score hint；0.0 表示不靠该 hint 丢弃候选。
             min_relevance: 0.0
@@ -291,6 +317,13 @@ agents:
             exclude_semantic_excluded: true
             # metadata-only 批量报告；只作补资源/升级阅读线索，不进入 BibTeX/comparison evidence。
             metadata_triage_report: literature/metadata_triage.md
+            # 每轮生成实际消费的浅读笔记清单、目标和缺口。数值目标未达到时 T3
+            # 会可恢复地阻塞，不能进入 T3.5/T3.6/T4。
+            manifest_path: literature/shallow_read_manifest.json
+            # 广覆盖阅读会为已有 PDF 的浅层候选写出可升级队列。该队列只给出
+            # queue rank、PDF 路径与推荐范围；只有 Reader 实际记录页码覆盖后才能升级证据等级。
+            reading_upgrade_queue: literature/reading_upgrade_queue.jsonl
+            max_auto_full_text_pages: 100
             # abstract sweep 排序权重；relevance 是 T2 priority hint，resource 表示可验证资源，
             # year 表示新近性。权重会自动归一化。
             priority_weights:
@@ -398,11 +431,14 @@ agents:
       tool_names:
       - read_file
       - write_file
+      - write_structured_file
       - list_files
       - search_papers
       - fetch_paper_metadata
       - extract_mechanism_tuple
       - compare_mechanism_tuples
+      - extract_design_rationale_tuple
+      - compare_design_rationale_tuples
       - finish_task
       allowed_write_prefixes:
       - ideation/
@@ -493,9 +529,7 @@ agents:
           allowed_write_prefixes:
           - external_executor/
         budget:
-          max_steps: 24
-          max_tokens_total: 220000
-          max_wall_seconds: 1800
+          unlimited_budget: true
         description: 自动 context re-boost，生成 external_executor/handoff_pack.json#context_reboost
       pilot:
         tools:
@@ -561,7 +595,7 @@ agents:
           docker_required: false
           gpu_required: false
       executor_gate:
-        description: 选择外部执行器并 patch handoff prompt
+        description: 选择外部执行器并 patch AGENTS/CLAUDE 控制说明
         behavior:
           docker_required: false
           gpu_required: false
@@ -606,6 +640,13 @@ agents:
       - novelty/
       - evaluation/
       - pilot/
+      # T8 consumes already-produced executor evidence.  Keep this narrow:
+      # the Writer may inspect the declared report and indexed result material,
+      # but it cannot write to or execute anything under external_executor/.
+      - external_executor/executor_research_report.md
+      - external_executor/raw_results/
+      - external_executor/expr/
+      - external_executor/configs/
       tool_names:
       - ask_human
       - read_file
@@ -652,6 +693,9 @@ agents:
       paper_claim_audit:
         description: T9 前最终 claim/evidence 审计
   survey_writer:
+    # Section prose and citation concentration can require distinct repairs.
+    # Exhaustion is handled by an explicit recovery gate, never by silent exit.
+    max_validation_retries: 5
     tools:
       allowed_read_prefixes:
       - ''
@@ -679,6 +723,7 @@ agents:
       allowed_write_prefixes:
       - drafts/survey/
       - ideation/
+      - literature/survey_supplement/
     prompt:
       prompt_template: survey_writer.j2
     modes:
@@ -705,6 +750,7 @@ agents:
           - literature/
           - literature/deep_read_notes/
           - literature/bridge_notes/
+          - literature/cross_domain_catalogs/
           - drafts/survey/
           allowed_write_prefixes:
           - drafts/survey/figures/

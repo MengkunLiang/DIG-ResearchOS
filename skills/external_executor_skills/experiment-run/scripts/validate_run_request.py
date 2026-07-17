@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from _common import error, load_json, require_allowed, resolve_in_workspace, sha256_file, workspace_root
+from _common import error, is_under_workspace_path, load_json, require_allowed, resolve_in_workspace, sha256_file, workspace_root
 
 RUN_TYPES = {"smoke", "small_scale", "formal", "ablation", "robustness", "diagnostic", "efficiency"}
 LEVELS = {"none": 0, "smoke": 1, "small_scale": 2, "formal": 3}
@@ -98,17 +98,23 @@ def validate_request(root: Path, request: Any) -> dict[str, Any]:
             require_allowed(root, resolved[field])
             if not resolved[field].is_file():
                 raise ValueError("must be a regular file")
+            if field == "config_ref" and not is_under_workspace_path(root, resolved[field], "external_executor/expr"):
+                errors.append(error("config_ref_not_under_expr", str(request.get(field))))
         except Exception as exc:
             errors.append(error("invalid_input_path", f"{field}: {exc}"))
     for field in outputs:
         try:
             resolved[field] = resolve_in_workspace(root, str(request.get(field, "")))
             require_allowed(root, resolved[field])
+            if not is_under_workspace_path(root, resolved[field], "external_executor/raw_results"):
+                errors.append(error("output_not_under_raw_results", f"{field}: {request.get(field)}"))
         except Exception as exc:
             errors.append(error("invalid_output_path", f"{field}: {exc}"))
     try:
         cwd = resolve_in_workspace(root, str(request.get("cwd", "")), must_exist=True)
         require_allowed(root, cwd)
+        if not is_under_workspace_path(root, cwd, "external_executor/expr"):
+            errors.append(error("cwd_not_under_expr", str(request.get("cwd"))))
         if not cwd.is_dir():
             errors.append(error("invalid_cwd", "cwd must be a directory"))
     except Exception as exc:
@@ -124,6 +130,8 @@ def validate_request(root: Path, request: Any) -> dict[str, Any]:
             try:
                 declared_path = resolve_in_workspace(root, value)
                 require_allowed(root, declared_path)
+                if not is_under_workspace_path(root, declared_path, "external_executor/raw_results"):
+                    raise ValueError("declared output must be under external_executor/raw_results")
                 for field in outputs:
                     core_path = resolved.get(field)
                     if core_path is not None and (declared_path == core_path or declared_path in core_path.parents):
@@ -147,6 +155,13 @@ def validate_request(root: Path, request: Any) -> dict[str, Any]:
             try:
                 path = resolve_in_workspace(root, str(item.get("path", "")), must_exist=True)
                 require_allowed(root, path)
+                if kind in {"code", "config"} and not is_under_workspace_path(root, path, "external_executor/expr"):
+                    errors.append(error(f"{kind}_dependency_not_under_expr", str(item.get("path"))))
+                if kind in {"dataset", "resource"} and not (
+                    is_under_workspace_path(root, path, "resources")
+                    or is_under_workspace_path(root, path, "resource")
+                ):
+                    errors.append(error(f"{kind}_dependency_not_under_resource", str(item.get("path"))))
                 if not path.is_file():
                     raise ValueError("dependency must be a regular file")
                 expected = item.get("sha256")

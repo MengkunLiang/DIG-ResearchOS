@@ -1,7 +1,7 @@
-"""T1/T7.5 PI Agent - 项目初始化与评估
+"""T1 PI Agent - 项目初始化与 legacy 评估
 
 T1 (init模式): 通过三轮对话引导用户明确研究方向，产出项目配置和种子数据
-T7.5 (evaluate模式): 评估实验结果，决定后续路径
+evaluate 模式: 旧实验评估兼容路径，当前主链不再使用
 
 契约详见 ResearchOS_Agent_Dev_Spec.md §6
 """
@@ -26,7 +26,7 @@ class PIAgent(Agent):
 
     两种模式:
     - init (T1): 三轮对话产出project.yaml和seed文件
-    - evaluate (T7.5): 评估实验结果，给出后续建议
+    - evaluate: 旧实验评估兼容路径，给出后续建议
     """
 
     def __init__(self, mode: str | None = None):
@@ -96,7 +96,7 @@ class PIAgent(Agent):
             context_vars["seed_external_resources_preview"] = seed_external_resources[:2000]
             context_vars["has_seed_external_resources"] = bool(seed_external_resources.strip())
         elif mode == "evaluate":
-            # T7.5模式：读取实验结果
+            # Legacy evaluate 模式：读取实验结果
             results_path = ctx.workspace_dir / "experiments" / "results_summary.json"
             iteration_log_path = ctx.workspace_dir / "experiments" / "iteration_log.md"
             integrity_audit_path = ctx.workspace_dir / "experiments" / "integrity_audit.json"
@@ -141,7 +141,7 @@ class PIAgent(Agent):
             return prepend_resume_prefix(
                 ctx,
                 (
-                "请开始T7.5外部实验评估流程。\n\n"
+                "请开始旧实验评估兼容流程。\n\n"
                 "请读取 experiments/results_summary.json、experiments/integrity_audit.json、"
                 "drafts/result_to_claim.json、drafts/experiment_evidence_pack.json、"
                 "experiments/iteration_log.md 和 ideation/exp_plan.yaml，评估实验证据链，判断Situation (A/B/C/D)，"
@@ -246,7 +246,7 @@ class PIAgent(Agent):
         return True, None
 
     def _validate_evaluate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
-        """校验T7.5 evaluate模式的输出。"""
+        """校验 legacy evaluate 模式的输出。"""
         # 检查evaluation_decision.md存在且包含必需内容
         decision_path = ctx.workspace_dir / "evaluation" / "evaluation_decision.md"
         if not decision_path.exists():
@@ -262,7 +262,7 @@ class PIAgent(Agent):
         if not any(keyword in content for keyword in ["Option", "next_task", "建议"]):
             return False, "evaluation_decision.md必须包含后续Options建议"
 
-        # T7.5 后续会把 human gate 的“按 PI 推荐推进”绑定到这里的 next_task。
+        # 旧 evaluate 后续会把 human gate 的“按 PI 推荐推进”绑定到这里的 next_task。
         # 因此评估报告必须显式给出至少一个 next_task，避免状态机无法解析推荐路径。
         if "next_task" not in content:
             return False, "evaluation_decision.md必须包含至少一个 next_task 字段"

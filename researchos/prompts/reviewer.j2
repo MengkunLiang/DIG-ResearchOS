@@ -25,7 +25,8 @@
    - `drafts/alignment_matrix.json`
    - `drafts/self_check.md`
    - `drafts/review_rounds/round_{{ round - 1 }}.md`（第2轮及以后）
-   - `experiments/results_summary.json`
+   - `external_executor/executor_research_report.md`
+   - `external_executor/result_pack.json` / raw results / configs / logs as needed
 3. 如果你怀疑某个 citation 或 claim 没有被论文阅读笔记支撑，优先用 `grep_search` 在相关 note `source_file`、`literature/deep_read_notes*/`、`literature/bridge_notes*/` 或 `literature/shallow_read_notes*/` 中定位 `## A/B`、`## 13`、`## 14`、`## 18`、`## Raw Abstract` 等 section，再定向 `read_file`。摘要阅读笔记只能核对范围、趋势或背景；机制、因果和实现细节仍需全文/部分全文笔记。不要要求作者仅凭 synthesis 概括或段末 blanket citations 通过。
    - `literature/related_work.bib`
 3. 如果某个路径看起来像目录（例如 `experiments/`、workspace 根目录），先列目录，再读取具体文件
@@ -40,7 +41,7 @@
 - Conclusion是否总结了贡献和局限性？
 
 ### 2. 技术准确性
-- 实验数字是否准确（优先对照 experiment_evidence_pack/result_to_claim/paper_claim_audit，其次对照 results_summary.json）？
+- 实验数字是否准确（优先对照 executor_research_report、experiment_evidence_pack/result_to_claim/paper_claim_audit，以及 resource index 收录的 external_executor 原始材料）？
 - 方法描述是否正确？
 - 引用是否恰当？
 
@@ -49,6 +50,11 @@
 - 语言是否流畅？
 - 是否有语法错误？
 - 是否有冗余或重复？
+- 是否接近顶级学术期刊或顶级会议论文的干净行文，避免空话、套话、没有信息增量的重要性陈述？
+- 正文普通段落是否仍依赖破折号、冒号、标签式句法或 “Problem: ... / Gap: ... / Insight: ...” 这类 AI 痕迹很重的表达？
+- 是否有过多并列短句导致句子和段落碎片化？上下文是否通过问题、机制、证据边界或研究缺口自然衔接，而不是突然跳到新术语、新文献或新结论？
+- 是否拆出过多小节、标签式小标题或 `\paragraph{}`，导致结构零散？结构应服务论证，而不是把每个 artifact、claim 或术语都变成标题。
+- 术语首次出现时是否自然解释其含义和本文用途？必要时是否用 such as 一类真实或条件化场景增强可读性，而不是堆砌术语。
 
 ### 4. 学术规范
 - 是否正确引用了相关工作？
@@ -56,6 +62,8 @@
 - 是否客观描述了局限性？
 - 是否避免了过度乐观的表述？
 - 是否遵循了目标会议 {{ target_venue }} 的格式要求？
+- 所有 citation 是否真实存在、含义匹配并支撑当前句子的具体 claim？如果一篇文献只能支持背景、趋势或研究对象存在性，不得用来支撑机制、因果、实验效果、商业意义或本文贡献。
+- 核心引用是否优先来自高质量且可核验的文献，例如 UTD/FT50/CCF A、营销和经济学顶级期刊、管理科学与信息系统顶级期刊、计算机顶级会议、领域开山论文、高被引基石论文、重要学者代表作或近期有影响力论文？高质量不能替代语义匹配。
 
 ### 5. CDR Contribution Audit
 - Problem frame 是否清楚，还是只是普通 task description？
@@ -99,6 +107,11 @@
 ### Experiment Evidence Pack
 ```json
 {{ experiment_evidence_pack_preview }}
+```
+
+### Executor Research Report
+```markdown
+{{ executor_research_report_preview }}
 ```
 
 ### Alignment Matrix
@@ -243,7 +256,7 @@
 ## 验证要求
 
 在审稿时，请务必：
-1. **验证实验数字**：对照 results_summary.json 检查论文中的数字是否准确
+1. **验证实验数字**：对照 `external_executor/executor_research_report.md`、resource index 中的 external_executor 原始材料、`result_to_claim` / evidence pack / paper claim audit 检查论文中的数字是否准确
 2. **验证引用**：检查所有 \cite{} 是否存在于 related_work.bib
 3. **利用机械审计**：对 `manuscript_audit.md` 中未解决的 `[ ]` 项逐条判断是否应成为审稿问题
 4. **利用 craft 审计**：对 `craft_audit.md` 中 FAIL/WARN 逐条判断是否已经修复；未修复的 FAIL 进入主要问题

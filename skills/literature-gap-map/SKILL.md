@@ -58,20 +58,9 @@ interaction:
 
 # Literature Gap Map
 
-First validate that every listed source exists. Read the supplied materials by decision
-relevance and retain a path plus section or field anchor for every gap candidate. Use
-`grep_search` only to locate supporting passages; read the relevant source before
-recording a conclusion. Do not interpret a missing note, a metadata-only record, or
-limited retrieval coverage as proof that a scholarly gap exists.
+First validate that every listed source exists. Read the supplied materials by decision relevance and retain a path plus section or field anchor for every gap candidate. Use
+`grep_search` only to locate supporting passages; read the relevant source before recording a conclusion. Do not interpret a missing note, a metadata-only record, or limited retrieval coverage as proof that a scholarly gap exists.
 
-For each entry, classify it as an observed limitation, an untested boundary condition,
-a missing comparison, an unresolved mechanism, a retrieval/coverage deficiency, or
-unsupported speculation. Record supporting and countervailing evidence separately,
-the strongest wording currently allowed, what exact additional paper/section/evidence
-would upgrade it, and whether it is suitable for background, a T4 candidate input, or
-only further search.
+For each entry, classify it as an observed limitation, an untested boundary condition, a missing comparison, an unresolved mechanism, a retrieval/coverage deficiency, or unsupported speculation. Record supporting and countervailing evidence separately, the strongest wording currently allowed, what exact additional paper/section/evidence would upgrade it, and whether it is suitable for background, a T4 candidate input, or only further search.
 
-Write both declared outputs. The report may suggest targeted follow-up queries or
-paper-note sections, but must not turn a gap map into a novelty claim or final
-hypothesis. Missing or contradictory evidence is a visible result, not a reason to
-invent a research story.
+Write both declared outputs. The report may suggest targeted follow-up queries or paper-note sections, but must not turn a gap map into a novelty claim or final hypothesis. Missing or contradictory evidence is a visible result, not a reason to invent a research story.

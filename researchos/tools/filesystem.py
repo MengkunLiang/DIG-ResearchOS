@@ -12,6 +12,7 @@ from .base import Tool, ToolResult
 from .seed_outline import looks_like_seed_outline
 from .workspace_policy import WorkspaceAccessPolicy
 from ..literature_identity import is_placeholder_text, is_workspace_guide_or_template
+from ..runtime.literature_contract import resolve_literature_note_card_path
 from ..runtime.errors import ToolAccessDenied, ToolRuntimeError
 from ..runtime.logger import get_logger
 
@@ -39,12 +40,34 @@ STRUCTURED_ONLY_WRITE_PATHS = {
     "bridge_domain_plan.json": "bridge_domain_plan",
     "literature/bridge_domain_plan.json": "bridge_domain_plan",
     "ideation/exp_plan.yaml": "exp_plan",
+    # ``exp_plan.yml`` is not a second valid artifact.  Accepting this alias
+    # let an agent evade the structured-output guard while leaving the
+    # state-machine contract's required ``exp_plan.yaml`` untouched.
+    "ideation/exp_plan.yml": "exp_plan",
     "ideation/idea_rationales.json": "idea_rationales",
     "ideation/idea_scorecard.yaml": "idea_scorecard",
     "ideation/gate_decisions.json": "gate_decisions",
     "pilot/pilot_plan.yaml": "pilot_plan",
     "pilot/pilot_results.json": "pilot_results",
 }
+
+
+def _note_card_stem_lookup_keys(stem: str) -> set[str]:
+    normalized = _normalize_note_card_stem(stem)
+    keys = {normalized}
+    if normalized.startswith("p_10_"):
+        keys.add("doi_" + normalized[2:])
+        keys.add(normalized[2:])
+    if normalized.startswith("doi_10_"):
+        keys.add("p_" + normalized[4:])
+        keys.add(normalized[4:])
+    return {key for key in keys if key}
+
+
+def _normalize_note_card_stem(stem: str) -> str:
+    import re
+
+    return re.sub(r"[^0-9A-Za-z]+", "_", str(stem or "").casefold()).strip("_")
 
 
 class ReadFileParams(BaseModel):
@@ -157,8 +180,28 @@ class ReadFileTool(Tool):
         )
         return max_chars, "model_context_chunk", estimated_tokens, usable_tokens
 
+    def _canonicalize_common_misrooted_read_path(self, path: str) -> tuple[str, str | None]:
+        normalized = str(path or "").replace("\\", "/").lstrip("/")
+        prefix = "drafts/survey/literature/"
+        if not normalized.startswith(prefix):
+            return self._canonicalize_note_card_read_path(path)
+        candidate = normalized.removeprefix("drafts/survey/")
+        if (self.policy.workspace_dir / candidate).exists():
+            return candidate, normalized
+        return self._canonicalize_note_card_read_path(path)
+
+    def _canonicalize_note_card_read_path(self, path: str) -> tuple[str, str | None]:
+        normalized = str(path or "").replace("\\", "/").lstrip("/")
+        if not normalized.endswith(".md") or (self.policy.workspace_dir / normalized).exists():
+            return path, None
+        resolved = resolve_literature_note_card_path(self.policy.workspace_dir, normalized, include_shallow=True)
+        if resolved:
+            return resolved, normalized
+        return path, None
+
     async def execute(self, **kwargs) -> ToolResult:
-        path = kwargs["path"]
+        requested_path = kwargs["path"]
+        path, canonicalized_from = self._canonicalize_common_misrooted_read_path(requested_path)
         offset = int(kwargs.get("offset") or 0)
         try:
             abs_path = self.policy.resolve_read(path)
@@ -191,6 +234,7 @@ class ReadFileTool(Tool):
                 content=content,
                 data={
                     "path": path,
+                    "canonicalized_from": canonicalized_from,
                     "size": size,
                     "offset": offset,
                     "max_chars": max_chars,

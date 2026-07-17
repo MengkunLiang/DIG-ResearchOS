@@ -2,6 +2,48 @@
 # emphasis profiles, not a claim about any venue's current review policy.
 schema_version: "1.0.0"
 profiles:
+  utd_is:
+    primary_orientation: theory_and_phenomenon
+    priority_dimensions:
+      - phenomenon and decision context
+      - theoretical tension and explanatory mechanism
+      - construct and identification credibility
+      - boundary conditions
+      - managerial or organizational implication
+      - coherent empirical research narrative
+    secondary_dimensions:
+      - technical artifact coherence
+      - empirical design feasibility
+    storytelling_emphasis:
+      - phenomenon and decision context
+      - theoretical tension
+      - explanatory mechanism
+      - identification and empirical test
+      - implications and boundary conditions
+    scoring_profile: utd_is
+    portfolio_profile_weight: 0.25
+  ccf_cs:
+    primary_orientation: technical_and_computational
+    priority_dimensions:
+      - precise computational problem
+      - algorithmic or system mechanism
+      - technical contribution distinctiveness
+      - baseline dataset and evaluation discipline
+      - efficiency scalability robustness or reproducibility
+      - tight technical narrative
+    secondary_dimensions:
+      - deployment relevance
+      - problem significance
+    storytelling_emphasis:
+      - formal problem
+      - failure of existing methods
+      - technical mechanism
+      - evaluation protocol
+      - limits robustness and reproducibility
+    scoring_profile: ccf_cs
+    portfolio_profile_weight: 0.25
+  # Legacy profiles remain so existing workspace artifacts continue to load.
+  # New orientation inference resolves to `utd_is` or `ccf_cs` above.
   management_is:
     primary_orientation: theory_and_phenomenon
     priority_dimensions:

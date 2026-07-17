@@ -78,7 +78,12 @@ def resolve_in_workspace(workspace: Path, value: str) -> Path:
     path = Path(raw).expanduser()
     if not path.is_absolute():
         path = workspace / path
-    return path.resolve(strict=False)
+    resolved = path.resolve(strict=False)
+    try:
+        resolved.relative_to(workspace.resolve(strict=False))
+    except ValueError as exc:
+        raise ValueError(f"Path escapes workspace: {value}") from exc
+    return resolved
 
 
 def relpath(workspace: Path, path: Path) -> str:

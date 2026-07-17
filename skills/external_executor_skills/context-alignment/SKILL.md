@@ -1,6 +1,6 @@
 ---
 name: context-alignment
-description: Validate and normalize the ResearchOS T5 external-executor handoff before resource preparation or experiments. Use when `research-execution` dispatches Phase A, when handoff/control inputs changed, when resuming with a stale alignment checkpoint, or when checking project goal, hypothesis, method intent, baselines, experiment minimum loop, claim boundaries, resource policy, executor capabilities, allowed paths, and result-pack schema for conflicts or missing authority. Produce an evidence-backed `context_alignment` section with pass, mismatch, or blocked status. Do not use to redesign the research idea, prepare resources, implement methods, run experiments, or resolve material scope conflicts without human review.
+description: Validate and normalize the ResearchOS T5 external-executor handoff before resource preparation or experiments. Use when `research-execution` dispatches Phase A, when handoff/control inputs changed, when resuming with a stale alignment checkpoint, or when checking project goal, hypothesis, method intent, baselines, experiment minimum loop, claim boundaries, resource policy, executor capabilities, allowed paths, and expected-output schema authority. Produce an evidence-backed `context_alignment` section with pass, mismatch, or blocked status. Do not use to redesign the research idea, prepare resources, implement methods, run experiments, or resolve material scope conflicts without human review.
 ---
 
 # Context Alignment
@@ -47,9 +47,11 @@ python <skill-dir>/scripts/inventory_sources.py --workspace <workspace> \
   --output external_executor/context_source_inventory.json
 ```
 
+If `external_executor/report/executor_capabilities.json` is absent and capability provenance relies on the T5 executor selection fallback, rerun inventory with `--include external_executor/report/executor_selection.json` before citing that source in the alignment report.
+
 Inspect both outputs. Stop with `blocked` when a required control file is missing or malformed, a major schema version is unsupported, allowed paths cannot be determined, the handoff omits execution-critical structures after supported reboost/top-level fallbacks, or the requested acquisition mode contradicts declared authority/capability.
 
-Treat preflight warnings as prompts for evidence review, not automatic blockers. A scaffold-only `external_executor/expr/`, missing `resources/baseline_candidates.jsonl`, missing `literature/baseline_map.json`, or an empty `novelty/required_baselines.json` is not a Phase A blocker.
+Treat preflight warnings as prompts for evidence review, not automatic blockers. An empty or workspace-guide-only `external_executor/expr/`, missing `resources/baseline_candidates.jsonl`, missing `resource/baseline_candidates.jsonl`, missing `literature/baseline_map.json`, or an empty `novelty/required_baselines.json` is not a Phase A blocker.
 
 ## Build a field-level evidence map
 
@@ -91,13 +93,14 @@ If `ideation/hypothesis_brief.yaml` or `ideation/selected/t45_search_targets.jso
 
 Native T4 artifacts such as `ideation/selected/selected_candidate.json`,
 `ideation/portfolio.json`, `ideation/final_cards/portfolio_cards.json`, and
-`ideation/evolution/` may be read only to trace the selected Candidate, Evidence
-Permission, Family, Mutation/Crossover lineage, and human decision. They are not an
-execution authority and must not be rewritten by an external executor. `idea_scorecard.yaml`
-is a compatibility projection when present; the post-T4.5 `hypotheses.md`, `exp_plan.yaml`,
-novelty audit, and handoff contract remain the authoritative inputs for external execution.
+`ideation/evolution/` may be read only to trace the selected Candidate, Evidence Permission, Family, Mutation/Crossover lineage, and human decision. They are not an execution authority and must not be rewritten by an external executor. `idea_scorecard.yaml` is a compatibility projection when present; the post-T4.5 `hypotheses.md`, `exp_plan.yaml`, novelty audit, and handoff contract remain the authoritative inputs for external execution.
 
 Read `synthesis_workbench.json`, `domain_map.json`, `comparison_table.csv`, paper notes, resources, and user seeds only when a named field is missing, ambiguous, or contradicted. Do not re-run literature review or load entire directories without a targeted question.
+
+For a Cross-domain question, first read the bridge plan and the specific
+`literature/cross_domain_catalogs/<bridge-id>/bridge_context.json` and `paper_catalog.json`.
+These files are a supplementary transfer track, not an empty-folder test and not paper notes: they may inform mechanism contrasts, baseline discovery, external-validity risks, and what the executor should verify next even before any paper is deeply read. Keep their evidence level in the alignment report. Open a linked canonical paper note in
+`literature/bridge_notes/` only if a concrete claim must be checked.
 
 ## Classify mismatches by axis
 
@@ -126,7 +129,7 @@ Compare the compiled policy with observed or declared executor capabilities:
 - compute/time budget when declared;
 - supported result/handoff schema major versions.
 
-Absence of optional capability detail may be a warning. If `executor_capabilities.json` is absent but `executor_selection.json` names `codex_cli`, `claude_code_window`, or `manual`, treat public network access, GitHub acquisition, dataset download support, and baseline reimplementation support as declared by the T5 gate. Absence of a required capability after this selection fallback is blocking.
+Absence of optional capability detail may be a warning. If `external_executor/report/executor_capabilities.json` is absent but `external_executor/report/executor_selection.json` names `codex_cli`, `claude_code_window`, or `manual`, treat public network access, GitHub acquisition, dataset download support, and baseline reimplementation support as declared by the T5 gate. Absence of a required capability after this selection fallback is blocking.
 
 ## Produce the alignment report
 

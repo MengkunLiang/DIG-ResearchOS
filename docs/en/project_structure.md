@@ -38,8 +38,10 @@ workspace/<project>/
 ├── literature/                 Retrieval, paper cards, queues, synthesis
 ├── ideation/                   T4 candidates, selection, hypotheses, audits
 ├── drafts/                     Survey/manuscript sections, claims, reviews
-├── external_executor/          T5 handoff and executor return contract
-├── experiments/                Ingested run evidence and claim mappings
+├── external_executor/          T5 handoff, executor outputs, and T8 handoff report
+│   ├── report/                 T5-REBOOST reports and diagnostics
+│   └── expr/                   Material/deployment area initialized empty
+├── experiments/                Optional/legacy ingested run evidence and claim mappings
 ├── submission/                 Final bundle, compile report, fingerprints
 └── _runtime/                   Logs, traces, event JSONL, Skill sessions/workflow state
 ```
@@ -50,8 +52,8 @@ workspace/<project>/
 | --- | --- | --- |
 | `project.yaml`, `user_seeds/`, `user_inputs/` | Human, guided intake | Scope, constraints, supplied material |
 | `literature/`, `ideation/`, `drafts/` | ResearchOS after validation | Auditable research artifacts |
-| `external_executor/` | ResearchOS + selected external executor | Handoff and protocol-bound return files |
-| `experiments/` | Result ingestion and audit tools | Observed results, not model guesses |
+| `external_executor/` | ResearchOS + selected external executor | Handoff files, executor outputs, and required T8 handoff report `executor_research_report.md` |
+| `experiments/` | Result ingestion and audit tools | Optional/legacy observed results, not model guesses |
 | `_runtime/` | Runtime only | Operational state; do not edit to change research conclusions |
 
 ### T4 Ideation Artifacts
@@ -60,7 +62,7 @@ workspace/<project>/
 
 After a complete Candidate is selected, `hypothesis_brief.yaml`, `selected/hypothesis_lineage.json`, `selected/t45_search_targets.json`, and `selected/pre_novelty_brief.md` describe a Pre-Novelty research direction. They preserve lineage and define a targeted T4.5 audit scope, but do not authorize T5. Only a passing T4.5 audit may create or update formal `hypotheses.md`, `exp_plan.yaml`, `contribution_hypothesis_map.yaml`, `validation_map.yaml`, `kill_criteria.yaml`, and `post_novelty_formalization.json`.
 
-`literature/deep_read_notes/`, `literature/shallow_read_notes/`, and `literature/bridge_notes/` are the only live Paper Note roots. Deep and Bridge notes can provide bounded full/partial-reading evidence; shallow notes are abstract-level recall only. Old `paper_notes*` directories are handled only by the explicit workspace migration layer, which records a migration report and never makes legacy paths a second live source. A conflicting legacy note is preserved under `literature/note_migration_conflicts/` for review instead of being silently duplicated in an evidence root.
+`literature/deep_read_notes/`, `literature/shallow_read_notes/`, and `literature/bridge_notes/` are the only live Paper Note roots. Deep and Bridge notes can provide bounded full/partial-reading evidence; shallow notes are abstract-level recall only. `literature/cross_domain_catalogs/` is not a fourth Paper Note root: it is the separate B1/B2 retrieval catalog for bridge context, metadata, and abstract-level idea fuel, and cannot itself support a mechanism or citation claim. Catalogs historically colocated under `bridge_notes/` are copied non-destructively into the new root; the old path remains read fallback only. Old `paper_notes*` directories are handled only by the explicit workspace migration layer, which records a migration report and never makes legacy paths a second live source. A conflicting legacy note is preserved under `literature/note_migration_conflicts/` for review instead of being silently duplicated in an evidence root.
 
 `ideation/t4_target_profile.json` records the researcher-confirmed Publication Orientation. `ideation/final_cards/portfolio_cards.json` contains non-mutating, profile-aware Impact Translations only for the final Portfolio Candidates. The Candidate Dossiers and Population snapshots remain the scientific source of truth; the final cards must echo their thesis, contribution IDs, and hypothesis IDs exactly.
 

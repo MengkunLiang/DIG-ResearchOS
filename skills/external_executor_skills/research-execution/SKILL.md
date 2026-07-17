@@ -1,6 +1,6 @@
 ---
 name: research-execution
-description: Orchestrate or resume the complete ResearchOS external-executor workflow from T5 handoff through resource readiness, claim-bound experiment planning, build-review-run iterations, diagnosis, attribution, evidence packaging, and T7-ready handoff. Use when Codex or Claude Code is launched in a ResearchOS workspace to execute `external_executor/skills/research-execution/SKILL.md`, continue an interrupted external experiment, decide the next project-specific child skill, enforce gates and budgets, or validate the final external result pack. Do not use for an isolated child-stage task when that child skill is explicitly requested.
+description: Orchestrate or resume the complete ResearchOS external-executor workflow from T5 handoff through resource readiness, claim-bound experiment planning, build-review-run iterations, diagnosis, attribution, evidence packaging, and final downstream handoff validation. Use when Codex or Claude Code is launched in a ResearchOS workspace to execute `external_executor/skills/research-execution/SKILL.md`, continue an interrupted external experiment, decide the next project-specific child skill, enforce gates and budgets, or validate the final T8 handoff inputs. Do not use for an isolated child-stage task when that child skill is explicitly requested.
 ---
 
 # Research Execution
@@ -34,6 +34,7 @@ Write narrowly. This root skill owns:
 - the global index and checkpoint metadata in `external_executor/run_manifest.json`;
 - iteration plans and iteration decisions in `external_executor/result_pack.json`;
 - budget accounting, blockers, human-review requests, and final validation status.
+- the final downstream handoff input validation report in `external_executor/final_handoff_input_validation.json`.
 
 Child skills own their domain sections and files. Read `<root-skill>/references/child-skill-contracts.md` before the first dispatch. Do not let one child invoke another child or overwrite a sibling's section.
 
@@ -101,7 +102,7 @@ Child sequence and conditional use:
 | 9 | `result-diagnosis` | A new usable run set has not been diagnosed |
 | 10 | `module-attribution` | Evidence is sufficient for mechanism/module analysis |
 | 11 | `evidence-packaging` | Iteration stops and current evidence snapshot is stable |
-| 12 | `writer-handoff` | Evidence package exists and is ready for T7 pre-audit handoff |
+| 12 | `writer-handoff` | Evidence package exists and the T8 writer handoff report is ready |
 
 ## Control the build-review-run loop
 
@@ -173,7 +174,7 @@ python <root-skill>/scripts/validate_executor_state.py --workspace <workspace> \
 
 4. Atomically update `executor_status.json` only after the output validation passes.
 
-Use workspace-relative artifact paths. Bind formal results to config, raw log, metric output, split, seed/repeat, code version, resource version, environment, and protocol fingerprint.
+Use workspace-relative artifact paths. Bind formal results to config, raw log, metric output, split, seed/repeat, code version, resource version, environment, and protocol fingerprint. Executed code/config must be under `external_executor/expr/`; by-hand local resources must be under `resources/`; public remote acquisitions and baseline reimplementations must be under `resource/`; raw logs, metric outputs, records, checkpoints, and run-produced artifacts must be under `external_executor/raw_results/`.
 
 ## Stop honestly
 
@@ -194,12 +195,15 @@ When iteration stops:
 ```bash
 python <root-skill>/scripts/validate_result_pack.py --workspace <workspace> --mode final
 python <root-skill>/scripts/validate_executor_state.py --workspace <workspace> --mode final
+python <root-skill>/scripts/validate_final_handoff_inputs.py --workspace <workspace> \
+  --output external_executor/final_handoff_input_validation.json
 ```
 
-4. Set the final executor status from actual validation results.
-5. Leave all outputs in `external_executor/` for T7. Do not write T7 or T8 artifacts yourself.
+4. Treat a missing or empty `external_executor/executor_research_report.md` as a final validation failure. This is the required T5-to-T8 handoff file; `external_executor/result_pack.json`, `external_executor/executor_status.json`, `external_executor/run_manifest.json`, raw results, configs, logs, and other `external_executor/` files remain available as supporting context for T8.
+5. Set the final executor status from actual validation results.
+6. Leave all outputs in `external_executor/` for downstream ResearchOS handoff. Do not write manuscript artifacts yourself.
 
-The external handoff is always `ready_for_T7_audit`, never “paper-approved.”
+The external handoff is a validated downstream input package, never “paper-approved.”
 
 ## Evidence rules
 
@@ -222,4 +226,5 @@ The external handoff is always `ready_for_T7_audit`, never “paper-approved.”
 - `scripts/update_manifest.py`: register artifacts with checksums and provenance.
 - `scripts/validate_executor_state.py`: validate controls, state, paths, and manifest integrity.
 - `scripts/validate_result_pack.py`: validate checkpoint/final result-pack contracts.
+- `scripts/validate_final_handoff_inputs.py`: validate the final downstream handoff input files exist and are readable.
 - `scripts/route_next_skill.py`: derive the next safe child action from durable state.

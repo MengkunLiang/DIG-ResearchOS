@@ -21,6 +21,7 @@ Act as an independent gate between Builder output and experiment execution. Veri
    - `result_pack.json#context_alignment` and confirmed execution scope;
    - the current iteration plan, implementation specification/delta, experiment plan, protocol fingerprint, baseline reproduction status, and run manifest;
    - the Builder's changed paths, tests, configs, adapters, and claimed verification evidence.
+   Deployed baseline and ours code/config snapshots under review must come from `external_executor/expr/`; raw run evidence referenced by the review must come from `external_executor/raw_results/`.
 4. Write only review snapshots/reports under `external_executor/` and append one review record to `result_pack.json#implementation_reviews` through the apply script.
 
 Do not edit code, config, protocol, raw results, handoff, executor status, or another result-pack section. Return fixes to the owning Builder skill.
@@ -44,7 +45,7 @@ Create a deterministic snapshot:
 ```bash
 python <skill-dir>/scripts/snapshot_review_inputs.py --workspace <workspace> \
   --iteration-id <iteration-id> \
-  --path <changed-code-or-config-path> [--path <another-path>] \
+  --path external_executor/expr/<changed-code-or-config-path> [--path external_executor/expr/<another-path>] \
   --output external_executor/reviews/<iteration-id>/input_snapshot.json
 ```
 
@@ -121,6 +122,8 @@ Each finding must name:
 - which run levels it blocks.
 
 Separate `unknown` from `failed`. Missing evidence is not proof of correctness or incorrectness; it is a gate limitation.
+
+For path compliance, check that executable deployments and code dependencies live under `external_executor/expr/`, prepared resources are read from `resources/` for by-hand local material or `resource/` for acquired/reimplemented material, and logs, metrics, run records, checkpoints, and run-produced artifacts are under `external_executor/raw_results/`.
 
 ## Issue the gate verdict
 

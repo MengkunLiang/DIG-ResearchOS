@@ -26,13 +26,21 @@ from .target_profile import prompt_profile_summary
 
 _MODE_BY_TEMPLATE = {
     "idea_opportunity_planner.j2": "planner",
+    "idea_opportunity_semantic_repair.j2": "semantic_repair",
     "idea_generator.j2": "generator",
+    "idea_route_semantic_repair.j2": "semantic_repair",
+    "idea_candidate_enricher.j2": "enricher",
+    "idea_interaction_reviewer.j2": "interaction",
     "idea_scorer.j2": "scorer",
+    "idea_score_semantic_repair.j2": "semantic_repair",
+    "idea_score_rationale_repair.j2": "scorer",
     "idea_evolver.j2": "evolver",
+    "idea_offspring_semantic_repair.j2": "semantic_repair",
     "idea_crossover_reviewer.j2": "crossover",
     "idea_composition_reviewer.j2": "human_composition",
     "idea_human_composer.j2": "human_composition",
     "idea_final_card_compiler.j2": "final_card",
+    "idea_final_card_semantic_repair.j2": "final_card",
 }
 
 
@@ -89,7 +97,10 @@ def _shared_scientific_constitution() -> str:
 def _role_name(mode: str) -> str:
     return {
         "planner": "IdeaGeneratorAgent in Opportunity Planning mode",
+        "semantic_repair": "T4 SemanticRepairAgent in evidence-bounded normalization mode",
         "generator": "IdeaGeneratorAgent in Route Formation mode",
+        "enricher": "CandidateEnricherAgent in Seed-to-Candidate enrichment mode",
+        "interaction": "InteractionReviewerAgent for bounded Candidate-pair interpretation",
         "scorer": "IdeaScoringAgent in independent, blind-scoring mode",
         "evolver": "IdeaEvolverAgent in plan-bound offspring mode",
         "crossover": "IdeaScoringAgent in Compatibility Check mode",
@@ -101,8 +112,11 @@ def _role_name(mode: str) -> str:
 def _objective(mode: str) -> str:
     return {
         "planner": "Form an evidence-routed Opportunity Map that gives later Routes distinct, bounded questions to explore.",
+        "semantic_repair": "Normalize a parseable role response into its required shape without adding research facts or relaxing scientific safety constraints.",
         "generator": "Form evidence-calibrated Idea Seeds for exactly one assigned Route without deciding which Candidate should survive.",
-        "scorer": "Independently diagnose supplied Candidates using scientific quality and separately reported Profile Fit.",
+        "enricher": "Expand one retained IdeaSeed into a richer Candidate without changing its core scientific proposal or deciding survival.",
+        "interaction": "Explain Candidate relationships in a supplied shortlist so later mutation and crossover can reason about peers without forcing a merge.",
+        "scorer": "Independently assess the three formal scientific dimensions and describe non-blocking evolution diagnostics.",
         "evolver": "Create only the Mutation or Crossover Children authorized by explicit Evolution Plans.",
         "crossover": "Determine whether a proposed pair can support one coherent Candidate or should remain parallel, be repaired, or be rejected.",
         "human_composition": "Assess or create one researcher-requested composition only after compatible genes and a Gene Donor Map are explicit.",
@@ -113,8 +127,11 @@ def _objective(mode: str) -> str:
 def _allowed_actions(mode: str) -> str:
     return {
         "planner": "Extract evidence-linked opportunities, name uncertainty, and assign compatible Routes.",
+        "semantic_repair": "Map equivalent field names and nesting, preserve source and numeric facts, and write only source-bound missing explanatory prose.",
         "generator": "Use the assigned Route, supplied Opportunity Map, and permitted evidence to form bounded Candidate dossiers or return unsupported.",
-        "scorer": "Score anonymous Candidates once, identify a dominant Bottleneck, and recommend preserve/modify genes and operators.",
+        "enricher": "Develop mechanism, hypotheses, contributions, validation logic, boundaries, and explicit uncertainty for one supplied Candidate while preserving its identity and core thesis.",
+        "interaction": "Interpret shared core, meaningful difference, peer challenge, transferable element, differentiation need, and conditional crossover potential for only the supplied pairs.",
+        "scorer": "Score anonymous Candidates on the three core dimensions, identify a dominant Bottleneck, and recommend preserve/modify genes and operators.",
         "evolver": "Follow explicit parent IDs, preserve/modify genes, and approved Gene Donor Maps to create substantive Children.",
         "crossover": "Approve, reject, or preserve parallel directions; explain compatibility, conflicts, complexity, and a donor map when approval is justified.",
         "human_composition": "Return the requested compatibility report, or create exactly one confirmed composed Candidate with complete lineage.",
@@ -125,7 +142,10 @@ def _allowed_actions(mode: str) -> str:
 def _forbidden_actions(mode: str) -> str:
     return {
         "planner": "Do not generate Candidates, score, rank, select, archive, or turn an absent retrieval area into a factual gap.",
+        "semantic_repair": "Do not invent a source, citation, dataset, metric, result, novelty claim, score, Candidate, lineage, or stronger Evidence Permission. Do not select, rank, merge, archive, or change canonical IDs.",
         "generator": "Do not score, rank, select, archive, rewrite another Route, or invent datasets, metrics, baselines, results, citations, or external novelty.",
+        "enricher": "Do not change Candidate ID, route, lineage, problem reframing, Core Thesis, or an existing conceptual leap. Do not score, select, invent sources, or promote Evidence Permission.",
+        "interaction": "Do not score, rank, select, reject, merge, rewrite, or delete Candidates. Do not turn structural similarity into evidence, external novelty, or a mandatory crossover.",
         "scorer": "Do not generate, rewrite, merge, select, archive, infer route/lineage, or reward length, jargon, or citation volume.",
         "evolver": "Do not choose Parents, alter an Evolution Plan, decide Survival, overwrite a Parent, elevate evidence strength, or perform cosmetic rewriting.",
         "crossover": "Do not generate a Child, force a merge, choose a portfolio, or approve a keyword-only combination.",
@@ -146,8 +166,11 @@ def _evidence_policy() -> str:
 def _decision_procedure(mode: str, prompt_name: str) -> str:
     procedures = {
         "planner": "Identify tensions and usable evidence atoms; separate anchors from expansion and Bridge leads; merge wording-only duplicates; emit distinct Opportunities with uncertainty and compatible Routes.",
+        "semantic_repair": "Read the attempted response and validator error; recover only semantically equivalent structure and source-bound explanation; preserve uncertainty; return the requested JSON shape so deterministic validation can verify it.",
         "generator": "Read the assigned Route and evidence bundle; form one coherent Problem-Opportunity-Mechanism chain per Candidate; test Evidence Permission; add falsifiable validation and boundaries; return unsupported when the route cannot be defended.",
-        "scorer": "Read each anonymized Candidate independently; score the five Core Scientific dimensions from visible genes and permissions; state a Bottleneck; recommend limited repairs; report Profile Fit separately without treating it as scientific quality.",
+        "enricher": "Read the canonical Seed first. Keep its problem reframing and Core Thesis fixed, then add only substantive mechanism, discrimination, contribution, validation, boundary, risk, and impact detail. Leave unresolved material visible instead of manufacturing a final-paper package.",
+        "interaction": "Read only the controller-supplied pair shortlist. Explain relation types conditionally from canonical Candidate content; preserve a parallel relation where no single coherent transfer is justified.",
+        "scorer": "Read each anonymized Candidate independently; score exactly Research Value, Mechanism Integrity, and Contribution Distinctiveness; state a Bottleneck and evolution guidance. Treat evidence, validation, uncertainty, scientific upside, and Profile Fit as qualitative diagnostics that cannot invalidate the Candidate.",
         "evolver": "Read each Evolution Plan before each Parent; preserve named genes; modify only diagnosed genes; compute a meaningful Gene Delta and Complexity Delta; verify one Core Thesis and a discriminating validation path before returning a Child.",
         "crossover": "Compare problem, assumptions, mechanism, evidence permissions, validation burden, and complexity; approve only a single-thesis combination with a complete Gene Donor Map; otherwise recommend parallel preservation, repair, or rejection.",
         "human_composition": "Use the requested components and full parent context; identify conflicts and evidence boundaries; first return a Compatibility Check, then create one Child only when a confirmed donor map and final confirmation are present.",
@@ -167,10 +190,50 @@ If the supplied evidence cannot support the requested work, say so in the requir
 
 
 def _output_contract(mode: str, prompt_name: str) -> str:
+    if prompt_name == "idea_score_rationale_repair.j2":
+        return (
+            "JSON: `{repairs:[{candidate_id, rationales}]}`. "
+            "Return only requested rationale fields; do not change dimensions, scores, operators, profile values, or Candidates."
+            + _required_model_schemas(prompt_name)
+        )
+    if prompt_name == "idea_opportunity_semantic_repair.j2":
+        return (
+            "JSON: `{opportunities:[OpportunityQuery]}`. Normalize only the attempted Opportunity Map; do not create Candidates, scores, or factual claims."
+            + _required_model_schemas(prompt_name)
+        )
+    if prompt_name == "idea_route_semantic_repair.j2":
+        return (
+            "JSON: `{seeds:[IdeaSeed]}` or `{candidates:[CandidateDossier], bridge_reviews?:[BridgeCoverageEntry]}` or "
+            "`{status:'unsupported', unsupported_reason:string}`. Normalize only the attempted Route response."
+            + _required_model_schemas(prompt_name)
+        )
+    if prompt_name == "idea_candidate_enricher.j2":
+        return (
+            "JSON: `{candidate: CandidateDossier}`. Preserve the supplied Candidate ID, route, lineage, problem, Core Thesis, "
+            "and existing conceptual leap. Return a partial Seed rather than unsupported scientific content."
+            + _required_model_schemas(prompt_name)
+        )
+    if prompt_name == "idea_interaction_reviewer.j2":
+        return (
+            "JSON: `{reviews:[{source_id,target_id,relation_hint,relation_type,shared_core,key_difference,peer_challenge,"
+            "transferable_element,differentiation_need,crossover_potential,crossover_risk,rationale}]}`. "
+            "Return only supplied shortlist pairs; `parallel` is valid and no review may select or merge a Candidate."
+            + _required_model_schemas(prompt_name)
+        )
+    if prompt_name == "idea_score_semantic_repair.j2":
+        return (
+            "JSON: `{scores:[ScoreReport]}`. Preserve existing numeric assessments and normalize only shape, aliases, and source-bound explanations."
+            + _required_model_schemas(prompt_name)
+        )
+    if prompt_name == "idea_offspring_semantic_repair.j2":
+        return (
+            "JSON: `{children:[CandidateDossier]}`. Normalize only the attempted plan-bound Child response; preserve the supplied Plans, Parent sets, Gene Donor Maps, and Evidence Permission."
+            + _required_model_schemas(prompt_name)
+        )
     contracts = {
         "planner": "JSON: `{opportunities:[OpportunityQuery]}`. Do not generate, score, select, or delete Candidates.",
-        "generator": "JSON: `{candidates:[CandidateDossier], bridge_reviews?:[BridgeCoverageEntry]}` or `{status:'unsupported', unsupported_reason:string}`. Do not score, rank, or select.",
-        "scorer": "JSON: `{scores:[ScoreReport]}`; every report includes five Core Scientific Score dimensions plus `profile_fit:{profile_type, overall_fit, dimensions, rationale, cautions}`. Do not rewrite, generate, select, or archive Candidates.",
+        "generator": "JSON: `{seeds:[IdeaSeed], bridge_reviews?:[BridgeCoverageEntry]}` or `{candidates:[CandidateDossier], bridge_reviews?:[BridgeCoverageEntry]}` or `{status:'unsupported', unsupported_reason:string}`. Do not score, rank, or select.",
+        "scorer": "JSON: `{scores:[ScoreReport]}`; every report includes exactly three Core Scientific Score dimensions. Evidence, validation, Profile Fit, upside, and uncertainty are optional qualitative diagnostics. Do not rewrite, generate, select, or archive Candidates.",
         "evolver": "JSON: `{children:[CandidateDossier]}`. Return only Children requested by explicit Evolution Plans. Do not choose Parents, alter plans, score, or select.",
         "crossover": "Return Compatibility Check decisions only. Do not generate a Child or choose a portfolio.",
         "human_composition": "Return only the requested compatibility report or one explicitly confirmed Human-composed Candidate, as the task states.",
@@ -180,73 +243,156 @@ def _output_contract(mode: str, prompt_name: str) -> str:
 
 
 def _required_model_schemas(prompt_name: str) -> str:
-    """Expose the actual Pydantic models, not only their type names.
+    """Return a compact stage contract instead of dumping full JSON Schema.
 
-    Typed role prompts previously named models such as ``OpportunityQuery``
-    without describing their required fields. A provider can produce plausible
-    prose-shaped JSON in that situation, which fails only after a paid call.
-    The schemas are derived from the runtime classes so they stay aligned with
-    validators and contain no project-specific content.
+    The Pydantic models remain the authoritative validator. Repeating their
+    deeply nested implementation schema in every prompt consumed context and
+    made the Generator optimize for form completion rather than research
+    exploration. These contracts name the fields that the current role must
+    decide; normalization and typed validation handle the rest.
     """
 
-    model_by_prompt = {
-        "idea_opportunity_planner.j2": (OpportunityQuery,),
-        "idea_generator.j2": (CandidateDossier, BridgeCoverageEntry),
-        "idea_scorer.j2": (ScoreReport,),
-        "idea_evolver.j2": (CandidateDossier,),
-        "idea_crossover_reviewer.j2": (CrossoverCompatibilityDecision,),
-        "idea_composition_reviewer.j2": (HumanCompositionCompatibility,),
-        "idea_human_composer.j2": (CandidateDossier,),
-        "idea_final_card_compiler.j2": (FinalIdeaCardTranslation,),
+    contracts = {
+        "idea_opportunity_planner.j2": (
+            "OpportunityQuery: opportunity_id, type, one_line_summary, question, "
+            "why_it_matters, compatible_routes; evidence_atom_ids, confidence, knowledge_origin, "
+            "verification_required, conceptual_leap, and competing_explanations are optional."
+        ),
+        "idea_opportunity_semantic_repair.j2": (
+            "OpportunityQuery: preserve opportunity_id, evidence_atom_ids, uncertainty, "
+            "question, why_it_matters, and compatible_routes."
+        ),
+        "idea_generator.j2": (
+            "Preferred IdeaSeed: candidate_id optional, route optional, problem, "
+            "one_line_thesis, candidate_mechanism, contribution_sketch, "
+            "provisional_prediction, and main_uncertainty. evidence_refs and "
+            "reading_levels, creative_leap, competing_explanations, surprising_prediction, "
+            "research_program_potential, and knowledge_origin are optional. A complete CandidateDossier is accepted "
+            "only when it is already available."
+        ),
+        "idea_route_semantic_repair.j2": (
+            "Route response: seeds array of minimal IdeaSeed objects or a complete "
+            "candidates array; preserve source_refs, reading_levels, IDs, and uncertainty. "
+            "Unsupported routes need status=unsupported and unsupported_reason."
+        ),
+        "idea_candidate_enricher.j2": (
+            "CandidateDossier: exact existing candidate_id, route, parent lineage, problem, and core_thesis; "
+            "attempt 2-4 hypotheses and 2-4 contributions with explicit uncertainty, but retain seed maturity when the "
+            "proposal cannot be responsibly completed."
+        ),
+        "idea_interaction_reviewer.j2": (
+            "Interaction review: exact source_id, target_id, and relation_hint from the supplied shortlist; relation_type is "
+            "competitor/complement/distant_transfer/parallel. Explanations are conditional interpretation, not a score or merge approval."
+        ),
+        "idea_scorer.j2": (
+            "ScoreReport: candidate_id, scoring_batch_id, blind, exactly three "
+            "numeric scores (research_value, mechanism_integrity, contribution_distinctiveness), "
+            "three candidate-specific rationales, dominant_strength, dominant_bottleneck, and optional qualitative "
+            "scientific_upside, evolution_potential, uncertainty, diagnostics, profile_fit, and Wildcard guidance. "
+            "Do not provide a separate readiness score or legacy compatibility scores."
+        ),
+        "idea_score_semantic_repair.j2": (
+            "ScoreReport: preserve candidate_id, blind, and the three core numeric assessments. "
+            "Retire old evidence/validation numbers into legacy diagnostics. A missing core score stays unavailable for a re-score."
+        ),
+        "idea_score_rationale_repair.j2": (
+            "Repairs: candidate_id and exactly requested core `rationales`; do not return a score or Profile Fit field."
+        ),
+        "idea_evolver.j2": (
+            "Child CandidateDossier: controller-owned candidate_id, full parent "
+            "lineage, complete genome, 2-4 contributions, 2-4 hypotheses, a falsifiable path, and preserved/extended creative_context. "
+            "CandidatePresentation is optional enrichment; FinalIdeaCardTranslation owns required human-facing prose."
+        ),
+        "idea_offspring_semantic_repair.j2": (
+            "Child CandidateDossier: preserve plan ID, parent set, donor map, source "
+            "limits, and controller-owned child ID."
+        ),
+        "idea_crossover_reviewer.j2": (
+            "CrossoverCompatibilityDecision: pair_id, parent_ids, decision, conflicts, "
+            "and an approved donor map only for one coherent thesis. `parallel` is a valid no-child verdict; only `approved` may create a Child."
+        ),
+        "idea_composition_reviewer.j2": (
+            "HumanCompositionCompatibility: composition_id, source_candidate_ids, "
+            "compatibility dimensions, recommended_action, explanation_for_user, "
+            "and a donor map only when compose is recommended."
+        ),
+        "idea_human_composer.j2": (
+            "CandidateDossier: one confirmed child with exact controller-owned ID, "
+            "lineage, donor map, and full evidence-calibrated fields."
+        ),
+        "idea_final_card_compiler.j2": (
+            "FinalIdeaCardTranslation: immutable candidate_id, profile_type, thesis, "
+            "contribution IDs, hypothesis IDs, plain_language_summary, why_it_matters, "
+            "scenario, current_failure, scientific_technical_core, implications, risks, "
+            "claims_not_to_make, evidence_status_summary, short_title, contribution label, "
+            "innovation type and delta, non-routine explanation, portfolio relationship, "
+            "composition guidance, candidate-specific recommendation, and bottleneck explanation."
+        ),
+        "idea_final_card_semantic_repair.j2": (
+            "FinalIdeaCardTranslation: preserve immutable candidate fields; normalize "
+            "only researcher-facing explanations, implications, risks, and evidence-status summary; "
+            "return every required card explanation without template-derived prose."
+        ),
     }
-    models = model_by_prompt.get(prompt_name, ())
-    if not models:
+    contract = contracts.get(prompt_name)
+    if not contract:
         return ""
-    rendered = "\n\n".join(
-        f"### {model.__name__}\n```json\n{json.dumps(model.model_json_schema(), ensure_ascii=False, separators=(',', ':'))}\n```"
-        for model in models
-    )
     return (
-        "\n\nUse these runtime-derived JSON Schemas for every typed object; do not rename fields or add fields."
+        "\n\n### Compact runtime contract\n"
+        + contract
+        + "\nThe runtime performs tolerant parsing, deterministic normalization, "
+        "then Pydantic and semantic validation. Do not add unsupported fields or "
+        "invent missing research facts merely to complete a structure."
         + _schema_semantic_rules(prompt_name)
-        + "\n\n"
-        + rendered
     )
 
 
 def _schema_semantic_rules(prompt_name: str) -> str:
-    """State cross-field requirements that JSON Schema cannot express."""
+    """State cross-field requirements that compact field lists cannot express."""
 
-    if prompt_name in {"idea_generator.j2", "idea_evolver.j2", "idea_human_composer.j2"}:
+    if prompt_name in {"idea_generator.j2", "idea_route_semantic_repair.j2"}:
         return (
-            "\n\n### Candidate cross-field requirements\n"
-            "Every evolved Candidate has exactly 2-4 Contributions and 2-4 provisional Hypotheses. "
-            "`presentation.gate1_card` must contain all five non-empty keys: `role_summary`, `evidence_interpretation`, "
-            "`selection_advice`, `risk_summary`, and `user_edit_hint`. `presentation.innovation` must contain `summary`, "
-            "`type`, `novelty_delta`, and `non_incremental_reason`. Every `presentation.basis_sources` entry must contain "
-            "`ref`, `claim`, and `implication`. A Child's `genome.candidate_id`, `lineage.candidate_id`, and top-level "
-            "`candidate_id` must match. A crossover Child must preserve both Parent IDs and its approved Gene Donor Map."
+            "\n\n### Seed maturity rules\n"
+            "A first-pass IdeaSeed needs one coherent thesis, one contribution "
+            "sketch, one falsifiable prediction, and one main risk. It may omit "
+            "CandidatePresentation, additional hypotheses, detailed validation, "
+            "full evidence composition, implications, and final experiment design. "
+            "Mark non-workspace knowledge as conjectural and verification-required."
+        )
+    if prompt_name == "idea_candidate_enricher.j2":
+        return (
+            "\n\n### Enrichment preservation rules\n"
+            "Enrichment adds scientific articulation to a retained Seed. It must preserve Candidate ID, route, Parent lineage, "
+            "problem reframing, Core Thesis, existing conceptual leap, source paths, and Evidence Permission. It may remain "
+            "partial and explicitly conjectural; no missing detail is a rejection signal."
+        )
+    if prompt_name == "idea_interaction_reviewer.j2":
+        return (
+            "\n\n### Interaction review rules\n"
+            "The graph's node and edge identities are controller-owned. Explain only listed relationships. A valid review may conclude "
+            "that Candidates should remain parallel; it cannot select a survivor, alter a Candidate, or certify evidence."
+        )
+    if prompt_name in {"idea_evolver.j2", "idea_human_composer.j2"}:
+        return (
+            "\n\n### Child integrity rules\n"
+            "An evolved Child preserves its controller-owned identity and lineage. "
+            "It must have 2-4 contributions, 2-4 provisional hypotheses, a "
+            "falsifiable validation path, and no evidence-permission elevation. "
+            "CandidatePresentation is enrichable and cannot reject a structurally complete Child; "
+            "the Final Card LLM owns required human-facing explanations."
         )
     if prompt_name == "idea_scorer.j2":
         return (
-            "\n\n### Score cross-field requirements\n"
-            "Every ScoreReport includes non-empty rationales for `research_value`, `mechanism_integrity`, "
-            "`contribution_distinctiveness`, `evidence_calibration`, and `validation_tractability`; a dominant strength and "
-            "Bottleneck; and all Gate1 compatibility score/rationale keys: `novelty`, `feasibility`, `impact`, "
-            "`evaluability`, `differentiation`, `cost`, and `contribution_strength`. `profile_fit` is complete and separate "
-            "from the five scientific dimensions."
+            "\n\n### Score integrity rules\n"
+            "Only Research Value, Mechanism Integrity, and Contribution Distinctiveness are formal scores. "
+            "Explain each from visible Candidate content. Missing evidence, validation detail, Profile Fit, or rationale "
+            "lowers a qualitative diagnostic or triggers local repair rather than deleting the Candidate."
         )
-    if prompt_name == "idea_final_card_compiler.j2":
+    if prompt_name in {"idea_final_card_compiler.j2", "idea_final_card_semantic_repair.j2"}:
         return (
-            "\n\n### Final Card immutability requirements\n"
-            "For each requested Candidate, echo exactly its `candidate_id`, Core Thesis, ordered contribution IDs, ordered "
-            "hypothesis IDs, and profile type. Every implication must include an Evidence Status and any needed conditions."
-        )
-    if prompt_name == "idea_composition_reviewer.j2":
-        return (
-            "\n\n### Composition decision requirements\n"
-            "Use `recommended_action=compose` only when `gene_donor_map` is present; a hard assumption conflict must never "
-            "return `compose`. Preserve all selected source Candidate IDs and component references."
+            "\n\n### Final card immutability rules\n"
+            "Echo candidate identity, thesis, contribution IDs, hypothesis IDs, "
+            "and profile type exactly. Do not change scientific content."
         )
     return ""
 

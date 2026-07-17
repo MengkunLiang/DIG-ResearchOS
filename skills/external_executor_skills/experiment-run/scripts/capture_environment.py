@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from _common import atomic_write_json, canonical_sha256, now_utc, require_allowed, resolve_in_workspace, workspace_root
+from _common import atomic_write_json, canonical_sha256, now_utc, require_allowed, require_under_workspace_path, resolve_in_workspace, workspace_root
 
 
 def _memory_bytes() -> int | None:
@@ -77,6 +77,7 @@ def main() -> int:
         root = workspace_root(args.workspace)
         output = resolve_in_workspace(root, args.output)
         require_allowed(root, output)
+        require_under_workspace_path(root, output, "external_executor/raw_results", label="environment output")
         atomic_write_json(output, snapshot())
         print(json.dumps({"output": output.relative_to(root).as_posix(), "status": "complete"}, sort_keys=True))
         return 0

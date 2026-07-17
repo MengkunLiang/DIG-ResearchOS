@@ -30,7 +30,7 @@ AGENT_REGISTRY = {
     "ideation": IdeationAgent,  # T4
     "novelty_auditor": NoveltyAuditorAgent,  # T4.5
     "novelty": NoveltyAgent,  # T6
-    "experimenter": ExperimenterAgent,  # T5/T7
+    "experimenter": ExperimenterAgent,  # T5 external execution
     "survey_writer": SurveyWriterAgent,  # T3.6 optional survey branch
     "writer": WriterAgent,  # T8
     "reviewer": ReviewerAgent,  # T8
@@ -41,11 +41,12 @@ AGENT_REGISTRY = {
 TASK_TO_AGENT_MAP = {
     "HELLO": HelloAgent,
     "T1": PIAgent,
-    "T7.5": PIAgent,
     "T2": ScoutAgent,
     "T3": ReaderAgent,  # 深度阅读
     "T3.5": ReaderAgent,  # 文献综合
     "T3.6-GATE-SURVEY": SurveyWriterAgent,  # 综述支线入口
+    "T3.6-TEMPLATE-GATE": SurveyWriterAgent,  # 综述模板大类选择
+    "T3.6-CCF-TEMPLATE-GATE": SurveyWriterAgent,  # CCF 综述模板选择
     "T3.6-PLAN": SurveyWriterAgent,  # 综述 taxonomy/outline 规划
     "T3.6-GATE-OUTLINE": SurveyWriterAgent,  # taxonomy 大纲确认
     "T3.6-GATE-CORPUS": SurveyWriterAgent,  # 综述素材范围确认
@@ -79,13 +80,8 @@ TASK_TO_AGENT_MAP = {
     "T5": ExperimenterAgent,  # 兼容别名，single-task 会映射到新版入口
     "LEGACY-T6-NOVELTY": NoveltyAgent,  # legacy 新颖性验证
     "T6": NoveltyAgent,  # 兼容别名，single-task 会映射到新版入口
-    "T7-INGEST": ExperimenterAgent,  # 外部结果摄取
-    "T7-AUDIT": ExperimenterAgent,  # 实验诚信审计
-    "T7-POST-NOVELTY": ExperimenterAgent,  # 实验后 novelty 复核
-    "T7-CLAIMS": ExperimenterAgent,  # result-to-claim
-    "LEGACY-T7-FULL": ExperimenterAgent,  # legacy 完整实验
-    "T7": ExperimenterAgent,  # 兼容别名，single-task 会映射到新版入口
     "T8-STYLE-GATE": WriterAgent,  # 写作风格确认
+    "T8-CCF-TEMPLATE-GATE": WriterAgent,  # CCF 模板选择
     "T8-RESOURCE": WriterAgent,  # 写作资源索引
     "T8-WRITE": WriterAgent,  # 论文大纲
     "T8-SECTION-PLAN": WriterAgent,  # 逐章节写作状态

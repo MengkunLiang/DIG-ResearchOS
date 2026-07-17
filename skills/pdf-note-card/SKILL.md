@@ -73,25 +73,12 @@ interaction:
 
 # PDF Note Card
 
-Read the intake packet and the resolved or uploaded PDF first. When the intake record
-lists a DOI/arXiv/OpenAlex ID or URL, preserve that identifier and its download outcome
-in the note provenance. Call `process_seed_paper` with
-`source="pdf_path"` and `value="user_inputs/pdf-note-card/paper.pdf"` so the original
-source is registered under `user_seeds/` without overwriting another paper. Then call
-`extract_paper_sections` for the available core sections. Use `extract_pdf_text` only
-when a required fact is absent from the bounded section extraction, and preserve the
-tool's page-coverage/truncation information.
+Read the intake packet and the resolved or uploaded PDF first. When the intake record lists a DOI/arXiv/OpenAlex ID or URL, preserve that identifier and its download outcome in the note provenance. Call `process_seed_paper` with
+`source="pdf_path"` and `value="user_inputs/pdf-note-card/paper.pdf"` so the original source is registered under `user_seeds/` without overwriting another paper. Then call
+`extract_paper_sections` for the available core sections. Use `extract_pdf_text` only when a required fact is absent from the bounded section extraction, and preserve the tool's page-coverage/truncation information.
 
-Create a dynamically named Markdown note beneath `literature/skill_pdf_note_cards/`
-and update both declared index files. The card must separately record: source path and
-resolved metadata; pages/sections actually read; `FULL-TEXT`, `PARTIAL-TEXT`, or
+Create a dynamically named Markdown note beneath `literature/skill_pdf_note_cards/` and update both declared index files. The card must separately record: source path and resolved metadata; pages/sections actually read; `FULL-TEXT`, `PARTIAL-TEXT`, or
 `UNREADABLE` evidence status; problem; method; data/evaluation; reported results;
-limitations; mechanism/design rationale when present; exact section anchors; allowed
-citation use; and unresolved facts. A source PDF does not justify an invented DOI,
-BibTeX entry, numerical result, or causal claim.
+limitations; mechanism/design rationale when present; exact section anchors; allowed citation use; and unresolved facts. A source PDF does not justify an invented DOI, BibTeX entry, numerical result, or causal claim.
 
-This is a standalone note-card lane, not a substitute for the canonical T3 queue. Do
-not write `literature/deep_read_notes/` or claim a T3 deep-read note is complete. If the
-PDF cannot support the requested extraction, write the index with the concrete failure
-and use `ask_human` for a readable PDF, DOI, or clarification. Finish by naming the
-dynamic note-card path and both declared index paths.
+This is a standalone note-card lane, not a substitute for the canonical T3 queue. Do not write `literature/deep_read_notes/` or claim a T3 deep-read note is complete. If the PDF cannot support the requested extraction, write the index with the concrete failure and use `ask_human` for a readable PDF, DOI, or clarification. Finish by naming the dynamic note-card path and both declared index paths.

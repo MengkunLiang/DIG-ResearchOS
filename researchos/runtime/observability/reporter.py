@@ -11,6 +11,7 @@ import sys
 from typing import Any, Callable
 
 from rich import box
+from rich.cells import cell_len
 from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -67,6 +68,11 @@ class StageReporter:
         self.store = EventStore(self.workspace, runtime_dir_name=runtime_dir_name)
         self._runs: dict[str, _StageRun] = {}
         self._live_line_active = False
+        # In a real terminal, heartbeats redraw one line. Plain/no-colour
+        # output cannot redraw, so retain a small public-display cache and do
+        # not turn concurrent LLM calls into repeated identical log lines.
+        # Events remain complete in the JSONL audit stream.
+        self._append_only_heartbeat_state: dict[tuple[str, str, str, str, str], dict[str, int | bool]] = {}
 
     @property
     def detailed(self) -> bool:
@@ -415,13 +421,36 @@ class StageReporter:
         if self.quiet:
             self._plain(f"[步骤] {task_id} {'完成' if ok else '暂停'} · 事件：{relative_path(self.workspace, event_path)}")
             return
+        if task_id.startswith("T3.6") and ok and not self.detailed:
+            # Survey section, assembly, and feed receipts are intentionally
+            # small. Rendering them through the generic completion Panel used
+            # to nest a Survey summary Panel inside a second success Panel,
+            # making a one-file update look like a new research decision.
+            ready_paths = [
+                relative_path(self.workspace, path)
+                for key, path in outputs.items()
+                if statuses.get(key) in {"created", "updated", "reused"}
+            ]
+            label = stage_display_name(task_id)
+            receipt_label = label if label.startswith("T3.6") else f"T3.6 · {label}"
+            if ready_paths:
+                self._render(Text(f"✓ {receipt_label} 完成 · 已生成：{'、'.join(ready_paths[:2])}", style="green", overflow="fold"))
+                remaining = len(ready_paths) - 2
+                if remaining > 0:
+                    self._render(Text(f"  另有 {remaining} 项结果已保存。", style="dim"))
+            else:
+                self._render(Text(f"✓ {receipt_label} 完成 · {summary or '结果已保存。'}", style="green", overflow="fold"))
+            return
         renderables: list[Any] = [Text(summary if summary else "阶段执行已结束。")]
         if error:
             renderables.append(Text(f"当前问题：{_public_error_summary(error)}", style="bold red"))
-        if insights:
+        if insights and (ok or self.detailed):
             # Normal CLI output should answer "what happened" without turning a
             # completion event into a full audit report.  The durable files and
             # --verbose retain every distribution and artifact-level detail.
+            # A paused run has not passed its task contract, so showing a rich
+            # success-looking insight panel in normal UI would make staged files
+            # look like a completed research decision.
             visible_insights = insights if self.detailed else insights[:1]
             for insight in visible_insights:
                 renderables.append(self._insight_panel(insight))
@@ -449,12 +478,26 @@ class StageReporter:
             more = f"；另有 {len(run.actual_reads) - len(visible)} 项" if len(run.actual_reads) > len(visible) else ""
             renderables.append(Text("实际读取：" + "、".join(visible) + more, style="dim"))
         if self.detailed:
-            renderables.append(self._artifact_manifest(output_infos, statuses))
+            display_statuses = {
+                key: (
+                    "staged"
+                    if not ok and status in {"created", "updated", "reused"}
+                    else status
+                )
+                for key, status in statuses.items()
+            }
+            renderables.append(self._artifact_manifest(output_infos, display_statuses))
             renderables.append(Text(f"过程事件：{relative_path(self.workspace, event_path)}", style="dim"))
         else:
-            ready = sum(status in {"created", "updated", "reused"} for status in statuses.values())
+            written = sum(status in {"created", "updated", "reused"} for status in statuses.values())
             unavailable = sum(status in {"missing", "invalid", "optional_missing"} for status in statuses.values())
-            result_text = f"结果：{ready}/{len(output_infos)} 项文件已就绪。"
+            if ok:
+                result_text = f"结果：{written}/{len(output_infos)} 项文件已就绪。"
+            else:
+                result_text = (
+                    f"暂停时已写入：{written}/{len(output_infos)} 项；"
+                    "尚未通过本步骤完成校验，不能进入下游。"
+                )
             if unavailable:
                 result_text += f" {unavailable} 项可选文件尚未提供。"
             renderables.append(Text(result_text, style="dim"))
@@ -535,6 +578,8 @@ class StageReporter:
         next_artifact: str | None,
         artifact_completed: int | None,
         artifact_total: int | None,
+        current_deliverable: str | None = None,
+        following_phase: str | None = None,
     ) -> None:
         """Render one compact, replaceable public model-wait heartbeat.
 
@@ -565,20 +610,85 @@ class StageReporter:
                 "status": status,
                 "activity": public_activity,
                 "next_artifact": next_artifact or "未提供",
+                "current_deliverable": current_deliverable or next_artifact or "未提供",
+                "following_phase": following_phase or "",
                 "artifact_progress": artifact_progress,
             },
         )
         if self.verbosity == "concise":
             return
-        required_parts = [f"[{stage_display_name(task_id)}] {pulse}", status, public_activity]
+        if not self._should_render_append_only_heartbeat(
+            task_id=task_id,
+            run_id=run_id,
+            activity=public_activity,
+            next_artifact=next_artifact,
+            artifact_progress=artifact_progress,
+            elapsed_seconds=elapsed_seconds,
+        ):
+            return
+        # Keep full public activity in the durable event stream.  The terminal
+        # heartbeat is a progress pulse, not a second phase description; use a
+        # semantic T4 label so a narrow terminal never wraps a long bilingual
+        # phase name into a visually broken pseudo-progress line.
+        display_activity = _terminal_heartbeat_activity(task_id, public_activity)
+        required_parts = [f"[{stage_display_name(task_id)}] {pulse}", status, display_activity]
         optional_parts: list[str] = []
         if elapsed_seconds is not None:
             required_parts.insert(2, f"已等待 {elapsed_seconds}s")
         if artifact_progress:
             optional_parts.append(artifact_progress)
-        if next_artifact:
-            optional_parts.append(f"下一步：{next_artifact}")
+        deliverable = current_deliverable or next_artifact
+        if deliverable:
+            label = "本次产出" if task_id == "T4" else "下一步"
+            optional_parts.append(f"{label}：{deliverable}")
+        if following_phase and task_id == "T4":
+            optional_parts.append(f"完成后：{following_phase}")
         self._render_live_line(_fit_live_status(required_parts, optional_parts))
+
+    def _should_render_append_only_heartbeat(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        activity: str,
+        next_artifact: str | None,
+        artifact_progress: str | None,
+        elapsed_seconds: int | None,
+    ) -> bool:
+        """Throttle append-only display while retaining every audit event.
+
+        T4 can run two routes concurrently. Their provider heartbeats have the
+        same public meaning, but previously printed twice in no-colour mode and
+        in captured CLI logs. Show the initial submission, the first visible
+        wait, each changed public status, and then at most once per minute for
+        an unchanged status.
+        """
+
+        if self._owns_terminal and not self.no_color and sys.stdout.isatty():
+            return True
+        signature = (
+            task_id,
+            run_id,
+            " ".join(activity.split()),
+            " ".join(str(next_artifact or "").split()),
+            " ".join(str(artifact_progress or "").split()),
+        )
+        state = self._append_only_heartbeat_state.setdefault(signature, {})
+        if elapsed_seconds is None:
+            if bool(state.get("request_emitted")):
+                return False
+            state["request_emitted"] = True
+            return True
+        elapsed = max(0, int(elapsed_seconds))
+        if not bool(state.get("wait_emitted")):
+            state["wait_emitted"] = True
+            state["last_wait_elapsed"] = elapsed
+            return True
+        last_wait = int(state.get("last_wait_elapsed") or 0)
+        if elapsed >= last_wait + 60:
+            state["last_wait_elapsed"] = elapsed
+            return True
+        return False
 
     def render_t4_runtime_heartbeat(
         self,
@@ -591,6 +701,8 @@ class StageReporter:
         next_artifact: str | None,
         artifact_completed: int | None,
         artifact_total: int | None,
+        current_deliverable: str | None = None,
+        following_phase: str | None = None,
     ) -> None:
         """Compatibility entry point for the richer T4 public milestone."""
 
@@ -603,6 +715,8 @@ class StageReporter:
             next_artifact=next_artifact,
             artifact_completed=artifact_completed,
             artifact_total=artifact_total,
+            current_deliverable=current_deliverable,
+            following_phase=following_phase,
         )
 
     def _event(
@@ -721,8 +835,6 @@ class StageReporter:
             return "green"
         if task_id.startswith("T5"):
             return "yellow"
-        if task_id.startswith("T7"):
-            return "bright_red"
         if task_id.startswith("T8"):
             return "bright_cyan"
         if task_id.startswith("T9"):
@@ -805,7 +917,7 @@ def _compact_cli_text(value: object, limit: int = 220) -> str:
     return "信息较长；完整记录可通过 --verbose、trace 或运行日志查看。"
 
 
-def _public_error_summary(value: object) -> str:
+def public_error_summary(value: object) -> str:
     """Keep recoverable runtime details actionable without dumping provider traces."""
 
     text = " ".join(str(value or "").split())
@@ -816,6 +928,8 @@ def _public_error_summary(value: object) -> str:
         return "服务暂时不可用，当前进度已保存；可稍后恢复，或用 --verbose 查看连接诊断。"
     if any(token in lowered for token in ("access_denied", "permission denied", "not allowed", "unauthorized")):
         return "当前 Skill 没有读取或写入所需位置的权限；请检查材料位置和本次任务范围。"
+    if "t4 本轮结构化输出不完整" in text or "t4 evolution 结果没有通过结构与证据边界校验" in lowered:
+        return "T4 的本轮输出尚未完成，已保存可恢复的证据材料；恢复后会从未完成的候选生成步骤继续。"
     if "schema_validation_failed" in lowered or "schema" in lowered:
         return "结构化结果尚未通过检查；请根据字段提示补齐内容后重试。"
     if any(token in lowered for token in ("missing", "not found", "does not exist", "file not found")):
@@ -823,18 +937,51 @@ def _public_error_summary(value: object) -> str:
     return "操作未完成；可用 --verbose、trace 或运行日志查看完整诊断。"
 
 
+# Kept as an internal compatibility alias for callers that were introduced
+# before the CLI began reusing the same public summary.
+_public_error_summary = public_error_summary
+
+
 def _fit_live_status(required_parts: list[str], optional_parts: list[str]) -> str:
     """Keep a heartbeat on one terminal line by dropping optional facts, never slicing prose."""
 
     width = max(40, shutil.get_terminal_size(fallback=(120, 40)).columns - 1)
     parts = [part for part in required_parts + optional_parts if part]
-    while len(parts) > len(required_parts) and len(" · ".join(parts)) > width:
+    while len(parts) > len(required_parts) and cell_len(" · ".join(parts)) > width:
         parts.pop()
-    if len(" · ".join(parts)) <= width:
+    if cell_len(" · ".join(parts)) <= width:
         return " · ".join(parts)
-    # A very narrow terminal receives the immutable runtime state.  Public
-    # activity remains visible in the next durable card or event.
-    return " · ".join([required_parts[0], required_parts[1], required_parts[-1]])
+    # Do not slice Chinese or English prose by character count.  At the
+    # narrowest supported width, fall back to a compact, stable runtime pulse;
+    # the event JSONL and phase-start panel retain the complete explanation.
+    compact = [required_parts[0], "进行中", required_parts[-1]]
+    if cell_len(" · ".join(compact)) <= width:
+        return " · ".join(compact)
+    return " · ".join([required_parts[0], "进行中"])
+
+
+def _terminal_heartbeat_activity(task_id: str, activity: str) -> str:
+    """Return a semantic, bounded terminal label while events keep the full text."""
+
+    normalized_task = str(task_id or "").upper()
+    text = " ".join(str(activity or "").split())
+    if normalized_task != "T4":
+        return text
+    labels = (
+        (("证据路由", "证据整理"), "证据整理"),
+        (("研究机会", "Opportunity"), "研究机会探索"),
+        (("多视角", "P0", "候选发散"), "多视角 Idea 发散"),
+        (("候选谱系", "Genome", "Family"), "候选谱系整理"),
+        (("独立评估", "双轴评估", "评分"), "独立评估"),
+        (("演化意图", "Evolution 计划", "演化计划"), "演化计划"),
+        (("Child", "子代"), "Child 生成与复评"),
+        (("保留多样性", "Candidate Population", "候选筛选"), "候选筛选"),
+        (("候选卡", "Portfolio", "决策页", "Gate1"), "候选决策页整理"),
+    )
+    for keywords, label in labels:
+        if any(keyword.casefold() in text.casefold() for keyword in keywords):
+            return label
+    return "T4 阶段处理中"
 
 
 def _artifact_status_label(value: object) -> str:
@@ -845,6 +992,7 @@ def _artifact_status_label(value: object) -> str:
         "created": "已生成",
         "updated": "已更新",
         "unchanged": "已存在且未改动",
+        "staged": "已写入，待校验",
         "missing": "未生成",
         "invalid": "不可读取",
         "invalidated": "校验未通过",
@@ -1004,34 +1152,6 @@ def _is_retrieval_tool(tool_name: str) -> bool:
 
 
 def _tool_calculation_summary(task_id: str, tool_name: str, data: dict[str, Any]) -> dict[str, Any] | None:
-    if tool_name == "extract_pdf_text":
-        page_range = data.get("extracted_page_range") or _page_range_from_metadata(data)
-        rows = []
-        if page_range:
-            rows.append(("本次阅读", f"第 {page_range} 页"))
-        if data.get("total_pages") is not None:
-            rows.append(("论文页数", f"共 {data['total_pages']} 页"))
-        if data.get("complete_pdf_read") is not None:
-            rows.append(("阅读状态", "已覆盖全文" if data["complete_pdf_read"] else "可继续阅读"))
-        if data.get("next_start_page") is not None:
-            rows.append(("下一页", data["next_start_page"]))
-        return {"title": "论文阅读 · PDF 文本", "rows": rows} if rows else None
-    if tool_name == "extract_paper_sections":
-        sections = data.get("sections")
-        names = list(sections) if isinstance(sections, dict) else []
-        rows = []
-        if names:
-            preview = "、".join(_compact_cli_text(name, 32) for name in names[:4])
-            if len(names) > 4:
-                preview += f"；另有 {len(names) - 4} 个"
-            rows.extend([("已识别部分", len(names)), ("内容", preview)])
-        quality = data.get("quality") if isinstance(data.get("quality"), dict) else {}
-        if quality.get("recommend_full_text_fallback"):
-            rows.append(("提示", "部分结构不完整，可按需继续阅读全文"))
-        return {"title": "论文阅读 · 已提取部分", "rows": rows} if rows else None
-    if tool_name == "fetch_paper_pdf":
-        rows = _selected_scalar_rows(data, ("path", "size"))
-        return {"title": "论文获取 · PDF", "rows": rows} if rows else None
     if tool_name == "web_fetch":
         rows = _selected_scalar_rows(data, ("status_code", "content_type", "truncated"))
         return {"title": f"{stage_display_name(task_id)} · 网页内容", "rows": rows} if rows else None
@@ -1140,14 +1260,6 @@ def _tool_calculation_summary(task_id: str, tool_name: str, data: dict[str, Any]
     return None
 
 
-def _page_range_from_metadata(data: dict[str, Any]) -> str | None:
-    start = data.get("range_start_page") or data.get("start_page")
-    end = data.get("end_page")
-    if start and end:
-        return f"{start}-{end}"
-    return None
-
-
 def _selected_scalar_rows(data: dict[str, Any], keys: tuple[str, ...]) -> list[tuple[str, str]]:
     """Return bounded display rows, never arbitrary tool payload fields.
 
@@ -1207,8 +1319,6 @@ def _default_public_activity(task_id: str) -> str:
         return "正在整理研究构思与依据"
     if normalized.startswith("T5"):
         return "正在整理实验执行材料"
-    if normalized.startswith("T7"):
-        return "正在核对实验结果"
     if normalized.startswith("T8"):
         return "正在准备论文草稿"
     if normalized.startswith("T9"):
@@ -1222,6 +1332,9 @@ def _tool_label(tool_name: str) -> str:
     return {
         "deduplicate_papers": "候选去重",
         "analyze_dedup_rate": "去重质量检查",
+        "fetch_paper_pdf": "PDF 获取",
+        "extract_pdf_text": "PDF 文本提取",
+        "extract_paper_sections": "论文部分提取",
         "build_verified_papers": "Metadata 验证",
         "build_deep_read_queue": "阅读队列",
         "build_domain_map": "引用图与领域映射",

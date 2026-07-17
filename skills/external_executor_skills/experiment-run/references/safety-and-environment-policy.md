@@ -6,6 +6,7 @@ Use this reference immediately before launching a process.
 
 - Execute an argument vector with `shell=False`.
 - Use the reviewed working directory and command exactly.
+- The reviewed working directory must be under `external_executor/expr/`.
 - Do not interpret pipes, redirects, substitutions, globbing, or shell control operators.
 - Set a finite timeout.
 - Start the process in its own process group so timeout and cancellation can terminate descendants.
@@ -16,6 +17,8 @@ Use this reference immediately before launching a process.
 Path validation protects the runner's own reads and writes. It cannot prove that arbitrary experiment code will not write elsewhere. The executor sandbox must enforce the declared filesystem boundary.
 
 Formal execution requires `isolation.filesystem=enforced` with an evidence reference. A claim in the request is not itself evidence; it must reflect an executor capability or sandbox record supplied by the root.
+
+All run-produced evidence, including logs, metrics, records, checkpoints, and environment snapshots, must be written under `external_executor/raw_results/`. The runner sets `RESEARCHOS_RAW_RESULTS_DIR` and `RESEARCHOS_OUTPUT_DIR` to raw-results locations for reviewed commands that honor those variables.
 
 ## Network
 

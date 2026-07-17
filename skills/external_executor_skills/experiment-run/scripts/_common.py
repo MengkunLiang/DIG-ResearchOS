@@ -132,6 +132,20 @@ def require_allowed(root: Path, path: Path) -> None:
         raise ValueError(f"path is not authorized by allowed_paths.txt: {relative}")
 
 
+def is_under_workspace_path(root: Path, path: Path, relative_root: str) -> bool:
+    anchor = resolve_in_workspace(root, relative_root)
+    try:
+        path.resolve(strict=False).relative_to(anchor.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def require_under_workspace_path(root: Path, path: Path, relative_root: str, *, label: str = "path") -> None:
+    if not is_under_workspace_path(root, path, relative_root):
+        raise ValueError(f"{label} must be under {relative_root}: {relative_path(root, path)}")
+
+
 def expand_regular_files(root: Path, values: Iterable[str]) -> list[Path]:
     files: list[Path] = []
     for value in values:

@@ -21,7 +21,7 @@ from ..runtime.progress import CliProgressEmitter
 from ..runtime.run_logger import RunLogger
 from ..runtime.workspace import initialize_workspace
 from ..schemas.state import StateYaml
-from ..schemas.validator import register_builtin_task_checkers, validate_task_artifacts
+from ..schemas.validator import register_builtin_task_checkers, validate_prerequisites, validate_task_artifacts
 from ..skills.agent import SkillAgent
 from ..skills.loader import resolve_skill
 from ..skills.project_specialization.task_adapter import (
@@ -35,6 +35,23 @@ from ..tools.registry import ToolRegistry
 
 _LOG = get_logger("complete_pipeline")
 _LATEX_PREFLIGHT_TASKS = {"T3.6-COMPILE", "T9"}
+
+
+def _consumes_shared_literature_contract(task_id: str) -> bool:
+    """Return whether a task consumes the workspace's Literature Contract.
+
+    The contract is deliberately inferred from the task I/O declaration rather
+    than maintained as a runner-local task list.  A list previously covered
+    only T3.5 and two T3.6 nodes, so a legacy workspace could resume directly
+    into T4 with an underfilled shallow-reading corpus even though T4, T4.5,
+    T5, and T8 all declare ``literature_manifest`` as an input.
+    """
+
+    try:
+        inputs = get_task_io(task_id).get("inputs") or {}
+    except KeyError:
+        return False
+    return "literature_manifest" in inputs
 
 
 def _now_iso() -> str:
@@ -169,8 +186,16 @@ class CompletePipelineRunner:
                 return 130
             if state.status == "WAITING_HUMAN":
                 _LOG.info("pipeline_waiting_human")
-                self.run_logger.event("ASK_HUMAN", project_id=state.project_id, task=state.current_task)
-                self.progress.emit("Project waiting for human input.", important=True)
+                self.run_logger.event(
+                    "ASK_HUMAN",
+                    project_id=state.project_id,
+                    task=state.current_task,
+                    gate_id=state.pending_gate.gate_id if state.pending_gate else None,
+                )
+                self.progress.pipeline_waiting_human(
+                    task=state.current_task,
+                    gate_id=state.pending_gate.gate_id if state.pending_gate else None,
+                )
                 return 130
 
     async def _prepare_failed_resume(self, state: StateYaml, state_path: Path) -> tuple[StateYaml, bool]:
@@ -363,8 +388,22 @@ class CompletePipelineRunner:
                     state.current_task == "T4-GATE1"
                     and validate_t4_gate1_selection_file(self.workspace)[0]
                 ):
+                    # Final Cards are mandatory before *opening* Gate1 for a
+                    # fresh human decision. A selection already persisted by
+                    # Gate1 has its own Candidate-pool fingerprint contract,
+                    # however. Do not strand that valid decision on resume if
+                    # a later card cleanup/archive removed a presentation
+                    # artifact: resume advances to the selected post-Gate
+                    # path and never renders a partial card.
+                    next_task = "T4.5"
+                    try:
+                        payload = json.loads((self.workspace / "ideation" / "_gate1_user_selection.json").read_text(encoding="utf-8"))
+                        if isinstance(payload, dict) and str(payload.get("next_task") or "").strip():
+                            next_task = str(payload.get("next_task")).strip()
+                    except (OSError, json.JSONDecodeError):
+                        pass
                     state.pending_gate = None
-                    state.current_task = "T4"
+                    state.current_task = next_task
                     state.status = "RUNNING"
                     state.last_error = None
                     state.dump_yaml(state_path)
@@ -386,6 +425,56 @@ class CompletePipelineRunner:
                 state.dump_yaml(state_path)
                 return state
 
+            # ``resume`` advances through state-machine nodes without
+            # returning to the CLI's one-time prerequisite check.  Every
+            # consumer that declares the shared manifest must therefore
+            # validate the same paper corpus before an immediate Gate can ask
+            # the researcher to make a downstream decision, or before an
+            # Agent can render an optimistic input panel or submit a model
+            # request.
+            if _consumes_shared_literature_contract(state.current_task):
+                prerequisites_ok, prerequisites_error = validate_prerequisites(self.workspace, state.current_task)
+            else:
+                prerequisites_ok, prerequisites_error = True, None
+            if not prerequisites_ok:
+                error = f"任务前置材料未就绪，未提交模型请求: {prerequisites_error}"
+                is_literature_coverage_gap = "Literature reading coverage is not ready" in str(prerequisites_error)
+                recovered = self.state_machine._pause_for_runtime_recovery_gate(
+                    state,
+                    error=error,
+                    workspace_dir=self.workspace,
+                    recovery={
+                        "kind": "literature_coverage" if is_literature_coverage_gap else "prerequisite_validation",
+                        "error_summary": error,
+                        "details": {
+                            "task_id": state.current_task,
+                            "source": "complete_pipeline_preflight",
+                            # A shallow-reading shortfall changes the evidence
+                            # set.  It must be repaired from T3 and then flow
+                            # through a fresh T3.5/T4 chain, never patched
+                            # inside a downstream ideation or writing task.
+                            "return_to_task": "T3" if is_literature_coverage_gap else None,
+                        },
+                    },
+                )
+                if recovered is None:
+                    state.status = "PAUSED"
+                    state.paused_at = _now_iso()
+                    state.last_error = error
+                else:
+                    state = recovered
+                state.dump_yaml(state_path)
+                self.run_logger.event("PAUSED", task=state.current_task, reason=state.last_error, validator="prerequisites")
+                self.progress.error_context(
+                    stage="任务前置材料校验",
+                    message=error,
+                    log_path=str(self.workspace / self.runtime_settings.workspace.runtime_dir / "logs" / "researchos.log"),
+                )
+                if state.status == "WAITING_HUMAN" and state.pending_gate is not None:
+                    return await self._present_pending_gate(state, state_path)
+                self.progress.pipeline_paused(reason=state.last_error)
+                return state
+
             if self.state_machine.should_pause_for_immediate_gate(state, workspace_dir=self.workspace):
                 state = self.state_machine.pause_for_immediate_gate(
                     state,
@@ -404,11 +493,27 @@ class CompletePipelineRunner:
         try:
             ctx = self.state_machine.build_execution_context(self.workspace, state)
         except Exception as exc:
-            state.status = "PAUSED"
-            state.paused_at = _now_iso()
-            state.last_error = f"构建执行上下文失败: {exc}"
+            error = f"构建执行上下文失败: {exc}"
+            recovered = self.state_machine._pause_for_runtime_recovery_gate(
+                state,
+                error=error,
+                workspace_dir=self.workspace,
+                recovery={
+                    "kind": "runtime",
+                    "error_summary": error,
+                    "details": {"source": "build_execution_context"},
+                },
+            )
+            if recovered is None:
+                state.status = "PAUSED"
+                state.paused_at = _now_iso()
+                state.last_error = error
+            else:
+                state = recovered
             state.dump_yaml(state_path)
             self.run_logger.event("ERROR", task=state.current_task, kind="build_context", message=state.last_error)
+            if state.status == "WAITING_HUMAN" and state.pending_gate is not None:
+                return await self._present_pending_gate(state, state_path)
             return state
         if ctx.task_id in _LATEX_PREFLIGHT_TASKS:
             readiness = latex_backend_preflight(self.runtime_settings.latex)
@@ -424,9 +529,26 @@ class CompletePipelineRunner:
                 )
             else:
                 detail = str(readiness.get("message") or readiness.get("reason") or "no usable LaTeX backend")
-                state.status = "PAUSED"
-                state.paused_at = _now_iso()
-                state.last_error = f"WAITING_ENVIRONMENT: {ctx.task_id} LaTeX preflight failed: {detail}"
+                error = f"WAITING_ENVIRONMENT: {ctx.task_id} LaTeX preflight failed: {detail}"
+                if ctx.task_id == "T3.6-COMPILE":
+                    state = self.state_machine._pause_for_t36_compile_recovery_gate(state, error, self.workspace)
+                else:
+                    recovered = self.state_machine._pause_for_runtime_recovery_gate(
+                        state,
+                        error=error,
+                        workspace_dir=self.workspace,
+                        recovery={
+                            "kind": "environment",
+                            "error_summary": error,
+                            "details": {"source": "latex_preflight", "task_id": ctx.task_id},
+                        },
+                    )
+                    if recovered is None:
+                        state.status = "PAUSED"
+                        state.paused_at = _now_iso()
+                        state.last_error = error
+                    else:
+                        state = recovered
                 state.dump_yaml(state_path)
                 self.run_logger.event(
                     "PAUSED",
@@ -434,6 +556,8 @@ class CompletePipelineRunner:
                     reason=state.last_error,
                     latex_preflight=readiness,
                 )
+                if state.status == "WAITING_HUMAN" and state.pending_gate is not None:
+                    return await self._present_pending_gate(state, state_path)
                 self.progress.pipeline_paused(reason=state.last_error)
                 return state
         state = self.state_machine.start_task(state, ctx.run_id, workspace_dir=self.workspace)
@@ -450,6 +574,60 @@ class CompletePipelineRunner:
             state.dump_yaml(state_path)
             self.run_logger.event("PAUSED", task=ctx.task_id, reason="interrupted")
             return state
+        except Exception as exc:
+            # Prompt rendering, tool construction, and provider routing happen
+            # before an AgentRunner can enter its normal model/tool loop.  A
+            # failure there used to escape this coroutine as a traceback (for
+            # example, a newly added StrictUndefined prompt variable) and left
+            # a RUNNING state behind.  It is a recoverable runtime failure
+            # unless the StateMachine identifies an explicit integrity issue.
+            # Preserve the task boundary and feed the same durable Human
+            # Recovery Gate used for exhausted validation or provider retries.
+            error = (
+                "Agent startup failed before the task loop: "
+                f"{type(exc).__name__}: {str(exc) or repr(exc)}"
+            )
+            result = AgentResult(
+                ok=False,
+                message=error,
+                outputs_produced={},
+                steps_used=0,
+                tokens_in=0,
+                tokens_out=0,
+                cost_usd=0.0,
+                duration_seconds=0.0,
+                stop_reason=AgentResult.STOP_INTERRUPTED,
+                error=error,
+                metadata={
+                    "runtime_recovery": {
+                        "schema_version": "1.0.0",
+                        "kind": "runtime",
+                        "task_id": ctx.task_id,
+                        "run_id": ctx.run_id,
+                        "error_summary": " ".join(error.split())[:1200],
+                        "details": {
+                            "source": "agent_runner_startup",
+                            "exception_type": type(exc).__name__,
+                        },
+                    }
+                },
+            )
+            self.run_logger.event(
+                "ERROR",
+                task=ctx.task_id,
+                kind="agent_runner_startup",
+                message=error,
+            )
+            self.progress.error_context(
+                stage="Agent 启动期",
+                message=error,
+                log_path=str(
+                    self.workspace
+                    / self.runtime_settings.workspace.runtime_dir
+                    / "logs"
+                    / "researchos.log"
+                ),
+            )
 
         if result.stop_reason in {
             AgentResult.STOP_INTERRUPTED,
@@ -458,6 +636,8 @@ class CompletePipelineRunner:
         }:
             state = self.state_machine.advance(state, result, workspace_dir=self.workspace)
             state.dump_yaml(state_path)
+            if state.status == "WAITING_HUMAN" and state.pending_gate is not None:
+                return await self._present_pending_gate(state, state_path)
             return state
 
         skip_runtime_artifact_validation = (
@@ -472,12 +652,29 @@ class CompletePipelineRunner:
         )
         if result.ok and not ok:
             result.ok = False
-            result.stop_reason = result.STOP_ERROR
             result.error = (
                 "Runtime artifact validation failed; retrying via state-machine failure route: "
                 + str(errors)
             )
             result.message = result.error
+            if self.state_machine.is_hard_runtime_integrity_error(result.error):
+                result.stop_reason = result.STOP_ERROR
+            else:
+                # Runner-level validation happens after an Agent reports
+                # success, so it previously skipped the Agent repair loop and
+                # fell directly into a terminal failure route.  Preserve the
+                # failed status while giving the StateMachine a durable human
+                # recovery decision for repairable artifacts.
+                result.stop_reason = result.STOP_INTERRUPTED
+                result.metadata = dict(result.metadata or {})
+                result.metadata["runtime_recovery"] = {
+                    "schema_version": "1.0.0",
+                    "kind": "artifact_validation",
+                    "task_id": ctx.task_id,
+                    "run_id": ctx.run_id,
+                    "error_summary": " ".join(result.error.split())[:1200],
+                    "details": {"validator": "runtime_artifact"},
+                }
             self.run_logger.event(
                 "VALIDATION_FAILED",
                 task=ctx.task_id,
@@ -514,10 +711,12 @@ class CompletePipelineRunner:
                 reason=result.stop_reason,
             )
         state.dump_yaml(state_path)
+        if state.status == "WAITING_HUMAN" and state.pending_gate is not None:
+            return await self._present_pending_gate(state, state_path)
         return state
 
     async def _present_pending_gate(self, state: StateYaml, state_path: Path) -> StateYaml:
-        """展示并处理已经挂起的人类 gate；只有输入不可用时才暂停。"""
+        """展示并处理已经挂起的人类 gate；无输入时持久化为可恢复暂停。"""
 
         if state.pending_gate is None:
             return state
@@ -525,6 +724,44 @@ class CompletePipelineRunner:
             state,
             workspace_dir=self.workspace,
         )
+        # A legacy T4 recovery gate can survive an upgrade that introduced the
+        # shared shallow-reading contract.  Compatibility-record repair is
+        # meaningless while the evidence set itself is incomplete: accepting
+        # that retry would only advance to a second, avoidable failure. Replace
+        # this *specific* stale recovery surface with the upstream reading
+        # decision. The original exception stays in state history/trace and no
+        # Candidate, Population, or paper file is removed.
+        if (
+            state.pending_gate is not None
+            and state.pending_gate.gate_id == "t4_recovery_gate"
+            and _consumes_shared_literature_contract(state.current_task)
+        ):
+            prerequisites_ok, prerequisites_error = validate_prerequisites(self.workspace, state.current_task)
+            coverage_gap = "Literature reading coverage is not ready" in str(prerequisites_error)
+            if not prerequisites_ok and coverage_gap:
+                error = f"任务前置材料未就绪，未提交模型请求: {prerequisites_error}"
+                recovered = self.state_machine._pause_for_runtime_recovery_gate(
+                    state,
+                    error=error,
+                    workspace_dir=self.workspace,
+                    recovery={
+                        "kind": "literature_coverage",
+                        "error_summary": error,
+                        "details": {
+                            "task_id": state.current_task,
+                            "source": "pending_t4_recovery_literature_preflight",
+                            "return_to_task": "T3",
+                        },
+                    },
+                )
+                if recovered is not None:
+                    state = recovered
+        # A refresh can resolve a stale recovery gate deterministically (for
+        # example after a compatible persisted artifact migration).  Let the
+        # outer step loop create the now-current immediate Gate instead of
+        # attempting to render the just-cleared pending object below.
+        if state.pending_gate is None:
+            return state
         state.dump_yaml(state_path)
         gate_id = state.pending_gate.gate_id
         gate_run_id = f"{state.current_task}_gate_{uuid4().hex[:8]}"
@@ -566,18 +803,26 @@ class CompletePipelineRunner:
                 options=state.pending_gate.options,
             )
         except HumanInputUnavailable as exc:
+            # EOF/no-input is an intentional handoff boundary.  Persist a
+            # real PAUSED state rather than leaving WAITING_HUMAN while the
+            # CLI claims the workflow was paused.  The durable pending gate
+            # (including an unconfirmed T4 directive) is deliberately kept,
+            # so resume renders the same decision and cannot execute it.
             state.status = "PAUSED"
             state.paused_at = _now_iso()
-            state.last_error = str(exc)
+            state.last_error = f"人工决策尚未提交，当前 Gate 已保存；resume 将回到这里。{exc}"
+            state.task_context["last_unavailable_human_input"] = {
+                "gate_id": gate_id,
+                "recorded_at": state.paused_at,
+                "reason": str(exc),
+            }
             state.dump_yaml(state_path)
-            self.run_logger.event("PAUSED", task=state.current_task, gate_id=gate_id, reason=state.last_error)
-            self.progress.stage_completed(
-                task_id=state.current_task,
-                run_id=gate_run_id,
-                outputs=outputs,
-                ok=False,
-                summary="Human Gate 等待输入。",
-                error=state.last_error,
+            self.run_logger.event(
+                "ASK_HUMAN",
+                task=state.current_task,
+                gate_id=gate_id,
+                input_transport="unavailable",
+                reason=str(exc),
             )
             return state
 
@@ -587,26 +832,51 @@ class CompletePipelineRunner:
             gate_result,
             workspace_dir=self.workspace,
         )
+        awaiting_confirmation = bool(
+            state.pending_gate is not None
+            and state.status == "WAITING_HUMAN"
+            and state.current_task == before_task
+        )
         self.run_logger.event(
             "STATE_TRANSITION",
             from_task=before_task,
             to_task=state.current_task,
-            reason=f"gate:{gate_id}",
+            reason=("gate:operation_confirmation_required" if awaiting_confirmation else f"gate:{gate_id}"),
         )
-        self.progress.gate_resolved(from_task=before_task, to_task=state.current_task, gate_id=gate_id)
-        self.progress.stage_gate_resolved(
-            task_id=before_task,
-            gate_id=gate_id,
-            decision=str(gate_result.get("option_id") or "human_selection"),
-        )
-        self.progress.stage_completed(
-            task_id=before_task,
-            run_id=gate_run_id,
-            outputs=outputs,
-            ok=True,
-            summary=f"Human Gate 已记录选择：{gate_result.get('option_id') or 'human_selection'}。",
-        )
+        if awaiting_confirmation:
+            # A directive such as “重新演化” was understood, but no scientific
+            # operation has happened yet. Do not render it as a completed
+            # Gate, a 0/1 artifact result, or a misleading T4-GATE1 ->
+            # T4-GATE1 transition.
+            self.progress.stage_human_action_required(
+                task_id=before_task,
+                gate_id=gate_id,
+                reason="操作计划已保存，尚未调用模型或改变 Population；请确认或取消该计划。",
+            )
+        else:
+            self.progress.gate_resolved(from_task=before_task, to_task=state.current_task, gate_id=gate_id)
+            self.progress.stage_gate_resolved(
+                task_id=before_task,
+                gate_id=gate_id,
+                decision=str(gate_result.get("option_id") or "human_selection"),
+            )
+            self.progress.stage_completed(
+                task_id=before_task,
+                run_id=gate_run_id,
+                outputs=outputs,
+                ok=True,
+                summary=f"Human Gate 已记录选择：{gate_result.get('option_id') or 'human_selection'}。",
+            )
         state.dump_yaml(state_path)
+        # A human decision is a conversation, rather than an invocation
+        # boundary.  Some paths deliberately chain gates (for example the
+        # survey decision -> template decision), and T4 deliberately opens a
+        # second confirmation after it has understood a research operation.
+        # Keep presenting the next pending gate in this same CLI session.  A
+        # real EOF/no-input is handled above as ``HumanInputUnavailable`` and
+        # therefore persists PAUSED without entering this branch.
+        if state.status == "WAITING_HUMAN" and state.pending_gate is not None:
+            return await self._present_pending_gate(state, state_path)
         return state
 
     def _build_runner(self, node, ctx):

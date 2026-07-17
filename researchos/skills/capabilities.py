@@ -126,6 +126,7 @@ DEFAULT_PUBLIC_SKILL_PROFILES: dict[str, tuple[str, ...]] = {
     "experiment-design-review": ("structured_artifacts", "idea_analysis", "claim_review"),
     "hypothesis-compiler": ("structured_artifacts", "idea_analysis", "claim_review"),
     "idea-fanout-jury": ("structured_artifacts", "literature_discovery", "idea_analysis"),
+    "t4-evolution": ("structured_artifacts", "idea_analysis"),
     "literature-comparison-studio": (
         "structured_artifacts", "literature_discovery", "paper_acquisition", "paper_curation",
         "literature_processing",

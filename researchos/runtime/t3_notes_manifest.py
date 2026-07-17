@@ -25,6 +25,12 @@ from ..literature_identity import (
     record_is_covered,
     record_note_id,
 )
+from .bridge_catalog import (
+    CROSS_DOMAIN_CATALOG_INDEX_REL_PATH,
+    CROSS_DOMAIN_CATALOG_ROOT_REL_PATH,
+    bridge_id_key,
+    migrate_legacy_bridge_catalogs,
+)
 
 
 NOTE_MANIFEST_REL_PATH = "literature/notes_manifest.json"
@@ -175,7 +181,361 @@ def build_t3_notes_manifest(
     }
     if write:
         _atomic_write_json(workspace_dir / NOTE_MANIFEST_REL_PATH, manifest)
+        migrate_legacy_bridge_catalogs(workspace_dir)
+        _write_cross_domain_catalog_index(workspace_dir, entries)
     return manifest
+
+
+def refresh_bridge_catalogs(
+    workspace_dir: Path,
+    *,
+    queue_records: list[dict[str, Any]] | None = None,
+    source_queue: str | None = None,
+) -> dict[str, Any]:
+    """Refresh Cross-domain catalogs without making them depend on T3 reading.
+
+    A bridge catalog is a retrieval projection, not a deep-reading artifact.
+    T2 can therefore materialize it as soon as verified/raw records and the
+    bridge plan exist.  The helper deliberately reuses the same note matching
+    logic as the T3 manifest so an existing canonical note is linked rather
+    than copied, while records with no note remain usable abstract/metadata
+    leads.  It intentionally does *not* write ``notes_manifest.json``; that
+    file remains T3's reading-progress ledger.
+    """
+
+    workspace_dir = Path(workspace_dir).resolve()
+    migrate_legacy_bridge_catalogs(workspace_dir)
+    if queue_records is None:
+        literature_dir = workspace_dir / "literature"
+        queue_records, source_queue = _load_default_queue(literature_dir)
+    manifest = build_t3_notes_manifest(
+        workspace_dir,
+        queue_records=queue_records,
+        source_queue=source_queue or "bridge_catalog_refresh",
+        write=False,
+    )
+    _write_cross_domain_catalog_index(workspace_dir, manifest.get("entries") or [])
+    index_path = workspace_dir / CROSS_DOMAIN_CATALOG_INDEX_REL_PATH
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        index = {}
+    bridges = index.get("bridges") if isinstance(index, dict) and isinstance(index.get("bridges"), list) else []
+    return {
+        "index_path": CROSS_DOMAIN_CATALOG_INDEX_REL_PATH,
+        "bridge_count": len(bridges),
+        "retrieved_record_count": sum(int(item.get("retrieved_records") or 0) for item in bridges if isinstance(item, dict)),
+        "bridges": bridges,
+    }
+
+
+def _write_cross_domain_catalog_index(workspace_dir: Path, entries: list[dict[str, Any]]) -> None:
+    """Project durable Cross-domain material into a per-bridge knowledge track.
+
+    A bridge is useful before a paper receives a full reading note.  The old
+    global index only recorded queue entries, which made a user-confirmed
+    bridge look empty whenever all of its papers were deferred.  This writer
+    keeps a compact, non-duplicating catalog for every bridge instead:
+
+    ``cross_domain_catalogs/<bridge_id>/bridge_context.json`` describes the
+    intended transfer, while ``paper_catalog.json`` retains retrieved metadata
+    and any actual note path. Canonical Markdown notes remain in
+    ``bridge_notes/`` and are never copied merely to make a catalog look full.
+    """
+
+    plan_path = workspace_dir / "literature" / "bridge_domain_plan.json"
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        plan = {}
+    raw_domains = plan.get("bridge_domains") if isinstance(plan, dict) else []
+    domains = raw_domains if isinstance(raw_domains, list) else []
+    # T2/provider traces have historically alternated between ``B1`` and
+    # ``b1``.  The user-authored plan keeps its display spelling, while the
+    # association index is case-insensitive so a valid retrieval cannot vanish
+    # from its bridge catalog because of an identifier-format difference.
+    by_bridge: dict[str, list[dict[str, Any]]] = {}
+    for entry in entries:
+        bridge_ids = {
+            str(entry.get("bridge_id") or "").strip(),
+            *[str(value).strip() for value in entry.get("recalled_by_bridges") or []],
+            *[str(value).strip() for value in entry.get("contributed_bridges") or []],
+        }
+        for bridge_id in bridge_ids:
+            lookup_key = bridge_id_key(bridge_id)
+            if lookup_key:
+                by_bridge.setdefault(lookup_key, []).append(entry)
+
+    # The read queue is deliberately selective.  A Cross-domain result that
+    # did not make that queue is still a useful, explicitly bounded bridge
+    # lead, so recover it from durable T2 result stores as well.  Queue data
+    # wins for reading state; metadata fills the catalog rather than replacing
+    # it.
+    retrieved_by_bridge = _bridge_retrieved_records(workspace_dir)
+    bridge_root = workspace_dir / CROSS_DOMAIN_CATALOG_ROOT_REL_PATH
+    bridge_root.mkdir(parents=True, exist_ok=True)
+
+    bridges: list[dict[str, Any]] = []
+    for domain in domains:
+        if not isinstance(domain, dict):
+            continue
+        bridge_id = str(domain.get("bridge_id") or "").strip()
+        if not bridge_id:
+            continue
+        lookup_key = bridge_id_key(bridge_id)
+        associated = by_bridge.get(lookup_key, [])
+        catalog = _bridge_catalog_records(
+            bridge_id,
+            entries=associated,
+            retrieved_records=retrieved_by_bridge.get(lookup_key, []),
+        )
+        completed = [item for item in associated if item.get("status") == "complete"]
+        active = [item for item in associated if not item.get("triaged_out")]
+        if completed:
+            status = "read"
+        elif active:
+            status = "queued_for_read"
+        elif associated or catalog:
+            status = "retrieved_but_deferred"
+        else:
+            status = "no_retrieved_material"
+        queries_raw = (
+            domain.get("planned_queries")
+            or domain.get("query_plan")
+            or domain.get("queries")
+            or []
+        )
+        if isinstance(queries_raw, str):
+            queries_raw = [queries_raw]
+        if not isinstance(queries_raw, list):
+            queries_raw = []
+        name = str(domain.get("name") or domain.get("domain") or "").strip()
+        rationale = str(domain.get("rationale") or domain.get("why") or "").strip()
+        planned_queries = [str(value).strip() for value in queries_raw if str(value).strip()]
+        bridge_payload = {
+            "schema_version": "1.0.0",
+            "semantics": "cross_domain_bridge_context",
+            "bridge_id": bridge_id,
+            "name": name,
+            "rationale": rationale,
+            "priority": str(domain.get("priority") or "").strip(),
+            "planned_queries": planned_queries,
+            "source_plan": "literature/bridge_domain_plan.json",
+            "usage_boundary": (
+                "Use retrieved bridge metadata and abstracts for inspiration, analogy, "
+                "scope, mechanism challenges, validation questions, and reading priorities. "
+                "Do not represent them as direct support for a mechanism or result unless "
+                "the linked canonical reading note provides that support."
+            ),
+        }
+        bridge_dir = bridge_root / _safe_bridge_dir_name(bridge_id)
+        _atomic_write_json(bridge_dir / "bridge_context.json", bridge_payload)
+        _atomic_write_json(
+            bridge_dir / "paper_catalog.json",
+            {
+                "schema_version": "1.0.0",
+                "semantics": "cross_domain_bridge_paper_catalog",
+                "bridge_id": bridge_id,
+                "source_plan": "literature/bridge_domain_plan.json",
+                "records": catalog,
+            },
+        )
+        _write_bridge_context_markdown(bridge_dir / "_bridge_context.md", bridge_payload, catalog)
+        bridges.append(
+            {
+                "bridge_id": bridge_id,
+                "name": name,
+                "rationale": rationale,
+                "planned_queries": [str(value).strip() for value in queries_raw if str(value).strip()],
+                "status": status,
+                "associated_records": len(associated),
+                "retrieved_records": len(catalog),
+                "active_read_targets": len(active),
+                "completed_notes": [str(item.get("note_path") or "") for item in completed if str(item.get("note_path") or "")],
+                "deferred_records": sum(1 for item in associated if item.get("triaged_out")),
+                "context_path": f"{CROSS_DOMAIN_CATALOG_ROOT_REL_PATH}/{_safe_bridge_dir_name(bridge_id)}/bridge_context.json",
+                "catalog_path": f"{CROSS_DOMAIN_CATALOG_ROOT_REL_PATH}/{_safe_bridge_dir_name(bridge_id)}/paper_catalog.json",
+            }
+        )
+    payload = {
+        "schema_version": "1.0.0",
+        "semantics": "t3_cross_domain_note_index",
+        "source_plan": "literature/bridge_domain_plan.json",
+        "catalog_root": CROSS_DOMAIN_CATALOG_ROOT_REL_PATH,
+        "note_ownership": "Canonical notes remain in literature/bridge_notes/ at their recorded note_path; this index does not duplicate scientific prose.",
+        "bridges": bridges,
+    }
+    _atomic_write_json(workspace_dir / CROSS_DOMAIN_CATALOG_INDEX_REL_PATH, payload)
+
+
+def _bridge_retrieved_records(workspace_dir: Path) -> dict[str, list[dict[str, Any]]]:
+    """Return all verified/deduplicated/raw records associated with each bridge.
+
+    Search provenance historically stored ``bridge_id`` under ``provenance``;
+    queue enrichment later promotes it to the top level.  Supporting both
+    forms is what makes bridge catalogs survive queue triage.
+    """
+
+    collected: dict[str, dict[str, dict[str, Any]]] = {}
+    for rel_path in (
+        "literature/papers_verified.jsonl",
+        "literature/papers_dedup.jsonl",
+        "literature/papers_raw.jsonl",
+        "literature/papers_backlog.jsonl",
+        "literature/deep_read_queue.jsonl",
+    ):
+        for record in load_jsonl(workspace_dir / rel_path):
+            for bridge_id in _record_bridge_ids(record):
+                record_key = _bridge_record_key(record)
+                # Prefer the selected/verified store, but enrich it with
+                # queue-specific reading state when a duplicate is later seen.
+                existing = collected.setdefault(bridge_id, {}).get(record_key)
+                if existing is None or _bridge_record_richness(record) >= _bridge_record_richness(existing):
+                    merged = dict(record)
+                    if existing:
+                        merged = {**existing, **merged}
+                    collected[bridge_id][record_key] = merged
+                elif existing is not None:
+                    existing.update({key: value for key, value in record.items() if value not in (None, "", [], {})})
+    return {
+        bridge_id: list(records.values())
+        for bridge_id, records in collected.items()
+    }
+
+
+def _record_bridge_ids(record: dict[str, Any]) -> set[str]:
+    provenance = record.get("provenance") if isinstance(record.get("provenance"), dict) else {}
+    values: list[Any] = [
+        record.get("bridge_id"),
+        provenance.get("bridge_id"),
+        record.get("recalled_by_bridges"),
+        record.get("contributed_bridges"),
+        provenance.get("recalled_by_bridges"),
+        provenance.get("contributed_bridges"),
+    ]
+    result: set[str] = set()
+    for value in values:
+        if isinstance(value, list):
+            result.update(bridge_id_key(item) for item in value if bridge_id_key(item))
+        elif bridge_id_key(value):
+            result.add(bridge_id_key(value))
+    return result
+
+
+def _bridge_record_key(record: dict[str, Any]) -> str:
+    provenance = record.get("provenance") if isinstance(record.get("provenance"), dict) else {}
+    # DOI/arXiv survive provider-side canonicalization better than OpenAlex or
+    # queue identifiers, so they collapse the same retrieved paper across raw,
+    # verified, and queue stores before we fall back to title identity.
+    external_ids = record.get("externalIds") if isinstance(record.get("externalIds"), dict) else {}
+    persistent_id = str(record.get("doi") or record.get("arxiv_id") or external_ids.get("DOI") or external_ids.get("ArXiv") or "").strip()
+    return persistent_id or str(
+        record.get("canonical_id")
+        or record.get("paper_id")
+        or record.get("id")
+        or provenance.get("canonical_id")
+        or record.get("doi")
+        or record.get("url")
+        or record.get("title")
+        or "unknown"
+    ).strip()
+
+
+def _bridge_record_richness(record: dict[str, Any]) -> int:
+    return sum(bool(record.get(key)) for key in ("abstract", "doi", "url", "year", "venue", "queue_rank", "note_path"))
+
+
+def _bridge_catalog_records(
+    bridge_id: str,
+    *,
+    entries: list[dict[str, Any]],
+    retrieved_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build a compact catalog without turning metadata into a paper note."""
+
+    queue_by_key = {_bridge_record_key(item): item for item in entries}
+    combined: dict[str, dict[str, Any]] = {key: dict(value) for key, value in queue_by_key.items()}
+    for record in retrieved_records:
+        key = _bridge_record_key(record)
+        if not key:
+            continue
+        if key in combined:
+            combined[key] = {**record, **combined[key]}
+        else:
+            combined[key] = dict(record)
+    catalog: list[dict[str, Any]] = []
+    for key, record in combined.items():
+        abstract = str(record.get("abstract") or "").strip()
+        note_path = str(record.get("note_path") or "").strip()
+        note_status = str(record.get("note_status") or record.get("status") or "not_read").strip()
+        queue_reason = str(record.get("queue_reason") or "").strip()
+        target_bucket = str(record.get("target_bucket") or "").strip()
+        catalog.append(
+            {
+                "record_key": key,
+                "paper_id": str(record.get("paper_id") or record.get("canonical_id") or record.get("id") or key),
+                "canonical_id": str(record.get("canonical_id") or record.get("normalized_id") or key),
+                "title": str(record.get("title") or "").strip(),
+                "authors": record.get("authors") if isinstance(record.get("authors"), list) else [],
+                "year": record.get("year"),
+                "venue": str(record.get("venue") or "").strip(),
+                "doi": str(record.get("doi") or "").strip(),
+                "url": str(record.get("url") or "").strip(),
+                "abstract": abstract,
+                "metadata_status": str(record.get("verification_status") or "retrieved_metadata"),
+                "relevance_score": _optional_number(record.get("relevance_score") or record.get("final_priority")),
+                "reading_status": note_status,
+                "canonical_note_path": note_path,
+                "target_bucket": target_bucket,
+                "queue_reason": queue_reason,
+                "bridge_association": bridge_id,
+                "usage_boundary": (
+                    "abstract_only_inspiration" if abstract and not note_path else
+                    "canonical_note_controls_claim_use" if note_path else
+                    "metadata_only_discovery"
+                ),
+            }
+        )
+    return sorted(
+        catalog,
+        key=lambda item: (
+            not bool(item.get("canonical_note_path")),
+            str(item.get("metadata_status") or "") != "metadata_verified",
+            not bool(item.get("abstract")),
+            -float(item.get("relevance_score") or 0.0),
+            str(item.get("title") or "").casefold(),
+        ),
+    )
+
+
+def _optional_number(value: object) -> float | None:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_bridge_dir_name(bridge_id: str) -> str:
+    value = "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in bridge_id).strip("._-")
+    return value or "unknown_bridge"
+
+
+def _write_bridge_context_markdown(path: Path, context: dict[str, Any], catalog: list[dict[str, Any]]) -> None:
+    """Write a human-readable pointer file; it is not a scientific paper note."""
+
+    lines = [
+        f"# Cross-domain bridge: {context.get('name') or context.get('bridge_id')}",
+        "",
+        f"Bridge ID: {context.get('bridge_id')}",
+        f"Rationale: {context.get('rationale') or 'Not specified'}",
+        "",
+        "This directory retains retrieved cross-domain material independently of deep reading. "
+        "Use `paper_catalog.json` for metadata and reading status. Canonical reading notes, when available, "
+        "remain the only source for direct scientific claims.",
+        "",
+        f"Retrieved records: {len(catalog)}",
+    ]
+    _atomic_write_text(path, "\n".join(lines) + "\n")
 
 
 def refresh_t3_notes_manifest(workspace_dir: Path) -> dict[str, Any]:
@@ -318,7 +678,12 @@ def _load_default_queue(literature_dir: Path) -> tuple[list[dict[str, Any]], str
     for rel_name in ("deep_read_queue_pending.jsonl", "deep_read_queue.jsonl", "papers_verified.jsonl", "papers_dedup.jsonl"):
         path = literature_dir / rel_name
         if path.exists():
-            return load_jsonl(path), f"literature/{rel_name}"
+            records = load_jsonl(path)
+            # An empty pending queue is a completion marker, not an empty
+            # source of truth. Falling through preserves the original queue
+            # for manifests, bridge accounting, and a readable T3 summary.
+            if records or rel_name != "deep_read_queue_pending.jsonl":
+                return records, f"literature/{rel_name}"
     return [], "none"
 
 
@@ -559,6 +924,19 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
+        os.replace(tmp_name, path)
+    finally:
+        tmp_path = Path(tmp_name)
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
         os.replace(tmp_name, path)
     finally:
         tmp_path = Path(tmp_name)

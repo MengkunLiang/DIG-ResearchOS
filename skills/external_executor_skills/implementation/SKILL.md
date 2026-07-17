@@ -33,7 +33,7 @@ Write only:
 - `external_executor/implementation_preflight.json`;
 - `external_executor/implementation_change_contract.json`;
 - `external_executor/implementation_report.json`;
-- versioned implementation work under `external_executor/workdir/implementation/`;
+- versioned baseline adapter and method implementation deployments under `external_executor/expr/implementation/`;
 - `result_pack.json#implementations` through the narrow apply script.
 
 Do not change root-owned status, manifest, budget, iteration decisions, experiment plan, protocol fingerprint, baseline reproduction records, review verdicts, experiment runs, diagnoses, or sibling-owned sections. Return control to `research-execution` after applying the report.
@@ -93,7 +93,7 @@ python <skill-dir>/scripts/prepare_worktree.py --workspace <workspace> \
 The implementation root is:
 
 ```text
-external_executor/workdir/implementation/<iteration-id>/<implementation-id>/
+external_executor/expr/implementation/<iteration-id>/<implementation-id>/
   before/
   worktree/
   verification/
@@ -102,7 +102,7 @@ external_executor/workdir/implementation/<iteration-id>/<implementation-id>/
   implementation_provenance.json
 ```
 
-`before/` is a read-only snapshot. Edit only `worktree/`. Never mutate `external_executor/expr/`, acquired resources, baseline source snapshots, or another iteration's evidence in place. Reject symlink escapes and preserve excluded/generated-file rules in provenance.
+`before/` is a read-only snapshot. Edit only this package's `worktree/` under `external_executor/expr/implementation/`. Never mutate acquired resources, baseline source snapshots, another `external_executor/expr/` deployment, or another iteration's evidence in place. Reject symlink escapes and preserve excluded/generated-file rules in provenance.
 
 ## Inspect before editing
 
@@ -278,7 +278,7 @@ implementation_gate=ready_for_review|needs_fix|blocked
 implementation_id=<id>
 iteration_id=<id>
 report=external_executor/implementation_report.json
-implementation_root=external_executor/workdir/implementation/<iteration>/<implementation>/
+implementation_root=external_executor/expr/implementation/<iteration>/<implementation>/
 patch_bundle=<path>
 module_mapping=<path>
 changed_paths=<paths-or-count>

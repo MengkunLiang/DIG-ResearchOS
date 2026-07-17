@@ -7,22 +7,31 @@ import json
 import re
 from pathlib import Path
 
-from _common import dump_json_atomic, finite_number, load_json, read_simple_selector, utc_now
+from _common import dump_json_atomic, find_workspace, finite_number, is_within, load_json, read_simple_selector, resolve_in_workspace, utc_now
 
 
-def extract_one(attempt: Path, metric: dict) -> dict:
+def candidate_paths(attempt: Path, result_dir: Path | None, rel: str) -> list[Path]:
+    paths = []
+    if result_dir:
+        paths.extend([(result_dir / "outputs" / rel).resolve(strict=False), (result_dir / rel).resolve(strict=False)])
+    paths.extend([(attempt / "source" / rel).resolve(strict=False), (attempt / rel).resolve(strict=False)])
+    return paths
+
+
+def extract_one(attempt: Path, result_dir: Path | None, metric: dict) -> dict:
     spec = metric.get("extractor", {})
     typ = spec.get("type")
-    path = (attempt / "source" / spec.get("path", "metrics.json")).resolve(strict=False)
-    if not str(path).startswith(str((attempt / "source").resolve())):
-        raise ValueError("Metric path escapes source directory")
-    if not path.exists():
-        # Allow direct log paths in attempt root.
-        alt = (attempt / spec.get("path", "")).resolve(strict=False)
-        if str(alt).startswith(str(attempt.resolve())) and alt.exists():
-            path = alt
-        else:
-            raise FileNotFoundError(path)
+    rel = spec.get("path", "metrics.json")
+    path = None
+    for candidate in candidate_paths(attempt, result_dir, rel):
+        allowed_roots = [attempt.resolve()]
+        if result_dir:
+            allowed_roots.append(result_dir.resolve())
+        if any(is_within(candidate, root) for root in allowed_roots) and candidate.exists():
+            path = candidate
+            break
+    if path is None:
+        raise FileNotFoundError(rel)
     raw = None
     matched = None
     if typ == "json":
@@ -83,16 +92,28 @@ def main() -> int:
     ap.add_argument("--output", required=True)
     args = ap.parse_args()
     attempt = Path(args.attempt_dir).expanduser().resolve()
+    output = Path(args.output).expanduser().resolve()
+    workspace = find_workspace(output)
+    if not is_within(attempt, workspace / "external_executor" / "expr"):
+        raise SystemExit("Metric extraction attempt-dir must be under external_executor/expr")
+    if not is_within(output, workspace / "external_executor" / "raw_results"):
+        raise SystemExit("Metric extraction output must be under external_executor/raw_results")
     spec = load_json(Path(args.spec).expanduser().resolve())
+    result_dir = None
+    if isinstance(spec, dict) and spec.get("result_dir"):
+        for parent in [attempt, *attempt.parents]:
+            if (parent / "project.yaml").exists():
+                result_dir = resolve_in_workspace(parent, str(spec["result_dir"]))
+                break
     items = []
     errors = []
     for metric in spec.get("metrics", []):
         try:
-            items.append(extract_one(attempt, metric))
+            items.append(extract_one(attempt, result_dir, metric))
         except Exception as exc:
             errors.append({"metric": metric.get("name"), "error": str(exc)})
     payload = {"schema_version": "baseline_metrics.v1", "generated_at": utc_now(), "status": "complete" if items and not errors else "partial" if items else "failed", "items": items, "errors": errors}
-    dump_json_atomic(Path(args.output).expanduser().resolve(), payload)
+    dump_json_atomic(output, payload)
     print(payload["status"])
     return 0 if payload["status"] == "complete" else 2
 

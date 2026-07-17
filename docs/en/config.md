@@ -49,7 +49,7 @@ python -m researchos.cli configure-llm \
 
 ## Edit or Configure Interactively
 
-When `run`, `resume`, `run-task`, or `run-skill` finds a missing connection, it stops before creating an Agent and shows a Rich setup card. A complete real `config/model_settings.yaml` skips this guide, so setup is never repeated unnecessarily. The choices appear only when the file is missing, the example has not been copied, or a required field such as `provider`, `api_key`, or `model` is absent:
+When `run`, `resume`, `run-task`, or `run-skill` finds a missing connection, it stops before creating an Agent and shows a Rich setup card. A complete real `config/model_settings.yaml` skips this guide, so setup is never repeated unnecessarily. If only one field is missing, for example `model` while the provider, API URL, and API key already work, choosing setup asks only for `model`; an existing API-key environment reference is preserved and is never redisplayed, re-entered, or written back as a literal secret. When the provider changes, ResearchOS requests that provider's API key and model rather than carrying over the old provider's credential or model. The choices appear only when the file is missing, the example has not been copied, or a required field such as `provider`, `api_key`, or `model` is absent:
 
 1. Configure now: enter the values in the terminal and immediately test them.
 2. Edit `config/model_settings.yaml`: make the change yourself, then let ResearchOS reload and check it.

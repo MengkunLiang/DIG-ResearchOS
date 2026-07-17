@@ -7,7 +7,7 @@ import argparse
 import json
 import sys
 
-from _common import atomic_write_json, load_json, now_utc, require_allowed, resolve_in_workspace, workspace_root
+from _common import atomic_write_json, load_json, now_utc, require_allowed, require_under_workspace_path, resolve_in_workspace, workspace_root
 from validate_run_record import validate_record
 
 
@@ -26,6 +26,7 @@ def main() -> int:
             return 2
         output = resolve_in_workspace(root, args.output)
         require_allowed(root, output)
+        require_under_workspace_path(root, output, "external_executor/raw_results", label="checkpoint output")
         complete = record["run_status"] == "completed"
         artifact_refs = [item for item in [record.get("raw_log_ref"), record.get("metric_output_ref"), record.get("config_ref")] if item]
         artifact_refs.extend(record.get("artifacts", []))

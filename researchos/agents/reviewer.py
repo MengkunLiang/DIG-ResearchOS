@@ -1,6 +1,6 @@
 """T8 Reviewer Agent — 论文审稿
 
-输入: drafts/paper.tex, experiments/results_summary.json, literature/related_work.bib
+输入: drafts/paper.tex, external_executor/executor_research_report.md, literature/related_work.bib
 输出: drafts/review_rounds/round_N.md
 """
 
@@ -44,6 +44,7 @@ class ReviewerAgent(Agent):
                         "drafts/",
                         "literature/",
                         "experiments/",
+                        "external_executor/",
                     ],
                     "allowed_write_prefixes": ["drafts/review_rounds/"],
                     "prompt_template": "reviewer.j2",
@@ -64,9 +65,9 @@ class ReviewerAgent(Agent):
         project = load_project(ctx)
         ws = ctx.workspace_dir
 
-        # 读取实验结果用于验证
-        results_summary = read_text_file(
-            ws / "experiments" / "results_summary.json", default="{}"
+        # T5->T8 的核心实验接口是 external_executor/executor_research_report.md。
+        executor_research_report = read_text_file(
+            ws / "external_executor" / "executor_research_report.md", default=""
         )
         related_work = read_text_file(ws / "literature" / "related_work.bib", default="")
         manuscript_audit = read_text_file(ws / "drafts" / "manuscript_audit.md", default="")
@@ -92,7 +93,7 @@ class ReviewerAgent(Agent):
             self.spec.prompt_template,
             ctx,
             project=project,
-            results_summary=results_summary,
+            executor_research_report_preview=executor_research_report[:6000],
             related_work_bib=related_work[:3000],
             manuscript_audit_preview=manuscript_audit[:3000],
             craft_audit_preview=craft_audit[:3000],
@@ -117,7 +118,8 @@ class ReviewerAgent(Agent):
             f"请执行 T8 Reviewer 第{round_num}轮审稿。\n\n"
             "读取 drafts/paper.tex、drafts/manuscript_audit.md、drafts/craft_audit.md、"
             "drafts/paper_claim_audit.md、drafts/result_to_claim.json、"
-            "drafts/alignment_matrix.json、drafts/self_check.md"
+            "drafts/alignment_matrix.json、drafts/self_check.md、"
+            "external_executor/executor_research_report.md"
             f"{'、drafts/review_rounds/round_' + str(round_num - 1) + '.md' if round_num > 1 else ''}，"
             f"先逐章生成 drafts/review_rounds/round_{round_num}_sections/*.md，"
             f"再综合生成 drafts/review_rounds/round_{round_num}.md。"

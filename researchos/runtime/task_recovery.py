@@ -4,7 +4,7 @@ from __future__ import annotations
 
 目标：
 - 给所有 task 提供统一的“已有输出/缺失输出”快照；
-- 为已有专项恢复逻辑（T3 / T5 / T7）提供统一接入口；
+- 为已有专项恢复逻辑（T3 / legacy T5）提供统一接入口；
 - 让 single-task 与完整 pipeline 两条执行链都能复用同一套恢复语义。
 """
 
@@ -147,7 +147,7 @@ def prepare_task_resume_artifacts(
 
     约定：
     - generic 恢复能力对所有 task 生效；
-    - T3 / T5 / T7 继续叠加专项恢复信息；
+    - T3 / legacy T5 继续叠加专项恢复信息；
     - 如果历史上已经被判定为 resume，则沿用原 resume_reason；
     - 如果只是检测到已有输出，则补一个通用 reason，提醒 Agent 走增量模式。
     """
@@ -167,11 +167,9 @@ def prepare_task_resume_artifacts(
                 refresh_reason=str(base_extra.get("resume_reason") or "context_build"),
             )
         )
-    # T5 / T7 的“已有代码 + 待补实验产物”也继续沿用专项恢复器。
+    # Legacy T5 的“已有代码 + 待补实验产物”继续沿用专项恢复器。
     elif task_id == "T5":
         recovery.update(prepare_experiment_resume_artifacts(workspace_dir, mode="pilot"))
-    elif task_id == "T7":
-        recovery.update(prepare_experiment_resume_artifacts(workspace_dir, mode="full"))
 
     resume_mode = bool(
         base_extra.get("resume_mode")

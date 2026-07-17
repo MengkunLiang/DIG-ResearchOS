@@ -59,8 +59,8 @@
 ## Step 2: 用多个来源检索，并立即保留返回结果
 - 优先使用 `openalex_search`、`crossref_search`、`arxiv_search`；有凭据时可使用 `semantic_scholar_search`、`elsevier_scopus_search`。OR/MS 或管理科学主题可补充 `informs_search`。传统 MCP 连接若配置可用也可使用；未配置时继续使用公开来源，不要停在等待 MCP。
 - `multi_source_search` 可作为来源故障时的组合搜索。所有论文元数据必须来自工具返回；禁止编造 title、作者、venue、年份、摘要、DOI 或引用关系。
-- 每条 query 都指定召回意图：`core`、`baseline`、`evaluation`、`adjacent_field` 或 `theory_bridge`。这只是检索记录，不等于论文已经通过筛选。
-- 每次搜索返回 `papers` 时，runtime 会立刻合并写入 `literature/papers_raw.jsonl`。看到“已自动保留”后，继续下一项工作；不要对同一批结果调用 `append_papers_raw`、`save_papers_raw` 或把结果攒在内存里。用户要求补检时，优先安排缺失 bucket 的 2-4 条 query；全部新增 query 仍不得超过本轮预算。
+- 每条 query 都指定检索方向（内部字段 `query_bucket`）：`core`、`baseline`、`evaluation`、`adjacent_field` 或 `theory_bridge`。这只是检索记录，不等于论文已经通过筛选。
+- 每次搜索返回 `papers` 时，runtime 会立刻合并写入 `literature/papers_raw.jsonl`。看到“已自动保留”后，继续下一项工作；不要对同一批结果调用 `append_papers_raw`、`save_papers_raw` 或把结果攒在内存里。用户要求补检时，优先安排缺失检索主题的 2-4 条 query；全部新增 query 仍不得超过本轮预算。
 - 一个来源暂时失败或返回空结果时，记录事实并切换来源或 query。不要对相同失败请求无限重试。
 - 默认英文文稿（`manuscript_language=en` 且 `include_chinese_literature=False`）不要主动设计中文 query；用户提供的中文材料只可用于理解范围，不得把它当作英文稿核心 citation。中文或 mixed 文稿可检索中文文献，但只接受明确的高质量或用户提供来源。
 

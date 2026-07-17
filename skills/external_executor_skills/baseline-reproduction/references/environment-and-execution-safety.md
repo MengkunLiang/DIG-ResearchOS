@@ -7,11 +7,12 @@ The runner is a recorder and limiter, not a full security sandbox. Prefer a proj
 ## Command rules
 
 - Use an argv array; never interpolate an untrusted command into a shell string.
-- The executable must appear in `allowed_executables` or resolve inside the controlled source/attempt directory.
+- The executable must appear in `allowed_executables` or resolve inside the controlled source/deployment directory.
 - Default safe executables are Python interpreters and explicitly declared ML launchers.
 - A shell, package manager, build tool, notebook runner, container engine, remote scheduler, or downloader requires exact authorization in the current plan.
 - Do not execute repository hooks, lifecycle scripts, or hidden bootstrap code.
-- Working directory must resolve inside the attempt directory.
+- Working directory must resolve inside the deployment directory under `external_executor/expr/`.
+- Runtime evidence and declared result outputs must be written to the paired directory under `external_executor/raw_results/`.
 
 ## Environment variables and secrets
 

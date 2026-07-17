@@ -80,7 +80,13 @@ def main() -> int:
         if "baseline" not in text and not iteration.get("baseline_ids"):
             warnings.append({"id": "iteration_baseline_authorization_ambiguous", "message": "Active iteration does not clearly name baseline reproduction"})
 
-    write_targets = [output, ext / "baseline_reproduction_plan.json", ext / "baseline_reproduction_report.json", ext / "workdir" / "baseline_reproduction"]
+    write_targets = [
+        output,
+        ext / "baseline_reproduction_plan.json",
+        ext / "baseline_reproduction_report.json",
+        ext / "expr" / "baseline_reproduction",
+        ext / "raw_results" / "baseline_reproduction",
+    ]
     for target in write_targets:
         try:
             assert_write_allowed(ws, target)

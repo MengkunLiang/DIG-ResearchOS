@@ -27,12 +27,16 @@ python -m researchos.cli validate-config
 ```bash
 PYTHONPATH=. python -m compileall -q researchos
 PYTHONPATH=. python -m researchos.cli validate-config --no-banner --no-color
+python scripts/check_docs.py --strict \
+  --report tmp/debug/08_documentation_audit/docs_quality.json
 pytest -q tests/unit
 pytest -q tests/real
 git diff --check
 ```
 
 为更改的逻辑添加针对性测试。至少，行为变更应覆盖其验证器/工具/CLI 路径，以及一个真实或快照式集成路径，其中影响范围触及用户可见的运行时行为。
+
+`check_docs.py` 是只读的文档质量门。它检查 Markdown 链接与锚点、示例中的 CLI 子命令和选项、状态机 task 名称，以及文档中不应作为当前写法出现的旧路径和术语。只有显式提供 `--report` 时才写入报告；报告应放在 `tmp/debug/08_documentation_audit/`，不要写入用户 Workspace。
 
 对于上下文自适应批处理，测试多篇论文的提供者上下文批次以及格式错误/部分批次的回退。断言独立的笔记制品和 `ABSTRACT_ONLY` 边界；永远不要只测试提供者调用次数。
 
@@ -45,8 +49,11 @@ python -m researchos.cli doctor --workspace /tmp/researchos-dev
 python -m researchos.cli run-task HELLO --workspace /tmp/researchos-dev
 python -m researchos.cli list-skills --workspace /tmp/researchos-dev
 python -m researchos.cli describe-skill domain-synthesis-studio --workspace /tmp/researchos-dev
+python -m researchos.cli validate --task T3.6-VISUALS --scope inputs --workspace ./workspace/project-a
 python -m researchos.cli validate --task T3.6-SEC-INTRO --workspace ./workspace/project-a
 ```
+
+`validate --scope inputs` 用于在高成本 resume 前检查声明的前置材料；如果任务声明了 `literature_manifest`，它也会检查共享的 Literature Artifact Contract。默认 scope 仍是 `outputs`，用于检查已经生成的任务产物。
 
 对于 Compose 回归：
 

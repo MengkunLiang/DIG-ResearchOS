@@ -221,7 +221,7 @@ def read_state(ctx: "ExecutionContext") -> dict:
 
 
 def read_iteration_count(ctx: "ExecutionContext", key: str) -> int:
-    """读iteration_count[key]，用于T5重做、T7多轮实验。"""
+    """读iteration_count[key]，用于需要重做或多轮执行的任务。"""
     state = read_state(ctx)
     return state.get("iteration_count", {}).get(key, 0)
 
@@ -376,7 +376,9 @@ def build_resume_prefix(ctx: "ExecutionContext") -> str:
         "[恢复运行] 这是一次续跑。必须先读取已有产物，在现有内容基础上增量完成，不要忽略之前已经做出的结果。",
     ]
     if resume_state_path:
-        lines.append(f"- 恢复状态文件：`{resume_state_path}`")
+        lines.append(
+            "- 内部恢复状态已由 controller 加载；不要直接读取 `_runtime/resume/` 下的文件。"
+        )
     if resume_reason:
         lines.append(f"- 恢复原因：`{resume_reason}`")
     if existing_outputs:

@@ -5,7 +5,7 @@
 Published builds and validate-only runs use:
 
 ```text
-external_executor/skill_specialization_report.json
+external_executor/report/skill_specialization_report.json
 ```
 
 The report is the durable specialization result. It is not a research audit.

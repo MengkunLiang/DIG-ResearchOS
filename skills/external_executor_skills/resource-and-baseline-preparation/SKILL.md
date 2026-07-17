@@ -1,6 +1,6 @@
 ---
 name: resource-and-baseline-preparation
-description: Prepare and statically validate the datasets, benchmarks, baseline implementations, evaluation code, preprocessing assets, checkpoints, environments, protocols, and references required by the confirmed ResearchOS external-executor scope. Use when `research-execution` dispatches Phase B after non-blocking context alignment, when resource readiness is missing or stale, or when authorized local search, GitHub acquisition, or baseline reimplementation is needed. Produce a requirement matrix, provenance-rich inventory, candidate and review records, material gaps, propagated risks, and a `ready`, `partial`, or `blocked` readiness gate. Do not run baseline experiments, redesign claims, silently replace required baselines, execute unreviewed third-party code, or broaden network, dataset, license, path, or reimplementation authority.
+description: Prepare and statically validate the datasets, benchmarks, baseline implementations, evaluation code, preprocessing assets, checkpoints, environments, protocols, and references required by the confirmed ResearchOS external-executor scope. Use when `research-execution` dispatches Phase B after non-blocking context alignment, when resource readiness is missing or stale, or when authorized local resource review, public remote acquisition, or baseline reimplementation is needed. Produce a requirement matrix, provenance-rich inventory, candidate and review records, material gaps, propagated risks, and a `ready`, `partial`, or `blocked` readiness gate. Do not run baseline experiments, redesign claims, silently replace required baselines, execute unreviewed third-party code, or broaden network, dataset, license, path, or reimplementation authority.
 ---
 
 # Resource and Baseline Preparation
@@ -23,7 +23,7 @@ Prepare the minimum experiment loop without confusing resource availability with
    - `<skill-dir>/references/acquisition-policy.md`;
    - `<skill-dir>/references/resource-requirement-contract.md`;
    - `<skill-dir>/references/output-contract.md`.
-4. Stop with `blocked` when context alignment is absent or blocking, the confirmed execution scope is missing, the acquisition policy is internally inconsistent, or the writable resource boundary cannot be determined. If the policy is absent in a legacy handoff, use the ResearchOS default policy: public GitHub access, public dataset download, and baseline reimplementation are allowed within `allowed_paths.txt`, license review, and security review.
+4. Stop with `blocked` when context alignment is absent or blocking, the confirmed execution scope is missing, the acquisition policy is internally inconsistent, or the writable resource boundary cannot be determined. If the policy is absent in a legacy handoff, use the ResearchOS default policy: public remote resource acquisition, public dataset download, and baseline reimplementation are allowed within `allowed_paths.txt`, license review, and security review.
 
 Write only:
 
@@ -31,8 +31,11 @@ Write only:
 - `external_executor/resource_requirement_matrix.json`;
 - `external_executor/resource_local_inventory.json`;
 - `external_executor/resource_search_records.json`;
+- `external_executor/resource_source_report.json`;
+- `external_executor/resource_source_report.md`;
 - `external_executor/resource_preparation_report.json`;
-- authorized staged/acquired/reimplemented material under `external_executor/workdir/resources/`;
+- authorized by-hand local material under `resources/`;
+- authorized remote acquisitions and baseline reimplementations under `resource/`;
 - the Phase B result-pack sections listed in `references/output-contract.md`, through the narrow apply script.
 
 Do not change `executor_status.json`, `run_manifest.json`, budgets, iteration decisions, context alignment, experiment plans, baseline reproduction records, or sibling-owned sections. Return control to `research-execution` after applying the report.
@@ -51,10 +54,10 @@ The preflight must confirm:
 - `context_alignment.status` is `pass` or non-blocking `mismatch`;
 - `confirmed_execution_scope` contains required baselines, benchmark/protocol information, minimum loop, claim constraints, and acquisition policy;
 - acquisition mode, capability flags, and allowed domains agree;
-- local output and `workdir/resources/` paths are writable under policy;
+- local output, `resources/`, `resource/`, and source-report paths are writable under policy;
 - no unsupported major schema is required.
 
-A preflight warning prompts targeted review. A preflight blocker prevents acquisition and reimplementation. A scaffold-only `external_executor/expr/`, missing `resources/baseline_candidates.jsonl`, or missing `literature/baseline_map.json` is not a blocker; this skill owns discovering/acquiring/reimplementing missing resources.
+A preflight warning prompts targeted review. A preflight blocker prevents acquisition and reimplementation. `external_executor/expr/` is not a resource inventory source; whether it is empty, guide-only, or populated is not a Phase B local-resource blocker. Missing `resources/` by-hand inputs, `resource/` acquired/reimplemented products, `resources/baseline_candidates.jsonl`, `resource/baseline_candidates.jsonl`, or `literature/baseline_map.json` are also not blockers; this skill owns discovering/acquiring/reimplementing missing resources.
 
 ## Build the resource requirement matrix
 
@@ -80,7 +83,19 @@ Every requirement must state whether it is required, what minimum-loop dependenc
 
 Do not silently weaken a requirement because a convenient candidate exists.
 
-## Search and inventory local material first
+## Use the three-step resource strategy
+
+For each unsatisfied requirement, proceed in this exact order:
+
+1. verify by-hand local resources under the project `resources/` area;
+2. search and acquire authorized public remote resources;
+3. reimplement an unavailable required baseline when policy permits.
+
+After each step, review candidates against the requirement matrix and check whether all minimum-loop requirements are now satisfied. If they are satisfied, stop the strategy for those requirements and do not run later fallback steps. If all three steps finish and a minimum-loop required resource is still unsatisfied, mark the requirement blocked, record the blocker, and return to `research-execution` for human supplementation or scope review.
+
+Never inspect `external_executor/expr/` for candidate baselines, benchmarks, datasets, checkpoints, or evaluation resources. `external_executor/expr/` is the formal experiment area after baseline and method construction; using it as a resource source makes execution artifacts indistinguishable from prepared inputs.
+
+## Inventory local resource material first
 
 Run:
 
@@ -92,15 +107,16 @@ python <skill-dir>/scripts/inventory_local_resources.py --workspace <workspace> 
 Inspect in this order:
 
 ```text
-external_executor/expr/
-resources/
+resources/                        # by-hand local project resources
+resource/                         # acquired/reimplemented products from this skill
 user_seeds/
-external_executor/workdir/resources/  # only verifiable prior material
 ```
 
-It is valid for `external_executor/expr/` to contain only the generated README and checklist. Record that as an inventory fact and continue to authorized remote acquisition or reimplementation for unsatisfied requirements.
+Do not inventory `external_executor/expr/`, even if it exists and contains files. Existing files there are execution workspace material, not approved candidate resources.
 
 Use `references/resource-review-checklist.md` to map candidates to requirements. Inspect provenance, fixed version, license, README, configuration, entry points, dependency manifests, dataset split, preprocessing, metric implementation, benchmark protocol, checkpoints, symlinks, submodules, and minimum-loop coverage. Do not execute third-party setup, download, shell, notebook, training, or evaluation code during inventory.
+
+Stage accepted by-hand material under `resources/byhand/<candidate-id>/`.
 
 When a local candidate is accepted for controlled work, copy it without mutating the source:
 
@@ -120,7 +136,7 @@ python <skill-dir>/scripts/initialize_resource_report.py --workspace <workspace>
 
 The initializer preserves already reviewed child-owned sections by default. Use `--force` only when the root has invalidated the entire Phase B checkpoint.
 
-## Search and acquire remote resources only when authorized
+## Search and acquire remote resources only when local resources are insufficient
 
 Read `references/source-ranking-and-search.md` before remote search.
 
@@ -132,7 +148,15 @@ Use remote search only for requirements still unsatisfied after local review and
 - dataset download is separately authorized when the resource contains data;
 - the query does not expose private manuscript text, unpublished results, secrets, or private paths.
 
-For ResearchOS T5 external execution, public GitHub search/acquisition and public dataset download are allowed by default unless a narrower handoff policy explicitly forbids them.
+For ResearchOS T5 external execution, public remote search/acquisition and public dataset download are allowed by default unless a narrower handoff policy explicitly forbids them.
+
+Search these platform groups first, then broaden only if they cannot satisfy the requirement:
+
+- Baseline: Hugging Face, OpenReview, GitLab, Bitbucket, ModelScope, Zenodo.
+- Dataset: Hugging Face, OpenML, Kaggle, UCI, Zenodo, Dataverse, DataCite.
+- Benchmark: OpenML, Hugging Face Leaderboards, Codabench, EvalAI, HELM, and relevant domain-specific platforms such as OGB, MTEB, or OpenCompass.
+
+Record every public source class checked, selected candidate, rejection, and remaining uncertainty in `external_executor/resource_search_records.json`.
 
 Prefer, in order:
 
@@ -157,11 +181,13 @@ Immediately perform static review:
 
 ```bash
 python <skill-dir>/scripts/static_review_repository.py --workspace <workspace> \
-  --path <workspace>/external_executor/workdir/resources/github/<candidate-id> \
-  --output <workspace>/external_executor/workdir/resources/github/<candidate-id>/static_review.json
+  --path <workspace>/resource/Remote_acquisition/<candidate-id> \
+  --output <workspace>/resource/Remote_acquisition/<candidate-id>/static_review.json
 ```
 
 Treat static review as risk discovery, not proof of safety. Never run a fetched install script merely because the scan passed.
+
+After remote acquisition and review, recompute whether the affected requirement is satisfied. If a required baseline, dataset, benchmark, metric, or checkpoint now has a passing candidate with suitable approval, do not proceed to reimplementation for that requirement.
 
 ## Reimplement a baseline only as the final authorized path
 
@@ -171,7 +197,7 @@ Reimplementation is permitted only when:
 
 - mode is `github_and_reimplementation`;
 - `baseline_reimplementation_allowed=true`;
-- local and authorized remote searches are exhausted and recorded;
+- local resource review and authorized public remote searches are exhausted and recorded;
 - core algorithm, objective, dataset/split, metric, and benchmark protocol are recoverable;
 - license or access restrictions do not prohibit the work;
 - the requirement does not demand an official implementation specifically.
@@ -201,6 +227,10 @@ python <skill-dir>/scripts/validate_reimplementation_package.py --workspace <wor
 
 If the central mechanism or protocol cannot be recovered, mark the baseline unavailable rather than inventing missing details.
 
+After reimplementation validation and independent review, recompute readiness. If the reimplemented candidate still cannot satisfy the minimum-loop requirement, mark Phase B `blocked` and request human-provided resource material or an approved scope/baseline decision from the root.
+
+Place reimplementation products under `resource/reproduction/<baseline>/`.
+
 ## Perform an independent resource review
 
 Read `references/resource-review-checklist.md` and `references/repository-static-review.md`.
@@ -224,6 +254,8 @@ For each reviewed candidate record:
 
 A candidate may be approved for `static_inspection` or `smoke_preparation` while still being rejected for `baseline_reproduction` or `formal_comparison`.
 
+A baseline may be marked executable, or approved for `baseline_reproduction` / `formal_comparison`, only when all seven conditions are explicitly satisfied: accessible code or model exists; an immutable revision can be locked; license is clear; environment or dependency information exists; dataset version and split are determined; metric implementation is determined; and at least one traceable result record exists.
+
 ## Compute the readiness gate
 
 Assemble `external_executor/resource_preparation_report.json` using `references/output-contract.md`, then run:
@@ -233,6 +265,17 @@ python <skill-dir>/scripts/compute_resource_readiness.py --workspace <workspace>
   --report <workspace>/external_executor/resource_preparation_report.json \
   --write-back
 ```
+
+Before final validation, build the source report for by-hand products under `resources/` and acquired/reimplemented products under `resource/`:
+
+```bash
+python <skill-dir>/scripts/build_resource_source_report.py --workspace <workspace> \
+  --output external_executor/resource_source_report.json \
+  --markdown-output external_executor/resource_source_report.md \
+  --write-back
+```
+
+The report must classify products as `byhand`, `Remote_acquisition`, or `reproduction`.
 
 Use these outcomes:
 
@@ -312,8 +355,9 @@ The recommendation is advisory. `research-execution` owns manifest registration,
 - `scripts/build_requirement_matrix.py`: create a deterministic requirement scaffold from confirmed scope.
 - `scripts/inventory_local_resources.py`: inventory local candidates without executing them.
 - `scripts/initialize_resource_report.py`: create or refresh the durable Phase B report envelope without overwriting reviewed sections.
-- `scripts/stage_local_resource.py`: copy accepted local material into controlled workdir with provenance.
-- `scripts/acquire_github_resource.py`: fetch one immutable GitHub revision without submodules or code execution.
+- `scripts/stage_local_resource.py`: copy accepted local material into `resources/byhand/` with provenance.
+- `scripts/acquire_github_resource.py`: fetch one immutable public Git revision without submodules or code execution.
+- `scripts/build_resource_source_report.py`: classify by-hand products under `resources/` and acquired/reimplemented products under `resource/` by source category.
 - `scripts/static_review_repository.py`: inspect repository metadata and risky patterns statically.
 - `scripts/scaffold_reimplementation.py`: create a provenance-first baseline reimplementation package.
 - `scripts/validate_reimplementation_package.py`: validate reimplementation completeness and labels.

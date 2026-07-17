@@ -60,7 +60,7 @@ config/system_config/state_machine.yaml
 
 每次启动先显示 Rich 启动卡：项目目录、已加载的研究流程、模型设置、可用 Skill 和 MCP 状态。随后“系统检查”卡只报告模型连接与本地依赖是否可用，不再输出 YAML、`startup_selftest`、配置路径列表或原始 provider trace。`--no-color` 只关闭颜色，仍保留卡片和表格；`--verbose` 才显示配置路径、完整 Tool 名称、详细错误和过程文件。
 
-普通运行只展示研究者需要采取行动的信息：当前正在做什么、已经完成什么、还需要什么以及下一步。高容量 Tool（PDF 文本、网页、命令输出和结构化记录）仍把完整结果保存在运行记录中，终端只给出页码、范围、文件或状态摘要。长文本在 Rich 单元格中自然换行；不会使用字符级省略号截断半句话。模型等待会显示一条原位刷新的 heartbeat，优先保留当前活动和已完成的公开里程碑，不重复刷出同一行。
+普通运行只展示研究者需要采取行动的信息：当前正在做什么、已经完成什么、还需要什么以及下一步。高容量 Tool（PDF 文本、网页、命令输出和结构化记录）仍把完整结果保存在运行记录中，终端只给出页码、范围、文件或状态摘要。长文本在 Rich 单元格中自然换行；不会使用字符级省略号截断半句话。模型等待会显示一条原位刷新的 heartbeat，优先保留当前活动和已完成的公开里程碑，不重复刷出同一行。等待时间属于研究者可见的逻辑阶段，而不是某一次 provider 请求，因此 T4.5、T5、T8 或其他长任务发生 retry 时，屏幕上的阶段计时不会重新开始。T4 保留由控制器管理的更细粒度阶段时钟。Resume 会启动新的显示时钟，而是否跳过工作仍只由已验证的持久化产物决定。
 
 用户界面称“材料准备”“论文阅读笔记”“论文中的相关内容或位置”“输出文件”。`taxonomy`、`baseline`、`ablation`、`claim` 和 `Related Work` 等学术术语保持原样。内部的 `schema`、`artifact`、`intake`、Agent 名称、Tool 名称和原始 provider 错误仍可在 `--verbose`、trace 和日志中查看，但不会作为普通用户界面的主要说明。
 
@@ -68,7 +68,7 @@ config/system_config/state_machine.yaml
 
 一个请求只使用 `config/model_settings.yaml` 中配置的同一个 provider/model。若因 timeout、连接中断、502/503/504 或临时过载失败，runtime 会先按该文件中的同模型 retry 策略等待并重试；连续恢复仍失败时，终端提供“立即重试”“等待后重试”“暂停项目”三个明确选项。等待不计入 Agent 的有效工作时间，也不会消耗研究步骤。
 
-暂停会保留当前任务和所有 artifact；服务恢复后使用原来的 `resume` 命令继续。普通 CLI 不显示 API key、完整 SDK stack trace 或内部 retry 细节。认证、URL 与 model 配置问题会直接提示运行 `configure-llm`，而不是进入无意义的网络重试。
+暂停会保留当前任务和所有 artifact；服务恢复后使用原来的 `resume` 命令继续。暂停前写入的文件会显示为“已写入，待完成校验”，而不是可供下游使用的完成结果。当恢复编译器有意保留 blocked handoff 或部分报告时，这一区分尤其重要。详细模式与事件 trace 会保留完整的暂存文件清单和诊断。普通 CLI 不显示 API key、完整 SDK stack trace 或内部 retry 细节。认证、URL 与 model 配置问题会直接提示运行 `configure-llm`，而不是进入无意义的网络重试。
 
 ## 引导式技能会话
 
@@ -158,7 +158,17 @@ $.ideas[0].basis.literature_observations[0].strength [enum]: supporting is not a
 
 文件不会被部分写入。更正列出的字段，然后重试相同的 `write_structured_file` 调用。不要仅仅为了减少模式错误而删除候选记录：T4 需要完整的 Gate1 池，包括延迟、合并和拒绝的候选记录。终端错误代码保持为 `schema_validation_failed` 以供自动化使用；字段级诊断是可操作的原因。
 
-T4 不会机械地产生固定数量的想法卡片，而是先构建 Evidence Index 和非对称 P0。Standard mode 完成 `P0 -> P1`：以不同的 Evidence Permission 召回全文/部分全文与摘要层论文阅读笔记，形成 Opportunity Map，按 Route 生成 Candidate，执行 Independent Scoring，生成受计划约束的 Mutation Child 和满足 Compatibility Check 的 Crossover Child，随后进行 union rescoring 与 Survival Selection。Gate1 通常先展示 1–3 个成熟 Candidate 的 Portfolio，同时保留 6–8 个 Active Candidates 和完整 Archive。每张成熟卡由 LLM 基于 Workspace 证据撰写，包含 2–4 项 Contribution、2–4 条 Draft Hypotheses、机制、验证路径、风险、Evidence Composition、评分解释、谱系和论文阅读笔记路径。运行时负责验证结构、来源、权限和生命周期，不会补写科研性文字。`resume` 会从最后一个有效 Phase 修复不完整的 native artifact；legacy artifact 只会迁移，不会被静默覆盖。
+T4 不会机械地产生固定数量的想法卡片，而是先构建 Evidence Index 和非对称 P0。Standard mode 完成 `P0 -> P1`：以不同的 Evidence Permission 召回全文/部分全文与摘要层论文阅读笔记，形成 Opportunity Map，按 Route 生成 Candidate，执行 Independent Scoring，生成受计划约束的 Mutation Child 和满足 Compatibility Check 的 Crossover Child，随后进行 Survival Selection。只有成功接纳的 Child 改变 Population 时才执行 union rescoring；若没有 Child 通过验证，Controller 会带着明确的评分复用回执复用既有 Parent 的独立评分，既不编造新分数，也不会额外调用 provider。Route 配额、P0 目标数、Family 分布、MMR 和 Portfolio 数量都是调度或排序目标，不是“一少一条就失败”的完成条件；Gate1 可以展示现有的 1–3 个最佳方向，并保留完整 Active Population 和 Archive。
+
+原生 T4 的模型输出采用四态结果：`valid` 可直接继续，`repairable` 先做无损提取、别名/枚举/ID 等确定性归一和受限修复，`degraded` 保留可用内容、写明风险并继续，只有 `blocked` 才停止。`blocked` 仅用于证据权限或来源越界、虚假或不可追溯 Citation、Candidate/Parent/Plan 谱系冲突、ID 覆盖、指纹/工作区一致性损坏和 Legacy 覆盖风险等 Hard Invariant。Markdown fence、YAML、数组/对象外层差异、非核心字段缺失、单 Route 失败、数量不足、Crossover 不兼容、评分暂缺和展示卡延后都属于可修复或降级情形，必须记录诊断而不是丢弃整个 Round。
+
+初始 Route 可以产生最小 `IdeaSeed`：问题、核心命题、候选机制、贡献草图、一条可证伪预测、主要不确定性和 Route 来源。Controller 负责稳定 ID、谱系、版本、配额、重试、Artifact 与恢复。证据约束的是认证，不是想象边界：每条正常 Route 都可以在 Workspace 上下文之外使用通用学术知识、反事实推演和结构性跨域类比。此类内容会写入 `CreativeContext`，保留概念跃迁、竞争解释、反直觉预测、研究纲领潜力及所需验证/阅读升级；Seed 的 LLM 参数知识会标为 `knowledge_origin=llm_parametric_knowledge`、`evidence_status=conjectural`、`verification_required=true`，可用于提出假设，绝不能转为已证实机制、文献、数据集、指标或结果。成熟 Candidate 才需要完整展示与多条假设。评分在有限重试后仍失败时为 `unscored`，不会伪造分数或删除 Candidate；恢复和 Profile 重评只使用实际获得的独立评分，未评分项保持可见并提示人工或后续重试。运行时负责验证结构、来源、权限和生命周期，不会补写科研性文字。`resume` 会从最后一个有效 Phase 修复不完整的 native artifact；`ideation.j2` 只能由显式 Legacy 配置进入，且不能覆盖原生 Artifact。
+
+T4 明确区分当前成熟度与科研上行空间。`overall_readiness` 描述 Candidate 此刻的完整性和证据校准程度；独立 Scorer 的 `scientific_upside` 则描述其问题重构、机制、反直觉预测或研究纲领在猜想通过验证后可能带来的价值。`wildcard_recommended` Candidate 可以与成熟方向一起保留给人类比较，但该标签绝不会使它成为已认证证据或直接可进入 T4.5 的候选。同样，Evolution Plan 返回带理由和复审条件的 `no_improvement`、`incompatible` 或 `deferred` 时，Controller 会保留 Parent，而不是强迫生成措辞变化的 Child。复杂度是审查与后续演化目标，不是自动淘汰理由。
+
+T4 的实时视图分开显示当前活动、当前产物和后续阶段。例如 Opportunity Map 统一显示为 `研究机会探索（Opportunity Map）`；运行中会明确“本次产出”为研究机会清单（不是最终 Candidate），“完成后”为多视角 Idea 发散，避免把同一个 Opportunity Map 同时写成当前活动和误导性的“下一步”。
+
+运行时生成的 `_DIR_GUIDE.md` 只是操作说明，不是科研输入，因此不会使输入指纹失效。对 T4 的证据可用性而言，缺失的笔记目录与空的笔记目录等价；真实笔记的字节内容仍会绑定进指纹。原生 Seed 与 `unscored` Candidate 保持可见。Seed 在已有独立评分、完整 LLM Final Card、可追溯命题和至少一条 LLM 草案假设时，可以以 provisional 方向进入 T4.5；成熟度与证据告警是审计输入，不能成为确认后重新打开 T4 的隐藏原因。`unscored` Candidate 或缺少上述结构输入的 Candidate 会在确认前阻塞。完全没有原生生命周期字段的历史 Candidate Artifact 继续使用其历史 resume 契约，不会被误判为新的 Seed。
 
 ## 扩展点
 

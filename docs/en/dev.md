@@ -27,12 +27,16 @@ Use `.env` for local provider credentials. Never add it to a commit. Run command
 ```bash
 PYTHONPATH=. python -m compileall -q researchos
 PYTHONPATH=. python -m researchos.cli validate-config --no-banner --no-color
+python scripts/check_docs.py --strict \
+  --report tmp/debug/08_documentation_audit/docs_quality.json
 pytest -q tests/unit
 pytest -q tests/real
 git diff --check
 ```
 
 Add focused tests for changed logic. At minimum, behavior changes should cover their validator/tool/CLI path and one real or snapshot-style integration path where the blast radius reaches user-visible runtime behavior.
+
+`check_docs.py` is a read-only documentation quality gate. It checks Markdown links and anchors, CLI commands/options in examples, state-machine task names, and legacy paths or terminology that should not appear as current guidance. It writes a report only when `--report` is explicit. Store that report under `tmp/debug/08_documentation_audit/`, never in a user Workspace.
 
 For context-adaptive batching, test both a multi-paper provider-context batch and a malformed/partial batch fallback. Assert separate note artifacts and `ABSTRACT_ONLY` boundaries; never test only the provider call count.
 
@@ -45,8 +49,11 @@ python -m researchos.cli doctor --workspace /tmp/researchos-dev
 python -m researchos.cli run-task HELLO --workspace /tmp/researchos-dev
 python -m researchos.cli list-skills --workspace /tmp/researchos-dev
 python -m researchos.cli describe-skill domain-synthesis-studio --workspace /tmp/researchos-dev
+python -m researchos.cli validate --task T3.6-VISUALS --scope inputs --workspace ./workspace/project-a
 python -m researchos.cli validate --task T3.6-SEC-INTRO --workspace ./workspace/project-a
 ```
+
+`validate --scope inputs` checks declared prerequisites before an expensive resume, including the shared Literature Artifact Contract when the task declares `literature_manifest`. The default scope remains `outputs`, which checks generated task artifacts.
 
 For Compose regression:
 

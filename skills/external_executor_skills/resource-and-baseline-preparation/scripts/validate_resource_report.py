@@ -11,13 +11,58 @@ TOP_REQUIRED = {
     "schema_version", "child_skill", "status", "generated_at", "input_fingerprint", "policy_snapshot",
     "resource_requirement_matrix", "local_inventory", "remote_search_records", "staged_resources",
     "acquired_resources", "baseline_candidates", "dataset_inventory", "reimplementations",
-    "resource_reviews", "material_gaps", "resource_risks", "resource_readiness", "artifact_refs", "notes",
+    "resource_source_report", "resource_reviews", "material_gaps", "resource_risks",
+    "resource_readiness", "artifact_refs", "notes",
 }
 SECTION_STATUSES = {"not_started", "not_needed", "complete", "partial", "blocked", "stale"}
 READINESS = {"ready", "partial", "blocked"}
 CHILD_STATUS = {"complete", "partial", "blocked", "failed"}
 VERDICTS = {"pass", "needs_fix", "blocked"}
 APPROVALS = {"static_inspection", "smoke_preparation", "experiment_design", "baseline_reproduction", "formal_comparison", "dataset_use", "metric_use", "preprocessing_use", "checkpoint_use", "none"}
+EXECUTABLE_BASELINE_CRITERIA = {
+    "accessible_code_or_model",
+    "revision_locked",
+    "license_clear",
+    "environment_or_dependencies",
+    "dataset_version_and_split",
+    "metric_implementation",
+    "traceable_result_record",
+}
+
+
+def _is_expr_path(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    normalized = value.replace("\\", "/").strip().lstrip("./").rstrip("/")
+    return normalized == "external_executor/expr" or normalized.startswith("external_executor/expr/")
+
+
+def _is_forbidden_workdir_resource(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    normalized = value.replace("\\", "/").strip().lstrip("./").rstrip("/")
+    return normalized == "external_executor/workdir/resources" or normalized.startswith("external_executor/workdir/resources/")
+
+
+def _candidate_paths(candidate: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for key in ("path", "local_path", "source_path", "destination_path"):
+        value = candidate.get(key)
+        if isinstance(value, str):
+            values.append(value)
+    for key in ("paths", "source_paths", "artifact_paths"):
+        value = candidate.get(key)
+        if isinstance(value, list):
+            values.extend(str(item) for item in value if item)
+    return values
+
+
+def _criterion_passed(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, dict):
+        return value.get("status") in {"pass", "present", "confirmed"} or value.get("available") is True
+    return False
 
 
 def validate_data(data: dict[str, Any]) -> tuple[list[str], list[str]]:
@@ -69,6 +114,11 @@ def validate_data(data: dict[str, Any]) -> tuple[list[str], list[str]]:
             errors.append("candidate item must be object")
             continue
         errors.extend(ensure_known_ids(candidate.get("requirement_ids", []), known_req, "requirement ID in candidate"))
+        for candidate_path in _candidate_paths(candidate):
+            if _is_expr_path(candidate_path):
+                errors.append(f"candidate uses external_executor/expr as resource source: {candidate.get('candidate_id')}")
+            if _is_forbidden_workdir_resource(candidate_path):
+                errors.append(f"candidate uses forbidden workdir resource path: {candidate.get('candidate_id')}")
 
     reviews = data.get("resource_reviews", {}).get("items", [])
     for review in reviews:
@@ -85,6 +135,37 @@ def validate_data(data: dict[str, Any]) -> tuple[list[str], list[str]]:
             errors.append(f"unknown approved_for values: {sorted(unknown_approvals)}")
         if review.get("verdict") != "pass" and set(review.get("approved_for", [])) & {"baseline_reproduction", "formal_comparison", "dataset_use", "metric_use"}:
             errors.append(f"non-pass review grants execution approval: {review.get('review_id')}")
+        baseline_req_ids = [
+            req.get("requirement_id")
+            for req in requirements
+            if isinstance(req, dict)
+            and req.get("resource_type") == "baseline_implementation"
+            and req.get("requirement_id") in set(review.get("requirement_ids", []))
+        ]
+        if baseline_req_ids and set(review.get("approved_for", [])) & {"baseline_reproduction", "formal_comparison"}:
+            criteria = review.get("executable_baseline_criteria")
+            if not isinstance(criteria, dict):
+                errors.append(f"executable baseline review lacks criteria object: {review.get('review_id')}")
+            else:
+                missing = sorted(key for key in EXECUTABLE_BASELINE_CRITERIA if not _criterion_passed(criteria.get(key)))
+                if missing:
+                    errors.append(f"executable baseline criteria not satisfied for {review.get('review_id')}: {missing}")
+
+    source_report = data.get("resource_source_report")
+    if not isinstance(source_report, dict):
+        errors.append("resource_source_report must be an object")
+    else:
+        if source_report.get("status") not in SECTION_STATUSES:
+            errors.append(f"invalid resource_source_report.status: {source_report.get('status')}")
+        categories = source_report.get("categories")
+        if not isinstance(categories, dict):
+            errors.append("resource_source_report.categories must be an object")
+        else:
+            for category in ("byhand", "Remote_acquisition", "reproduction"):
+                if category not in categories:
+                    errors.append(f"resource_source_report missing category: {category}")
+        if data.get("status") == "complete" and source_report.get("status") != "complete":
+            errors.append("complete resource preparation requires a complete resource_source_report")
 
     gap_req_ids = set()
     for gap in data.get("material_gaps", {}).get("items", []):

@@ -19,7 +19,7 @@ class StageProfile:
 _PROFILES: dict[str, StageProfile] = {
     "T1": StageProfile("T1 · 研究范围初始化", "建立可审计研究范围与跨领域检索边界", "研究问题、约束和跨领域方向是否已经明确且可执行？", ("明确项目范围", "整理种子论文", "生成跨领域检索计划")),
     "T2": StageProfile("T2 · 文献检索与领域映射", "构建可信文献池、引用关系和阅读队列", "哪些论文、领域关系和阅读优先级足以支撑后续综合？", ("设计检索组合", "检索与去重", "核验论文信息", "扩展参考文献", "建立阅读队列"), "完成后会请你确认文献覆盖是否足够。"),
-    "T3": StageProfile("T3 · 基于原文的文献阅读", "把候选论文整理为可追溯的论文阅读笔记", "每篇论文实际支持什么，哪些内容仍没有足够依据？", ("判断原文可读性", "阅读 PDF", "整理论文阅读笔记", "更新比较表")),
+    "T3": StageProfile("T3 · 文献阅读", "把候选论文整理为可追溯的论文阅读笔记", "每篇论文实际支持什么，哪些内容仍没有足够依据？", ("检查论文是否可读", "阅读 PDF", "整理阅读笔记", "更新比较表")),
     "T3.5": StageProfile("T3.5 · 文献综合", "组织跨论文的机制、贡献和分歧", "领域的共同机制、适用边界、冲突和待补证据分别是什么？", ("归纳方法类别", "梳理贡献空间", "聚类机制", "识别冲突与迁移关系")),
     "T3.6-GATE-SURVEY": StageProfile("T3.6 · 是否撰写综述", "判断当前文献是否足以单独写成综述", "分类框架覆盖度和材料充分性是否达到可核验综述的要求？", ("检查材料充分性", "检查分类覆盖度", "等待你的决定"), "综述是可选分支；无论是否选择，T3.5 的文献综合仍会供 T4 使用。"),
     "T3.6-PLAN": StageProfile("T3.6 · 综述分类框架规划", "把综合材料整理为综述分类框架和章节计划", "现有方法类别、机制和证据能否形成易理解的分类结构？", ("盘点文献材料", "规划分类框架", "识别覆盖不足"), "检索覆盖不足不等同于研究领域的真实空白。"),
@@ -35,12 +35,7 @@ _PROFILES: dict[str, StageProfile] = {
     "T5-EXPR-MATERIAL-GATE": StageProfile("T5 · 外部实验材料准备", "确认数据、代码仓库、模型权重和基线材料是否就绪", "外部执行器是否已有真实运行所需的项目材料？", ("盘点材料", "说明缺少材料", "等待你的决定")),
     "T5-EXECUTOR-GATE": StageProfile("T5 · 选择外部实验执行方式", "选择外部实验的执行方式", "哪种执行方式能够在既定资源、权限和审计约定下完成实验？", ("展示执行方式", "确认可能的副作用", "等待你的决定")),
     "T5-DRY-RUN": StageProfile("T5 · 外部执行协议演练", "验证外部执行器之间的文件交接是否正常", "在不做真实实验时，交接说明、状态和结果文件能否正常衔接？", ("模拟交接", "检查文件协议", "检查结果文件格式")),
-    "T5-EXTERNAL-WAIT": StageProfile("T5 · 等待外部执行器回传", "等待并验证外部执行器回传的结果", "结果文件是否包含可审计的运行记录、配置、日志和原始结果？", ("检查执行状态", "检查结果文件是否就绪", "等待外部执行完成")),
-    "T7-INGEST": StageProfile("T7 · 接收外部实验结果", "接收外部实验的原始运行记录、配置和日志", "哪些运行可以作为可核验的实验事实？", ("读取结果文件", "盘点运行记录", "建立证据索引")),
-    "T7-AUDIT": StageProfile("T7 · 实验完整性审计", "核验结果来源、公平性和基线覆盖", "哪些结果可以进入论文依据，哪些必须降级或拒绝？", ("检查完整性", "检查基线覆盖", "核验指标来源", "检查公平性")),
-    "T7-POST-NOVELTY": StageProfile("T7 · 实验后的新颖性复核", "以已经实现的方法和结果重新审查贡献边界", "计划贡献是否已经实现，并获得结果支持？", ("比较计划与实现", "更新相似工作风险", "明确主张边界")),
-    "T7-CLAIMS": StageProfile("T7 · 整理结果与论文主张", "把审计结果转换为谨慎的论文主张", "每条主张的支持强度、限制和禁止表述分别是什么？", ("对应主张与证据", "整理证据包", "标注禁止表述", "关联图表依据")),
-    "T7.5": StageProfile("T7.5 · 确认研究证据是否充足", "由你确认下一步研究决策", "现有证据足以进入写作，还是应补实验、回到研究方向或停止？", ("评估证据是否充足", "等待你的决定")),
+    "T5-EXTERNAL-WAIT": StageProfile("T5 · 等待外部执行器回传", "等待并验证外部执行器回传给 T8 的材料", "核心 executor_research_report.md 和支持材料是否已经就绪？", ("检查执行状态", "检查 T8 交接报告", "等待外部执行完成")),
     "T8-RESOURCE": StageProfile("T8 · 论文写作资料索引", "索引写作依据并建立章节对齐关系", "每个论点、章节和图表应使用哪些可追溯材料？", ("整理资料索引", "规划证据使用", "建立章节对齐表", "维护主张清单")),
     "T8-STYLE-GATE": StageProfile("T8 · 确认投稿目标与写作风格", "确认稿件语言、投稿目标和叙事风格", "篇幅、论证方式和模板如何匹配目标期刊或会议？", ("查看投稿目标", "确认语言策略", "等待你的决定")),
     "T8-WRITE": StageProfile("T8 · 论文叙事与大纲", "建立与投稿目标匹配的研究叙事和章节结构", "研究动机、技术贡献和证据链如何组成可验证的故事？", ("撰写大纲", "组织叙事", "对齐贡献与证据")),
@@ -117,7 +112,8 @@ _ARTIFACT_MEANINGS: tuple[tuple[str, str], ...] = (
     ("exp_plan.yaml", "实验计划、基线、指标与停止条件"),
     ("handoff_pack.json", "外部执行器的研究意图与证据契约"),
     ("paper_card_evidence_index.json", "外部执行器按需读取的论文卡索引与证据使用边界"),
-    ("result_pack.json", "外部执行器回传的结果包"),
+    ("executor_research_report.md", "T5 交给 T8 的核心外部执行研究报告"),
+    ("result_pack.json", "外部执行器回传的支持性结果包"),
     ("integrity_audit.json", "实验 provenance、完整性与公平性审计"),
     ("result_to_claim.json", "实验事实到允许论文 claim 的映射"),
     ("experiment_evidence_pack.json", "写作可用的规范化实验证据"),
@@ -150,15 +146,15 @@ def artifact_meaning(path: str) -> str:
 def artifact_consumers(task_id: str, path: str) -> str:
     prefix = Path(path).as_posix()
     if prefix.startswith("literature/deep_read_notes") or prefix.startswith("literature/notes_manifest"):
-        return "T3.5 / T4 / T4.5 / T5 / 外部执行器 / T7 / T8"
+        return "T3.5 / T4 / T4.5 / T5 / 外部执行器 / T8"
     if prefix.startswith("literature/"):
-        return "T3 / T3.5 / T4 / T4.5 / T5 / T7 / T8"
+        return "T3 / T3.5 / T4 / T4.5 / T5 / T8"
     if prefix.startswith("ideation/") or prefix.startswith("novelty/"):
-        return "T4.5 / T5 / T7 / T8"
+        return "T4.5 / T5 / T8"
     if prefix.startswith("external_executor/"):
-        return "外部执行器 / T7"
+        return "外部执行器 / T5-EXTERNAL-WAIT / T8"
     if prefix.startswith("experiments/"):
-        return "T7.5 / T8 / T9"
+        return "T8 / T9 / 旧内部实验兼容检查"
     if prefix.startswith("drafts/"):
         return "T8 / T9"
     if prefix.startswith("submission/"):

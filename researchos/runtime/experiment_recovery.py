@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""T5/T7 运行期恢复辅助。
+"""Legacy internal experiment runtime recovery helpers.
 
 目标：
 1. 在 Experimenter 任务中显式识别“已有代码/已有结果”的状态；
@@ -30,11 +30,11 @@ def _list_relative_files(root: Path, workspace_dir: Path) -> list[str]:
 
 
 def prepare_experiment_resume_artifacts(workspace_dir: Path, *, mode: str) -> dict[str, Any]:
-    """为 T5/T7 生成恢复摘要。
+    """为 legacy internal experiment modes 生成恢复摘要。
 
     mode:
-    - pilot: 对应 T5
-    - full: 对应 T7
+    - pilot: 对应 legacy T5
+    - full: 旧完整实验兼容数据；当前主链不再调用
     """
 
     if mode not in {"pilot", "full"}:

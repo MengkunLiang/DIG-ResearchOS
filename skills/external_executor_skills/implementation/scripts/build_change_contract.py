@@ -159,7 +159,7 @@ def main() -> int:
 
     semantic_delta = [{key: change.get(key) for key in ("change_type", "summary", "target_paths", "module_ids")} for change in changes]
     implementation_id = str(spec.get("implementation_id") or stable_id("IMPL", iteration_id, spec_id, canonical_json_hash(semantic_delta)))
-    implementation_root = workspace / "external_executor" / "workdir" / "implementation" / iteration_id / implementation_id
+    implementation_root = workspace / "external_executor" / "expr" / "implementation" / iteration_id / implementation_id
     experiment_plan = result.get("experiment_plan", {})
     protocol_fp = get_nested(experiment_plan, "protocol_fingerprint", "protocol.fingerprint", default=None)
     fairness_fp = get_nested(experiment_plan, "fairness_fingerprint", "fairness.fingerprint", default=None)

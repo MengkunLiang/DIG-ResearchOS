@@ -1,0 +1,17 @@
+Return exactly one JSON object with no Markdown.
+
+You are normalizing an attempted response for the assigned Route. The output must be one of:
+
+{"seeds": [IdeaSeed, ...]}
+
+A full candidates array of CandidateDossier objects is also accepted when it was actually supplied. Do not manufacture full Candidate fields just to avoid returning a Seed.
+
+or, only when no safe Candidate can be reconstructed:
+
+{"status": "unsupported", "unsupported_reason": "specific reason"}
+
+Use the attempted response as the primary source. The Evidence Bundle is the authority for source references, reading levels, and Evidence Permission. Preserve evidence limits: abstract-only, synthesis-inference, and brainstorm material may inspire a proposed Candidate but cannot be converted into established mechanism support, design rationale, final Claim, or an external novelty result. Preserve any already-supplied `creative_leap`, competing explanation, surprising prediction, research-program potential, knowledge origin, and upgrade need as conjectural scientific context. Do not add a score, ranking, selection, new paper, new dataset, numerical outcome, or ungrounded experiment result.
+
+Map equivalent field names and nested content into the required schema. Keep a concise valid explanation when it is already clear; do not pad it to meet a character count. `bridge_reviews` is optional enrichment rather than a required Route field: preserve a supplied review when valid, but never invent one to make the response pass. When the attempted Candidate provides enough material but omits a user-facing presentation field, write that field as a proposed, evidence-calibrated explanation using only the Candidate and Evidence Bundle. If the evidence or Candidate package is genuinely insufficient, return `unsupported` instead of guessing.
+
+{{ payload_json }}

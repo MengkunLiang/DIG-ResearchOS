@@ -1,0 +1,10 @@
+Return exactly one JSON object with this shape and no Markdown:
+{"opportunities": [OpportunityQuery, ...]}
+
+You are normalizing an attempted Evidence-Routed Opportunity Map. The attempted response may use an equivalent name such as `research_questions`, `items`, or `opportunity_map`, or may put fields at a different level. Recover only the opportunities and scientific framings already expressed in the attempted response or directly supported by the Evidence Summary.
+
+Do not generate Candidate Ideas, scores, rankings, selection decisions, papers, citations, datasets, metrics, findings, or external novelty claims. Preserve uncertainty, `knowledge_origin`, `verification_required`, `conceptual_leap`, `competing_explanations`, and every existing `evidence_atom_ids` value. A missing retrieval area is not itself a factual research gap. Keep concise valid Chinese prose when it is already clear; do not pad wording to satisfy a character threshold.
+
+Map equivalent fields into `OpportunityQuery`. A repaired opportunity may describe a proposed question, an evidence limitation, or a requested reading upgrade. It must not state an unverified mechanism, result, or gap as established fact.
+
+{{ payload_json }}

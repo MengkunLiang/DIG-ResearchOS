@@ -18,6 +18,21 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 
+from ..latex_templates import (
+    is_ccf_package_shell,
+    is_ccf_template_path,
+    render_ccf_package_shell,
+    resolve_latex_template as resolve_catalog_latex_template,
+)
+from ..runtime.bridge_catalog import load_bridge_catalog_summaries
+from ..runtime.literature_contract import (
+    build_literature_manifest,
+    build_note_card_lookup,
+    normalize_paper_note_alias,
+    paper_note_card_aliases,
+)
+from ..runtime.pdf_acquisition import acquire_retained_pdfs, attach_pdf_acquisition
+from ..literature_identity import record_note_id
 from .base import Tool, ToolResult
 from .bibtex import (
     bibtex_quality_issues,
@@ -27,6 +42,7 @@ from .bibtex import (
 )
 from .citation_alignment import citation_alignment_issues, citation_support_text_by_key
 from .manuscript import _extract_latex_cites, has_formal_citation
+from .multi_source_search import MultiSourceSearchTool
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 
 
@@ -331,6 +347,11 @@ SURVEY_QUALITY_DIMENSIONS = (
 
 OPTIONAL_SURVEY_SECTION_PREFIXES = ("theme_",)
 
+# These values guide writer planning and visible coverage diagnostics. They are
+# deliberately not release floors: numeric citation targets cannot prove
+# semantic fit, and treating them as hard requirements encourages padding with
+# irrelevant literature. Citation existence, provenance, and claim alignment
+# remain release checks.
 SURVEY_SECTION_MIN_CITATIONS = {
     "introduction": 2,
     "background": 4,
@@ -358,20 +379,20 @@ _SURVEY_RUNTIME_PROCESS_RE = re.compile(
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 _LATIN_WORD_RE = re.compile(r"\b[A-Za-z][A-Za-z\-]{2,}\b")
 
-# These are completeness floors, not venue page limits.  A survey uses a
-# compact taxonomy structure but needs a moderately longer evidence narrative
-# than a standard CCF-A research-article section.  Section content must still
-# scale with the actual corpus, taxonomy breadth, evidence boundaries, and
-# target template; padding to reach a number is not acceptable.
+# These are completeness floors, not venue page limits. A survey needs enough
+# room for a taxonomy-driven argument and a compressed development narrative,
+# but should not expand by repeating the same background across sections.
+# Content must scale with actual corpus breadth and evidence; padding to reach
+# a number is never acceptable.
 _SURVEY_MIN_PLAIN_CHARS = {
-    "abstract": {"en": 200, "zh": 600},
-    "introduction": {"en": 1600, "zh": 2800},
-    "background": {"en": 1500, "zh": 2600},
-    "taxonomy": {"en": 2100, "zh": 3500},
-    "comparison": {"en": 2900, "zh": 4800},
-    "challenges": {"en": 1500, "zh": 2600},
-    "future": {"en": 1900, "zh": 3200},
-    "conclusion": {"en": 850, "zh": 1600},
+    "abstract": {"en": 180, "zh": 500},
+    "introduction": {"en": 1200, "zh": 2200},
+    "background": {"en": 1200, "zh": 2100},
+    "taxonomy": {"en": 1700, "zh": 2800},
+    "comparison": {"en": 2300, "zh": 3900},
+    "challenges": {"en": 1200, "zh": 2100},
+    "future": {"en": 1500, "zh": 2600},
+    "conclusion": {"en": 650, "zh": 1200},
 }
 
 _SURVEY_SECTION_QUALITY_PATTERNS = {
@@ -444,6 +465,7 @@ class BuildSurveyFiguresParams(BaseModel):
     comparison_table_path: str = Field(default="literature/comparison_table.csv")
     domain_map_path: str = Field(default="literature/domain_map.json")
     survey_plan_path: str = Field(default="drafts/survey/survey_plan.json")
+    literature_manifest_path: str = Field(default="literature/literature_manifest.json")
     deep_read_notes_dir: str = Field(default="literature/deep_read_notes")
     bridge_notes_dir: str = Field(default="literature/bridge_notes")
     output_dir: str = Field(default="drafts/survey/figures")
@@ -488,6 +510,7 @@ class BuildSurveyFiguresTool(Tool):
         params = BuildSurveyFiguresParams(**kwargs)
         try:
             survey_plan_path = self.policy.resolve_read(params.survey_plan_path)
+            self.policy.resolve_write(params.literature_manifest_path)
             deep_read_notes_dir = self.policy.resolve_read(params.deep_read_notes_dir)
             bridge_notes_dir = self.policy.resolve_read(params.bridge_notes_dir)
             output_dir = self.policy.resolve_write(params.output_dir)
@@ -499,6 +522,36 @@ class BuildSurveyFiguresTool(Tool):
                 ok=False,
                 content=f"survey plan missing or empty: {params.survey_plan_path}",
                 error="missing_survey_plan",
+            )
+        invalid_note_roots = [
+            path
+            for path in (deep_read_notes_dir, bridge_notes_dir)
+            if path.exists() and not path.is_dir()
+        ]
+        if invalid_note_roots:
+            return ToolResult(
+                ok=False,
+                content="survey note root is not a directory: " + ", ".join(str(path) for path in invalid_note_roots),
+                error="invalid_survey_note_root",
+            )
+        literature_manifest = build_literature_manifest(self.policy.workspace_dir, write=True)
+        literature_counts = (
+            literature_manifest.get("counts") if isinstance(literature_manifest.get("counts"), dict) else {}
+        )
+        note_card_count = int(literature_counts.get("note_cards") or 0)
+        if note_card_count <= 0:
+            return ToolResult(
+                ok=False,
+                content=(
+                    "T3.6-VISUALS blocked: literature/literature_manifest.json contains zero readable "
+                    "paper-note cards. Run or resume T3/T3.5 literature preparation, or migrate legacy "
+                    "paper_notes/deep_read_notes/bridge_notes before generating survey visuals."
+                ),
+                error="literature_corpus_empty",
+                data={
+                    "manifest_path": params.literature_manifest_path,
+                    "counts": literature_counts,
+                },
             )
         try:
             import matplotlib
@@ -552,12 +605,19 @@ class BuildSurveyFiguresTool(Tool):
             bridge_notes_dir=bridge_notes_dir,
         )
         unresolved_ids = paper_link_audit["unresolved_direct_paper_ids"]
+        direct_link_count = int(paper_link_audit.get("direct_link_records") or 0)
+        resolved_link_count = int(paper_link_audit.get("resolved_direct_paper_ids") or 0)
         canonical_figure_path = output_dir / "fig_taxonomy_overview.pdf"
         if visual_decision in {"omit", "none", "skip"}:
             if canonical_figure_path.exists():
                 canonical_figure_path.unlink()
             skipped.append({"id": "taxonomy_overview", "reason": visual_reason or "The survey plan judges that a figure would not add analytical value."})
-        elif len(top_level) >= params.min_top_level_classes and (not params.require_resolved_note_cards or not unresolved_ids):
+        elif (
+            len(top_level) >= params.min_top_level_classes
+            and direct_link_count > 0
+            and resolved_link_count > 0
+            and (not params.require_resolved_note_cards or not unresolved_ids)
+        ):
             _render_survey_taxonomy_overview(
                 plt,
                 top_level,
@@ -585,6 +645,11 @@ class BuildSurveyFiguresTool(Tool):
                 reason = (
                     "requires at least "
                     f"{params.min_top_level_classes} explicit top-level taxonomy classes; found {len(top_level)}"
+                )
+            elif direct_link_count == 0 or resolved_link_count == 0:
+                reason = (
+                    "taxonomy overview requires at least one direct paper ID resolved to a local structured note card; "
+                    f"found {direct_link_count} direct links and {resolved_link_count} resolved note cards"
                 )
             else:
                 reason = "direct taxonomy paper IDs have no local structured note card: " + ", ".join(unresolved_ids[:12])
@@ -628,10 +693,21 @@ class BuildSurveyFiguresTool(Tool):
             },
             "source": {
                 "survey_plan": params.survey_plan_path,
+                "literature_manifest": {
+                    "path": params.literature_manifest_path,
+                    "note_cards": note_card_count,
+                    "full_or_partial_note_cards": int(literature_counts.get("full_or_partial_note_cards") or 0),
+                    "abstract_note_cards": int(literature_counts.get("abstract_note_cards") or 0),
+                    "bridge_note_cards": int(literature_counts.get("bridge_note_cards") or 0),
+                    "cross_domain_catalog_files": int(literature_counts.get("cross_domain_catalog_files") or 0),
+                },
                 "taxonomy_dimension": taxonomy.get("dimension") or "",
                 "taxonomy_nodes": int(taxonomy.get("node_count") or 0),
                 "top_level_classes": len(top_level),
                 "paper_link_audit": paper_link_audit,
+                "consumed_note_cards": paper_link_audit.get("consumed_note_cards", []),
+                "consumed_paper_ids": paper_link_audit.get("consumed_paper_ids", []),
+                "consumed_note_paths": paper_link_audit.get("consumed_note_paths", []),
                 "comparison_table_intentionally_unused": True,
                 "reason": "Comparison-table metrics and T2 screening signals are not comparable survey-wide evidence for a figure.",
                 "visual_decision": visual_decision,
@@ -643,7 +719,9 @@ class BuildSurveyFiguresTool(Tool):
                 self.policy.workspace_dir,
                 {
                     "survey_plan": params.survey_plan_path,
+                    "literature_manifest": params.literature_manifest_path,
                     "deep_read_notes_dir": params.deep_read_notes_dir,
+                    "shallow_read_notes_dir": str(Path(params.deep_read_notes_dir).parent / "shallow_read_notes"),
                     "bridge_notes_dir": params.bridge_notes_dir,
                 },
             ),
@@ -664,6 +742,219 @@ class BuildSurveyFiguresTool(Tool):
                 "skipped": skipped,
             },
         )
+
+
+SURVEY_VISUAL_MANIFEST_REL_PATH = "drafts/survey/figures/survey_visual_manifest.json"
+SURVEY_VISUAL_MIGRATION_RECEIPT_REL_PATH = (
+    "drafts/survey/figures/survey_visual_manifest_migration.json"
+)
+_SURVEY_VISUAL_REQUIRED_FINGERPRINTS = {
+    "survey_plan",
+    "literature_manifest",
+    "deep_read_notes_dir",
+    "shallow_read_notes_dir",
+    "bridge_notes_dir",
+}
+
+
+def migrate_survey_visual_manifest(workspace_dir: Path) -> tuple[dict[str, Any] | None, list[dict[str, str]]]:
+    """Upgrade a valid pre-manifest T3.6 visual without rerendering it.
+
+    ``literature_manifest`` became a required T3.6-VISUALS fingerprint after
+    some workspaces had already generated a taxonomy figure.  Treating every
+    such figure as disposable causes a resume to submit an unnecessary model
+    run even when its paper links and actual note cards remain intact.  The
+    compatibility path is intentionally narrower than a generic fingerprint
+    backfill:
+
+    * the previously recorded inputs must still match;
+    * the canonical Literature Artifact Contract must rebuild to real cards;
+    * the *current* survey plan must resolve every direct paper link to those
+      cards before a generated figure may be reused; and
+    * no figure pixels, taxonomy text, or scholarly explanation is altered.
+
+    This is therefore an audit/migration of durable provenance, not a way to
+    bless an old generated result.  A missing paper, moved note, zero-card
+    corpus, changed plan, malformed old manifest, or unresolved direct link
+    remains for the normal blocked/regenerate path.
+    """
+
+    workspace = Path(workspace_dir).resolve()
+    manifest_path = workspace / SURVEY_VISUAL_MANIFEST_REL_PATH
+    if not manifest_path.is_file() or manifest_path.stat().st_size <= 0:
+        return None, []
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, []
+    if not isinstance(payload, dict):
+        return None, []
+    if payload.get("semantics") != "deterministic_survey_data_visual_manifest":
+        return payload, []
+
+    fingerprints = payload.get("input_fingerprints")
+    if not isinstance(fingerprints, dict):
+        return payload, []
+    missing = _SURVEY_VISUAL_REQUIRED_FINGERPRINTS - set(fingerprints)
+    # Only migrate the known addition.  A manifest missing its plan or several
+    # unrelated provenance fields must be regenerated, not guessed at.
+    if not missing or missing != {"literature_manifest"}:
+        return payload, []
+    plan_fingerprint = fingerprints.get("survey_plan")
+    if not isinstance(plan_fingerprint, dict):
+        return payload, []
+    existing_ok, _existing_error = _validate_input_fingerprint_map(
+        workspace,
+        fingerprints,
+        "survey_visual_manifest.json",
+    )
+    if not existing_ok:
+        return payload, []
+
+    # Rebuild the shared contract before resolving the old visual's direct
+    # links.  This runs the safe legacy note migration but never deletes or
+    # moves the original source directories.
+    literature_manifest = build_literature_manifest(workspace, write=True)
+    counts = literature_manifest.get("counts") if isinstance(literature_manifest.get("counts"), dict) else {}
+    if int(counts.get("note_cards") or 0) <= 0:
+        return payload, []
+
+    status = str(payload.get("status") or "").strip().lower()
+    if status not in {"generated", "skipped"}:
+        return payload, []
+    policy = payload.get("generation_policy") if isinstance(payload.get("generation_policy"), dict) else {}
+    required_policy = {
+        "only_one_figure": True,
+        "performance_comparisons_forbidden": True,
+        "cross_study_relative_gains_forbidden": True,
+        "screening_scores_forbidden": True,
+        "inferred_safety_or_risk_heatmaps_forbidden": True,
+        "only_taxonomy_structure_and_explicit_paper_links": True,
+        "all_direct_paper_ids_must_resolve_to_note_cards": True,
+    }
+    if any(policy.get(key) is not expected for key, expected in required_policy.items()):
+        return payload, []
+
+    plan_rel_path = str(plan_fingerprint.get("path") or "drafts/survey/survey_plan.json").replace("\\", "/").lstrip("/")
+    plan_path = workspace / plan_rel_path
+    if not plan_path.is_file():
+        return payload, []
+    try:
+        survey_plan = _read_json(plan_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return payload, []
+    if not isinstance(survey_plan, dict):
+        return payload, []
+
+    taxonomy = _survey_taxonomy_structure(survey_plan)
+    paper_link_audit = _audit_taxonomy_paper_links(
+        taxonomy=taxonomy,
+        workspace=workspace,
+        deep_read_notes_dir=workspace / "literature/deep_read_notes",
+        shallow_read_notes_dir=workspace / "literature/shallow_read_notes",
+        bridge_notes_dir=workspace / "literature/bridge_notes",
+    )
+    if status == "generated":
+        figure_path = workspace / "drafts/survey/figures/fig_taxonomy_overview.pdf"
+        figures = payload.get("figures") if isinstance(payload.get("figures"), list) else []
+        if (
+            len(figures) != 1
+            or not isinstance(figures[0], dict)
+            or figures[0].get("id") != "taxonomy_overview"
+            or figures[0].get("path") != "drafts/survey/figures/fig_taxonomy_overview.pdf"
+            or not figure_path.is_file()
+            or figure_path.stat().st_size <= 0
+            or not figure_path.read_bytes().startswith(b"%PDF")
+        ):
+            return payload, []
+        if (
+            int(paper_link_audit.get("direct_link_records") or 0) <= 0
+            or int(paper_link_audit.get("resolved_direct_paper_ids") or 0) <= 0
+            or paper_link_audit.get("unresolved_direct_paper_ids")
+            or not paper_link_audit.get("consumed_note_cards")
+        ):
+            return payload, []
+
+    upgraded = dict(payload)
+    source = dict(payload.get("source") or {})
+    source["survey_plan"] = plan_rel_path
+    source["literature_manifest"] = {
+        "path": "literature/literature_manifest.json",
+        "note_cards": int(counts.get("note_cards") or 0),
+        "full_or_partial_note_cards": int(counts.get("full_or_partial_note_cards") or 0),
+        "abstract_note_cards": int(counts.get("abstract_note_cards") or 0),
+        "bridge_note_cards": int(counts.get("bridge_note_cards") or 0),
+        "cross_domain_catalog_files": int(counts.get("cross_domain_catalog_files") or 0),
+    }
+    source["paper_link_audit"] = paper_link_audit
+    source["consumed_note_cards"] = paper_link_audit.get("consumed_note_cards", [])
+    source["consumed_paper_ids"] = paper_link_audit.get("consumed_paper_ids", [])
+    source["consumed_note_paths"] = paper_link_audit.get("consumed_note_paths", [])
+    upgraded["source"] = source
+    upgraded["input_fingerprints"] = _input_fingerprints(
+        workspace,
+        {
+            "survey_plan": plan_rel_path,
+            "literature_manifest": "literature/literature_manifest.json",
+            "deep_read_notes_dir": "literature/deep_read_notes",
+            "shallow_read_notes_dir": "literature/shallow_read_notes",
+            "bridge_notes_dir": "literature/bridge_notes",
+        },
+    )
+    migration = {
+        "id": "survey_visual_manifest_add_literature_manifest_fingerprint_v1",
+        "reason": (
+            "The current survey plan still resolves every generated figure paper link to a readable canonical note card; "
+            "record the shared Literature Artifact Contract without rerendering the figure."
+        ),
+        "from": "visual manifest without literature_manifest fingerprint",
+        "to": "visual manifest with canonical literature manifest, resolved-note audit, and current input fingerprints",
+    }
+    history = list(upgraded.get("compatibility_migrations") or [])
+    if migration not in history:
+        history.append(migration)
+    upgraded["compatibility_migrations"] = history
+
+    old_sha256 = _sha256_file(manifest_path)
+    receipt_path = workspace / SURVEY_VISUAL_MIGRATION_RECEIPT_REL_PATH
+    receipt = {
+        "schema_version": "1.0.0",
+        "semantics": "survey_visual_manifest_non_destructive_compatibility_migration",
+        "manifest_path": SURVEY_VISUAL_MANIFEST_REL_PATH,
+        "migration": migration,
+        "status": "migrated",
+        "previous_manifest_sha256": old_sha256,
+        "current_literature_manifest": "literature/literature_manifest.json",
+        "resolved_note_card_count": len(paper_link_audit.get("consumed_note_cards") or []),
+        "generated_figure_preserved": status == "generated",
+        "source_directories_preserved": True,
+    }
+    try:
+        _atomic_write_survey_json(manifest_path, upgraded)
+        receipt["migrated_manifest_sha256"] = _sha256_file(manifest_path)
+        _atomic_write_survey_json(receipt_path, receipt)
+    except OSError:
+        # The original manifest is either still present or was atomically
+        # replaced by the complete upgraded document.  In either case callers
+        # revalidate it rather than declaring a migration success here.
+        return payload, []
+    return upgraded, [migration]
+
+
+def _atomic_write_survey_json(path: Path, payload: dict[str, Any]) -> None:
+    """Replace one small survey artifact without exposing a partial JSON file."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".migration.tmp")
+    try:
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(path)
+    except OSError:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def _survey_taxonomy_structure(survey_plan: dict[str, Any]) -> dict[str, Any]:
@@ -728,23 +1019,14 @@ def _audit_taxonomy_paper_links(
     full-text mechanism evidence.
     """
 
-    card_paths: dict[str, tuple[Path, str]] = {}
-    for directory, evidence_level in (
-        (deep_read_notes_dir, "FULL_OR_PARTIAL_TEXT"),
-        (bridge_notes_dir, "FULL_OR_PARTIAL_TEXT"),
-        (shallow_read_notes_dir, "ABSTRACT_ONLY"),
-    ):
-        if not directory.exists() or not directory.is_dir():
-            continue
-        for path in directory.rglob("*.md"):
-            if path.name.startswith("_") or path.stat().st_size <= 0:
-                continue
-            card_paths.setdefault(path.stem, (path, evidence_level))
+    del deep_read_notes_dir, shallow_read_notes_dir, bridge_notes_dir
+    card_paths = build_note_card_lookup(workspace, include_shallow=True)
 
     nodes = taxonomy.get("nodes") if isinstance(taxonomy.get("nodes"), list) else []
     direct_records: list[dict[str, str]] = []
     unique_ids: list[str] = []
     seen_ids: set[str] = set()
+    consumed_by_path: dict[str, dict[str, Any]] = {}
     for node in nodes:
         if not isinstance(node, dict):
             continue
@@ -756,25 +1038,137 @@ def _audit_taxonomy_paper_links(
             if normalized not in seen_ids:
                 seen_ids.add(normalized)
                 unique_ids.append(normalized)
-            resolved = card_paths.get(normalized)
-            path = resolved[0] if resolved else None
+            resolved = card_paths.get(normalized) or card_paths.get(_normalize_paper_note_alias(normalized))
+            if resolved is not None:
+                consumed = consumed_by_path.setdefault(
+                    resolved.rel_path,
+                    {
+                        "paper_id": resolved.paper_id,
+                        "path": resolved.rel_path,
+                        "root_type": resolved.root_type,
+                        "evidence_level": resolved.evidence_level,
+                        "sha256": resolved.sha256,
+                        "size": resolved.size,
+                        "requested_paper_ids": [],
+                        "taxonomy_class_ids": [],
+                    },
+                )
+                if normalized not in consumed["requested_paper_ids"]:
+                    consumed["requested_paper_ids"].append(normalized)
+                if class_id and class_id not in consumed["taxonomy_class_ids"]:
+                    consumed["taxonomy_class_ids"].append(class_id)
             direct_records.append(
                 {
                     "class_id": class_id,
                     "paper_id": normalized,
-                    "note_card": _workspace_relative(workspace, path) if path else "",
-                    "status": "resolved_note_card" if path else "unresolved_note_card",
-                    "evidence_level": resolved[1] if resolved else "UNKNOWN",
+                    "note_card": resolved.rel_path if resolved else "",
+                    "status": "resolved_note_card" if resolved else "unresolved_note_card",
+                    "evidence_level": resolved.evidence_level if resolved else "UNKNOWN",
+                    "root_type": resolved.root_type if resolved else "",
+                    "sha256": resolved.sha256 if resolved else "",
                 }
             )
     unresolved = sorted({record["paper_id"] for record in direct_records if record["status"] != "resolved_note_card"})
+    consumed_note_cards = sorted(consumed_by_path.values(), key=lambda item: str(item.get("path") or ""))
+    consumed_requested_ids = sorted(
+        {
+            str(requested)
+            for item in consumed_note_cards
+            for requested in item.get("requested_paper_ids", [])
+            if str(requested).strip()
+        }
+    )
     return {
         "direct_link_records": len(direct_records),
         "unique_direct_paper_ids": len(unique_ids),
         "resolved_direct_paper_ids": len(unique_ids) - len(unresolved),
         "unresolved_direct_paper_ids": unresolved,
         "note_card_resolution": direct_records,
+        "consumed_paper_ids": consumed_requested_ids,
+        "consumed_requested_paper_ids": consumed_requested_ids,
+        "consumed_canonical_paper_ids": [str(item.get("paper_id") or "") for item in consumed_note_cards],
+        "consumed_note_paths": [str(item.get("path") or "") for item in consumed_note_cards],
+        "consumed_note_cards": consumed_note_cards,
     }
+
+
+def _paper_note_card_aliases(path: Path) -> set[str]:
+    return paper_note_card_aliases(path)
+
+
+def _strip_paper_note_metadata_value(value: str) -> str:
+    value = str(value or "").strip()
+    value = re.sub(r"\s+\(.*?\)\s*$", "", value).strip()
+    return value.strip("`[](){}.,; ")
+
+
+def _normalize_paper_note_alias(value: str) -> str:
+    return normalize_paper_note_alias(value)
+
+
+def _paper_note_citation_key_aliases(text: str) -> set[str]:
+    title_match = re.search(r"(?m)^\s*#\s+(.+?)\s*$", text or "")
+    authors_match = re.search(r"(?im)^\s*-\s*\*\*Authors\*\*\s*:\s*(.+?)\s*$", text or "")
+    if not title_match or not authors_match:
+        return set()
+    years = sorted(set(re.findall(r"\b(?:19|20)\d{2}\b", text or "")))
+    if not years:
+        return set()
+    author_tokens = _paper_note_author_key_tokens(authors_match.group(1))
+    title_tokens = _paper_note_title_key_tokens(title_match.group(1))
+    if not author_tokens or not title_tokens:
+        return set()
+    title_aliases = set(title_tokens[:10])
+    for index in range(min(9, len(title_tokens) - 1)):
+        title_aliases.add(title_tokens[index] + title_tokens[index + 1])
+    aliases: set[str] = set()
+    for author in author_tokens:
+        for year in years:
+            for token in title_aliases:
+                aliases.add(_normalize_paper_note_alias(f"{author}{year}{token}"))
+    return aliases
+
+
+def _paper_note_author_key_tokens(authors: str) -> list[str]:
+    first_author = str(authors or "").split(",", 1)[0]
+    raw_tokens = re.findall(r"[A-Za-z][A-Za-z'\-]*", first_author)
+    tokens: list[str] = []
+    if raw_tokens:
+        tokens.extend([raw_tokens[0], raw_tokens[-1]])
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for token in tokens:
+        alias = _normalize_paper_note_alias(token)
+        if alias and alias not in seen:
+            seen.add(alias)
+            normalized.append(alias)
+    return normalized
+
+
+def _paper_note_title_key_tokens(title: str) -> list[str]:
+    stopwords = {
+        "a",
+        "an",
+        "and",
+        "for",
+        "from",
+        "in",
+        "of",
+        "on",
+        "the",
+        "to",
+        "using",
+        "with",
+    }
+    tokens: list[str] = []
+    for token in re.findall(r"[A-Za-z0-9]+", title or ""):
+        normalized = _normalize_paper_note_alias(token)
+        if not normalized or normalized in stopwords:
+            continue
+        if len(normalized) < 2 and not token.isupper():
+            continue
+        tokens.append(normalized)
+    return tokens
 
 
 def _select_survey_figure_font(font_manager: Any) -> str:
@@ -1018,6 +1412,187 @@ class ExportSurveyForIdeationParams(BaseModel):
     summary_output_path: str = Field(default="drafts/survey/survey_summary.md")
 
 
+SURVEY_AUDIT_SCHEMA_VERSION = "survey_coverage_audit.v2"
+
+
+def upgrade_survey_audit_document(audit: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Upgrade an old audit document to the current release semantics.
+
+    This is a schema/data migration, not a quality-rule bypass. Numeric
+    citation breadth and prose/depth heuristics are visible quality warnings:
+    neither can establish that a citation is semantically false or that an
+    otherwise complete scholarly argument is invalid. Provenance, alignment,
+    bibliography, structure, fingerprint, language, and TeX checks retain
+    their hard status.
+    """
+
+    normalized = json.loads(json.dumps(audit, ensure_ascii=False))
+    migrations: list[dict[str, str]] = []
+    if normalized.get("semantics") != "deterministic_survey_coverage_audit_not_scientific_judgment":
+        return normalized, migrations
+
+    checks = normalized.get("checks")
+    if not isinstance(checks, list):
+        return normalized, migrations
+
+    writing_diagnostic_checks = {
+        "citation_diversity",
+        "has_sufficient_citations",
+        "section_level_citation_density",
+        "survey_section_depth",
+    }
+    for item in checks:
+        if not isinstance(item, dict) or item.get("name") not in writing_diagnostic_checks:
+            continue
+        if item.get("passed") is False and str(item.get("level") or "FAIL").upper() != "WARN":
+            item["level"] = "WARN"
+            migrations.append(
+                {
+                    "id": f"{item.get('name')}_fail_to_warn",
+                    "reason": "Citation breadth and prose/depth heuristics are quality diagnostics, not evidence-validity failures.",
+                    "from": "FAIL",
+                    "to": "WARN",
+                }
+            )
+
+    hard_failed = [
+        item
+        for item in checks
+        if isinstance(item, dict)
+        and item.get("passed") is False
+        and str(item.get("level") or "FAIL").upper() != "WARN"
+    ]
+    soft_failed = [
+        item
+        for item in checks
+        if isinstance(item, dict)
+        and item.get("passed") is False
+        and str(item.get("level") or "FAIL").upper() == "WARN"
+    ]
+    if normalized.get("passed") is not True and soft_failed and not hard_failed:
+        normalized["passed"] = True
+        migrations.append(
+            {
+                "id": "recompute_release_status_from_current_levels",
+                "reason": "Only quality warnings remain after schema migration.",
+                "from": "passed=false",
+                "to": "passed=true",
+            }
+        )
+
+    if normalized.get("schema_version") != SURVEY_AUDIT_SCHEMA_VERSION:
+        previous = str(normalized.get("schema_version") or "legacy_unversioned")
+        normalized["schema_version"] = SURVEY_AUDIT_SCHEMA_VERSION
+        migrations.append(
+            {
+                "id": "survey_audit_schema_v2",
+                "reason": "Adopt explicit audit schema and quality-warning semantics.",
+                "from": previous,
+                "to": SURVEY_AUDIT_SCHEMA_VERSION,
+            }
+        )
+
+    if migrations:
+        existing = normalized.get("compatibility_migrations")
+        history = list(existing) if isinstance(existing, list) else []
+        history.extend(migrations)
+        normalized["compatibility_migrations"] = history
+    else:
+        normalized.setdefault("compatibility_migrations", [])
+    return normalized, migrations
+
+
+def migrate_survey_audit_artifact(path: Path) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Atomically persist the current audit schema before a consumer uses it.
+
+    The derived Markdown is rewritten from the upgraded JSON in the same
+    operation, so CLI users never see a JSON document saying ``WARN`` beside a
+    stale Markdown document saying ``FAIL``.  I/O errors intentionally bubble
+    to the runtime's recovery boundary instead of being swallowed.
+    """
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"survey audit cannot be read for migration: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("survey audit must be a JSON object for migration")
+    upgraded, migrations = upgrade_survey_audit_document(raw)
+    markdown_path = path.with_suffix(".md")
+    expected_markdown = _audit_markdown(upgraded)
+    try:
+        actual_markdown = markdown_path.read_text(encoding="utf-8") if markdown_path.exists() else ""
+    except OSError:
+        actual_markdown = ""
+    if actual_markdown != expected_markdown:
+        markdown_migration = {
+            "id": "synchronize_survey_audit_markdown",
+            "reason": "Keep the derived human-readable audit synchronized with current JSON semantics.",
+            "from": "stale_or_missing_markdown",
+            "to": "current_markdown",
+        }
+        migrations.append(markdown_migration)
+        history = upgraded.get("compatibility_migrations")
+        recorded = list(history) if isinstance(history, list) else []
+        if markdown_migration not in recorded:
+            recorded.append(markdown_migration)
+        upgraded["compatibility_migrations"] = recorded
+    if not migrations:
+        return upgraded, []
+
+    temporary = path.with_suffix(path.suffix + ".migration.tmp")
+    markdown_temporary = markdown_path.with_suffix(markdown_path.suffix + ".migration.tmp")
+    try:
+        temporary.write_text(json.dumps(upgraded, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        markdown_temporary.write_text(expected_markdown, encoding="utf-8")
+        temporary.replace(path)
+        markdown_temporary.replace(markdown_path)
+    except OSError as exc:
+        for transient in (temporary, markdown_temporary):
+            try:
+                transient.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise ValueError(f"survey audit schema migration could not be persisted: {exc}") from exc
+    return upgraded, migrations
+
+
+def survey_audit_release_ready(audit: dict[str, Any]) -> tuple[bool, list[str], list[str]]:
+    """Classify a persisted survey audit without turning concentration into a block.
+
+    Consumers call :func:`migrate_survey_audit_artifact` first.  This helper is
+    intentionally strict over the resulting current schema and provides a
+    final defensive classification for in-memory callers.
+    """
+
+    raw_checks = audit.get("checks")
+    if not isinstance(raw_checks, list):
+        return False, ["audit has no inspectable checks list"], []
+
+    hard_failures: list[str] = []
+    soft_warnings: list[str] = []
+    for raw in raw_checks:
+        if not isinstance(raw, dict) or raw.get("passed") is not False:
+            continue
+        name = str(raw.get("name") or "unnamed_check")
+        detail = str(raw.get("detail") or "")
+        if name == "citation_diversity":
+            soft_warnings.append(detail or name)
+            continue
+        level = str(raw.get("level") or "FAIL").upper()
+        if level == "WARN":
+            soft_warnings.append(detail or name)
+        else:
+            hard_failures.append(name + (f": {detail}" if detail else ""))
+    if hard_failures:
+        return False, hard_failures, soft_warnings
+    if audit.get("passed") is True:
+        return True, [], soft_warnings
+    if soft_warnings:
+        return True, [], soft_warnings
+    return False, ["audit marked not passed without a recognized recoverable quality warning"], []
+
+
 class BindSurveyReviewParams(BaseModel):
     review_path: str = Field(default="drafts/survey/survey_review.md")
     actions_path: str = Field(default="drafts/survey/survey_review_actions.json")
@@ -1038,6 +1613,15 @@ class ExpandSurveyCorpusParams(BaseModel):
     papers_verified_path: str = Field(default="literature/papers_verified.jsonl")
     output_path: str = Field(default="drafts/survey/survey_expansion.json")
     max_queries_per_class: int = Field(default=3, ge=1, le=8)
+    max_total_queries: int = Field(default=5, ge=1)
+    max_results_per_query: int = Field(default=6, ge=1, le=20)
+    # This is the researcher's retrieval target, not a scientific-quality or
+    # citation quota.  Do not impose a UI-level upper bound: a larger request
+    # simply expands the one-shot query plan and remains subject to normal
+    # runtime/provider limits.
+    target_record_count: int = Field(default=18, ge=1)
+    corpus_decision_path: str = Field(default="drafts/survey/corpus_decision.json")
+    supplement_dir: str = Field(default="literature/survey_supplement")
 
 
 class BuildSurveyStateTool(Tool):
@@ -1104,6 +1688,11 @@ class BuildSurveyStateTool(Tool):
             template_selection = _read_workspace_json_optional(
                 self.policy.workspace_dir / "drafts" / "survey" / "writing_template.json"
             )
+        bridge_catalogs = load_bridge_catalog_summaries(
+            self.policy.workspace_dir,
+            records_per_bridge=1,
+            abstract_excerpt_chars=320,
+        )
 
         sections: dict[str, dict[str, Any]] = {}
         for section_id in SURVEY_SECTION_SEQUENCE:
@@ -1153,6 +1742,8 @@ class BuildSurveyStateTool(Tool):
                     "corpus_decision": params.corpus_decision_path,
                     "survey_expansion": params.expansion_path,
                     "metadata_triage": params.metadata_triage_path,
+                    "bridge_catalog_index": "literature/cross_domain_catalogs/index.json",
+                    "bridge_catalog_root": "literature/cross_domain_catalogs",
                 },
             ),
             "corpus_scope": _corpus_scope(corpus_decision),
@@ -1183,6 +1774,15 @@ class BuildSurveyStateTool(Tool):
                     _metadata_triage_upgrade_needs(metadata_triage),
                 ),
                 "metadata_triage_boundaries": _metadata_triage_boundaries(metadata_triage),
+                "cross_domain_catalog_context": {
+                    "semantics": "cross_domain_catalog_context_not_direct_survey_claim_evidence",
+                    "tracks": bridge_catalogs,
+                    "usage_boundary": (
+                        "Catalog tracks may inform scope, historical framing, taxonomy boundaries, comparison dimensions, "
+                        "future research questions, and reading upgrades. Do not cite them as direct support for a mechanism, "
+                        "result, implementation detail, or strong comparative assertion."
+                    ),
+                },
                 "expansion_summary": expansion.get("summary", "") if isinstance(expansion, dict) else "",
             },
             "revision_log": [],
@@ -1633,15 +2233,27 @@ class AuditSurveyCoverageTool(Tool):
             _check(
                 "has_sufficient_citations",
                 len(cited) >= min_unique_citations,
-                f"Only {len(cited)} unique citation keys found; minimum={min_unique_citations}.",
+                (
+                    f"Only {len(cited)} unique citation keys found; suggested coverage breadth="
+                    f"{min_unique_citations}. Semantic fit takes priority over padding."
+                ),
+                level_if_fail="WARN",
             )
         )
+        citation_diversity_detail = _survey_citation_diversity_diagnostic(tex, section_texts)
         citation_diversity_issues = _survey_citation_diversity_issues(tex, cited, bib_keys, state)
         checks.append(
             _check(
                 "citation_diversity",
                 not citation_diversity_issues,
                 "Citation diversity issues: " + "; ".join(citation_diversity_issues[:8]),
+                # Repetition can reveal that the corpus is narrow, but it is
+                # not evidence of a false citation.  Treating a proportional
+                # heuristic as a release blocker pressures the writer to add
+                # irrelevant citations merely to satisfy a formula.  Retain
+                # the full diagnostic and repair guidance as a visible quality
+                # warning; citation existence and claim alignment remain hard.
+                level_if_fail="WARN",
             )
         )
         citation_issues = _survey_section_citation_issues(section_texts, state)
@@ -1650,6 +2262,7 @@ class AuditSurveyCoverageTool(Tool):
                 "section_level_citation_density",
                 not citation_issues,
                 "Citation density issues: " + "; ".join(citation_issues[:8]),
+                level_if_fail="WARN",
             )
         )
         citation_alignment = citation_alignment_issues(
@@ -1706,6 +2319,7 @@ class AuditSurveyCoverageTool(Tool):
                 "survey_section_depth",
                 not depth_issues,
                 "Section depth issues: " + "; ".join(depth_issues[:8]),
+                level_if_fail="WARN",
             )
         )
         compact_theme_issues = _compact_theme_coverage_issues(state, section_texts)
@@ -1719,6 +2333,7 @@ class AuditSurveyCoverageTool(Tool):
 
         passed = all(item["passed"] or item["level"] == "WARN" for item in checks)
         audit = {
+            "schema_version": SURVEY_AUDIT_SCHEMA_VERSION,
             "semantics": "deterministic_survey_coverage_audit_not_scientific_judgment",
             "input_fingerprints": _input_fingerprints(
                 self.policy.workspace_dir,
@@ -1731,6 +2346,7 @@ class AuditSurveyCoverageTool(Tool):
                     "deep_read_notes_dir": "literature/deep_read_notes",
                     "shallow_read_notes_dir": "literature/shallow_read_notes",
                     "bridge_notes_dir": "literature/bridge_notes",
+                    "cross_domain_catalogs_dir": "literature/cross_domain_catalogs",
                     "survey_assembly_manifest": "drafts/survey/survey_assembly_manifest.json",
                     "survey_visual_manifest": "drafts/survey/figures/survey_visual_manifest.json",
                 },
@@ -1751,6 +2367,10 @@ class AuditSurveyCoverageTool(Tool):
                     else {}
                 ),
             },
+            "repair_guidance": {
+                "citation_diversity": citation_diversity_detail,
+            },
+            "compatibility_migrations": [],
         }
         failed_checks = [
             item for item in checks
@@ -1765,10 +2385,19 @@ class AuditSurveyCoverageTool(Tool):
         failure_summary = "; ".join(
             f"{item['name']}: {item['detail']}" for item in failed_checks[:4]
         )
+        warning_checks = [
+            item
+            for item in checks
+            if item.get("level") == "WARN" and item.get("passed") is False
+        ]
         return ToolResult(
             ok=passed,
             content=(
-                f"Survey audit passed with {len(checks)} checks."
+                (
+                    f"Survey audit passed with {len(checks)} checks and {len(warning_checks)} quality warning(s)."
+                    if warning_checks
+                    else f"Survey audit passed with {len(checks)} checks."
+                )
                 if passed
                 else (
                     f"Survey audit failed: {failure_summary}. Read drafts/survey/survey_audit.md; "
@@ -1793,16 +2422,25 @@ class ExportSurveyForIdeationTool(Tool):
         try:
             plan = _read_json(self.policy.resolve_read(params.survey_plan_path))
             state = _read_optional_json(self.policy, params.survey_state_path)
-            audit = _read_optional_json(self.policy, params.survey_audit_path)
+            audit_path = self.policy.resolve_read(params.survey_audit_path)
+            audit = _read_json(audit_path)
             tex = self.policy.resolve_read(params.survey_tex_path).read_text(encoding="utf-8", errors="replace")
             insights_path = self.policy.resolve_write(params.insights_output_path)
             summary_path = self.policy.resolve_write(params.summary_output_path)
         except (ToolAccessDenied, FileNotFoundError, ValueError) as exc:
             return ToolResult(ok=False, content=str(exc), error="invalid_input")
-        if audit.get("passed") is not True:
+        try:
+            audit, audit_migrations = migrate_survey_audit_artifact(audit_path)
+        except ValueError as exc:
+            return ToolResult(ok=False, content=str(exc), error="survey_audit_migration_failed")
+        audit_ready, audit_hard_failures, audit_warnings = survey_audit_release_ready(audit)
+        if not audit_ready:
             return ToolResult(
                 ok=False,
-                content="survey_audit.json has not passed; do not export survey insights to T4.",
+                content=(
+                    "survey_audit.json has hard failures; do not export survey insights to T4: "
+                    + "; ".join(audit_hard_failures[:4])
+                ),
                 error="survey_audit_not_passed",
             )
 
@@ -1828,11 +2466,24 @@ class ExportSurveyForIdeationTool(Tool):
             "challenge_hints": _extract_section_hints(tex, "challenge"),
             "future_direction_hints": _extract_section_hints(tex, "future"),
             "audit_summary": {
-                "passed": audit.get("passed") if isinstance(audit, dict) else None,
+                "passed": audit_ready,
+                # Persisted history, not only migrations made during this
+                # invocation, keeps an old-artifact repair visible to later
+                # T4/T8 consumers after a resume.
+                "compatibility_migrations": audit.get("compatibility_migrations", audit_migrations),
                 "warnings": [
                     item
                     for item in (audit.get("checks") or [])
                     if isinstance(item, dict) and item.get("level") == "WARN" and not item.get("passed")
+                ] + [
+                    {
+                        "name": "citation_diversity",
+                        "level": "WARN",
+                        "detail": warning,
+                        "legacy_softened": audit.get("passed") is not True,
+                    }
+                    for warning in audit_warnings
+                    if warning
                 ] if isinstance(audit, dict) else [],
             },
         }
@@ -1908,6 +2559,8 @@ class BindSurveyReviewTool(Tool):
                 "domain_map": params.domain_map_path,
                 "comparison_table": params.comparison_table_path,
                 "related_work_bib": params.related_work_bib_path,
+                "bridge_catalog_index": "literature/cross_domain_catalogs/index.json",
+                "bridge_catalog_root": "literature/cross_domain_catalogs",
             },
         )
         actions_path.write_text(json.dumps(actions, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -1921,8 +2574,8 @@ class BindSurveyReviewTool(Tool):
 class ExpandSurveyCorpusTool(Tool):
     name = "expand_corpus_for_survey"
     description = (
-        "Create a one-shot targeted corpus-expansion plan for empty/weak taxonomy classes. "
-        "This does not run a T4->T2 loop and does not assert scholarly gaps."
+        "Execute a one-shot targeted supplement retrieval for the survey. "
+        "It persists real search records and section-targeted evidence leads without turning them into verified claims."
     )
     parameters_schema = ExpandSurveyCorpusParams
 
@@ -1938,24 +2591,407 @@ class ExpandSurveyCorpusTool(Tool):
             return ToolResult(ok=False, content=str(exc), error="invalid_input")
         domain_map = _read_optional_json(self.policy, params.domain_map_path)
         verified = _read_jsonl_optional(self.policy, params.papers_verified_path)
+        decision = _read_optional_json(self.policy, params.corpus_decision_path)
+        requested_count = _positive_int(decision.get("supplement_target_papers"))
+        # A supplement target is an explicit researcher-controlled retrieval
+        # goal, not a relevance/citation threshold.  Runtime and provider
+        # budgets still govern execution, but the survey Gate must not reject
+        # a legitimate small or comprehensive target merely because it falls
+        # outside a heuristic recommendation band.
+        raw_target = requested_count if requested_count is not None else params.target_record_count
+        target_record_count = max(1, int(raw_target))
+        target_source = "researcher" if requested_count is not None else "suggested_default"
         weak_classes = _classes_needing_lit(plan)
-        queries = []
-        for cls in weak_classes:
-            label = str(cls)
-            adjacent_terms = _adjacent_titles(domain_map)[:3]
-            verified_terms = [str(item.get("title") or "") for item in verified[:5] if isinstance(item, dict)]
-            base_terms = [term for term in [label, *adjacent_terms, *verified_terms] if term]
-            for query in _unique_queries(base_terms, max_count=params.max_queries_per_class):
-                queries.append({"class_id": label, "query": query, "purpose": "survey_taxonomy_gap_check"})
+        # A larger researcher-approved record target needs enough distinct
+        # queries to be attainable. Preserve the normal one-shot cap for the
+        # default case, then expand to the researcher's one-shot target. The
+        # provider may still return fewer records; that is a visible coverage
+        # result, not an error to pad with irrelevant papers.
+        requested_query_budget = max(
+            1,
+            (target_record_count + max(1, params.max_results_per_query) - 1) // max(1, params.max_results_per_query),
+        )
+        effective_max_total_queries = max(params.max_total_queries, requested_query_budget)
+        query_plan = _build_survey_supplement_query_plan(
+            plan,
+            domain_map=domain_map,
+            verified=verified,
+            weak_classes=weak_classes,
+            max_queries_per_class=params.max_queries_per_class,
+            max_total_queries=effective_max_total_queries,
+        )
+        supplement_dir = self.policy.resolve_write(params.supplement_dir)
+        supplement_dir.mkdir(parents=True, exist_ok=True)
+        search_tool = MultiSourceSearchTool()
+        retrieved: list[dict[str, Any]] = []
+        search_log: list[dict[str, Any]] = []
+        for item in query_plan:
+            result = await search_tool.execute(
+                query=str(item["query"]),
+                max_results=params.max_results_per_query,
+                query_bucket="survey_supplement",
+                sources=["openalex", "crossref", "arxiv"],
+                try_all_sources=False,
+            )
+            log_entry = {
+                "query": item["query"],
+                "purpose": item["purpose"],
+                "section_ids": item["section_ids"],
+                "ok": result.ok,
+                "error": result.error,
+                "count": int((result.data or {}).get("count") or 0),
+                "source_stats": (result.data or {}).get("source_stats") or {},
+            }
+            search_log.append(log_entry)
+            if not result.ok:
+                continue
+            for paper in (result.data or {}).get("papers") or []:
+                if not isinstance(paper, dict):
+                    continue
+                retrieved.append(
+                    {
+                        **paper,
+                        "survey_supplement": {
+                            "query": item["query"],
+                            "purpose": item["purpose"],
+                            "section_ids": item["section_ids"],
+                            "evidence_boundary": (
+                                "retrieved_metadata_or_abstract_only; use for discovery, historical/frontier coverage, "
+                                "or an explicitly abstract-level description until a paper note verifies a specific claim"
+                            ),
+                        },
+                    }
+                )
+        deduplicated = _deduplicate_survey_supplement_records(retrieved)[:target_record_count]
+        # Supplement candidates belong to the same availability contract as
+        # retained T2 candidates.  Try their open PDFs now, but keep their
+        # generated notes ABSTRACT_ONLY until a Reader records page coverage.
+        pdf_acquisition = await acquire_retained_pdfs(
+            self.policy.workspace_dir,
+            deduplicated,
+            source_pool="t3_6_survey_supplement",
+        )
+        deduplicated = attach_pdf_acquisition(deduplicated, pdf_acquisition)
+        reading_note_summary = _materialize_survey_supplement_shallow_notes(
+            self.policy.workspace_dir,
+            deduplicated,
+        )
+        section_map = _survey_supplement_section_map(
+            query_plan,
+            deduplicated,
+            note_paths=reading_note_summary["note_paths_by_paper_id"],
+        )
+        _write_jsonl(supplement_dir / "search_log.jsonl", search_log)
+        _write_jsonl(supplement_dir / "papers_retrieved.jsonl", deduplicated)
+        (supplement_dir / "search_plan.json").write_text(
+            json.dumps({"semantics": "survey_targeted_supplement_search_plan", "queries": query_plan}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        (supplement_dir / "section_evidence_map.json").write_text(
+            json.dumps(section_map, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        # Refresh the same workspace-local manifest used by T3.5, T3.6, T4,
+        # T5 and T8.  Supplement notes are shallow/abstract-level until a
+        # later full-text upgrade writes a deep or bridge note.
+        build_literature_manifest(self.policy.workspace_dir, write=True)
         payload = {
-            "semantics": "one_shot_survey_corpus_expansion_plan_not_ideation_loop",
-            "summary": f"Generated {len(queries)} query hints for {len(weak_classes)} weak taxonomy classes.",
+            "semantics": "one_shot_survey_corpus_expansion_retrieval_not_ideation_loop",
+            "summary": (
+                f"Executed {len(query_plan)} targeted supplement searches and retained {len(deduplicated)} "
+                "retrieved records for section-level verification."
+            ),
             "classes_needing_more_lit": weak_classes,
-            "query_hints": queries,
-            "note": "LLM should verify relevance before citing; this tool only organizes expansion hints.",
+            "retrieval_plan": query_plan,
+            "retrieval_actions": len(search_log),
+            "retrieved_record_count": len(deduplicated),
+            "target_record_count": target_record_count,
+            "target_record_source": target_source,
+            "query_budget": {
+                "configured_max_total_queries": params.max_total_queries,
+                "effective_max_total_queries": effective_max_total_queries,
+                "max_results_per_query": params.max_results_per_query,
+            },
+            "supplement_focus": str(decision.get("supplement_focus") or "").strip(),
+            "successful_searches": sum(1 for item in search_log if item["ok"]),
+            "reading_notes": {
+                "root": "literature/shallow_read_notes",
+                "evidence_level": "ABSTRACT_ONLY",
+                "generated_count": reading_note_summary["generated_count"],
+                "existing_count": reading_note_summary["existing_count"],
+                "no_abstract_count": reading_note_summary["no_abstract_count"],
+                "paper_note_paths": reading_note_summary["note_paths"],
+                "usage_boundary": (
+                    "These are canonical abstract-level reading notes available to downstream tasks. "
+                    "They support coverage, taxonomy, history, trends and explicitly abstract-level descriptions; "
+                    "a full/partial note is still required for substantive mechanism, result or causal claims."
+                ),
+            },
+            "pdf_acquisition": {
+                "manifest": "literature/pdf_acquisition_manifest.json",
+                "receipts": "literature/pdf_acquisition_receipts.jsonl",
+                "counts": pdf_acquisition.get("counts") if isinstance(pdf_acquisition, dict) else {},
+                "evidence_boundary": (
+                    "A parseable PDF is available for later reading, but these supplement notes remain "
+                    "ABSTRACT_ONLY until explicit full/partial reading coverage is saved."
+                ),
+            },
+            "supplement_artifacts": {
+                "search_plan": f"{params.supplement_dir}/search_plan.json",
+                "search_log": f"{params.supplement_dir}/search_log.jsonl",
+                "papers": f"{params.supplement_dir}/papers_retrieved.jsonl",
+                "section_evidence_map": f"{params.supplement_dir}/section_evidence_map.json",
+            },
+            "note": (
+                "Retrieved records are a one-shot targeted supplement. Records with an abstract are materialized as canonical "
+                "shallow reading notes; any substantive mechanism/result/causal claim still requires a full/partial reading-note upgrade."
+            ),
         }
         output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return ToolResult(ok=True, content=payload["summary"], data=payload)
+
+
+def _materialize_survey_supplement_shallow_notes(
+    workspace_dir: Path,
+    records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Persist retrieved abstract records as canonical, reusable note cards.
+
+    T3.6 supplement retrieval used to end at an isolated JSONL file.  That
+    made the material invisible to the shared Literature Artifact Contract and
+    forced later stages to guess a separate path.  These notes use the same
+    ``literature/shallow_read_notes`` root as T3's abstract sweep, retain their
+    abstract-only evidence boundary, and add bibliography entries only for
+    records that can be cited as explicitly abstract-level coverage context.
+    """
+
+    # ``abstract_sweep`` depends on runtime progress reporting, whose
+    # observability extractor imports this module.  Delay this reusable note
+    # formatter import until the supplement tool is actually invoked so the
+    # normal CLI/config bootstrap remains acyclic.
+    from ..runtime.abstract_sweep import generate_abstract_note, generate_bib_entry
+
+    workspace = Path(workspace_dir)
+    note_root = workspace / "literature" / "shallow_read_notes"
+    note_root.mkdir(parents=True, exist_ok=True)
+    lookup = build_note_card_lookup(workspace, include_shallow=True)
+    note_paths: list[str] = []
+    paths_by_paper_id: dict[str, str] = {}
+    bib_entries: list[str] = []
+    generated_count = 0
+    existing_count = 0
+    no_abstract_count = 0
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        paper_id = record_note_id(record)
+        if not paper_id:
+            continue
+        existing = lookup.get(paper_id) or lookup.get(normalize_paper_note_alias(paper_id))
+        if existing is not None:
+            note_paths.append(existing.rel_path)
+            paths_by_paper_id[paper_id] = existing.rel_path
+            existing_count += 1
+            continue
+        abstract = str(record.get("abstract") or "").strip()
+        if not abstract:
+            no_abstract_count += 1
+            continue
+        note_path = note_root / f"{paper_id}.md"
+        note = generate_abstract_note(record).rstrip()
+        note += "\n\n<!-- survey_supplement_reading_note: abstract_only; upgrade_required_for_substantive_claims -->\n"
+        note_path.write_text(note, encoding="utf-8")
+        rel_path = note_path.relative_to(workspace).as_posix()
+        note_paths.append(rel_path)
+        paths_by_paper_id[paper_id] = rel_path
+        generated_count += 1
+        bib_entries.append(generate_bib_entry(record))
+
+    if bib_entries:
+        bib_path = workspace / "literature" / "related_work.bib"
+        existing_bib = bib_path.read_text(encoding="utf-8", errors="replace") if bib_path.exists() else ""
+        known_keys = set(extract_bib_keys_from_text(existing_bib))
+        additions: list[str] = []
+        for entry in bib_entries:
+            keys = extract_bib_keys_from_text(entry)
+            if not keys or keys[0] in known_keys:
+                continue
+            known_keys.add(keys[0])
+            additions.append(entry.strip())
+        if additions:
+            combined = existing_bib.rstrip() + "\n\n" + "\n\n".join(additions) + "\n"
+            bib_path.write_text(dedupe_bibtex_entries(combined), encoding="utf-8")
+    return {
+        "generated_count": generated_count,
+        "existing_count": existing_count,
+        "no_abstract_count": no_abstract_count,
+        "note_paths": note_paths,
+        "note_paths_by_paper_id": paths_by_paper_id,
+    }
+
+
+def _build_survey_supplement_query_plan(
+    plan: dict[str, Any],
+    *,
+    domain_map: dict[str, Any],
+    verified: list[dict[str, Any]],
+    weak_classes: list[str],
+    max_queries_per_class: int,
+    max_total_queries: int,
+) -> list[dict[str, Any]]:
+    """Derive bounded retrieval actions from the LLM-authored survey plan.
+
+    The plan's taxonomy and section arguments determine *what* needs coverage.
+    This helper only converts that intent into executable queries and adds the
+    two review-specific needs that a taxonomy alone often misses: historical
+    development and the current frontier.
+    """
+
+    taxonomy = plan.get("taxonomy") if isinstance(plan.get("taxonomy"), dict) else {}
+    classes = _taxonomy_classes(plan)
+    labels = list(weak_classes)
+    if not labels:
+        labels = [
+            str(item.get("name") or item.get("class_id") or "").strip()
+            for item in classes
+            if isinstance(item, dict)
+        ]
+    labels = list(dict.fromkeys(label for label in labels if label))[: max(1, max_total_queries)]
+    dimension = str(taxonomy.get("dimension") or plan.get("central_question") or "").strip()
+    central_terms = _survey_query_terms(dimension)
+    adjacent_terms = _adjacent_titles(domain_map)[:2]
+    verified_terms = [str(item.get("title") or "").strip() for item in verified[:2] if isinstance(item, dict)]
+    outline = plan.get("outline") if isinstance(plan.get("outline"), list) else []
+    query_plan: list[dict[str, Any]] = []
+    for class_label in labels:
+        terms = _survey_query_terms(class_label)
+        if not terms:
+            continue
+        section_ids = _sections_for_supplement_topic(outline, class_label)
+        # One focused frontier query is preferable to three near-identical
+        # search hints.  Additional queries are only added when the user gave
+        # this class more allowance.
+        variants = [("frontier_progress", f"{terms} recent advances review")]
+        if max_queries_per_class >= 2:
+            variants.append(("historical_development", f"{terms} historical development review"))
+        if max_queries_per_class >= 3 and central_terms:
+            variants.append(("cross_stream_bridge", f"{central_terms} {terms}"))
+        for purpose, query in variants:
+            normalized = _bounded_survey_query(query)
+            if not normalized or any(item["query"].casefold() == normalized.casefold() for item in query_plan):
+                continue
+            query_plan.append(
+                {"query": normalized, "purpose": purpose, "topic": class_label, "section_ids": section_ids}
+            )
+            if len(query_plan) >= max_total_queries:
+                return query_plan
+    # A plan can have no explicitly weak class.  The selected complete mode
+    # should still perform a small retrieval that enriches the review's
+    # historical and frontier framing rather than silently doing nothing.
+    if len(query_plan) < max_total_queries and central_terms:
+        for purpose, suffix in (("historical_development", "historical development review"), ("frontier_progress", "recent advances")):
+            query = _bounded_survey_query(f"{central_terms} {suffix}")
+            if query and not any(item["query"].casefold() == query.casefold() for item in query_plan):
+                query_plan.append({"query": query, "purpose": purpose, "topic": "survey-wide framing", "section_ids": ["background", "introduction"]})
+            if len(query_plan) >= max_total_queries:
+                break
+    # Adjacent and existing verified titles are intentionally not substituted
+    # for the survey question. They act only as a final fallback when a sparse
+    # plan lacks usable textual taxonomy.
+    if not query_plan:
+        fallback = _bounded_survey_query(" ".join([*adjacent_terms, *verified_terms]))
+        if fallback:
+            query_plan.append({"query": fallback, "purpose": "coverage_recovery", "topic": "survey-wide framing", "section_ids": ["background", "taxonomy"]})
+    return query_plan[:max_total_queries]
+
+
+def _survey_query_terms(value: str) -> str:
+    text = re.sub(r"\([^)]*\)", " ", str(value or ""))
+    text = re.sub(r"[—–:：;,；。]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:180]
+
+
+def _bounded_survey_query(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()[:240]
+
+
+def _sections_for_supplement_topic(outline: list[Any], topic: str) -> list[str]:
+    tokens = {token.casefold() for token in re.findall(r"[A-Za-z][A-Za-z-]{2,}|[\u4e00-\u9fff]{2,}", topic)}
+    matches: list[str] = []
+    for item in outline:
+        if not isinstance(item, dict):
+            continue
+        haystack = " ".join(str(item.get(key) or "") for key in ("title", "reader_question", "section_argument", "covers"))
+        if any(token in haystack.casefold() for token in tokens):
+            section_id = str(item.get("section_id") or "").strip()
+            if section_id:
+                matches.append(section_id)
+    return list(dict.fromkeys(matches)) or ["background", "taxonomy"]
+
+
+def _deduplicate_survey_supplement_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_key: dict[str, dict[str, Any]] = {}
+    for record in records:
+        external = record.get("externalIds") if isinstance(record.get("externalIds"), dict) else {}
+        key = str(record.get("doi") or external.get("DOI") or record.get("id") or record.get("title") or "").strip().casefold()
+        if not key:
+            continue
+        if key not in by_key:
+            by_key[key] = dict(record)
+            continue
+        existing = by_key[key]
+        existing_supplement = existing.get("survey_supplement") if isinstance(existing.get("survey_supplement"), dict) else {}
+        incoming_supplement = record.get("survey_supplement") if isinstance(record.get("survey_supplement"), dict) else {}
+        section_ids = list(dict.fromkeys([*(existing_supplement.get("section_ids") or []), *(incoming_supplement.get("section_ids") or [])]))
+        existing_supplement["section_ids"] = section_ids
+        existing_supplement["queries"] = list(dict.fromkeys([str(existing_supplement.get("query") or ""), str(incoming_supplement.get("query") or "")]))
+        existing["survey_supplement"] = existing_supplement
+        for field in ("abstract", "doi", "url", "venue", "year", "authors"):
+            if not existing.get(field) and record.get(field):
+                existing[field] = record[field]
+    return sorted(by_key.values(), key=lambda item: str(item.get("title") or "").casefold())
+
+
+def _survey_supplement_section_map(
+    query_plan: list[dict[str, Any]],
+    records: list[dict[str, Any]],
+    *,
+    note_paths: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    sections: dict[str, list[dict[str, str]]] = {}
+    note_paths = note_paths or {}
+    for record in records:
+        supplement = record.get("survey_supplement") if isinstance(record.get("survey_supplement"), dict) else {}
+        for section_id in supplement.get("section_ids") or []:
+            paper_id = record_note_id(record)
+            sections.setdefault(str(section_id), []).append(
+                {
+                    "paper_id": paper_id,
+                    "note_path": str(note_paths.get(paper_id) or ""),
+                    "title": str(record.get("title") or ""),
+                    "usage": "canonical_abstract_note_for_coverage_or_upgrade_required_for_substantive_claim",
+                }
+            )
+    return {
+        "semantics": "survey_supplement_section_evidence_map",
+        "query_count": len(query_plan),
+        "sections": sections,
+        "usage_boundary": "Each linked note_path is an ABSTRACT_ONLY canonical note. No substantive causal, mechanism, result, or comparison claim may be supported without a full/partial reading-note upgrade.",
+    }
+
+
+def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n" for item in records), encoding="utf-8")
+
+
+def _positive_int(value: object) -> int | None:
+    try:
+        result = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return result if 4 <= result <= 60 else None
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -2313,8 +3349,13 @@ def _survey_section_quality_issues(section_id: str, text: str) -> list[str]:
         for label, pattern in patterns.items()
         if not re.search(pattern, plain, flags=re.IGNORECASE)
     ]
-    if missing:
-        issues.append("lacks survey-argument signals: " + ", ".join(missing))
+    # These patterns are semantic hints, not a prose template. Requiring every
+    # literal label made the model inject constructions such as "Definition:"
+    # simply to satisfy the checker, then another validator rejected that
+    # mechanical punctuation. Only reject a section when it exhibits none of
+    # its expected argumentative functions.
+    if patterns and len(missing) == len(patterns):
+        issues.append("lacks the expected survey argument functions: " + ", ".join(missing))
     if section_id in {"comparison", "challenges", "future"}:
         if _looks_like_paper_by_paper_summary(plain):
             issues.append("looks like paper-by-paper summary rather than synthesis")
@@ -2424,6 +3465,38 @@ def _input_fingerprints(workspace: Path, paths: dict[str, str]) -> dict[str, dic
             item["sha256"] = _sha256_dir(path, children)
         fingerprints[label] = item
     return fingerprints
+
+
+def _validate_input_fingerprint_map(workspace: Path, fingerprints: object, label: str) -> tuple[bool, str | None]:
+    if not isinstance(fingerprints, dict):
+        return False, f"{label} is missing input_fingerprints and must be regenerated"
+    for key, item in fingerprints.items():
+        if not isinstance(item, dict):
+            return False, f"{label}.input_fingerprints.{key} must be an object"
+        rel_path = str(item.get("path") or "").strip()
+        if not rel_path:
+            return False, f"{label}.input_fingerprints.{key} is missing path"
+        path = workspace / rel_path
+        expected_exists = bool(item.get("exists"))
+        if expected_exists != path.exists():
+            return False, f"{label} input existence changed: {rel_path}"
+        if not expected_exists:
+            continue
+        if item.get("kind") == "dir" or path.is_dir():
+            children = [child for child in path.rglob("*") if child.is_file()] if path.exists() else []
+            expected_count = item.get("file_count")
+            if expected_count is not None and int(expected_count) != len(children):
+                return False, f"{label} input directory file count changed: {rel_path}"
+            expected_sha = str(item.get("sha256") or "").strip()
+            if expected_sha and _sha256_dir(path, children) != expected_sha:
+                return False, f"{label} input directory content changed: {rel_path}"
+            continue
+        expected_sha = str(item.get("sha256") or "").strip()
+        if not expected_sha:
+            return False, f"{label}.input_fingerprints.{key} is missing sha256"
+        if not path.is_file() or _sha256_file(path) != expected_sha:
+            return False, f"{label} input is stale: {rel_path}"
+    return True, None
 
 
 def _sha256_dir(root: Path, children: list[Path]) -> str:
@@ -2845,16 +3918,16 @@ def _section_citation_requirement_lines(section_id: str) -> list[str]:
             "- minimum_unique_citations: 0",
             "- rule: Abstract must not contain formal citations.",
         ]
-    minimum = SURVEY_SECTION_MIN_CITATIONS.get(section_id, 0)
-    if minimum <= 0:
+    suggested = SURVEY_SECTION_MIN_CITATIONS.get(section_id, 0)
+    if suggested <= 0:
         return [
-            "- minimum_unique_citations: 0",
+            "- suggested_citation_breadth: continuity citations only when they add claim-level support",
             "- rule: Do not introduce new evidence claims; cite only if needed for continuity.",
         ]
     return [
-        f"- minimum_unique_citations: {minimum}",
-        "- rule: Use exact keys from related_work.bib and distribute citations across claim-bearing paragraphs.",
-        "- rule: Citation count is not a target by itself; every citation must anchor a concept, stream, comparison, challenge, or agenda item.",
+        f"- suggested_initial_citation_breadth: about {suggested} distinct, semantically matched sources when the corpus supports them; this is guidance, not a quota.",
+        "- rule: Use exact keys from related_work.bib and distribute citations across genuinely claim-bearing paragraphs when the evidence warrants it.",
+        "- rule: Citation count is never a target by itself; every citation must anchor a concept, stream, comparison, challenge, or agenda item.",
         "- rule: Do not cite metadata-only or explicitly weak/do_not_cite records as mechanism evidence.",
     ]
 
@@ -3122,6 +4195,12 @@ def _copy_latex_template_support_files(template_path: Path | None, target_dir: P
 
 def _template_support_sources(template_path: Path) -> list[Path]:
     support = list(template_path.parent.iterdir())
+    fallback_root = _repo_root() / "latex_templete" / "ccf-latex-templates" / "ICML"
+    existing = {source.name for source in support}
+    for name in ("algorithm.sty", "algorithmic.sty"):
+        fallback = fallback_root / name
+        if name not in existing and fallback.exists():
+            support.append(fallback)
     if _is_ccf_template(template_path, "iclr") and template_path.suffix.lower() == ".sty":
         shell = template_path.parent / "iclr2026_basic.tex"
         if shell.exists():
@@ -3229,6 +4308,8 @@ def _render_survey_document(
                 body_sections=body_sections,
                 bib_stem="references",
             )
+        elif is_ccf_package_shell(template_path):
+            rendered = render_ccf_package_shell(template_path, body)
         else:
             rendered = _replace_template_document_body(template, body, bib_stem="references")
     else:
@@ -3239,7 +4320,36 @@ def _render_survey_document(
             writing_language=writing_language,
             bib_stem="references",
         )
-    return rendered
+    return _ensure_survey_math_symbol_support(rendered)
+
+
+def _ensure_survey_math_symbol_support(tex: str) -> str:
+    """Add the minimal math-symbol package only when the rendered body needs it.
+
+    Section writers may correctly use expressions such as ``\\mathbb{E}``.
+    A venue's official template does not necessarily load ``amssymb`` or
+    ``amsfonts`` itself, so the otherwise valid prose can fail at the final
+    compile step.  This is a template-projection concern, not a reason to send
+    the model back to rewrite a section.  Keep the change narrow: do nothing
+    unless ``\\mathbb`` occurs and an equivalent package is absent.
+    """
+
+    if not re.search(r"\\mathbb(?:\s*\{|[A-Za-z])", tex or ""):
+        return tex
+    package_pattern = re.compile(
+        r"\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\{[^}]*\b(?:amssymb|amsfonts)\b[^}]*\}",
+        flags=re.IGNORECASE,
+    )
+    if package_pattern.search(tex or ""):
+        return tex
+    documentclass = re.search(r"\\documentclass(?:\[[^\]]*\])?\{[^}]+\}[^\n]*(?:\n|$)", tex or "")
+    if documentclass is None:
+        # The fallback is intentionally conservative for malformed custom
+        # templates.  The normal renderer will subsequently report a concrete
+        # compile failure rather than mutating an unknown document shape.
+        return tex
+    insertion = "\\usepackage{amssymb} % required by rendered \\mathbb expressions\n"
+    return tex[: documentclass.end()] + insertion + tex[documentclass.end() :]
 
 
 def _strip_generated_section_comments(text: str) -> str:
@@ -3312,13 +4422,17 @@ def _replace_template_document_body(template: str, body: str, *, bib_stem: str) 
         return template.strip() + "\n\n" + body + "\n"
     end_match = re.search(r"\\end\{document\}", rest, flags=re.IGNORECASE)
     suffix = rest[end_match.end() :] if end_match else ""
-    preamble = _remove_template_title_author(preamble)
+    preamble = _make_optional_template_packages_resilient(_remove_template_title_author(preamble))
     preamble, bib_style = _extract_template_bib_style(preamble, rest)
+    if _uses_automatic_bibliography_style(preamble):
+        bib_style = ""
     body = _set_document_bibliography(
         body,
         bib_stem=bib_stem,
-        bib_style=bib_style or "plainnat",
+        bib_style=bib_style or ("" if _uses_automatic_bibliography_style(preamble) else "plainnat"),
     )
+    if "{acmart}" in preamble:
+        body = _move_abstract_before_maketitle(body)
     return preamble.rstrip() + "\n\n" + begin_cmd + "\n" + body.strip() + "\n\\end{document}" + suffix
 
 
@@ -3328,16 +4442,7 @@ def _is_informs_template(template_path: Path | None, template_text: str) -> bool
 
 
 def _is_ccf_template(template_path: Path | None, template_id: str) -> bool:
-    if not template_path:
-        return False
-    path_text = template_path.as_posix().lower()
-    aliases = {
-        "neurips": "/ccf-latex-templates/neurips/",
-        "kdd": "/ccf-latex-templates/sigkdd/",
-        "icml": "/ccf-latex-templates/icml/",
-        "iclr": "/ccf-latex-templates/iclr/",
-    }
-    return aliases.get(template_id, "") in path_text
+    return is_ccf_template_path(template_path, template_id)
 
 
 def _render_informs_survey_document(
@@ -3527,10 +4632,64 @@ def _split_template_at_begin_document(template: str) -> tuple[str, str, str]:
 
 
 def _remove_template_title_author(preamble: str) -> str:
-    cleaned = re.sub(r"(?ms)^\\title\{.*?\}\s*", "", preamble)
-    cleaned = re.sub(r"(?ms)^\\author\{.*?\}\s*", "", cleaned)
-    cleaned = re.sub(r"(?m)^\\date\{.*?\}\s*", "", cleaned)
+    cleaned = preamble
+    for command in ("title", "author", "date"):
+        cleaned = _remove_braced_command(cleaned, command)
     return cleaned
+
+
+def _remove_braced_command(text: str, command: str) -> str:
+    pattern = re.compile(rf"(?m)^\\{re.escape(command)}\s*\{{")
+    match = pattern.search(text)
+    while match is not None:
+        index = match.end()
+        depth = 1
+        while index < len(text) and depth:
+            char = text[index]
+            if char == "%":
+                newline = text.find("\n", index)
+                index = len(text) if newline < 0 else newline + 1
+                continue
+            if char == "\\":
+                index += 2
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+            index += 1
+        if depth:
+            break
+        text = text[: match.start()] + text[index:].lstrip()
+        match = pattern.search(text)
+    return text
+
+
+def _make_optional_template_packages_resilient(preamble: str) -> str:
+    for package in ("inconsolata", "soul"):
+        preamble = re.sub(
+            rf"(?m)^\\usepackage(?:\[[^\]]*\])?\{{{package}\}}\s*$",
+            rf"\\IfFileExists{{{package}.sty}}{{\\usepackage{{{package}}}}}{{}}",
+            preamble,
+        )
+    preamble = re.sub(
+        r"(?m)^(\\usepackage(?:\[[^\]]*\])?\{acl\})\s*$",
+        "\\\\let\\\\researchosoriginalbibstyle\\\\bibliographystyle\n"
+        "\\\\renewcommand{\\\\bibliographystyle}[1]{}\n"
+        r"\1\n"
+        "\\\\let\\\\bibliographystyle\\\\researchosoriginalbibstyle",
+        preamble,
+    )
+    return preamble
+
+
+def _uses_automatic_bibliography_style(preamble: str) -> bool:
+    return bool(re.search(r"\\usepackage(?:\[[^\]]*\])?\{aaai2026\}", preamble))
+
+
+def _move_abstract_before_maketitle(body: str) -> str:
+    pattern = re.compile(r"(\\maketitle\s*)(\\begin\{abstract\}.*?\\end\{abstract\}\s*)", re.DOTALL)
+    return pattern.sub(lambda match: match.group(2) + match.group(1), body, count=1)
 
 
 def _extract_template_bib_style(preamble: str, body: str = "") -> tuple[str, str]:
@@ -3546,6 +4705,8 @@ def _set_document_bibliography(body: str, *, bib_stem: str, bib_style: str) -> s
     body = re.sub(r"\\bibliography\{[^}]*\}", lambda _m: f"\\bibliography{{{bib_stem}}}", body)
     if "\\bibliography{" not in body:
         body = body.rstrip() + f"\n\n\\bibliography{{{bib_stem}}}\n"
+    if not bib_style.strip():
+        return body
     return re.sub(
         r"(\\bibliography\{[^}]*\})",
         lambda m: f"\\bibliographystyle{{{bib_style}}}\n" + m.group(1),
@@ -3555,42 +4716,7 @@ def _set_document_bibliography(body: str, *, bib_stem: str, bib_style: str) -> s
 
 
 def _resolve_latex_template(repo_root: Path, family: str, template_id: str, writing_language: str) -> Path | None:
-    base = repo_root / "latex_templete"
-    candidates: list[Path] = []
-    if family == "basic_zh":
-        candidates.append(base / "normal" / "basic_zh.tex")
-    elif family == "basic_en":
-        candidates.append(base / "normal" / "basic_en.tex")
-    elif family == "utd":
-        tid = template_id or "informs"
-        if tid in {"informs", "mnsc", "isre", "isr", "ijds"}:
-            candidates.append(
-                base
-                / "utd"
-                / "informs"
-                / "INFORMS-ISRE-Template-6-10-2024"
-                / "INFORMS-ISRE-Template.tex"
-            )
-            candidates.append(base / "utd" / "informs" / "informs_fallback.tex")
-        candidates.append(base / "utd" / "informs_basic.tex")
-    elif family == "ccf":
-        tid = template_id or "neurips"
-        if tid == "neurips":
-            candidates.append(base / "ccf-latex-templates" / "NeurIPS" / "neurips_2026.tex")
-        elif tid == "kdd":
-            candidates.append(base / "ccf-latex-templates" / "SIGKDD" / "kdd_basic.tex")
-            candidates.extend((base / "ccf-latex-templates" / "SIGKDD").glob("*.tex"))
-        elif tid == "icml":
-            candidates.append(base / "ccf-latex-templates" / "ICML" / "example_paper.tex")
-        elif tid == "iclr":
-            candidates.append(base / "ccf-latex-templates" / "ICLR" / "iclr2026_basic.tex")
-            candidates.append(base / "ccf-latex-templates" / "ICLR" / "iclr2026_conference.sty")
-    if not candidates:
-        candidates.append(base / "normal" / ("basic_zh.tex" if writing_language == "zh" else "basic_en.tex"))
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
+    return resolve_catalog_latex_template(repo_root, family, template_id, writing_language)
 
 
 def _active_survey_sections(state: dict[str, Any]) -> list[str]:
@@ -3853,24 +4979,19 @@ def _survey_citation_diversity_issues(
     minimum = _survey_min_diverse_citations(bib_keys, state)
     if minimum and len(cited) < minimum:
         issues.append(f"survey uses {len(cited)} unique citation keys; diversity minimum={minimum} for {len(bib_keys)} available bib entries")
-    uses = _latex_cite_key_occurrences(tex)
-    if not uses:
+    diagnostic = _survey_citation_diversity_diagnostic(tex)
+    total = int(diagnostic["citation_use_count"])
+    if not total:
         return issues
-    counts = {key: uses.count(key) for key in set(uses)}
-    total = len(uses)
     # A fixed cap incorrectly penalizes a long survey that uses a foundational
     # paper across several legitimate sections. Keep the small-corpus floor,
     # but scale the repeated-use limit with the actual citation-use count.
     # Example: 13 uses in 104 citation occurrences is 12.5%, below the 16%
     # concentration boundary, and must not block assembly merely because 13>10.
-    repeat_limit = max(
-        _SURVEY_CITATION_REPEAT_LIMIT,
-        math.ceil(total * _SURVEY_CITATION_CONCENTRATION_LIMIT),
-    )
+    repeat_limit = int(diagnostic["repeat_limit"])
     concentrated = [
-        (key, count)
-        for key, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-        if count > repeat_limit
+        (str(item["key"]), int(item["count"]))
+        for item in diagnostic["over_repeated"]
     ]
     if concentrated:
         issues.append(
@@ -3879,6 +5000,61 @@ def _survey_citation_diversity_issues(
             + ", ".join(f"{key}={count}/{total}" for key, count in concentrated[:6])
         )
     return issues
+
+
+def _survey_citation_diversity_diagnostic(
+    tex: str,
+    section_texts: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Return actionable, non-prescriptive citation concentration facts.
+
+    The audit can say where a foundation paper dominates the prose, but it
+    cannot know which other paper supports a particular sentence.  It reports
+    occurrences only; the Survey Writer must consolidate repeated claims or
+    choose a semantically relevant, already verified source.
+    """
+
+    uses = _latex_cite_key_occurrences(tex)
+    total = len(uses)
+    repeat_limit = max(
+        _SURVEY_CITATION_REPEAT_LIMIT,
+        math.ceil(total * _SURVEY_CITATION_CONCENTRATION_LIMIT),
+    )
+    counts = {key: uses.count(key) for key in set(uses)}
+    per_section: dict[str, dict[str, int]] = {}
+    for section_id, text in (section_texts or {}).items():
+        section_uses = _latex_cite_key_occurrences(text)
+        if section_uses:
+            per_section[str(section_id)] = {
+                key: section_uses.count(key) for key in set(section_uses)
+            }
+    offenders: list[dict[str, Any]] = []
+    for key, count in sorted(counts.items(), key=lambda item: (-item[1], item[0])):
+        if count <= repeat_limit:
+            continue
+        section_counts = {
+            section_id: values[key]
+            for section_id, values in per_section.items()
+            if key in values
+        }
+        offenders.append(
+            {
+                "key": key,
+                "count": count,
+                "ratio": round(count / total, 4) if total else 0.0,
+                "section_counts": section_counts,
+            }
+        )
+    return {
+        "citation_use_count": total,
+        "repeat_limit": repeat_limit,
+        "concentration_limit": _SURVEY_CITATION_CONCENTRATION_LIMIT,
+        "over_repeated": offenders,
+        "repair_policy": (
+            "First consolidate redundant claims. Replace a citation only when the replacement is semantically relevant "
+            "and already verified for that claim; do not add citation padding."
+        ),
+    }
 
 
 def _survey_section_citation_issues(section_texts: dict[str, str], state: dict[str, Any]) -> list[str]:
@@ -3962,6 +5138,23 @@ def _audit_markdown(audit: dict[str, Any]) -> str:
     for item in audit.get("checks") or []:
         marker = "PASS" if item.get("passed") else item.get("level", "FAIL")
         lines.append(f"- [{marker}] {item.get('name')}: {item.get('detail')}")
+    diversity = ((audit.get("repair_guidance") or {}).get("citation_diversity") or {})
+    offenders = diversity.get("over_repeated") if isinstance(diversity, dict) else []
+    if isinstance(offenders, list) and offenders:
+        lines.extend(["", "## Citation Diversity Repair Guidance"])
+        lines.append(
+            "These are concentration diagnostics, not automatic substitution instructions. "
+            "First remove repeated claims; only cite another already verified source when it supports that exact claim."
+        )
+        for item in offenders:
+            if not isinstance(item, dict):
+                continue
+            sections = item.get("section_counts") if isinstance(item.get("section_counts"), dict) else {}
+            section_text = ", ".join(f"{key}={value}" for key, value in sorted(sections.items())) or "section unknown"
+            lines.append(
+                f"- `{item.get('key')}`: {item.get('count')}/{diversity.get('citation_use_count')} uses "
+                f"({float(item.get('ratio') or 0):.1%}); sections: {section_text}."
+            )
     lines.append("")
     return "\n".join(lines)
 

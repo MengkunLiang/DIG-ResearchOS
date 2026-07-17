@@ -21,6 +21,7 @@ Core files:
 external_executor/executor_status.json
 external_executor/run_manifest.json
 external_executor/result_pack.json
+external_executor/executor_research_report.md
 external_executor/input_fingerprint.json
 ```
 
@@ -32,7 +33,7 @@ Read broadly and write narrowly:
 - Each child owns only the result-pack sections and files declared in its contract.
 - Reviewers write review records; they do not rewrite Builder outputs.
 - Packaging skills read evidence and create packages; they do not alter raw results.
-- T7 consumes external outputs; this suite does not write T7/T8 artifacts.
+- T8 consumes `external_executor/executor_research_report.md` plus supporting `external_executor/` artifacts; this suite does not write manuscript artifacts.
 
 Never replace the entire result pack with a child-local view. Merge only the owned top-level section and preserve unknown fields for forward compatibility.
 

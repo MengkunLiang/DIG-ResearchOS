@@ -86,8 +86,8 @@ def _build_evidence_index(workspace: Path) -> dict[str, str]:
     if audit_path.exists():
         for record in _load_jsonl(audit_path):
             level = str(record.get("evidence_level") or "").strip()
-            if bool(record.get("has_seed_pdf")) or str(record.get("access_level_hint") or "") == "FULL_TEXT_LOCAL":
-                level = "FULL_TEXT"
+            # A local PDF records availability only.  Do not promote the
+            # comparison table unless a Reader note records actual coverage.
             if level not in _EVIDENCE_RANK:
                 continue
             for key in paper_record_match_keys(record):

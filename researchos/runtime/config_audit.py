@@ -100,7 +100,9 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
             "global_budget": agent_params.get("global_budget") or {},
             "global_timeout": agent_params.get("global_timeout") or {},
             "retry_policy": agent_params.get("retry_policy") or {},
-            "budget_escalation": agent_params.get("budget_escalation") or {},
+            "runtime_recovery": _summarize_runtime_recovery_policy(
+                agent_params.get("budget_escalation") or {}
+            ),
         },
         "effective_llm_runtime": load_llm_runtime_defaults(),
         # Retained as a migration audit. These historical fields no longer
@@ -147,6 +149,32 @@ def _summarize_agent_llm(agent_params: dict[str, Any]) -> dict[str, dict[str, An
             if llm.get(key) is not None
         }
     return summary
+
+
+def _summarize_runtime_recovery_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    """Expose old budget_escalation config without reintroducing budget tuning.
+
+    The YAML key is intentionally kept for compatibility, but validate-config is
+    a researcher-facing command. It should describe what is active today rather
+    than printing obsolete step/token increase ratios as if they were user
+    controls.
+    """
+
+    if not isinstance(policy, dict):
+        policy = {}
+    return {
+        "enabled": bool(policy.get("enabled", False)),
+        "purpose": (
+            "validation/tool recovery and legacy bounded-budget compatibility; "
+            "ordinary ResearchOS step/token caps are not imposed by default"
+        ),
+        "validation_retry_increase": policy.get("validation_retry_increase", 3),
+        "max_validation_extensions_per_run": policy.get("max_validation_extensions_per_run"),
+        "legacy_bounded_budget_compatibility": {
+            "enabled_only_when_a_bounded_budget_override_is_explicit": True,
+            "max_extensions_per_run": policy.get("max_extensions_per_run"),
+        },
+    }
 
 
 def _scan_state_machine_llm_overrides(state_machine: dict[str, Any]) -> dict[str, list[str]]:

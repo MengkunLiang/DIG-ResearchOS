@@ -28,11 +28,35 @@ def resource_preexec(memory_mb: int | None, cpu_seconds: int | None):
 
 
 def find_attempt(ws: Path, item: dict, attempt: int) -> Path:
-    base = ws / "external_executor" / "workdir" / "baseline_reproduction"
+    base = ws / "external_executor" / "expr" / "baseline_reproduction"
     matches = list(base.glob(f"*/{item['reproduction_id']}/attempt-{attempt}"))
     if len(matches) != 1:
         raise FileNotFoundError(f"Expected one attempt directory, found {len(matches)}")
     return matches[0].resolve()
+
+
+def result_dir_for(ws: Path, attempt_dir: Path, fragment: dict) -> Path:
+    value = fragment.get("result_dir")
+    if value:
+        return resolve_in_workspace(ws, str(value))
+    rel = attempt_dir.relative_to(ws / "external_executor" / "expr" / "baseline_reproduction")
+    return (ws / "external_executor" / "raw_results" / "baseline_reproduction" / rel).resolve(strict=False)
+
+
+def stage_output(ws: Path, source: Path, target_root: Path, rel: str) -> dict:
+    target = (target_root / rel).resolve(strict=False)
+    if not is_within(target, target_root):
+        return {"path": rel, "exists": False, "type": None, "reason": "target_escape"}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if source.is_file():
+        shutil.copy2(source, target)
+        return {"path": relpath(ws, target), "sha256": sha256_file(target), "size_bytes": target.stat().st_size}
+    if source.is_dir():
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(source, target, symlinks=False)
+        return {"path": relpath(ws, target), "type": "directory"}
+    return {"path": rel, "exists": False, "type": None}
 
 
 def main() -> int:
@@ -57,6 +81,12 @@ def main() -> int:
     attempt_dir = find_attempt(ws, item, args.attempt)
     assert_write_allowed(ws, attempt_dir)
     fragment = load_json(attempt_dir / "plan_fragment.json")
+    result_dir = result_dir_for(ws, attempt_dir, fragment)
+    if not is_within(result_dir, ws / "external_executor" / "raw_results"):
+        raise SystemExit(f"Result directory must be under external_executor/raw_results: {result_dir}")
+    assert_write_allowed(ws, result_dir)
+    result_dir.mkdir(parents=True, exist_ok=True)
+    (result_dir / "outputs").mkdir(exist_ok=True)
     work_rel = execution.get("working_directory", ".")
     workdir = (attempt_dir / "source" / work_rel).resolve(strict=False)
     if not is_within(workdir, (attempt_dir / "source").resolve()) or not workdir.exists():
@@ -77,10 +107,12 @@ def main() -> int:
 
     env, redacted = safe_env(os.environ, execution.get("allowed_env_names", []), execution.get("env_overrides", {}))
     env["RESEARCHOS_ATTEMPT_DIR"] = str(attempt_dir)
-    env["RESEARCHOS_OUTPUT_DIR"] = str(attempt_dir / "outputs")
-    stdout_path = attempt_dir / "stdout.log"
-    stderr_path = attempt_dir / "stderr.log"
-    record_path = attempt_dir / "run_record.json"
+    env["RESEARCHOS_DEPLOYMENT_DIR"] = str(attempt_dir)
+    env["RESEARCHOS_RAW_RESULTS_DIR"] = str(result_dir)
+    env["RESEARCHOS_OUTPUT_DIR"] = str(result_dir / "outputs")
+    stdout_path = result_dir / "stdout.log"
+    stderr_path = result_dir / "stderr.log"
+    record_path = result_dir / "run_record.json"
     if record_path.exists():
         raise SystemExit("run_record.json already exists; create a new attempt instead of overwriting")
 
@@ -130,11 +162,27 @@ def main() -> int:
     expected_checks = []
     produced = []
     for rel in execution.get("expected_outputs", []):
-        p = (workdir / rel).resolve(strict=False)
-        valid = is_within(p, workdir) and p.exists()
-        expected_checks.append({"path": rel, "exists": bool(valid), "type": "directory" if valid and p.is_dir() else "file" if valid else None})
-        if valid and p.is_file():
-            produced.append({"path": relpath(ws, p), "sha256": sha256_file(p), "size_bytes": p.stat().st_size})
+        raw_output = (result_dir / "outputs" / rel).resolve(strict=False)
+        work_output = (workdir / rel).resolve(strict=False)
+        valid_raw = is_within(raw_output, result_dir) and raw_output.exists()
+        valid_work = is_within(work_output, workdir) and work_output.exists()
+        valid = valid_raw or valid_work
+        stored_under_raw = bool(valid_raw)
+        staged = None
+        if not valid_raw and valid_work:
+            staged = stage_output(ws, work_output, result_dir / "outputs", rel)
+            stored_under_raw = True
+        expected_checks.append({
+            "path": rel,
+            "exists": bool(valid),
+            "type": "directory" if valid and (raw_output if valid_raw else work_output).is_dir() else "file" if valid else None,
+            "stored_under_raw_results": stored_under_raw,
+        })
+        if valid_raw and raw_output.is_file():
+            produced.append({"path": relpath(ws, raw_output), "sha256": sha256_file(raw_output), "size_bytes": raw_output.stat().st_size})
+        elif staged:
+            staged["staged_from"] = relpath(ws, work_output)
+            produced.append(staged)
     provenance = load_json(attempt_dir / "attempt_provenance.json")
     run_id = stable_id("RUN", item["reproduction_id"], args.attempt, started_at)
     record = {
@@ -151,6 +199,8 @@ def main() -> int:
         "argv": argv,
         "command_display": " ".join(subprocess.list2cmdline([x]) for x in argv),
         "working_directory": relpath(ws, workdir),
+        "deployment_dir": relpath(ws, attempt_dir),
+        "result_dir": relpath(ws, result_dir),
         "exit_code": exit_code,
         "termination_signal": termination_signal,
         "timed_out": timed_out,
@@ -166,7 +216,7 @@ def main() -> int:
         "repeats": item.get("repeats", 1),
         "stdout_path": relpath(ws, stdout_path),
         "stderr_path": relpath(ws, stderr_path),
-        "environment_path": relpath(ws, attempt_dir / "environment.json") if (attempt_dir / "environment.json").exists() else None,
+        "environment_path": relpath(ws, result_dir / "environment.json") if (result_dir / "environment.json").exists() else None,
         "expected_outputs": execution.get("expected_outputs", []),
         "output_checks": expected_checks,
         "produced_artifacts": produced,

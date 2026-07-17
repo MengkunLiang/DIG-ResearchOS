@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _common import SECRET_NAME_RE, canonical_hash, dump_json_atomic, tree_manifest, utc_now
+from _common import SECRET_NAME_RE, canonical_hash, dump_json_atomic, find_workspace, is_within, tree_manifest, utc_now
 
 
 def git_info(path: Path) -> dict:
@@ -60,6 +60,11 @@ def main() -> int:
     args = ap.parse_args()
     output = Path(args.path).expanduser().resolve()
     source = Path(args.source).expanduser().resolve() if args.source else None
+    workspace = find_workspace(output)
+    if not is_within(output, workspace / "external_executor" / "raw_results"):
+        raise SystemExit("Environment records must be written under external_executor/raw_results")
+    if source and not is_within(source, workspace / "external_executor" / "expr"):
+        raise SystemExit("Environment source must be a deployment under external_executor/expr")
     packages = sorted([{"name": d.metadata.get("Name") or d.name, "version": d.version} for d in importlib.metadata.distributions()], key=lambda x: x["name"].lower())
     env_names = sorted(set(args.env_name))
     env_record = []

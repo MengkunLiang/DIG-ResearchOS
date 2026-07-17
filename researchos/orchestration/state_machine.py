@@ -35,6 +35,13 @@ from ..runtime.artifact_fingerprints import (
     validate_t45_fingerprint_report,
 )
 from ..writing_profiles import resolve_venue_writing_profile
+from ..latex_templates import (
+    ccf_template_entry,
+    ccf_template_entries,
+    ccf_template_ids,
+    ccf_template_option_id,
+    normalize_ccf_template_id,
+)
 from ..schemas.state import BudgetCumulative, GateState, StateYaml, TaskHistoryEntry
 from .gate_presenter import build_presentation
 from .task_io_contract import get_task_io, task_io_contract_source
@@ -48,23 +55,30 @@ from ..ideation.prerun import (
     default_run_config,
     has_current_t4_prerun_confirmation,
     inspect_t4_inputs,
+    materialize_t4_cross_domain_catalog_context,
     parse_t4_prerun_intent,
 )
 from ..ideation.target_profile import parse_target_profile_instruction, suggest_target_profile
 from ..ideation.selected_compilation import (
+    candidate_selection_readiness,
+    candidate_selection_warnings_for_workspace,
     compile_pre_novelty_hypothesis_brief,
     selected_candidate_id_from_gate_input,
+    validate_candidate_selection_ready,
 )
 from ..ideation.directives import (
+    _explicit_read_only_action,
+    _explicit_selection_action,
     current_population_context,
     parse_idea_directive,
     persist_idea_directive_confirmation,
     persist_idea_directive,
 )
+from ..ideation.final_card_readiness import validate_t4_portfolio_final_cards
 from ..ideation.models import CandidateDossier, IdeaDirective, PopulationSnapshot, RouteGenerationResult, ScoreReport
 from ..ideation.population import build_idea_families, select_portfolio
 from ..ideation.legacy_projection import project_gate1_population
-from ..ideation.state import T4ArtifactStore, run_config_fingerprint
+from ..ideation.state import T4ArtifactStore, build_t4_input_fingerprints, run_config_fingerprint
 
 
 def _now_iso() -> str:
@@ -90,77 +104,77 @@ def _native_t4_action_description(directive: IdeaDirective) -> dict[str, str]:
     action = directive.action
     descriptions = {
         "select_candidate": {
-            "title": "Proceed with Candidate",
-            "what_happens": "The selected complete Candidate is frozen as a Pre-Novelty brief. T4.5 will then check novelty and collisions before formal hypotheses or an experiment plan are compiled.",
-            "estimated_time": "Usually under one minute for local compilation; T4.5 runs separately.",
-            "version_policy": "The current Population, Parents, Children, and Archive are retained. You can return to this Gate later.",
-            "next_stage": "Pre-Novelty compilation, then T4.5.",
+            "title": "选择此 Candidate 进入 T4.5",
+            "what_happens": "系统会将这个完整 Candidate 固化为 Pre-Novelty brief；随后由 T4.5 检查 novelty 与 collision，只有通过后才会编译正式 hypotheses 和 experiment plan。",
+            "estimated_time": "本地整理通常少于一分钟；T4.5 会作为下一阶段单独运行。",
+            "version_policy": "当前 Population、Parent、Child 和 Archive 都会保留，之后仍可回到此 Gate。",
+            "next_stage": "生成 Pre-Novelty brief，然后进入 T4.5。",
         },
         "continue_evolution": {
-            "title": "Run another Generation",
-            "what_happens": "ResearchOS uses the active Population as Parents, creates plan-bounded Mutation/Crossover Children, scores the union independently, and writes a new Population snapshot.",
-            "estimated_time": "A model-backed round; duration depends on the configured provider and Population size.",
-            "version_policy": "The active Population becomes a preserved prior version and remains available through Rollback.",
-            "next_stage": "Return to Gate1 with a new Portfolio; T4.5 is not entered.",
+            "title": "继续一轮 Evolution",
+            "what_happens": "系统以当前 Active Population 为 Parent，按计划生成 Mutation / Crossover Child，对合并后的候选独立评分，并写入新的 Population 快照。",
+            "estimated_time": "需要模型参与；耗时取决于 provider 和 Population 大小。",
+            "version_policy": "当前 Active Population 会保留为历史版本，可随时 rollback。",
+            "next_stage": "带着新的 Portfolio 回到 Gate1，不会进入 T4.5。",
         },
         "focus_candidate": {
-            "title": "Focus Evolution",
-            "what_happens": "ResearchOS creates a plan-bounded Mutation Child for the selected Candidate and independently scores it against the active Population.",
-            "estimated_time": "A focused model-backed operation, typically shorter than a full Generation.",
-            "version_policy": "Other Candidates and all historical versions remain preserved.",
-            "next_stage": "Return to Gate1 with the updated Population; T4.5 is not entered.",
+            "title": "聚焦演化此 Candidate",
+            "what_happens": "系统会为所选 Candidate 制定边界明确的 Mutation Child 计划，并将其与当前 Active Population 独立比较评分。",
+            "estimated_time": "需要模型参与，通常短于完整的一轮 Evolution。",
+            "version_policy": "其他 Candidate 与所有历史版本都会保留。",
+            "next_stage": "带着更新后的 Population 回到 Gate1，不会进入 T4.5。",
         },
         "merge_candidates": {
-            "title": "Create a Crossover",
-            "what_happens": "ResearchOS first performs a Compatibility Check. A Child is generated only when an approved Gene Donor Map supports one coherent thesis.",
-            "estimated_time": "A model-backed compatibility review and, only if approved, one child-generation and scoring pass.",
-            "version_policy": "Both Parent Candidates remain unchanged and recoverable.",
-            "next_stage": "Return to Gate1; T4.5 is not entered automatically.",
+            "title": "创建 Crossover Candidate",
+            "what_happens": "系统会先进行 Compatibility Check；只有确认存在一致的 Core Thesis 和 Gene Donor Map 后，才会生成新的 Child。",
+            "estimated_time": "需要模型参与的兼容性检查；通过后才会再进行一次 Child 生成和评分。",
+            "version_policy": "两个 Parent Candidate 都不会被改写，且可以恢复。",
+            "next_stage": "回到 Gate1；不会自动进入 T4.5。",
         },
         "compose_from_components": {
-            "title": "Compose selected components",
-            "what_happens": "ResearchOS checks whether the chosen hypotheses, contributions, or genes can form one coherent Candidate. It never concatenates them into a final hypothesis file.",
-            "estimated_time": "A model-backed Compatibility Check; a second confirmation is required before any new Candidate is generated.",
-            "version_policy": "Every source Candidate and its original components remain preserved.",
-            "next_stage": "Return to Gate1 with a Compatibility Report.",
+            "title": "组合选定的组成部分",
+            "what_happens": "系统会检查所选 hypotheses、contributions 或 genes 能否构成一个一致的 Candidate；不会把它们直接拼接进正式假设文件。",
+            "estimated_time": "需要模型参与的 Compatibility Check；生成新 Candidate 前还会进行第二次确认。",
+            "version_policy": "所有来源 Candidate 及其原始组成部分都会保留。",
+            "next_stage": "带着 Compatibility Report 回到 Gate1。",
         },
         "keep_parallel": {
-            "title": "Keep Ideas in parallel",
-            "what_happens": "The selected complete Candidates are recorded as separate directions. No mechanism, contribution, or hypothesis is merged.",
-            "estimated_time": "Local artifact update only; no model call.",
-            "version_policy": "All selected and unselected Candidates remain unchanged.",
-            "next_stage": "Return to Gate1; choose a direction when you are ready for a Pre-Novelty brief.",
+            "title": "并行保留多个方向",
+            "what_happens": "所选的完整 Candidate 会作为相互独立的研究方向记录；不会合并 mechanism、contribution 或 hypothesis。",
+            "estimated_time": "仅更新本地记录，不调用模型。",
+            "version_policy": "已选和未选 Candidate 都不会改变。",
+            "next_stage": "回到 Gate1；准备好后再选择一个方向生成 Pre-Novelty brief。",
         },
         "regenerate_route": {
-            "title": "Regenerate a Route",
-            "what_happens": "ResearchOS creates a new route run while preserving the prior route artifacts and Population history.",
-            "estimated_time": "A model-backed generation and independent scoring operation.",
-            "version_policy": "Existing route output and all Candidates remain recoverable.",
-            "next_stage": "Return to Gate1 with a new Population snapshot.",
+            "title": "重新生成一条 Route",
+            "what_happens": "系统会重新运行指定 Route，同时保留先前的 Route 结果和 Population 历史。",
+            "estimated_time": "需要模型生成与独立评分。",
+            "version_policy": "现有 Route 输出和所有 Candidate 都可恢复。",
+            "next_stage": "带着新的 Population 快照回到 Gate1。",
         },
         "change_target_profile": {
-            "title": "Change Publication Orientation",
-            "what_happens": "ResearchOS preserves the active Candidate Population and five-dimension Core Scientific Score, independently reassesses Profile Fit, and writes a new profile-revision Population snapshot.",
-            "estimated_time": "One model-backed Profile Fit assessment across the active Population.",
-            "version_policy": "The previous Population, score batch, Candidates, and lineage remain preserved and can be inspected or restored.",
-            "next_stage": "Return to Gate1 with a Portfolio ordered for the new orientation.",
+            "title": "调整论文取向（Publication Orientation）",
+            "what_happens": "系统会保留 Active Population 与五维 Core Scientific Score，只重新独立评估 Profile Fit，并写入新的 profile-revision Population 快照。",
+            "estimated_time": "需要模型对当前 Active Population 做一次 Profile Fit 评估。",
+            "version_policy": "之前的 Population、评分批次、Candidate 和谱系都会保留，可查看或恢复。",
+            "next_stage": "按新的论文取向排序 Portfolio 后回到 Gate1。",
         },
         "rollback": {
-            "title": "Rollback",
-            "what_happens": "The active Population pointer moves to the preceding Generation and the compatibility view is rebuilt from its persisted Candidate and score artifacts.",
-            "estimated_time": "Local artifact update only; no model call.",
-            "version_policy": "Later Generations are not deleted and can be revisited later.",
-            "next_stage": "Return to Gate1 at the restored Generation.",
+            "title": "回退到上一代（Rollback）",
+            "what_happens": "系统会将 Active Population 指向上一代，并根据已保存的 Candidate 和评分记录重建比较视图。",
+            "estimated_time": "仅更新本地记录，不调用模型。",
+            "version_policy": "后续 Generation 不会删除，之后仍可重新查看。",
+            "next_stage": "在恢复后的 Generation 回到 Gate1。",
         },
     }
     return descriptions.get(
         action,
         {
-            "title": action.replace("_", " ").title(),
-            "what_happens": "ResearchOS will preserve the request and validate its artifact boundary before changing the active Population.",
-            "estimated_time": "Depends on the requested operation.",
-            "version_policy": "Existing Candidate and Population artifacts remain preserved.",
-            "next_stage": "Return to Gate1.",
+            "title": "T4 操作",
+            "what_happens": "系统会先保留请求并校验 artifact 边界，再改变 Active Population。",
+            "estimated_time": "取决于所请求的操作。",
+            "version_policy": "现有 Candidate 和 Population artifact 会保留。",
+            "next_stage": "回到 Gate1。",
         },
     )
 
@@ -247,6 +261,44 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+_T4_IMPLEMENTATION_PATHS = (
+    "researchos/ideation/evolution_controller.py",
+    "researchos/ideation/llm_roles.py",
+    "researchos/ideation/models.py",
+    "researchos/ideation/evidence.py",
+    "researchos/ideation/legacy_projection.py",
+    "researchos/runtime/orchestrator.py",
+    "researchos/ui/idea_evolution_renderer.py",
+    "config/system_config/t4_evolution.yaml",
+    "config/system_config/idea_evidence_permissions.yaml",
+    "config/system_config/idea_scoring_rubric.yaml",
+    "config/system_config/idea_evolution_operators.yaml",
+)
+
+
+def _t4_execution_implementation_fingerprint() -> str:
+    """Bind T4 retry identity to the installed controller contract.
+
+    A retry with unchanged workspace inputs should still be stopped after the
+    configured deadlock threshold.  A repaired T4 runtime, however, is a new
+    execution contract: treating it as the old failing attempt blocks a valid
+    resume and forces users to edit unrelated project inputs.  Only the small
+    set of files that define T4 formation, validation, projection, and its
+    system policy participate in this fingerprint.
+    """
+
+    repository_root = Path(__file__).resolve().parents[2]
+    digest = hashlib.sha256()
+    for relative in _T4_IMPLEMENTATION_PATHS:
+        path = repository_root / relative
+        digest.update(relative.encode("utf-8"))
+        try:
+            digest.update(path.read_bytes())
+        except OSError:
+            digest.update(b"<missing>")
+    return digest.hexdigest()
+
+
 _T36_SURVEY_GATE_INPUT_PATHS = {
     "project": "project.yaml",
     "synthesis": "literature/synthesis.md",
@@ -311,6 +363,16 @@ _TEMPLATE_GATE_DEFAULTS: dict[str, dict[str, str]] = {
         "writing_language": "en",
     },
 }
+_TEMPLATE_GATE_DEFAULTS.update(
+    {
+        ccf_template_option_id(entry.template_id): {
+            "template_family": "ccf",
+            "template_id": entry.template_id,
+            "writing_language": "en",
+        }
+        for entry in ccf_template_entries()
+    }
+)
 
 
 _SUPPORTED_RUNTIME_TEMPLATE_IDS = {
@@ -321,7 +383,43 @@ _SUPPORTED_RUNTIME_TEMPLATE_IDS = {
     "icml",
     "kdd",
     "informs",
+} | ccf_template_ids()
+
+
+_CCF_TEMPLATE_GATE_TASKS = {
+    "T3.6-CCF-TEMPLATE-GATE": "T3.6-PLAN",
+    "T8-CCF-TEMPLATE-GATE": "T8-RESOURCE",
 }
+
+
+def _ccf_template_gate_options(*, task_id: str) -> list[dict[str, Any]]:
+    """Build the second-level CCF menu from the bundled local catalogue."""
+
+    repo_root = Path(__file__).resolve().parents[2]
+    next_task = _CCF_TEMPLATE_GATE_TASKS[task_id]
+    options: list[dict[str, Any]] = []
+    for entry in ccf_template_entries(repo_root=repo_root, available_only=True):
+        package_note = (
+            "使用本地官方 LaTeX 入口。"
+            if entry.has_official_entry
+            else "只有本地 class/style 模板包；ResearchOS 会生成匿名写作外壳，提交前请替换为该 venue 最新官方入口。"
+        )
+        options.append(
+            {
+                "id": ccf_template_option_id(entry.template_id),
+                "label": entry.label,
+                "description": package_note,
+                "aliases": [entry.template_id, entry.label.casefold()],
+                "next": next_task,
+                "captured_defaults": {
+                    "template_family": "ccf",
+                    "template_id": entry.template_id,
+                    "writing_language": "en",
+                    **({"venue_style": "ccf_a"} if task_id == "T8-CCF-TEMPLATE-GATE" else {}),
+                },
+            }
+        )
+    return options
 
 
 _T2_LITERATURE_PARAM_GATE_INPUT_PATHS = {
@@ -622,7 +720,7 @@ def _t4_basis_summary_for_gate(candidate: dict[str, Any]) -> str:
 
 
 def _t4_short_display_title(candidate: dict[str, Any], fallback: str) -> str:
-    """Use an authored short title when available without eliding the content."""
+    """Use an authored short title; old cards get a layout-only abbreviation."""
 
     text = str(
         candidate.get("display_title")
@@ -631,6 +729,15 @@ def _t4_short_display_title(candidate: dict[str, Any], fallback: str) -> str:
         or fallback
         or "未命名候选"
     ).strip()
+    # New FinalIdeaCard translations supply a real LLM-authored short title.
+    # Historical cards only have a full pitch.  Do not pretend to invent a
+    # scientific title from it: retain a compact display excerpt and leave the
+    # full LLM-authored thesis in the detailed card immediately below.
+    if len(text) > 38:
+        boundary = min(
+            [position for position in (text.find("。"), text.find("；"), text.find("，")) if position >= 12] or [38]
+        )
+        return text[:boundary].rstrip("，；。 ") + "…"
     return text
 
 
@@ -664,6 +771,56 @@ def _t4_candidate_innovation(candidate: dict[str, Any]) -> dict[str, str]:
         "delta": str(raw.get("novelty_delta") or "").strip(),
         "non_incremental": str(raw.get("non_incremental_reason") or "").strip(),
     }
+
+
+_T4_GATE1_ENRICHABLE_CARD_FIELDS: tuple[tuple[str, str], ...] = (
+    ("role_summary", "为何入选说明"),
+    ("evidence_interpretation", "证据解读"),
+    ("selection_advice", "选择建议"),
+    ("risk_summary", "主要风险说明"),
+    ("user_edit_hint", "可调整处说明"),
+)
+
+
+def _t4_gate1_card_enrichment_diagnostics(gate1_card: dict[str, Any]) -> list[str]:
+    """Report absent LLM card explanations without fabricating their meaning.
+
+    Gate1 remains a comparison surface when one Candidate's presentation is
+    incomplete.  These messages are operational disclosure, not substituted
+    research prose: they say which model-authored explanation is unavailable
+    and keep the Candidate out of direct T4.5 selection until a targeted
+    enrichment pass produces it.
+    """
+
+    missing = [
+        label
+        for field, label in _T4_GATE1_ENRICHABLE_CARD_FIELDS
+        if not " ".join(str(gate1_card.get(field) or "").split())
+    ]
+    if not missing:
+        return []
+    return [
+        "LLM 展示富化未完成：缺少" + "、".join(missing) + "。"
+        "当前仅展示已保存字段；请先定向富化或继续演化，不能将其它字段替代为这些解释。"
+    ]
+
+
+def _t4_evidence_status_for_gate(
+    candidate: dict[str, Any],
+    final_card: dict[str, Any],
+    evidence_levels: set[str],
+    basis_sources: list[dict[str, Any]],
+) -> str:
+    """Return only the LLM-authored evidence explanation for a Final Card.
+
+    Evidence level labels and source paths remain available as factual metadata
+    elsewhere in the view model.  They cannot stand in for the candidate-level
+    explanation of what the present material supports, so a missing summary is
+    deliberately left empty and routed to Final Card repair before Gate1.
+    """
+
+    del candidate, evidence_levels, basis_sources
+    return str(final_card.get("evidence_status_summary") or "").strip()
 
 
 def _t4_merge_opportunities(candidate: dict[str, Any]) -> list[dict[str, str]]:
@@ -717,10 +874,23 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
             ]
             if str(candidate_id or "").strip()
         ]
+    lead_id = str(portfolio.get("lead_id") or "").strip() if isinstance(portfolio, dict) else ""
+    alternative_ids = set(str(item).strip() for item in (portfolio.get("alternative_ids") or []) if str(item).strip()) if isinstance(portfolio, dict) else set()
+    high_upside_ids = set(str(item).strip() for item in (portfolio.get("high_upside_ids") or []) if str(item).strip()) if isinstance(portfolio, dict) else set()
     portfolio_id_set = set(portfolio_ids)
     all_candidate_count = len([item for item in raw_candidates if isinstance(item, dict)])
+    raw_by_id = {
+        str(item.get("id") or item.get("idea_id") or "").strip(): item
+        for item in raw_candidates
+        if isinstance(item, dict) and str(item.get("id") or item.get("idea_id") or "").strip()
+    }
+    ordered_raw_candidates = (
+        [raw_by_id[candidate_id] for candidate_id in portfolio_ids if candidate_id in raw_by_id]
+        if portfolio_ids
+        else [item for item in raw_candidates if isinstance(item, dict)]
+    )
 
-    for candidate in raw_candidates:
+    for candidate in ordered_raw_candidates:
         if not isinstance(candidate, dict):
             continue
         candidate_id = str(candidate.get("id") or candidate.get("idea_id") or "").strip()
@@ -729,11 +899,19 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
         if portfolio_id_set and candidate_id not in portfolio_id_set:
             continue
         source_title = str(candidate.get("title") or "").strip()
-        full_title = str(candidate.get("title_zh") or source_title).strip()
-        title = _t4_short_display_title(candidate, full_title)
-        gate1_card = candidate.get("gate1_card") if isinstance(candidate.get("gate1_card"), dict) else {}
-        value = str(candidate.get("pitch_zh") or candidate.get("pitch") or candidate.get("core_claim") or "").strip()
-        mechanism = str(candidate.get("mechanism_zh") or candidate.get("mechanism") or "").strip()
+        final_translation = candidate.get("final_idea_card") if isinstance(candidate.get("final_idea_card"), dict) else {}
+        # A visible Portfolio candidate must have a completed LLM Final Card.
+        # Do not build a title, evidence interpretation, or recommendation from
+        # legacy CandidatePresentation fields when it is absent; the recovery
+        # gate owns that repair path.
+        if not final_translation:
+            continue
+        title = str(final_translation.get("short_title") or "").strip()
+        if not title:
+            continue
+        full_title = str(final_translation.get("plain_language_summary") or "").strip()
+        value = str(final_translation.get("core_thesis") or "").strip()
+        mechanism = str(final_translation.get("scientific_technical_core") or "").strip()
         minimum = candidate.get("minimum_experiment") if isinstance(candidate.get("minimum_experiment"), dict) else {}
         metrics = minimum.get("metric") or minimum.get("metrics") or ""
         if isinstance(metrics, list):
@@ -756,29 +934,47 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
             for item in support
             if isinstance(item, dict) and str(item.get("evidence_level") or "").strip()
         }
-        evidence = "；".join(sorted(evidence_levels)) if evidence_levels else "需回查对应文献笔记 section"
+        evidence = _t4_evidence_status_for_gate(candidate, final_translation, evidence_levels, basis_sources)
         pass2 = candidate.get("pass2_screening") if isinstance(candidate.get("pass2_screening"), dict) else {}
+        selection_enabled, selection_blocker = validate_candidate_selection_ready(candidate)
+        # The Final Idea Card is the LLM-authored decision narrative for the
+        # visible Portfolio. It supersedes an older CandidatePresentation that
+        # may be absent in a resumed workspace. Gate1 is not opened at all
+        # until the Card Compiler has produced this complete translation, so
+        # no deterministic card-field fallback is needed here.
+        selection_recommendation = str(pass2.get("screening_recommendation") or "").strip()
         warning = str(pass2.get("selection_warning") or candidate.get("selection_warning") or "").strip()
         generated_by = str(candidate.get("generated_by") or candidate.get("generation_stage") or "").strip()
         is_recovery_candidate = generated_by.startswith("deterministic_recovery") or "deterministic_t4_gate1_recovery" in generated_by
+        presentation_status = "legacy_recovery_requires_llm_reanalysis" if is_recovery_candidate else "llm_final_card_completed"
         lane = {
             "mainline": "主方向",
-            "bridge": "桥接方向",
+            "bridge": "跨领域候选方向",
             "supplement": "消融补充",
             "not_supported_by_current_evidence": "证据待补",
+            "presentation_degraded": "展示待补",
         }.get(str(candidate.get("constraint_status") or "").lower(), "候选方向")
         candidates.append(
             {
-                "id": candidate_id,
+                # D# is the stable researcher-facing handle for this Gate.
+                # The internal lineage ID remains available in the detail view
+                # and is resolved by the state machine before any operation.
+                "id": f"D{len(candidates) + 1}",
+                "internal_id": candidate_id,
+                "portfolio_role": (
+                    "lead" if candidate_id == lead_id else "alternative" if candidate_id in alternative_ids else "high_upside" if candidate_id in high_upside_ids else "parallel"
+                ),
                 "lane": lane,
                 "title": title,
                 "full_title": full_title,
                 "original_title": source_title if full_title != source_title else "",
                 "origin": str(candidate.get("idea_origin") or "").strip(),
+                "parent_ids": [str(value).strip() for value in candidate.get("parent_ids") or [] if str(value).strip()] if isinstance(candidate.get("parent_ids"), list) else [],
                 "mechanism_family": str(candidate.get("mechanism_family") or "").strip(),
                 "target_problem": str(candidate.get("target_problem") or "").strip(),
                 "value": value,
                 "mechanism": mechanism,
+                "real_world_significance": str(final_translation.get("real_world_significance") or "").strip(),
                 "prediction": prediction,
                 "counterfactual": counterfactual,
                 "practical_implication": str(candidate.get("practical_implication_zh") or candidate.get("practical_implication") or "").strip(),
@@ -797,6 +993,7 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                     else [],
                 },
                 "evidence": evidence,
+                "evidence_status_summary": str(final_translation.get("evidence_status_summary") or "").strip(),
                 "support_count": len(support),
                 "basis_summary": _t4_basis_summary_for_gate(candidate),
                 "evidence_chain": [
@@ -844,9 +1041,57 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                 },
                 "final_idea_card": candidate.get("final_idea_card") if isinstance(candidate.get("final_idea_card"), dict) else {},
                 "maturity": str(candidate.get("maturity") or "").strip(),
+                "candidate_stage": str(candidate.get("candidate_stage") or candidate.get("maturity") or "").strip(),
+                "contribution_type": str(
+                    candidate.get("contribution_type")
+                    or (
+                        candidate.get("contributions")[0].get("type")
+                        if isinstance(candidate.get("contributions"), list)
+                        and candidate.get("contributions")
+                        and isinstance(candidate.get("contributions")[0], dict)
+                        else ""
+                    )
+                ).strip(),
+                "contributions": [
+                    {
+                        "id": str(item.get("id") or "").strip(),
+                        "statement": str(item.get("statement") or "").strip(),
+                        "type": str(item.get("type") or "").strip(),
+                        "what_changes_if_true": str(item.get("what_changes_if_true") or "").strip(),
+                    }
+                    for item in candidate.get("contributions", [])
+                    if isinstance(item, dict)
+                ]
+                if isinstance(candidate.get("contributions"), list)
+                else [],
+                "lineage": candidate.get("lineage") if isinstance(candidate.get("lineage"), dict) else {},
+                "artifact_index": candidate.get("artifact_index") if isinstance(candidate.get("artifact_index"), dict) else {},
+                "cross_domain_sources": [
+                    str(value).strip()
+                    for value in candidate.get("cross_domain_sources", [])
+                    if str(value).strip()
+                ]
+                if isinstance(candidate.get("cross_domain_sources"), list)
+                else [],
+                "cross_domain_relation": str(candidate.get("cross_domain_relation_detail") or candidate.get("cross_domain_relation") or "").strip(),
+                "projection_status": str(candidate.get("projection_status") or "complete").strip(),
+                "projection_diagnostics": [
+                    str(value).strip()
+                    for value in candidate.get("projection_diagnostics", [])
+                    if str(value).strip()
+                ]
+                if isinstance(candidate.get("projection_diagnostics"), list)
+                else [],
+                "final_card_status": str(candidate.get("final_card_status") or "").strip(),
+                "final_card_diagnostic": str(candidate.get("final_card_diagnostic") or "").strip(),
                 "evidence_composition": candidate.get("evidence_composition") if isinstance(candidate.get("evidence_composition"), dict) else {},
                 "artifact_paths": [str(path).strip() for path in candidate.get("artifact_paths", []) if str(path).strip()] if isinstance(candidate.get("artifact_paths"), list) else [],
-                "selection_recommendation": str(pass2.get("screening_recommendation") or "").strip(),
+                "selection_recommendation": selection_recommendation,
+                # This is the same structural contract used after the second
+                # confirmation.  The Gate must never present a Candidate as
+                # selectable and only reject it after the researcher confirms.
+                "selection_enabled": selection_enabled,
+                "selection_blocker": selection_blocker or "",
                 "counterfactual_check": str(pass2.get("counterfactual_check") or "").strip(),
                 "nearest_prior_work": str(
                     (pass2.get("nearest_prior_work") or candidate.get("nearest_prior_work") or {}).get("work")
@@ -855,14 +1100,8 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                 ).strip(),
                 "novelty_signal": str(pass2.get("novelty_signal") or candidate.get("novelty_signal") or "").strip(),
                 "warning": warning,
-                "presentation_status": "legacy_recovery_requires_llm_reanalysis" if is_recovery_candidate else "llm_authored_candidate",
-                "gate1_card": {
-                    "role_summary": str(gate1_card.get("role_summary") or "").strip(),
-                    "evidence_interpretation": str(gate1_card.get("evidence_interpretation") or "").strip(),
-                    "selection_advice": str(gate1_card.get("selection_advice") or "").strip(),
-                    "risk_summary": str(gate1_card.get("risk_summary") or "").strip(),
-                    "user_edit_hint": str(gate1_card.get("user_edit_hint") or "").strip(),
-                },
+                "presentation_status": presentation_status,
+                "enrichment_diagnostics": [],
                 "innovation": _t4_candidate_innovation(candidate),
                 "candidate_hypotheses": _t4_candidate_hypotheses(candidate, candidate_id),
                 "merge_opportunities": _t4_merge_opportunities(candidate),
@@ -870,12 +1109,25 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
             }
         )
 
+    internal_to_display = {
+        str(item.get("internal_id") or ""): str(item.get("id") or "")
+        for item in candidates
+        if str(item.get("internal_id") or "").strip()
+    }
+    for item in candidates:
+        final_card = item.get("final_idea_card") if isinstance(item.get("final_idea_card"), dict) else {}
+        dependencies = final_card.get("dependency_candidate_ids") if isinstance(final_card.get("dependency_candidate_ids"), list) else []
+        item["dependency_display_ids"] = [
+            internal_to_display.get(str(value), str(value))
+            for value in dependencies
+            if str(value).strip()
+        ]
     return {
         "language": "zh",
         "candidates": candidates,
         "active_candidate_count": all_candidate_count,
         "remaining_candidate_count": max(0, all_candidate_count - len(candidates)),
-        "input_hint": "选择一个完整 Candidate 可进入 Pre-Novelty review；选择多个方向时请明确“并行保留”或“构建新 Candidate”。也可以输入“查看剩余 Population”“查看 I1 的评分/证据/谱系”“再进化一轮”或“回到上一代”。",
+        "input_hint": "选择一个完整 Candidate 可进入 Pre-Novelty review；选择多个方向时请明确“并行保留”或“构建新 Candidate”。也可以输入“查看剩余 Population”“查看 D1 的评分/证据/谱系/全部假设”“重新演化”“只优化 D2”或“回到上一代”。",
         "detail_path": "ideation/_gate1_candidate_cards.md",
         "file_navigation": [
             {"path": "ideation/_gate1_candidate_cards.md", "purpose": "人工阅读版完整候选卡片，适合逐项比较。"},
@@ -886,6 +1138,86 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
             {"path": "ideation/bridge_coverage_review.json", "purpose": "桥接领域候选为何展示、暂缓或需要补证据的审计记录。"},
         ],
     }
+
+
+def _t4_gate1_display_id_map(workspace_dir: Path) -> dict[str, str]:
+    """Return stable Gate1 D# handles for the whole current Active Population.
+
+    The first handles always match the visible Portfolio cards.  Remaining
+    active Candidates receive subsequent handles so a researcher can inspect
+    or compare them after selecting ``查看其余 Population``.  Internal lineage
+    identifiers remain the durable execution keys and are never inferred from
+    a display handle.
+    """
+
+    overview = _t4_gate1_candidate_overview(workspace_dir)
+    ordered_ids = [
+        str(item.get("internal_id") or "").strip()
+        for item in overview.get("candidates", [])
+        if isinstance(item, dict) and str(item.get("internal_id") or "").strip()
+    ]
+    try:
+        raw = json.loads((workspace_dir / "ideation" / "_candidate_directions.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raw = {}
+    raw_candidates = raw.get("candidates") if isinstance(raw, dict) else []
+    if isinstance(raw_candidates, list):
+        for item in raw_candidates:
+            if not isinstance(item, dict):
+                continue
+            candidate_id = str(item.get("id") or item.get("idea_id") or "").strip()
+            if candidate_id and candidate_id not in ordered_ids:
+                ordered_ids.append(candidate_id)
+    try:
+        population, _dossiers = current_population_context(workspace_dir)
+    except (OSError, ValueError):
+        population = None
+    if population is not None:
+        for candidate_id in population.active_candidate_ids:
+            if candidate_id not in ordered_ids:
+                ordered_ids.append(candidate_id)
+    return {f"D{index}": candidate_id for index, candidate_id in enumerate(ordered_ids, start=1)}
+
+
+def _resolve_t4_display_ids(value: str, display_ids: dict[str, str]) -> str:
+    """Replace exact public D# handles, never arbitrary substrings."""
+
+    if not display_ids:
+        return value
+    return re.sub(
+        r"(?<![A-Za-z0-9])D\d+(?![A-Za-z0-9])",
+        lambda match: display_ids.get(match.group(0).upper(), match.group(0)),
+        str(value or ""),
+        flags=re.IGNORECASE,
+    )
+
+
+def _resolve_t4_display_ids_in_payload(value: Any, display_ids: dict[str, str]) -> Any:
+    """Resolve public handles in the narrow parsed-directive payload."""
+
+    if isinstance(value, str):
+        return _resolve_t4_display_ids(value, display_ids)
+    if isinstance(value, list):
+        return [_resolve_t4_display_ids_in_payload(item, display_ids) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _resolve_t4_display_ids_in_payload(item, display_ids) for key, item in value.items()}
+    return value
+
+
+def _t4_public_handle_tokens(value: str) -> list[str]:
+    """Return bare Gate1 D# handles when the whole input is just handles."""
+
+    text = " ".join(str(value or "").strip().split())
+    if not text:
+        return []
+    tokens = re.findall(r"(?<![A-Za-z0-9])D\d+(?![A-Za-z0-9])", text, flags=re.IGNORECASE)
+    if not tokens:
+        return []
+    remainder = re.sub(r"(?<![A-Za-z0-9])D\d+(?![A-Za-z0-9])", "", text, flags=re.IGNORECASE)
+    remainder = re.sub(r"[\s,，、;；+&和与andAND]+", "", remainder)
+    if remainder:
+        return []
+    return [token.upper() for token in tokens]
 
 
 def validate_t4_gate1_selection_file(workspace_dir: Path) -> tuple[bool, str | None]:
@@ -1564,7 +1896,15 @@ def _template_selection_from_gate(
         "decided_at": _now_iso(),
         "input_fingerprints": build_input_fingerprints(workspace_dir, _TEMPLATE_GATE_INPUT_PATHS),
     }
-    if task_id == "T8-STYLE-GATE":
+    if family == "ccf":
+        entry = ccf_template_entry(template_id)
+        if entry is not None:
+            payload["template_availability"] = entry.availability_label
+            if not entry.has_official_entry:
+                payload["template_submission_notice"] = (
+                    "本地目录只有 class/style 模板包；正文会使用匿名写作外壳，投稿前必须核对并替换为该 venue 当年的官方入口文件。"
+                )
+    if task_id in {"T8-STYLE-GATE", "T8-CCF-TEMPLATE-GATE"}:
         payload["venue_style"] = venue_style
         payload["venue_profile"] = resolve_venue_writing_profile("", payload).get("id", "")
         payload["venue_profile_note"] = (
@@ -1603,6 +1943,8 @@ def _normalize_template_family(value: Any) -> str:
         "sigkdd": "ccf",
     }
     text = aliases.get(text, text)
+    if normalize_ccf_template_id(text) in ccf_template_ids():
+        text = "ccf"
     return text if text in {"basic_zh", "basic_en", "ccf", "utd", "other"} else "basic_en"
 
 
@@ -1636,7 +1978,7 @@ def _normalize_template_id(value: Any) -> str:
         "informs_journal_on_data_science": "informs",
         "informs_journal_on_data_science_and_analytics": "informs",
     }
-    return aliases.get(text, text)
+    return normalize_ccf_template_id(aliases.get(text, text))
 
 
 def _normalize_writing_language(value: Any) -> str:
@@ -1842,6 +2184,18 @@ class StateMachine:
 
             self._validate_gate(task_id, node, errors)
             self._validate_task_contract(task_id, node, errors)
+
+        # T4's run configuration is a first-class Human Gate, not a renderer
+        # convenience.  A state machine that exposes T4 but omits this public
+        # declaration would otherwise pass generic node validation and fail
+        # only after the user starts a run.  Runtime still has a Recovery Gate
+        # fallback for stale persisted workspaces, but new/custom definitions
+        # must fail validation with an actionable configuration error.
+        if "T4" in self.nodes and "t4_prerun_gate" not in self.gates:
+            errors.append(
+                "T4: missing required gate 't4_prerun_gate'; add the public T4 pre-run confirmation "
+                "to gates.yaml or use config/system_config/gates.yaml"
+            )
         return errors
 
     def build_execution_context(self, workspace_dir: Path, state: StateYaml) -> ExecutionContext:
@@ -1943,6 +2297,15 @@ class StateMachine:
             base_extra=extra,
         )
         extra.update(recovery_info)
+        runtime_recovery = extra.get("runtime_recovery")
+        if isinstance(runtime_recovery, dict) and runtime_recovery.get("target_task") == node.task_id:
+            # The durable directive is intentionally passed through the normal
+            # context rather than reconstructed from a free-form error.  All
+            # Agent families can therefore see the same bounded repair window
+            # after a process restart.
+            extra["resume_mode"] = True
+            extra["is_resume"] = True
+            extra["resume_reason"] = "runtime_recovery"
 
         ctx = ExecutionContext(
             workspace_dir=workspace_dir,
@@ -1963,12 +2326,33 @@ class StateMachine:
     def should_pause_for_immediate_gate(self, state: StateYaml, *, workspace_dir: Path | None = None) -> bool:
         """Return true when the current node is a gate-only node that should not run an LLM."""
 
+        # Upgrade an older paused Survey assembly failure into the current
+        # durable recovery gate before another model repair window is used.
+        if (
+            state.current_task == "T3.6-ASSEMBLE"
+            and workspace_dir is not None
+            and state.status == "PAUSED"
+            and self._is_t36_assemble_recoverable_error(state.last_error)
+        ):
+            return True
+        if (
+            state.current_task == "T3.6-COMPILE"
+            and workspace_dir is not None
+            and state.status == "PAUSED"
+            and self._is_t36_compile_recoverable_error(state.last_error)
+        ):
+            return True
         if state.current_task == "T4" and "T4-GATE1" in self.nodes and workspace_dir is not None:
-            if isinstance(state.task_context.get("t4_operation_request"), dict):
+            operation = state.task_context.get("t4_operation_request")
+            if isinstance(operation, dict) and not self._is_legacy_t4_advance_operation(operation):
                 return False
+            if isinstance(operation, dict):
+                return True
             if self._t4_gate1_ready_without_selection(workspace_dir):
                 return True
             return self._t4_prerun_confirmation_required(workspace_dir)
+        if state.status == "PAUSED" and self._runtime_recovery_payload_from_error(state.last_error) is not None:
+            return True
         node = self.nodes[state.current_task]
         return bool(node.gate and (node.extra or {}).get("immediate_gate"))
 
@@ -1980,14 +2364,68 @@ class StateMachine:
     ) -> StateYaml:
         """Present a gate-only node directly and pause without starting an agent run."""
 
+        if (
+            state.current_task == "T3.6-ASSEMBLE"
+            and workspace_dir is not None
+            and self._is_t36_assemble_recoverable_error(state.last_error)
+        ):
+            return self._pause_for_t36_assemble_recovery_gate(state, state.last_error or "", workspace_dir)
+        if (
+            state.current_task == "T3.6-COMPILE"
+            and workspace_dir is not None
+            and self._is_t36_compile_recoverable_error(state.last_error)
+        ):
+            return self._pause_for_t36_compile_recovery_gate(state, state.last_error or "", workspace_dir)
         if state.current_task == "T4" and workspace_dir is not None:
+            operation = state.task_context.get("t4_operation_request")
+            if isinstance(operation, dict) and self._is_legacy_t4_advance_operation(operation):
+                state.task_context.pop("t4_operation_request", None)
+                state.task_context.pop("human_iteration_directive", None)
+                return self._reopen_native_t4_gate(
+                    state,
+                    workspace_dir,
+                    result={
+                        "title": "已阻止旧版错误推进",
+                        "summary": (
+                            "当前保存的 T4 操作原本来自“推进候选”，但被旧版解析为重新演化。"
+                            "系统已在模型调用前取消该操作；没有创建新 Candidate 或改变 Population。"
+                            "请重新输入“推进 D1”，随后将进入 T4.5 的确认流程。"
+                        ),
+                        "kind": "legacy_advance_operation_repaired",
+                    },
+                )
             if self._t4_gate1_ready_without_selection(workspace_dir):
                 state.current_task = "T4-GATE1"
             elif self._t4_prerun_confirmation_required(workspace_dir):
+                # A custom/minimal state-machine can expose T4 without also
+                # importing the public pre-run Gate declaration.  That is a
+                # recoverable configuration incompleteness, not a reason for
+                # the CLI to raise ``KeyError`` before it can show a human
+                # decision.  The standard configuration still presents the
+                # normal T4 pre-run chooser below.
+                if "t4_prerun_gate" not in self.gates:
+                    return self._pause_for_t4_recovery_gate(
+                        state,
+                        "T4 requires a confirmed pre-run configuration, but this state-machine does not declare t4_prerun_gate. "
+                        "Add the public pre-run gate or resume with the standard ResearchOS configuration.",
+                        workspace_dir,
+                    )
                 return self._pause_for_t4_prerun_gate(state, workspace_dir)
+        if state.status == "PAUSED":
+            generic_recovery = self._pause_for_runtime_recovery_gate(
+                state,
+                error=state.last_error,
+                workspace_dir=workspace_dir,
+            )
+            if generic_recovery is not None:
+                return generic_recovery
         node = self.nodes[state.current_task]
         if not node.gate:
             raise ValueError(f"{state.current_task} has no gate")
+        if node.task_id == "T4-GATE1" and workspace_dir is not None:
+            redirected = self._redirect_incomplete_t4_gate_to_recovery(state, workspace_dir)
+            if redirected is not None:
+                return redirected
         gate_id = self._gate_id_for_node(node)
         gate_spec = self._find_gate(gate_id)
         presentation = build_presentation(
@@ -1999,6 +2437,10 @@ class StateMachine:
         if node.task_id == "T2-PARAM-GATE":
             presentation["current_parameter_preview"] = build_literature_param_gate_preview(workspace_dir)
             options = enrich_literature_param_gate_options(options, workspace_dir)
+        elif node.task_id in _CCF_TEMPLATE_GATE_TASKS:
+            options = _ccf_template_gate_options(task_id=node.task_id)
+        elif node.task_id == "T3.6-GATE-CORPUS" and workspace_dir is not None:
+            presentation["supplement_recommendation"] = _t36_supplement_recommendation(workspace_dir)
         if node.task_id == "T4-GATE1" and workspace_dir is not None:
             presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
             presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
@@ -2011,8 +2453,8 @@ class StateMachine:
                     0,
                     {
                         "id": "confirm_composition",
-                        "label": "Confirm Human-composed Candidate",
-                        "description": "Generate one new Candidate from the reviewed Gene Donor Map and independently score it; source Candidates remain preserved.",
+                        "label": "确认生成 Human-composed Candidate",
+                        "description": "根据已审核的 Gene Donor Map 生成一个新 Candidate 并独立评分；来源 Candidate 会保留。",
                     },
                 )
         state.pending_gate = GateState(
@@ -2025,10 +2467,36 @@ class StateMachine:
         state.paused_at = _now_iso()
         return state
 
+    @staticmethod
+    def _is_legacy_t4_advance_operation(operation: dict[str, Any]) -> bool:
+        """Identify an old queued T4 evolution created from ``推进 D#``.
+
+        This is a resume-only compatibility guard.  Explicit optimize/evolve
+        directives remain valid T4 operations; only a plainly documented
+        advance request with a non-selection action is intercepted.
+        """
+
+        action = str(operation.get("action") or "").strip()
+        directive = operation.get("directive") if isinstance(operation.get("directive"), dict) else {}
+        raw = str(directive.get("raw_user_input") or "")
+        targets = directive.get("target_candidate_ids") if isinstance(directive.get("target_candidate_ids"), list) else []
+        return action != "select_candidate" and _explicit_selection_action(raw, target_count=len(targets))
+
     def _pause_for_t4_prerun_gate(self, state: StateYaml, workspace_dir: Path) -> StateYaml:
         """Pause inside T4 for configuration without adding an external FSM node."""
 
+        catalog_context = materialize_t4_cross_domain_catalog_context(workspace_dir)
         inspection = inspect_t4_inputs(workspace_dir)
+        if catalog_context.get("status") == "degraded":
+            inspection = inspection.model_copy(
+                update={
+                    "warnings": [
+                        *inspection.warnings,
+                        "Cross-domain catalog 未能自动物化："
+                        + str(catalog_context.get("warning") or "请检查 catalog 诊断；T4 仍会保留已确认方向名称作为受限创意上下文。"),
+                    ]
+                }
+            )
         store = T4ArtifactStore(workspace_dir)
         try:
             config = store.read_run_config()
@@ -2061,6 +2529,774 @@ class StateMachine:
         state.paused_at = _now_iso()
         return state
 
+    @staticmethod
+    def _t4_recovery_presentation(error: str, *, has_final_card_checkpoint: bool) -> dict[str, str]:
+        """Describe the failed T4 boundary without exposing a provider traceback.
+
+        T4 uses one recovery gate for several recoverable boundaries.  A
+        compatibility-review record that needs normalizing is fundamentally
+        different from a missing Final Idea Card.  Calling both of them
+        ``card repair`` confused researchers into retrying an unrelated
+        operation, and leaked a Pydantic implementation error into the normal
+        decision surface.  The complete error remains in the runtime trace and
+        ``state.last_error``; this method supplies the bounded public account.
+        """
+
+        normalized = " ".join(str(error or "").casefold().split())
+        compatibility_tokens = (
+            "crossovercompatibilitydecision",
+            "crossover compatibility",
+            "兼容投影",
+            "兼容性评审",
+        )
+        final_card_tokens = (
+            "final idea card",
+            "portfolio idea card",
+            "final card",
+            "portfolio_cards.json",
+        )
+        if any(token in normalized for token in compatibility_tokens):
+            return {
+                "kind": "compatibility_record",
+                "title": "T4 兼容性记录恢复",
+                "description": (
+                    "候选、评分、谱系和已完成演化均已保存。已保存的候选组合评审记录需要按当前版本重新读取和校验；"
+                    "这不会重新生成候选，也不会把未获批准的组合变成新方向。"
+                ),
+                "error_summary": (
+                    "候选组合的兼容性评审记录与当前恢复格式不兼容，尚未完成读取。"
+                    "已保存的候选、评分和演化计划保持不变。"
+                ),
+                "retry_label": "继续兼容性记录恢复",
+                "retry_description": "从已保存的演化计划恢复兼容性记录；已完成的候选、评分和路线不会重跑。",
+            }
+        if has_final_card_checkpoint or any(token in normalized for token in final_card_tokens):
+            return {
+                "kind": "final_card",
+                "title": "T4 卡片说明恢复",
+                "description": (
+                    "候选、评分、谱系和已完成演化均已保存。决策页缺少部分完整的候选说明，"
+                    "恢复时只会补齐该说明，不会改写候选或评分。"
+                ),
+                "error_summary": "候选决策卡尚未完整生成，当前不能安全打开选择页；已保存的研究结果不会丢失。",
+                "retry_label": "继续卡片说明恢复",
+                "retry_description": "从已保存 checkpoint 恢复，只补齐缺失的候选说明，不重跑路线、评分或 Population。",
+            }
+        return {
+            "kind": "general",
+            "title": "T4 恢复决策",
+            "description": "候选、评分和已完成演化均已保存。恢复会从尚未完成的 T4 边界继续，不会删除已有研究结果。",
+            "error_summary": "T4 尚未完成一项结构化恢复检查；已保存的候选、评分和演化结果保持可用。",
+            "retry_label": "继续 T4 恢复",
+            "retry_description": "从已保存状态继续未完成的 T4 工作，并在恢复前重新校验相关产物。",
+        }
+
+    def _pause_for_t4_recovery_gate(self, state: StateYaml, error: str, workspace_dir: Path | None) -> StateYaml:
+        """Persist an actionable decision when T4 cannot safely reach Gate1."""
+
+        ready = bool(workspace_dir and self._t4_gate1_ready_without_selection(workspace_dir))
+        cards_ready = False
+        card_error = ""
+        repair_checkpoint: dict[str, Any] | None = None
+        repair_checkpoint_error = ""
+        if workspace_dir is not None:
+            cards_ready, raw_card_error = validate_t4_portfolio_final_cards(workspace_dir)
+            card_error = str(raw_card_error or "")
+            operation = state.task_context.get("t4_operation_request")
+            try:
+                repair_checkpoint, raw_checkpoint_error = T4ArtifactStore(
+                    workspace_dir
+                ).current_final_card_repair_checkpoint(
+                    operation=operation if isinstance(operation, dict) else None,
+                )
+                repair_checkpoint_error = str(raw_checkpoint_error or "")
+            except (OSError, ValueError) as exc:
+                repair_checkpoint_error = str(exc)
+        recovery = self._t4_recovery_presentation(
+            error,
+            has_final_card_checkpoint=repair_checkpoint is not None,
+        )
+        options = [
+            {
+                "id": "retry_t4",
+                "label": recovery["retry_label"],
+                "description": recovery["retry_description"],
+            },
+            {"id": "pause", "label": "暂停", "description": "保留诊断和所有 T4 artifacts，稍后 resume。"},
+            {"id": "exit", "label": "结束本次运行", "description": "不删除任何 Candidate 或演化结果。"},
+        ]
+        if ready:
+            options.insert(
+                1,
+                {
+                    "id": "open_gate1",
+                    "label": "查看完整 Portfolio Card",
+                    "description": "所有可见 Candidate 已有完整 LLM Final Card；仅打开决策面板，不调用模型。",
+                },
+            )
+        state.pending_gate = GateState(
+            gate_id="t4_recovery_gate",
+            presented_at=_now_iso(),
+            presentation={
+                "_title": recovery["title"],
+                "_description": recovery["description"],
+                "_recovery_kind": recovery["kind"],
+                "_recovery_presentation_version": 2,
+                "error_summary": recovery["error_summary"],
+                "gate1_artifacts_ready": ready,
+                "portfolio_final_cards_ready": cards_ready,
+                "portfolio_final_cards_error": card_error[:1000],
+                "final_card_repair_checkpoint": (
+                    {
+                        "population_id": repair_checkpoint.get("population_id"),
+                        "population_generation": repair_checkpoint.get("population_generation"),
+                        "operation_action": repair_checkpoint.get("operation_action"),
+                        "operation_directive_id": repair_checkpoint.get("operation_directive_id"),
+                        "status": repair_checkpoint.get("status"),
+                    }
+                    if repair_checkpoint is not None
+                    else None
+                ),
+                "final_card_repair_checkpoint_error": repair_checkpoint_error[:1000],
+            },
+            options=options,
+        )
+        state.status = "WAITING_HUMAN"
+        state.paused_at = _now_iso()
+        return state
+
+    @staticmethod
+    def _t4_has_recoverable_checkpoint(workspace_dir: Path | None) -> bool:
+        """Return whether a T4 retry can retain a durable Candidate checkpoint.
+
+        This deliberately performs only an existence check.  It must not read or
+        reinterpret a potentially damaged Population while deciding whether a
+        provider outage is recoverable; the normal controller/state validation
+        remains responsible for that stronger integrity check on retry.
+        """
+
+        if workspace_dir is None:
+            return False
+        workspace = Path(workspace_dir)
+        return bool(
+            list((workspace / "ideation" / "populations").glob("P*.json"))
+            or list((workspace / "ideation" / "candidates").glob("*.json"))
+        )
+
+    @classmethod
+    def _is_t4_recoverable_runtime_failure(
+        cls,
+        error: str | None,
+        *,
+        workspace_dir: Path | None,
+    ) -> bool:
+        """Classify a failed native T4 run without turning a failure into success.
+
+        T4's controller already preserves checkpoints and raw diagnostics for
+        route, score, mutation, crossover, card, renderer, and compatibility
+        projection failures.  Those conditions need an actionable recovery Gate
+        rather than the generic `next_on_failure: failed` transition.  By
+        contrast, an explicitly unsafe persistence/identity/selection state
+        cannot be retried blindly and must remain a hard failure.
+
+        Runtime currently transports many failures as text, so this is
+        intentionally conservative about what is *hard*: only explicit
+        integrity signatures bypass recovery.  Unknown implementation or
+        provider failures remain visible in the recovery Gate with their saved
+        diagnostic; they are never marked successful.
+        """
+
+        text = " ".join(str(error or "").casefold().split())
+        hard_patterns = (
+            r"path traversal",
+            r"workspace-relative",
+            r"cannot safely write",
+            r"permission denied",
+            r"read-only file system",
+            r"unsafe artifact (?:replacement|overwrite)",
+            r"legacy artifact.*overwrit",
+            r"state corruption",
+            r"unrecoverable state",
+            r"fingerprint (?:corruption|mismatch)",
+            r"stale (?:gate1 )?selection",
+            r"selection is stale",
+            r"candidate id .*?(?:overwrite|collision)",
+            r"population id .*?(?:overwrite|collision)",
+            r"forged (?:parent|child )?lineage",
+        )
+        if any(re.search(pattern, text) for pattern in hard_patterns):
+            return False
+
+        # A total provider outage is only a hard infrastructure failure when no
+        # Population/Candidate checkpoint exists to present or resume.  A
+        # partial T4 run with saved Candidates remains recoverable.
+        all_providers_unavailable = bool(
+            re.search(r"(?:all|every) (?:llm )?providers? (?:are )?(?:unavailable|failed)", text)
+            or "no available provider" in text
+        )
+        if all_providers_unavailable and not cls._t4_has_recoverable_checkpoint(workspace_dir):
+            return False
+        return True
+
+    def _pause_for_t4_runtime_failure(
+        self,
+        state: StateYaml,
+        error: str | None,
+        *,
+        workspace_dir: Path | None,
+    ) -> StateYaml | None:
+        """Open the T4 recovery Gate for a non-integrity failure, if eligible."""
+
+        if state.current_task != "T4" or not self._is_t4_recoverable_runtime_failure(
+            error,
+            workspace_dir=workspace_dir,
+        ):
+            return None
+        summary = " ".join(str(error or "T4 stopped before Gate1 without a detailed runtime error.").split())
+        # The task did not succeed, but it is a recoverable interruption rather
+        # than a completed/failed scientific result. Keep the original error
+        # for audit while making the lifecycle status truthful for resume.
+        if state.history:
+            state.history[-1].status = "INTERRUPTED"
+            state.history[-1].error = summary
+        return self._pause_for_t4_recovery_gate(state, summary, workspace_dir)
+
+    def _pause_for_t36_assemble_recovery_gate(
+        self,
+        state: StateYaml,
+        error: str,
+        workspace_dir: Path | None,
+    ) -> StateYaml:
+        """Turn an exhausted Survey assembly audit into a durable decision.
+
+        A citation-diversity FAIL is neither a bibliography fabrication request
+        nor a reason to discard the assembled Survey.  The audit already
+        records the exact over-concentrated keys and sections.  Preserve that
+        context in a Gate so the researcher can grant another bounded repair
+        window, inspect the saved diagnosis, or pause without losing prose.
+        """
+
+        repair_guidance: dict[str, Any] = {}
+        audit_path = workspace_dir / "drafts" / "survey" / "survey_audit.json" if workspace_dir else None
+        if audit_path and audit_path.exists():
+            try:
+                audit = json.loads(audit_path.read_text(encoding="utf-8"))
+                if isinstance(audit, dict):
+                    guidance = audit.get("repair_guidance")
+                    if isinstance(guidance, dict):
+                        repair_guidance = guidance
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
+        state.pending_gate = GateState(
+            gate_id="t36_assemble_recovery_gate",
+            presented_at=_now_iso(),
+            presentation={
+                "_title": "综述拼装审计需要决策",
+                "_description": (
+                    "已保存所有 section、survey.tex 和审计结果。请选择是否追加一轮定向修复；"
+                    "系统只会修复审计指出的来源文件，不会用无关引用或虚构内容强行通过。"
+                ),
+                "error_summary": " ".join(str(error).split())[:1000],
+                "audit_path": "drafts/survey/survey_audit.json",
+                "repair_guidance": repair_guidance,
+            },
+            options=[
+                {
+                    "id": "retry_survey_repair",
+                    "label": "继续定向修复",
+                    "description": "给予新的有界修复窗口；优先处理 audit 指出的 section，不重写整篇综述。",
+                },
+                {
+                    "id": "pause_review",
+                    "label": "暂停并检查审计",
+                    "description": "保留所有已写内容和 audit，稍后 resume。",
+                },
+                {
+                    "id": "exit",
+                    "label": "结束本次综述运行",
+                    "description": "不删除任何 survey artifact。",
+                },
+            ],
+        )
+        state.status = "WAITING_HUMAN"
+        state.paused_at = _now_iso()
+        return state
+
+    @staticmethod
+    def _is_t36_assemble_recoverable_error(error: str | None) -> bool:
+        text = str(error or "").casefold()
+        return bool(
+            text
+            and (
+                "survey_audit" in text
+                or "citation_diversity" in text
+                or "survey audit" in text
+            )
+        )
+
+    def _pause_for_t36_compile_recovery_gate(
+        self,
+        state: StateYaml,
+        error: str,
+        workspace_dir: Path | None,
+    ) -> StateYaml:
+        """Turn a deterministic Survey compile failure into a user decision.
+
+        Compilation is deliberately outside the prose-writing agent loop.  A
+        TeX/environment failure therefore needs an explicit choice instead of
+        silently relaunching a model that cannot improve the compiler result:
+        retry the deterministic command after an environment repair, return to
+        Review to patch the source sections, or preserve the artifacts and
+        pause.
+        """
+
+        artifacts: dict[str, bool] = {}
+        if workspace_dir is not None:
+            for relative_path in (
+                "drafts/survey/survey.tex",
+                "drafts/survey/survey.log",
+                "drafts/survey/survey_compile_report.json",
+                "drafts/survey/survey_audit.json",
+            ):
+                artifacts[relative_path] = (workspace_dir / relative_path).is_file()
+        state.pending_gate = GateState(
+            gate_id="t36_compile_recovery_gate",
+            presented_at=_now_iso(),
+            presentation={
+                "_title": "综述 PDF 编译需要决策",
+                "_description": (
+                    "编译阶段未改写任何综述正文，已保留 TeX、section、审计和 compile report。"
+                    "请选择重试确定性编译、回到 Review 修复来源文件，或暂停检查环境。"
+                ),
+                "error_summary": " ".join(str(error).split())[:1200],
+                "compile_report_path": "drafts/survey/survey_compile_report.json",
+                "artifacts_present": artifacts,
+            },
+            options=[
+                {
+                    "id": "retry_compile",
+                    "label": "重试编译",
+                    "description": "不调用模型，不改写正文；重新执行 latex_compile 并验证 PDF、log 和 report。",
+                },
+                {
+                    "id": "return_to_review",
+                    "label": "回到 Review 修复来源文件",
+                    "description": "调用 Survey Writer 只修复 compile report 指向的 section、引用或模板来源；随后重新拼装、审计和编译。",
+                },
+                {
+                    "id": "pause_review",
+                    "label": "暂停并检查编译报告",
+                    "description": "保留所有文件和诊断，稍后 resume 会再次显示此决策。",
+                },
+                {
+                    "id": "exit",
+                    "label": "结束本次综述运行",
+                    "description": "停止当前运行，不删除任何 survey artifact。",
+                },
+            ],
+        )
+        state.status = "WAITING_HUMAN"
+        state.paused_at = _now_iso()
+        return state
+
+    @staticmethod
+    def _is_t36_compile_recoverable_error(error: str | None) -> bool:
+        text = str(error or "").casefold()
+        return bool(
+            text
+            and (
+                "t3.6-compile" in text
+                or "survey compile" in text
+                or "compile report" in text
+                or "waiting_environment" in text
+                or "latex" in text
+            )
+        )
+
+    @staticmethod
+    def is_hard_runtime_integrity_error(error: str | None) -> bool:
+        """Return whether a runtime error is unsafe to retry through a Gate.
+
+        A generic recovery decision must never convert state corruption, unsafe
+        writes, forged provenance, or an identity collision into an ordinary
+        retry.  Schema shape/format issues, quality findings, provider
+        outages, and exhausted budgets deliberately do *not* belong here: they
+        remain repairable or degradable workflow conditions.
+        """
+
+        text = " ".join(str(error or "").casefold().split())
+        hard_patterns = (
+            r"path traversal",
+            r"workspace-relative",
+            r"cannot safely write",
+            r"unsafe artifact (?:replacement|overwrite)",
+            r"legacy artifact.*overwrit",
+            r"state corruption",
+            r"unrecoverable state",
+            r"fingerprint (?:corruption|mismatch)",
+            r"forged (?:parent|child )?lineage",
+            r"(?:candidate|population) id .*?(?:overwrite|collision)",
+            r"forged (?:citation|source|doi)",
+            r"citation (?:identity|provenance) corruption",
+        )
+        return any(re.search(pattern, text) for pattern in hard_patterns)
+
+    @staticmethod
+    def _result_has_explicit_runtime_pause(result: AgentResult) -> bool:
+        """Return whether an inline runtime prompt already received a pause choice."""
+
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        raw = metadata.get("runtime_explicit_pause")
+        return isinstance(raw, dict) and bool(str(raw.get("decision") or "").strip())
+
+    @classmethod
+    def _runtime_recovery_payload_from_result(cls, result: AgentResult) -> dict[str, Any] | None:
+        """Normalize an AgentRunner recovery signal without trusting text alone."""
+
+        if cls.is_hard_runtime_integrity_error(result.error):
+            return None
+        if cls._result_has_explicit_runtime_pause(result):
+            return None
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        raw = metadata.get("runtime_recovery")
+        if isinstance(raw, dict):
+            kind = str(raw.get("kind") or "runtime").strip()
+            if kind in {
+                "validation",
+                "artifact_validation",
+                "budget",
+                "max_steps",
+                "provider",
+                "runtime",
+                "environment",
+                "human_input",
+            }:
+                payload = dict(raw)
+                payload["kind"] = kind
+                payload["error_summary"] = " ".join(
+                    str(payload.get("error_summary") or result.error or "").split()
+                )[:1200]
+                details = payload.get("details")
+                payload["details"] = dict(details) if isinstance(details, dict) else {}
+                return payload
+
+        # ``STOP_MAX_STEPS`` and ``STOP_BUDGET`` have unambiguous runtime
+        # semantics even for third-party Agents that predate the structured
+        # signal.  Keep plain interrupted runs conservative so Ctrl-C remains
+        # an ordinary user pause.
+        if result.stop_reason == AgentResult.STOP_BUDGET:
+            return {"kind": "budget", "error_summary": " ".join(str(result.error or "").split())[:1200], "details": {}}
+        if result.stop_reason == AgentResult.STOP_MAX_STEPS:
+            return {"kind": "max_steps", "error_summary": " ".join(str(result.error or "").split())[:1200], "details": {}}
+        if result.stop_reason != AgentResult.STOP_INTERRUPTED:
+            return None
+        text = " ".join(str(result.error or "").casefold().split())
+        inferred: str | None = None
+        if "validation failed" in text or "输出校验" in text or "artifact validation" in text:
+            inferred = "validation"
+        elif (
+            "模型服务" in text
+            or "llm provider" in text
+            or "provider unavailable" in text
+            or "provider failure" in text
+            or ("llm" in text and "unavailable" in text)
+        ):
+            inferred = "provider"
+        elif "waiting_environment" in text or "human_input_unavailable" in text or "需要用户输入" in text:
+            inferred = "runtime"
+        if inferred is None:
+            return None
+        return {"kind": inferred, "error_summary": " ".join(str(result.error or "").split())[:1200], "details": {}}
+
+    @classmethod
+    def _runtime_recovery_payload_from_error(cls, error: str | None) -> dict[str, Any] | None:
+        """Upgrade legacy PAUSED states created before structured metadata."""
+
+        synthetic = AgentResult(
+            ok=False,
+            message="legacy runtime recovery",
+            outputs_produced={},
+            steps_used=0,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0.0,
+            duration_seconds=0.0,
+            stop_reason=AgentResult.STOP_INTERRUPTED,
+            error=error,
+        )
+        return cls._runtime_recovery_payload_from_result(synthetic)
+
+    @staticmethod
+    def _runtime_recovery_existing_outputs(
+        workspace_dir: Path | None,
+        result: AgentResult | None,
+        node: TaskNode | None,
+    ) -> list[str]:
+        """List durable artifacts for the recovery decision without inventing content."""
+
+        if workspace_dir is None:
+            return []
+        workspace = Path(workspace_dir)
+        values: list[Path] = []
+        if result is not None:
+            values.extend(path for path in result.outputs_produced.values() if isinstance(path, Path))
+        if node is not None:
+            values.extend(workspace / str(path) for path in (node.outputs or {}).values())
+        listed: list[str] = []
+        seen: set[str] = set()
+        for path in values:
+            try:
+                relative = path.resolve().relative_to(workspace.resolve())
+            except (OSError, ValueError):
+                continue
+            if not path.exists():
+                continue
+            text = relative.as_posix()
+            if text not in seen:
+                seen.add(text)
+                listed.append(text)
+        return listed[:30]
+
+    def _pause_for_runtime_recovery_gate(
+        self,
+        state: StateYaml,
+        *,
+        error: str | None,
+        workspace_dir: Path | None,
+        result: AgentResult | None = None,
+        recovery: dict[str, Any] | None = None,
+    ) -> StateYaml | None:
+        """Persist a generic recovery decision for non-integrity interruptions.
+
+        This is intentionally below the T4 and T3.6 specialised gates in
+        ``advance``.  It covers the common runtime cases which used to become
+        a context-free ``PAUSED`` state after retry exhaustion.
+        """
+
+        if self.is_hard_runtime_integrity_error(error):
+            return None
+        payload = dict(recovery or {})
+        if not payload and result is not None:
+            recovered = self._runtime_recovery_payload_from_result(result)
+            payload = dict(recovered or {})
+            # A completed Agent can fail for many reasons that are not a
+            # recoverable runtime pause (for example a task-specific hard
+            # validator).  Only its structured signal or an unambiguous
+            # max-step/budget reason may open the generic Gate.  Text-only
+            # inference is reserved for legacy PAUSED state files, where the
+            # original AgentResult metadata no longer exists.
+            if not payload:
+                return None
+        if not payload:
+            recovered = self._runtime_recovery_payload_from_error(error)
+            payload = dict(recovered or {})
+        if not payload:
+            return None
+
+        node = self.nodes.get(state.current_task)
+        existing_outputs = self._runtime_recovery_existing_outputs(workspace_dir, result, node)
+        summary = " ".join(str(payload.get("error_summary") or error or "").split())[:1200]
+        recovery_kind = str(payload.get("kind") or "runtime").strip()
+        details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+        is_literature_coverage = recovery_kind == "literature_coverage"
+        payload.update(
+            {
+                "schema_version": "1.0.0",
+                "target_task": state.current_task,
+                "error_summary": summary,
+                "existing_outputs": existing_outputs,
+            }
+        )
+        if is_literature_coverage:
+            reentry_target = str(details.get("return_to_task") or "T3").strip()
+            if reentry_target not in self.nodes:
+                reentry_target = "T3" if "T3" in self.nodes else state.current_task
+            payload["return_to_task"] = reentry_target
+            title = "文献阅读覆盖未完成"
+            description = (
+                "当前阶段需要共享文献事实源，但摘要轻读覆盖未达到本工作区已确认的目标。"
+                "为避免用旧语料继续综合、生成候选或写作，系统不会重试当前下游阶段。"
+                "请回到 T3 补齐可读论文的阅读笔记；随后 T3.5、T4 及后续阶段会基于更新后的同一份文献清单重新运行。"
+            )
+            options = [
+                {
+                    "id": "return_to_t3_for_reading",
+                    "label": "回到 T3 补齐阅读",
+                    "description": "保留现有文献、综合和候选文件；从 T3 补齐缺少的阅读覆盖，再重新完成后续综合与研究方向生成。",
+                },
+                {
+                    "id": "inspect_then_pause",
+                    "label": "检查后暂停",
+                    "description": "保留诊断与所有已有文件；下次 resume 仍会展示此处，不会直接重跑下游阶段。",
+                },
+                {
+                    "id": "exit",
+                    "label": "结束本次运行",
+                    "description": "本次命令停止，不删除任何 artifact；之后 resume 仍会先展示这项阅读覆盖决策。",
+                },
+            ]
+        else:
+            title = "运行恢复需要决策"
+            description = (
+                "任务在可恢复的运行时问题后暂停，已有文件与诊断均已保留。"
+                "请选择定向修复、使用旧兼容修复窗口，或暂停检查；系统不会把该中断伪装成成功。"
+            )
+            options = [
+                {
+                    "id": "retry_targeted_repair",
+                    "label": "继续定向修复",
+                    "description": "基于当前诊断和已有产物继续；只处理实际失败点，不重写已合格内容。",
+                },
+                {
+                    "id": "extend_recovery_window",
+                    "label": "使用旧兼容修复窗口后重试",
+                    "description": "仅用于旧 workspace 的 bounded-recovery 记录；当前默认运行不施加普通 step/token 上限，也不会放松证据、引用或状态完整性。",
+                },
+                {
+                    "id": "inspect_then_pause",
+                    "label": "检查后暂停",
+                    "description": "保留本决策与所有诊断；下次 resume 会重新展示，不会直接重跑。",
+                },
+                {
+                    "id": "exit",
+                    "label": "结束本次运行",
+                    "description": "本次命令停止，不删除任何 artifact；之后显式 resume 时仍会先显示恢复决策。",
+                },
+            ]
+        state.pending_gate = GateState(
+            gate_id="runtime_recovery_gate",
+            presented_at=_now_iso(),
+            presentation={
+                "_title": title,
+                "_description": description,
+                "runtime_recovery": payload,
+                "error_summary": summary,
+                "existing_outputs": existing_outputs,
+                "resume_state_path": "_runtime/resume/" + state.current_task.lower().replace(".", "_") + "_resume_state.json",
+            },
+            options=options,
+        )
+        state.status = "WAITING_HUMAN"
+        state.paused_at = _now_iso()
+        return state
+
+    def _resolve_runtime_recovery_gate(
+        self,
+        state: StateYaml,
+        gate_result: dict[str, Any],
+        *,
+        workspace_dir: Path | None,
+    ) -> StateYaml:
+        """Apply a researcher decision for a persisted runtime recovery Gate."""
+
+        pending = state.pending_gate
+        if pending is None:
+            raise ValueError("runtime recovery gate is not pending")
+        option_id = str(gate_result.get("option_id") or gate_result.get("key") or "inspect_then_pause")
+        presentation = dict(pending.presentation or {})
+        raw_recovery = presentation.get("runtime_recovery")
+        recovery = dict(raw_recovery) if isinstance(raw_recovery, dict) else {}
+        target_task = str(recovery.get("target_task") or state.current_task)
+        if target_task not in self.nodes:
+            # The active state is the authority for a persisted dynamic Gate.
+            # A stale/malformed presentation must not redirect a resume to an
+            # arbitrary task name.
+            target_task = state.current_task
+
+        if option_id == "return_to_t3_for_reading":
+            details = recovery.get("details") if isinstance(recovery.get("details"), dict) else {}
+            reentry_target = str(recovery.get("return_to_task") or details.get("return_to_task") or "T3").strip()
+            if str(recovery.get("kind") or "") != "literature_coverage" or reentry_target not in self.nodes:
+                # This option is meaningful only for the explicitly typed
+                # evidence-coverage recovery.  A malformed persisted gate is
+                # never allowed to redirect an unrelated task to T3.
+                option_id = "inspect_then_pause"
+            else:
+                state.task_context["literature_coverage_reentry"] = {
+                    "schema_version": "1.0.0",
+                    "semantics": "literature_coverage_reentry",
+                    "from_task": target_task,
+                    "to_task": reentry_target,
+                    "requested_at": _now_iso(),
+                    "error_summary": str(recovery.get("error_summary") or presentation.get("error_summary") or "")[:1200],
+                    "scope": (
+                        "Resume T3 to create the missing reading coverage first. Preserve existing artifacts for audit, "
+                        "but do not reuse their derived synthesis, candidate, score, or writing conclusions after the literature set changes."
+                    ),
+                }
+                state.task_context.pop("runtime_recovery", None)
+                state.pending_gate = None
+                state.current_task = reentry_target
+                state.status = "RUNNING"
+                state.paused_at = None
+                state.last_error = None
+                return state
+
+        if option_id in {"retry_targeted_repair", "extend_recovery_window"}:
+            directive: dict[str, Any] = {
+                "schema_version": "1.0.0",
+                "semantics": "runtime_recovery_directive",
+                "action": option_id,
+                "target_task": target_task,
+                "requested_at": _now_iso(),
+                "recovery_kind": str(recovery.get("kind") or "runtime"),
+                "error_summary": str(recovery.get("error_summary") or presentation.get("error_summary") or "")[:1200],
+                "details": dict(recovery.get("details") or {}) if isinstance(recovery.get("details"), dict) else {},
+                "existing_outputs": [str(item) for item in recovery.get("existing_outputs", [])][:30]
+                if isinstance(recovery.get("existing_outputs"), list)
+                else [],
+                "scope": (
+                    "Read the saved diagnostics and existing artifacts first. Preserve valid work and repair only the implicated files, "
+                    "claims, structures, or environment preconditions. Do not fabricate evidence, citations, data, metrics, results, "
+                    "or scientific explanations merely to make a validator pass."
+                ),
+            }
+            if option_id == "extend_recovery_window":
+                directive["resource_window"] = {
+                    "mode": "legacy_bounded_extension_compatibility",
+                    "increase_ratio": 0.25,
+                    "applies_to": ["max_steps", "max_tokens", "max_wall_seconds"],
+                }
+            if workspace_dir is not None:
+                safe_task = re.sub(r"[^A-Za-z0-9_.-]+", "_", target_task).lower()
+                receipt_path = Path(workspace_dir) / "_runtime" / "recovery" / f"{safe_task}_runtime_recovery.json"
+                try:
+                    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+                    temporary_path = receipt_path.with_suffix(receipt_path.suffix + ".tmp")
+                    temporary_path.write_text(
+                        json.dumps(directive, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
+                    temporary_path.replace(receipt_path)
+                    directive["path"] = str(receipt_path.relative_to(workspace_dir))
+                except OSError as exc:
+                    # The state itself remains authoritative if a transient
+                    # filesystem issue prevents the optional receipt write.
+                    directive["path"] = ""
+                    directive["receipt_write_error"] = str(exc)[:500]
+            state.task_context["runtime_recovery"] = directive
+            state.pending_gate = None
+            state.current_task = target_task
+            state.status = "RUNNING"
+            state.paused_at = None
+            state.last_error = None
+            return state
+
+        # A pause/exit is intentional.  Preserve the pending Gate so a later
+        # explicit ``resume`` re-presents the same saved diagnosis instead of
+        # silently launching the Agent with no researcher decision.
+        presentation["last_user_action"] = option_id
+        presentation["last_user_action_at"] = _now_iso()
+        state.pending_gate.presentation = presentation
+        state.status = "PAUSED"
+        state.paused_at = _now_iso()
+        state.last_error = (
+            "Researcher chose to inspect the runtime recovery diagnostics before retrying."
+            if option_id == "inspect_then_pause"
+            else "Researcher ended this invocation at the runtime recovery decision; saved artifacts remain unchanged."
+        )
+        return state
+
     def t4_gate1_ready_without_selection(self, workspace_dir: Path) -> bool:
         """Public helper for runners/tests: T4 has candidate artifacts ready but no Gate1 choice."""
 
@@ -2084,9 +3320,50 @@ class StateMachine:
         node = self.nodes.get(state.current_task)
         if node is None:
             return state
+        # A previously rendered T4 recovery panel can become obsolete without
+        # another model turn: legacy Final Cards may have been migrated, or a
+        # bounded repair may already have committed a complete deck before the
+        # process resumed.  Do not keep asking the researcher to repair an
+        # artifact which is now valid; return to the ordinary Gate1 decision
+        # panel in this same invocation.
+        if (
+            state.pending_gate.gate_id == "t4_recovery_gate"
+            and node.task_id == "T4"
+            and workspace_dir is not None
+            and self._t4_gate1_ready_without_selection(workspace_dir)
+        ):
+            state.pending_gate = None
+            state.status = "RUNNING"
+            state.paused_at = None
+            state.last_error = None
+            state.task_context["t4_recovery_resolved_at"] = _now_iso()
+            state.task_context["t4_recovery_resolution"] = "final_card_artifacts_now_ready"
+            return state
+        if (
+            state.pending_gate.gate_id == "t4_recovery_gate"
+            and node.task_id == "T4"
+            and workspace_dir is not None
+            and state.pending_gate.presentation.get("_recovery_presentation_version") != 2
+        ):
+            # T4 recovery gates are durable workspace state.  Upgrade an old
+            # card-repair-only presentation before the first resumed CLI view,
+            # using its saved original error as the classifier input.  This is
+            # display-only: it does not rerun T4, rewrite a Candidate, or
+            # discard any recovery checkpoint.
+            legacy_error = str(
+                state.last_error
+                or state.pending_gate.presentation.get("error_summary")
+                or (state.history[-1].error if state.history else "")
+                or "T4 interrupted before Gate1"
+            )
+            return self._pause_for_t4_recovery_gate(state, legacy_error, workspace_dir)
         presentation = dict(state.pending_gate.presentation or {})
         options = list(state.pending_gate.options or [])
-        gate_spec = self._find_gate(state.pending_gate.gate_id)
+        # Recovery gates are persisted dynamically by the runtime.  Their
+        # presentation/options are already complete, so a missing optional
+        # registry decoration must never crash resume.  Normal declared gates
+        # still receive their configured title/description below.
+        gate_spec = self.gates.get(state.pending_gate.gate_id, {})
         if gate_spec.get("title"):
             presentation["_title"] = gate_spec["title"]
         if gate_spec.get("description"):
@@ -2096,7 +3373,23 @@ class StateMachine:
         if node.task_id == "T2-PARAM-GATE":
             presentation["current_parameter_preview"] = build_literature_param_gate_preview(workspace_dir)
             options = enrich_literature_param_gate_options(options, workspace_dir)
+        elif node.task_id in _CCF_TEMPLATE_GATE_TASKS:
+            options = _ccf_template_gate_options(task_id=node.task_id)
         elif node.task_id == "T4-GATE1" and workspace_dir is not None:
+            resumed = self._resume_confirmed_native_t4_directive(state, workspace_dir)
+            if resumed is not None:
+                return resumed
+            # A persisted operation confirmation is already a complete,
+            # user-facing panel.  Refreshing it as if it were the main
+            # candidate chooser used to mix in the candidate overview and
+            # made a confirmed directive appear to have returned to Gate1.
+            # Keep its immutable plan/options intact until the user confirms,
+            # cancels, pauses, or sends another explicit dialogue turn.
+            if isinstance(state.task_context.get("t4_pending_directive"), dict):
+                return state
+            redirected = self._redirect_incomplete_t4_gate_to_recovery(state, workspace_dir)
+            if redirected is not None:
+                return redirected
             presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
             presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
             operation_result = _latest_native_t4_operation_result(workspace_dir)
@@ -2118,6 +3411,88 @@ class StateMachine:
         state.pending_gate.options = options
         return state
 
+    def _resume_confirmed_native_t4_directive(
+        self,
+        state: StateYaml,
+        workspace_dir: Path,
+    ) -> StateYaml | None:
+        """Apply one durable T4 confirmation that was interrupted before execution.
+
+        A confirmation is written before the state transition so Ctrl+D,
+        process termination, or an old runtime error cannot lose the user's
+        decision.  Historically, a selection blocked by the now-soft
+        ``revise_before_selection`` label left that confirmation on disk but
+        dropped ``t4_pending_directive``; every later ``resume`` then merely
+        re-rendered Gate1.  Recover only a matching, accepted directive from
+        the *current* population, and let the normal mutation boundary write
+        the selection receipt.  Once written, that receipt prevents replay.
+        """
+
+        if state.current_task != "T4-GATE1":
+            return None
+        if isinstance(state.task_context.get("t4_pending_directive"), dict):
+            return None
+        if validate_t4_gate1_selection_file(workspace_dir)[0]:
+            return None
+        directives_root = workspace_dir / "ideation" / "human_directives"
+        if not directives_root.is_dir():
+            return None
+        confirmation: dict[str, Any] | None = None
+        for path in sorted(directives_root.glob("*_confirmation.json"), reverse=True):
+            try:
+                candidate = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(candidate, dict):
+                continue
+            if (
+                candidate.get("semantics") == "t4_human_directive_confirmation"
+                and candidate.get("accepted") is True
+                and str(candidate.get("outcome") or "") == "confirmed_for_execution"
+            ):
+                confirmation = candidate
+                break
+        if confirmation is None:
+            return None
+        relative_directive_path = str(confirmation.get("directive_path") or "").strip()
+        if not relative_directive_path:
+            return None
+        directive_file = (workspace_dir / relative_directive_path).resolve()
+        try:
+            directive_file.relative_to(workspace_dir.resolve())
+            record = json.loads(directive_file.read_text(encoding="utf-8"))
+            raw_directive = record.get("directive") if isinstance(record, dict) else None
+            directive = IdeaDirective.model_validate(raw_directive)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
+        if str(confirmation.get("directive_id") or "") != directive.directive_id:
+            return None
+        try:
+            population, _dossiers = current_population_context(workspace_dir)
+        except (OSError, ValueError):
+            return None
+        requested_population = str(record.get("population_id") or "").strip() if isinstance(record, dict) else ""
+        if requested_population and requested_population != population.population_id:
+            state.task_context["t4_stale_confirmed_directive"] = {
+                "directive_id": directive.directive_id,
+                "reason": "population_changed_before_confirmed_operation_could_resume",
+                "confirmed_population_id": requested_population,
+                "current_population_id": population.population_id,
+            }
+            return None
+        state.task_context["t4_resumed_confirmed_directive"] = {
+            "directive_id": directive.directive_id,
+            "directive_path": relative_directive_path,
+            "resumed_at": _now_iso(),
+            "reason": "confirmed_before_interruption",
+        }
+        return self._apply_native_t4_directive(
+            state,
+            directive=directive,
+            directive_path=relative_directive_path,
+            workspace_dir=workspace_dir,
+        )
+
     @staticmethod
     def _t4_gate1_ready_without_selection(workspace_dir: Path) -> bool:
         if validate_t4_gate1_selection_file(workspace_dir)[0]:
@@ -2126,9 +3501,40 @@ class StateMachine:
             from ..agents.ideation import validate_t4_gate1_ready
 
             ok, _err = validate_t4_gate1_ready(workspace_dir)
-            return bool(ok)
+            cards_ok, _cards_error = validate_t4_portfolio_final_cards(workspace_dir)
+            return bool(ok and cards_ok)
         except Exception:
             return False
+
+    def _redirect_incomplete_t4_gate_to_recovery(
+        self,
+        state: StateYaml,
+        workspace_dir: Path,
+    ) -> StateYaml | None:
+        """Keep every Gate1 entry behind the complete LLM Final Card boundary.
+
+        Older persisted gates, direct CLI entry, and rollback all converge here.
+        Candidate Population continuity is retained, but a researcher must not
+        see or select a partial Card whose missing explanation could otherwise
+        be replaced by a legacy field or renderer fallback.
+        """
+
+        if self._t4_gate1_ready_without_selection(workspace_dir):
+            return None
+        try:
+            from ..agents.ideation import validate_t4_gate1_ready
+
+            structural_ok, structural_error = validate_t4_gate1_ready(workspace_dir)
+        except Exception as exc:
+            structural_ok, structural_error = False, str(exc)
+        cards_ok, cards_error = validate_t4_portfolio_final_cards(workspace_dir)
+        if structural_ok and not cards_ok:
+            reason = "当前 Population 已保存，但 Portfolio Idea Card 尚未由 LLM 完整编译。" + str(cards_error or "")
+        else:
+            reason = "T4 Gate1 产物尚未完整。" + str(structural_error or cards_error or "")
+        state.current_task = "T4"
+        state.pending_gate = None
+        return self._pause_for_t4_recovery_gate(state, reason, workspace_dir)
 
     @staticmethod
     def _t4_prerun_confirmation_required(workspace_dir: Path) -> bool:
@@ -2220,11 +3626,65 @@ class StateMachine:
             AgentResult.STOP_BUDGET,
         }:
             state.last_error = result.error
+            explicit_pause = self._result_has_explicit_runtime_pause(result)
+            if not explicit_pause:
+                t4_recovery = self._pause_for_t4_runtime_failure(
+                    state,
+                    result.error,
+                    workspace_dir=workspace_dir,
+                )
+                if t4_recovery is not None:
+                    return t4_recovery
+            if explicit_pause:
+                return self.mark_interrupted(state)
+            if state.current_task == "T4":
+                # A T4 interruption carrying an explicit integrity signature
+                # is not a normal resumable pause.  Preserve the artifacts and
+                # error, then use the configured failure transition so callers
+                # receive the required nonzero outcome instead of a retry loop.
+                history.status = "FAILED"
+                node = self.nodes[state.current_task]
+                next_task = node.next_on_failure
+                if next_task and next_task in self.nodes:
+                    state.current_task = next_task
+                state.status = "FAILED"
+                return state
+            if state.current_task == "T3.6-ASSEMBLE" and self._is_t36_assemble_recoverable_error(result.error):
+                return self._pause_for_t36_assemble_recovery_gate(state, result.error or "", workspace_dir)
+            if state.current_task == "T3.6-COMPILE" and self._is_t36_compile_recoverable_error(result.error):
+                return self._pause_for_t36_compile_recovery_gate(state, result.error or "", workspace_dir)
+            runtime_recovery = self._pause_for_runtime_recovery_gate(
+                state,
+                error=result.error,
+                workspace_dir=workspace_dir,
+                result=result,
+            )
+            if runtime_recovery is not None:
+                return runtime_recovery
             return self.mark_interrupted(state)
 
         node = self.nodes[state.current_task]
         if not result.ok:
             state.last_error = result.error
+            t4_recovery = self._pause_for_t4_runtime_failure(
+                state,
+                result.error,
+                workspace_dir=workspace_dir,
+            )
+            if t4_recovery is not None:
+                return t4_recovery
+            if state.current_task == "T3.6-ASSEMBLE" and self._is_t36_assemble_recoverable_error(result.error):
+                return self._pause_for_t36_assemble_recovery_gate(state, result.error or "", workspace_dir)
+            if state.current_task == "T3.6-COMPILE" and self._is_t36_compile_recoverable_error(result.error):
+                return self._pause_for_t36_compile_recovery_gate(state, result.error or "", workspace_dir)
+            runtime_recovery = self._pause_for_runtime_recovery_gate(
+                state,
+                error=result.error,
+                workspace_dir=workspace_dir,
+                result=result,
+            )
+            if runtime_recovery is not None:
+                return runtime_recovery
             next_task = node.next_on_failure
             if next_task and next_task in self.nodes and not self.nodes[next_task].terminal:
                 state.current_task = next_task
@@ -2241,6 +3701,7 @@ class StateMachine:
             and "T4-GATE1" in self.nodes
         ):
             state.task_context.pop("t4_operation_request", None)
+            state.task_context.pop("t4_final_card_repair", None)
             return self._transition_to_next(state, "T4-GATE1", workspace_dir=workspace_dir)
 
         if (
@@ -2249,6 +3710,28 @@ class StateMachine:
             and "T4.5" in self.nodes
         ):
             return self._transition_to_next(state, "T4.5", workspace_dir=workspace_dir)
+
+        if state.current_task == "T3.6-ASSEMBLE":
+            # The recovery receipt documents a user-approved extra repair
+            # window. It must reach that resumed Assemble run, but cannot leak
+            # into a later ordinary assembly after this one has succeeded.
+            state.task_context.pop("t36_assemble_recovery", None)
+
+        if state.current_task == "T3.6-REVIEW":
+            # A compile recovery directive applies to this one source-repair
+            # review only.  Retaining it would make a later ordinary review
+            # look like a still-pending compile failure.
+            state.task_context.pop("t36_compile_recovery", None)
+
+        runtime_recovery_directive = state.task_context.get("runtime_recovery")
+        if (
+            isinstance(runtime_recovery_directive, dict)
+            and runtime_recovery_directive.get("target_task") == state.current_task
+        ):
+            # A generic repair window is single-use. Keeping it after a
+            # successful task would make a later normal run look like it still
+            # has an approved exception.
+            state.task_context.pop("runtime_recovery", None)
 
         human_directive = state.task_context.get("human_iteration_directive")
         if isinstance(human_directive, dict) and human_directive.get("target_task") == state.current_task:
@@ -2276,6 +3759,8 @@ class StateMachine:
             if state.current_task == "T2-PARAM-GATE":
                 presentation["current_parameter_preview"] = build_literature_param_gate_preview(workspace_dir)
                 options = enrich_literature_param_gate_options(options, workspace_dir)
+            elif state.current_task in _CCF_TEMPLATE_GATE_TASKS:
+                options = _ccf_template_gate_options(task_id=state.current_task)
             if state.current_task == "T4-GATE1" and workspace_dir is not None:
                 presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
                 presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
@@ -2307,14 +3792,150 @@ class StateMachine:
             if workspace_dir is None:
                 raise ValueError("T4 pre-run gate requires a workspace")
             return self._resolve_t4_prerun_gate(state, gate_result, workspace_dir)
-        node = self.nodes[state.current_task]
-        if (
-            node.task_id == "T4-GATE1"
-            and workspace_dir is not None
-            and validate_t4_gate1_selection_file(workspace_dir)[0]
-        ):
+        if state.pending_gate.gate_id == "t4_recovery_gate":
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "pause")
+            if option_id == "retry_t4":
+                # Carry a concise copy into ExecutionContext for observability,
+                # but let the runtime revalidate the durable artifact before it
+                # skips any scientific operation.  The original operation is
+                # intentionally retained until a successful Gate1 transition;
+                # its checkpoint identity proves it was already consumed.
+                if workspace_dir is not None:
+                    operation = state.task_context.get("t4_operation_request")
+                    try:
+                        checkpoint, _checkpoint_error = T4ArtifactStore(
+                            workspace_dir
+                        ).current_final_card_repair_checkpoint(
+                            operation=operation if isinstance(operation, dict) else None,
+                        )
+                    except (OSError, ValueError):
+                        checkpoint = None
+                    if checkpoint is not None:
+                        state.task_context["t4_final_card_repair"] = {
+                            "checkpoint_path": "ideation/evolution/final_card_repair_state.json",
+                            "population_id": str(checkpoint.get("population_id") or ""),
+                            "population_generation": checkpoint.get("population_generation"),
+                            "operation_action": str(checkpoint.get("operation_action") or ""),
+                            "operation_directive_id": str(checkpoint.get("operation_directive_id") or ""),
+                            "status": str(checkpoint.get("status") or ""),
+                        }
+                    else:
+                        state.task_context.pop("t4_final_card_repair", None)
+                state.pending_gate = None
+                state.current_task = "T4"
+                state.status = "RUNNING"
+                state.paused_at = None
+                state.last_error = None
+                return state
+            if option_id == "open_gate1" and workspace_dir is not None and self._t4_gate1_ready_without_selection(workspace_dir):
+                state.pending_gate = None
+                state.current_task = "T4-GATE1"
+                return self.pause_for_immediate_gate(state, workspace_dir=workspace_dir)
             state.pending_gate = None
-            return self._transition_to_next(state, "T4", workspace_dir=workspace_dir)
+            state.status = "PAUSED"
+            state.paused_at = _now_iso()
+            state.last_error = "T4 recovery was paused by human decision; all saved Candidates and diagnostics remain available."
+            return state
+        if state.current_task == "T4-GATE1" and workspace_dir is not None:
+            # A confirmed selection is a durable post-Gate transaction.  Check
+            # its receipt before evaluating whether the *pre-selection* Gate1
+            # deck is complete: selected compilation legitimately writes new
+            # artifacts, and an old in-memory Gate presentation must never
+            # send a Resume back through T4 after the user already chose T4.5.
+            if validate_t4_gate1_selection_file(workspace_dir)[0]:
+                return self._advance_verified_t4_gate1_selection(state, workspace_dir)
+            redirected = self._redirect_incomplete_t4_gate_to_recovery(state, workspace_dir)
+            if redirected is not None:
+                return redirected
+        if state.pending_gate.gate_id == "t36_assemble_recovery_gate":
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "pause_review")
+            recovery_presentation = dict(state.pending_gate.presentation or {})
+            state.pending_gate = None
+            if option_id == "retry_survey_repair":
+                repair_guidance = recovery_presentation.get("repair_guidance")
+                if not isinstance(repair_guidance, dict):
+                    repair_guidance = {}
+                directive: dict[str, Any] = {
+                    "semantics": "t36_assemble_recovery_directive",
+                    "action": "retry_survey_repair",
+                    "requested_at": _now_iso(),
+                    "audit_path": "drafts/survey/survey_audit.json",
+                    "error_summary": str(recovery_presentation.get("error_summary") or "")[:1000],
+                    "repair_guidance": repair_guidance,
+                    "scope": (
+                        "Read the saved audit guidance first. Repair only the implicated source sections, bibliography, plan, or state; "
+                        "do not edit the derived survey.tex directly or add unsupported citations."
+                    ),
+                }
+                if workspace_dir is not None:
+                    directive_path = workspace_dir / "drafts" / "survey" / "survey_assemble_recovery_directive.json"
+                    try:
+                        directive_path.parent.mkdir(parents=True, exist_ok=True)
+                        temporary_path = directive_path.with_suffix(directive_path.suffix + ".tmp")
+                        temporary_path.write_text(
+                            json.dumps(directive, ensure_ascii=False, indent=2) + "\n",
+                            encoding="utf-8",
+                        )
+                        temporary_path.replace(directive_path)
+                        directive["path"] = "drafts/survey/survey_assemble_recovery_directive.json"
+                    except OSError as exc:
+                        # State remains the durable fallback if a transient
+                        # filesystem issue prevents the convenience copy from
+                        # being written. A human-approved recovery must not be
+                        # turned into another terminal failure by this receipt.
+                        directive["path"] = ""
+                        directive["receipt_write_error"] = str(exc)[:500]
+                state.current_task = "T3.6-ASSEMBLE"
+                state.status = "RUNNING"
+                state.paused_at = None
+                state.last_error = None
+                state.task_context["t36_assemble_recovery"] = directive
+                return state
+            state.status = "PAUSED"
+            state.paused_at = _now_iso()
+            state.last_error = "Survey assembly recovery was paused by human decision; all section drafts and audit diagnostics remain available."
+            return state
+        if state.pending_gate.gate_id == "t36_compile_recovery_gate":
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "pause_review")
+            recovery_presentation = dict(state.pending_gate.presentation or {})
+            state.pending_gate = None
+            if option_id == "retry_compile":
+                state.current_task = "T3.6-COMPILE"
+                state.status = "RUNNING"
+                state.paused_at = None
+                state.last_error = None
+                return state
+            if option_id == "return_to_review":
+                directive = {
+                    "semantics": "t36_compile_recovery_directive",
+                    "action": "return_to_review",
+                    "requested_at": _now_iso(),
+                    "compile_report_path": "drafts/survey/survey_compile_report.json",
+                    "error_summary": str(recovery_presentation.get("error_summary") or "")[:1200],
+                    "scope": (
+                        "Read the compile report first. Patch only the implicated source section, bibliography, template input, or review action; "
+                        "then reassemble, audit, and compile. Do not hand-edit the derived survey.tex."
+                    ),
+                }
+                state.task_context["t36_compile_recovery"] = directive
+                state.current_task = "T3.6-REVIEW"
+                state.status = "RUNNING"
+                state.paused_at = None
+                state.last_error = None
+                return state
+            state.status = "PAUSED"
+            state.paused_at = _now_iso()
+            state.last_error = (
+                "Survey compilation recovery was paused by human decision; survey.tex, section drafts, audit, and compile report remain available."
+            )
+            return state
+        if state.pending_gate.gate_id == "runtime_recovery_gate":
+            return self._resolve_runtime_recovery_gate(
+                state,
+                gate_result,
+                workspace_dir=workspace_dir,
+            )
+        node = self.nodes[state.current_task]
         if node.task_id == "T4-GATE1" and workspace_dir is not None:
             if isinstance(state.task_context.get("t4_pending_directive"), dict):
                 return self._resolve_native_t4_gate1(state, gate_result, workspace_dir)
@@ -2357,7 +3978,11 @@ class StateMachine:
                 "and notes under external_executor/expr/, then resume."
             )
             return state
-        if node.task_id == "T5-EXTERNAL-WAIT" and workspace_dir is not None and next_task == "T7-INGEST":
+        if (
+            node.task_id == "T5-EXTERNAL-WAIT"
+            and workspace_dir is not None
+            and next_task in {"T8-STYLE-GATE", "T8-RESOURCE"}
+        ):
             readiness = validate_external_executor_ready(
                 workspace_dir,
                 "external_executor/result_pack.json",
@@ -2368,9 +3993,40 @@ class StateMachine:
                     state.pending_gate.presentation["external_executor_wait_status"] = readiness.get("message")
                 state.status = "WAITING_HUMAN"
                 state.paused_at = _now_iso()
-                state.last_error = str(readiness.get("message") or "external executor result is not ready")
+                state.last_error = str(readiness.get("message") or "external executor T8 handoff materials are not ready")
                 return state
         state.pending_gate = None
+        return self._transition_to_next(state, next_task, workspace_dir=workspace_dir)
+
+    def _advance_verified_t4_gate1_selection(
+        self,
+        state: StateYaml,
+        workspace_dir: Path,
+    ) -> StateYaml:
+        """Advance one validated Gate1 selection without re-entering T4.
+
+        This is the only Resume/duplicate-confirmation path for a persisted
+        selection receipt.  It makes the receipt authoritative across live
+        Gate handling, generic runners, and process boundaries, while keeping
+        legacy post-Gate targets readable when they are declared by the state
+        machine.
+        """
+
+        next_task = "T4.5"
+        try:
+            selection_payload = json.loads(
+                (workspace_dir / "ideation" / "_gate1_user_selection.json").read_text(encoding="utf-8")
+            )
+            declared = str(selection_payload.get("next_task") or "").strip() if isinstance(selection_payload, dict) else ""
+            if declared in self.nodes:
+                next_task = declared
+        except (OSError, json.JSONDecodeError):
+            # ``validate_t4_gate1_selection_file`` already established the
+            # receipt's validity.  Keep the native safe target if the optional
+            # second read races a transient filesystem error.
+            pass
+        state.pending_gate = None
+        state.last_error = None
         return self._transition_to_next(state, next_task, workspace_dir=workspace_dir)
 
     @staticmethod
@@ -2401,6 +4057,101 @@ class StateMachine:
         option_id = str(gate_result.get("option_id") or gate_result.get("key") or "").strip()
         captured = gate_result.get("captured") if isinstance(gate_result.get("captured"), dict) else {}
         if isinstance(pending, dict):
+            # Compatibility repair for a short-lived Gate regression: older
+            # LLM parsing could turn an explicit “查看 D1” into a pending
+            # select_candidate.  Detect that durable raw wording before any
+            # confirm action and invalidate the stale plan.  This preserves
+            # the audit trail while making it impossible to execute a view as
+            # a selection after upgrading ResearchOS.
+            raw_pending = pending.get("directive") if isinstance(pending.get("directive"), dict) else {}
+            try:
+                pending_directive = IdeaDirective.model_validate(raw_pending)
+            except Exception:
+                pending_directive = None
+            if pending_directive is not None and _explicit_read_only_action(
+                pending_directive.raw_user_input,
+                target_count=len(pending_directive.target_candidate_ids),
+            ):
+                state.task_context.pop("t4_pending_directive", None)
+                persist_idea_directive_confirmation(
+                    workspace_dir,
+                    directive=pending_directive,
+                    directive_path=str(pending.get("directive_path") or ""),
+                    accepted=False,
+                    outcome="invalidated_legacy_read_only_parse",
+                )
+                return self._reopen_native_t4_gate(
+                    state,
+                    workspace_dir,
+                    result={
+                        "title": "已修复旧版只读解析",
+                        "summary": (
+                            "此前保存的操作计划源自明确的查看请求，已自动作废；没有 Candidate、Population 或版本被改变。"
+                            "现在可重新输入“查看 D1”读取详情，或明确输入“推进 D1”后再确认。"
+                        ),
+                        "kind": "legacy_read_only_parse_repaired",
+                    },
+                )
+            if (
+                pending_directive is not None
+                and pending_directive.action != "select_candidate"
+                and _explicit_selection_action(
+                    pending_directive.raw_user_input,
+                    target_count=len(pending_directive.target_candidate_ids),
+                )
+            ):
+                state.task_context.pop("t4_pending_directive", None)
+                persist_idea_directive_confirmation(
+                    workspace_dir,
+                    directive=pending_directive,
+                    directive_path=str(pending.get("directive_path") or ""),
+                    accepted=False,
+                    outcome="invalidated_legacy_advance_parse",
+                )
+                return self._reopen_native_t4_gate(
+                    state,
+                    workspace_dir,
+                    result={
+                        "title": "已修复旧版推进解析",
+                        "summary": (
+                            "此前保存的“推进候选”计划被错误解释为重新演化，已自动作废；没有新版本被生成。"
+                            "请重新输入“推进 D1”，系统会创建进入 T4.5 的确认计划。"
+                        ),
+                        "kind": "legacy_advance_parse_repaired",
+                    },
+                )
+            if option_id == "t4_directive" and self._is_t4_readonly_gate_result(gate_result):
+                _population, dossiers = current_population_context(workspace_dir)
+                display_ids = _t4_gate1_display_id_map(workspace_dir)
+                raw = self._native_t4_directive_text(option_id=option_id, captured=captured)
+                raw = _resolve_t4_display_ids(raw, display_ids)
+                parsed_directive = captured.get("parsed_directive") if isinstance(captured.get("parsed_directive"), dict) else None
+                if parsed_directive is not None:
+                    parsed_directive = _resolve_t4_display_ids_in_payload(parsed_directive, display_ids)
+                try:
+                    readonly_directive = parse_idea_directive(
+                        raw,
+                        candidate_ids=set(dossiers),
+                        option_id=option_id,
+                        llm_payload=parsed_directive,
+                    )
+                    readonly_result = self._native_t4_readonly_result(workspace_dir, readonly_directive)
+                    readonly_result["pending_operation_preserved"] = True
+                    readonly_result["summary"] = (
+                        str(readonly_result.get("summary") or "").rstrip()
+                        + " 原待确认操作仍未执行；查看完成后请继续选择确认或取消。"
+                    ).strip()
+                except ValueError as exc:
+                    readonly_result = {
+                        "title": "只读请求需要补充信息",
+                        "summary": str(exc),
+                        "kind": "pending_confirmation_readonly_needs_clarification",
+                        "pending_operation_preserved": True,
+                    }
+                next_state = self._native_t4_confirmation_gate(state, workspace_dir, pending)
+                if next_state.pending_gate is not None:
+                    next_state.pending_gate.presentation["t4_directive_result"] = readonly_result
+                return next_state
             if option_id in {"confirm", "proceed", "yes"}:
                 raw = pending.get("directive")
                 if not isinstance(raw, dict):
@@ -2444,6 +4195,28 @@ class StateMachine:
 
         pending_composition = _pending_native_t4_composition(workspace_dir)
         inline_text = self._native_t4_directive_text(option_id=option_id, captured=captured).casefold()
+        if option_id == "more_actions" or any(token in inline_text for token in ("更多操作", "advanced actions", "more actions")):
+            return self._reopen_native_t4_gate(
+                state,
+                workspace_dir,
+                result={
+                    "title": "更多操作",
+                    "summary": (
+                        "这些是低频高级操作。它们不会因为展开而执行；只有你明确输入“组合 D1 与 D3”、"
+                        "“并行保留 D1 和 D3”、“重跑文献路线”或“回到上一代”等指令后，系统才会进入二次确认。"
+                    ),
+                    "kind": "advanced_actions",
+                    "advanced_operations": [
+                        {"label": "构建跨候选新方案", "description": "先检查两个候选是否兼容，兼容后再生成新的独立候选。"},
+                        {"label": "组合指定组件", "description": "从不同候选中选择假设、贡献或方法模块，构建新方案。"},
+                        {"label": "并行保留多个方向", "description": "将多个候选标记为独立研究方向，后续分别推进。"},
+                        {"label": "查看完整候选池", "description": "查看未进入当前推荐列表的候选，不生成新内容。"},
+                        {"label": "重新探索指定来源", "description": "重新运行某个 Idea 来源通道，并保留此前结果。"},
+                        {"label": "调整投稿取向", "description": "按 UTD、CCF 或 Hybrid 取向重新评估适配度，不改变候选本身。"},
+                        {"label": "回到上一代", "description": "将上一代候选池设为当前版本，不删除后续结果。"},
+                    ],
+                },
+            )
         if pending_composition and (
             option_id == "confirm_composition"
             or any(token in inline_text for token in ("confirm composition", "确认组合", "确认生成", "生成组合"))
@@ -2453,15 +4226,74 @@ class StateMachine:
                 workspace_dir,
                 pending_composition,
             )
+        if option_id in {"confirm", "proceed", "yes"} or inline_text in {
+            "confirm",
+            "yes",
+            "y",
+            "确认",
+            "继续",
+            "确认执行",
+        }:
+            return self._reopen_native_t4_gate(
+                state,
+                workspace_dir,
+                result={
+                    "title": "没有待确认的 T4 操作",
+                    "summary": (
+                        "当前没有已保存的操作计划可执行。请先输入“推进 D1”“优化 D2”“查看 D1”"
+                        "或“暂停”；系统会在真正需要执行前再次展示确认页。"
+                    ),
+                    "kind": "confirm_without_pending_plan",
+                },
+            )
 
         population, dossiers = current_population_context(workspace_dir)
         raw = self._native_t4_directive_text(option_id=option_id, captured=captured)
+        bare_handles = _t4_public_handle_tokens(raw)
+        if bare_handles and option_id in {"", "t4_directive"}:
+            if len(bare_handles) == 1:
+                handle = bare_handles[0]
+                return self._reopen_native_t4_gate(
+                    state,
+                    workspace_dir,
+                    result={
+                        "title": "请再说明你想对这个候选做什么",
+                        "summary": (
+                            f"你输入了 {handle}。请直接输入：推进 {handle}、优化 {handle}、查看 {handle}，"
+                            "或输入“暂停”。只输入编号不会改变 Candidate 或 Population。"
+                        ),
+                        "kind": "needs_clarification",
+                        "candidate_ids": [handle],
+                    },
+                )
+            return self._reopen_native_t4_gate(
+                state,
+                workspace_dir,
+                result={
+                    "title": "多个候选需要明确意图",
+                    "summary": (
+                        "你输入了 "
+                        + "、".join(bare_handles)
+                        + "。请说明是“分别推进”、 “并行保留”，还是“构建新方案”；只输入多个编号不会改变 Candidate 或 Population。"
+                    ),
+                    "kind": "needs_clarification",
+                    "candidate_ids": bare_handles,
+                },
+            )
+        # Gate1 speaks in stable D1/D2/D3 handles. Resolve only exact handles
+        # at the boundary to the internal directive contract, keeping lineage
+        # IDs out of the human-facing UI while preserving their safety checks.
+        display_ids = _t4_gate1_display_id_map(workspace_dir)
+        raw = _resolve_t4_display_ids(raw, display_ids)
+        parsed_directive = captured.get("parsed_directive") if isinstance(captured.get("parsed_directive"), dict) else None
+        if parsed_directive is not None:
+            parsed_directive = _resolve_t4_display_ids_in_payload(parsed_directive, display_ids)
         try:
             directive = parse_idea_directive(
                 raw,
                 candidate_ids=set(dossiers),
                 option_id=option_id,
-                llm_payload=captured.get("parsed_directive") if isinstance(captured.get("parsed_directive"), dict) else None,
+                llm_payload=parsed_directive,
             )
         except ValueError as exc:
             return self._reopen_native_t4_gate(
@@ -2545,6 +4377,19 @@ class StateMachine:
             value = captured.get(key)
             if str(value or "").strip():
                 return str(value).strip()
+        candidate_refs: list[str] = []
+        for key in ("candidate_id", "target_candidate_id"):
+            value = captured.get(key)
+            if str(value or "").strip():
+                candidate_refs.append(str(value).strip())
+        for key in ("candidate_ids", "target_candidate_ids"):
+            values = captured.get(key)
+            if isinstance(values, list):
+                candidate_refs.extend(str(value).strip() for value in values if str(value).strip())
+            elif str(values or "").strip():
+                candidate_refs.extend(part.strip() for part in re.split(r"[,，、\s]+", str(values)) if part.strip())
+        if candidate_refs:
+            return " ".join([option_id or "select_candidate", *dict.fromkeys(candidate_refs)])
         return option_id or "show_population"
 
     def _native_t4_confirmation_gate(
@@ -2559,8 +4404,8 @@ class StateMachine:
         directive = IdeaDirective.model_validate(raw)
         action = _native_t4_action_description(directive)
         presentation = {
-            "_title": "Confirm T4 operation",
-            "_description": "Review the planned operation before ResearchOS changes the active Population or calls a model.",
+            "_title": "T4 操作二次确认",
+            "_description": "系统已经理解你的研究操作，但尚未调用模型、生成新 Candidate 或改变 Population。请核对计划后确认执行，或取消返回当前候选集。",
             "t4_directive_confirmation": {
                 "action": action["title"],
                 "what_happens": action["what_happens"],
@@ -2577,8 +4422,8 @@ class StateMachine:
             presented_at=_now_iso(),
             presentation=presentation,
             options=[
-                {"id": "confirm", "label": "Confirm and continue", "description": "Apply the operation exactly as shown."},
-                {"id": "cancel", "label": "Cancel", "description": "Keep the current Population and return to the decision panel."},
+                {"id": "confirm", "label": "确认执行", "description": "按上方计划执行；若是推进候选，将生成 Pre-Novelty brief 并进入 T4.5。"},
+                {"id": "cancel", "label": "取消，返回候选页", "description": "保留当前 Population 和全部历史版本，不执行该操作。"},
             ],
         )
         state.current_task = "T4-GATE1"
@@ -2596,6 +4441,17 @@ class StateMachine:
     ) -> StateYaml:
         """Apply a confirmed directive or queue its model-backed T4 operation."""
 
+        # Defense in depth at the only mutation boundary: a plain public
+        # advance request must never re-enter T4 merely because an earlier
+        # parser labeled it focus/refine.  It has the documented T4.5 meaning.
+        if (
+            directive.action != "select_candidate"
+            and _explicit_selection_action(
+                directive.raw_user_input,
+                target_count=len(directive.target_candidate_ids),
+            )
+        ):
+            return self._select_native_t4_candidate(state, workspace_dir, directive, directive_path)
         if directive.action in {
             "show_more",
             "show_archive",
@@ -2605,6 +4461,8 @@ class StateMachine:
             "inspect_hypotheses",
             "inspect_contributions",
             "inspect_genome",
+            "inspect_files",
+            "compare_candidates",
         }:
             return self._reopen_native_t4_gate(
                 state,
@@ -2660,6 +4518,24 @@ class StateMachine:
             result={"title": "Operation is not available", "summary": f"The requested action '{directive.action}' is not available for this Population.", "kind": "unsupported"},
         )
 
+    @staticmethod
+    def _is_t4_readonly_gate_result(gate_result: dict[str, Any]) -> bool:
+        captured = gate_result.get("captured") if isinstance(gate_result.get("captured"), dict) else {}
+        directive = captured.get("parsed_directive") if isinstance(captured.get("parsed_directive"), dict) else {}
+        action = str(directive.get("action") or "").strip()
+        return action in {
+            "show_more",
+            "show_archive",
+            "inspect_score",
+            "inspect_evidence",
+            "inspect_lineage",
+            "inspect_hypotheses",
+            "inspect_contributions",
+            "inspect_genome",
+            "inspect_files",
+            "compare_candidates",
+        }
+
     def _stage_native_t4_profile_revision(
         self,
         state: StateYaml,
@@ -2681,6 +4557,7 @@ class StateMachine:
             "ideation/t4_target_profile.json",
             {"schema_version": "1.0.0", "semantics": "t4_target_profile", **model_dump(target_profile, mode="json")},
         )
+        catalog_context = materialize_t4_cross_domain_catalog_context(workspace_dir)
         inspection = inspect_t4_inputs(workspace_dir)
         store.write_json(
             "ideation/evolution/pre_run_confirmation.json",
@@ -2688,11 +4565,13 @@ class StateMachine:
                 "schema_version": "1.0.0",
                 "semantics": "t4_pre_run_confirmation",
                 "input_fingerprint": inspection.input_fingerprint,
+                "input_fingerprints": build_t4_input_fingerprints(workspace_dir),
                 "run_config_fingerprint": run_config_fingerprint(revised_config),
                 "selected_option": "profile_revision",
                 "captured": {"publication_orientation": directive.raw_user_input},
                 "target_profile": model_dump(target_profile, mode="json"),
                 "inspection_status": inspection.status,
+                "cross_domain_catalog_context": catalog_context,
                 "confirmed_at": _now_iso(),
             },
         )
@@ -2730,6 +4609,25 @@ class StateMachine:
 
         population, _dossiers = current_population_context(workspace_dir)
         selected_candidate_id = directive.target_candidate_ids[0]
+        selection_ready, selection_error = candidate_selection_readiness(
+            workspace_dir,
+            candidate_id=selected_candidate_id,
+        )
+        if not selection_ready:
+            return self._reopen_native_t4_gate(
+                state,
+                workspace_dir,
+                result={
+                    "title": "Candidate needs enrichment before T4.5",
+                    "summary": selection_error or "The selected Candidate is not ready for Pre-Novelty compilation.",
+                    "kind": "selection_not_ready",
+                    "candidate_ids": [selected_candidate_id],
+                },
+            )
+        selection_warnings = candidate_selection_warnings_for_workspace(
+            workspace_dir,
+            candidate_id=selected_candidate_id,
+        )
         pool_fingerprints = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
         fingerprint_payload = {
             "semantics": "t4_gate1_selection_fingerprint",
@@ -2752,7 +4650,8 @@ class StateMachine:
             "population_id": population.population_id,
             "candidate_pool_fingerprints": pool_fingerprints,
             "selection_fingerprint": selection_fingerprint,
-            "next_task": "T4",
+            "next_task": "T4.5",
+            "selection_warnings": selection_warnings,
             "decided_at": _now_iso(),
         }
         payload["pre_novelty_artifacts"] = compile_pre_novelty_hypothesis_brief(
@@ -2770,7 +4669,7 @@ class StateMachine:
             next_task="T4.5",
         )
         state.pending_gate = None
-        state.current_task = "T4"
+        state.current_task = "T4.5"
         state.status = "RUNNING"
         state.paused_at = None
         state.last_error = None
@@ -2850,6 +4749,39 @@ class StateMachine:
             profile_weight=run_config.target_profile.portfolio_profile_weight,
         )
         store.write_json("ideation/portfolio.json", model_dump(portfolio, mode="json"))
+        # A Final Idea Card is bound to one Portfolio's immutable Candidate
+        # package. The previous active card file cannot describe a rolled-back
+        # Portfolio, so mark a fresh bounded LLM compilation as required before
+        # any Human Gate is reopened.
+        store.write_json(
+            "ideation/final_cards/portfolio_cards.json",
+            {
+                "schema_version": "1.0.0",
+                "semantics": "t4_final_idea_card_translations",
+                "population_id": target.population_id,
+                "target_profile": model_dump(run_config.target_profile, mode="json"),
+                "cards": [],
+                "status": "llm_repair_required",
+                "reason": "population_rollback_requires_current_portfolio_cards",
+            },
+        )
+        # Rollback itself is a consumed Population operation.  Bind the
+        # required fresh LLM card compilation to the restored snapshot so a
+        # Recovery Gate retry cannot accidentally reopen or evolve the former
+        # generation.  The marker is intentionally written before projection:
+        # a process stop during projection still resumes card/projection-only.
+        rollback_operation = {
+            "action": "rollback",
+            "directive_path": directive_path,
+            "directive": model_dump(directive, mode="json"),
+            "requested_from_population": current.population_id,
+        }
+        store.write_final_card_repair_checkpoint(
+            population=target,
+            operation=rollback_operation,
+            status="llm_repair_required",
+            reason="population_rollback_requires_current_portfolio_cards",
+        )
         route_results = self._native_route_results(store)
         project_gate1_population(
             workspace_dir,
@@ -2895,11 +4827,15 @@ class StateMachine:
     ) -> StateYaml:
         """Re-render the decision surface after a safe read-only local action."""
 
+        redirected = self._redirect_incomplete_t4_gate_to_recovery(state, workspace_dir)
+        if redirected is not None:
+            return redirected
+
         node = self.nodes["T4-GATE1"]
         gate_spec = self._find_gate(self._gate_id_for_node(node))
         presentation = {
-            "_title": str(gate_spec.get("title") or "Research idea decision"),
-            "_description": str(gate_spec.get("description") or "Choose how to continue with the current Candidate Population."),
+            "_title": str(gate_spec.get("title") or "T4 · 研究方向决策"),
+            "_description": str(gate_spec.get("description") or "请选择如何继续当前 Candidate Population。"),
             "candidate_overview": _t4_gate1_candidate_overview(workspace_dir),
             "candidate_pool_fingerprints": _t4_gate1_candidate_pool_fingerprints(workspace_dir),
         }
@@ -2912,8 +4848,8 @@ class StateMachine:
                 0,
                 {
                     "id": "confirm_composition",
-                    "label": "Confirm Human-composed Candidate",
-                    "description": "Use the reviewed Gene Donor Map to generate one new Candidate and independently score it against its source Candidates. The sources remain preserved.",
+                    "label": "确认 Human-composed Candidate",
+                    "description": "使用已审查的 Gene Donor Map 生成一个新 Candidate，并与来源 Candidate 独立比较评分；来源版本会被保留。",
                 },
             )
         state.current_task = "T4-GATE1"
@@ -2977,6 +4913,7 @@ class StateMachine:
             "ideation/_gate1_candidate_cards.md",
             "ideation/_gate1_selection_brief.md",
             "ideation/bridge_coverage_review.json",
+            "ideation/final_cards/portfolio_cards.json",
         ):
             source = workspace_dir / rel
             if source.is_file():
@@ -2984,9 +4921,32 @@ class StateMachine:
                 shutil.copy2(source, archive / source.name)
 
     def _native_t4_readonly_result(self, workspace_dir: Path, directive: IdeaDirective) -> dict[str, Any]:
-        """Build a compact read-only explanation from durable Candidate artifacts."""
+        """Build a read-only result from durable artifacts and the shared Gate card."""
 
         population, dossiers = current_population_context(workspace_dir)
+        gate_overview = _t4_gate1_candidate_overview(workspace_dir)
+        card_by_internal = {
+            str(item.get("internal_id") or "").strip(): item
+            for item in gate_overview.get("candidates", [])
+            if isinstance(item, dict) and str(item.get("internal_id") or "").strip()
+        }
+        display_by_internal = {
+            candidate_id: display_id
+            for display_id, candidate_id in _t4_gate1_display_id_map(workspace_dir).items()
+        }
+
+        def candidate_summary(candidate: CandidateDossier) -> dict[str, Any]:
+            summary = self._native_candidate_summary(candidate)
+            summary["internal_id"] = candidate.candidate_id
+            summary["candidate_id"] = display_by_internal.get(candidate.candidate_id, candidate.candidate_id)
+            # The Gate deck is the only normal-UI scientific presentation.
+            # Reusing it here prevents a “查看 D1” response from degrading to
+            # a separate genome-only summary after a resume.
+            card = card_by_internal.get(candidate.candidate_id)
+            if card is not None:
+                summary["candidate_card"] = card
+            return summary
+
         if directive.action == "show_more":
             portfolio_path = workspace_dir / "ideation" / "portfolio.json"
             try:
@@ -3000,36 +4960,157 @@ class StateMachine:
             }
             remaining = [candidate_id for candidate_id in population.active_candidate_ids if candidate_id not in displayed]
             return {
-                "title": "Remaining active Population",
-                "summary": "These Candidates remain active but are outside the current display Portfolio. Viewing them does not call a model or change any version.",
+                "title": "其余 Active Population",
+                "summary": "这些 Candidate 仍处于 Active Population，只是未进入当前首屏 Portfolio。查看不会调用模型，也不会改变任何版本。",
                 "kind": "remaining_population",
-                "candidates": [self._native_candidate_summary(dossiers[candidate_id]) for candidate_id in remaining],
+                "candidates": [candidate_summary(dossiers[candidate_id]) for candidate_id in remaining],
                 "artifact": f"ideation/populations/{population.population_id}.json",
             }
         if directive.action == "show_archive":
             return {
-                "title": "Archived Candidates",
-                "summary": "Archived Candidates are retained for audit and can be revisited through Rollback or a targeted Evolution request.",
+                "title": "已归档 Candidate",
+                "summary": "归档 Candidate 会被保留用于审计，仍可通过回滚或定向演化重新查看和使用。",
                 "kind": "archive",
                 "candidate_ids": population.archived_candidate_ids,
                 "artifact": f"ideation/populations/{population.population_id}.json",
             }
+        if directive.action == "compare_candidates":
+            compared = [dossiers[candidate_id] for candidate_id in directive.target_candidate_ids]
+            compared_summaries = [candidate_summary(candidate) for candidate in compared]
+            return {
+                "title": "候选方向对比",
+                "summary": "下列内容直接来自当前 Candidate 与评分产物，仅供比较；不会调用模型、修改 Candidate 或改变 Population。",
+                "kind": "compare_candidates",
+                "candidates": compared_summaries,
+                "candidate_cards": [
+                    item["candidate_card"]
+                    for item in compared_summaries
+                    if isinstance(item.get("candidate_card"), dict)
+                ],
+                "comparison": {
+                    "candidate_ids": [display_by_internal.get(candidate.candidate_id, candidate.candidate_id) for candidate in compared],
+                    "core_theses": [str(candidate.genome.core_thesis.value) for candidate in compared],
+                    "mechanisms": [str(candidate.genome.mechanism.value) for candidate in compared],
+                    "risks": [str(candidate.genome.risks.value) for candidate in compared],
+                    "artifact_paths": {
+                        display_by_internal.get(candidate.candidate_id, candidate.candidate_id): candidate.artifact_paths
+                        for candidate in compared
+                    },
+                },
+            }
         candidate_id = directive.target_candidate_ids[0]
         candidate = dossiers[candidate_id]
+        raw_lower = " ".join(str(directive.raw_user_input or "").casefold().split())
+        generic_candidate_view = directive.action == "inspect_score" and not any(
+            token in raw_lower for token in ("评分", "分数", "score", "scoring")
+        )
+
+        def readable_gene_rows() -> list[dict[str, str]]:
+            gene_fields = (
+                ("研究问题", "problem"),
+                ("机会来源", "opportunity"),
+                ("核心命题", "core_thesis"),
+                ("机制", "mechanism"),
+                ("设计 / Artifact", "design_or_artifact"),
+                ("贡献包", "contribution_package"),
+                ("假设包", "hypothesis_bundle"),
+                ("验证逻辑", "validation_logic"),
+                ("边界条件", "boundary_conditions"),
+                ("主要风险", "risks"),
+            )
+            rows: list[dict[str, str]] = []
+            for label, field_name in gene_fields:
+                gene = getattr(candidate.genome, field_name, None)
+                value = " ".join(str(getattr(gene, "value", "") or "").split())
+                if not value:
+                    continue
+                provenance = getattr(gene, "provenance", None)
+                reading_levels = [
+                    str(getattr(item, "value", item))
+                    for item in (getattr(provenance, "reading_levels", []) if provenance is not None else [])
+                    if str(getattr(item, "value", item)).strip()
+                ]
+                role = str(getattr(getattr(provenance, "evidence_role", ""), "value", getattr(provenance, "evidence_role", ""))).strip()
+                refs = getattr(provenance, "source_refs", []) if provenance is not None else []
+                ref_labels: list[str] = []
+                for ref in refs[:3]:
+                    for attr in ("citation_key", "paper_id", "source_path"):
+                        item = str(getattr(ref, attr, "") or "").strip()
+                        if item:
+                            ref_labels.append(item)
+                            break
+                note_parts = []
+                if reading_levels:
+                    note_parts.append("阅读层级：" + "、".join(dict.fromkeys(reading_levels)))
+                if role:
+                    note_parts.append("证据角色：" + role)
+                if ref_labels:
+                    note_parts.append("来源：" + "；".join(dict.fromkeys(ref_labels)))
+                if provenance is not None and getattr(provenance, "upgrade_required", False):
+                    note_parts.append("需要补强阅读")
+                rows.append(
+                    {
+                        "label": label,
+                        "summary": value,
+                        "source": "；".join(note_parts) if note_parts else "当前候选未绑定具体论文来源",
+                    }
+                )
+            return rows
+
+        score_detail = (
+            {
+                "label": "详情",
+                "rows": readable_gene_rows(),
+            }
+            if generic_candidate_view
+            else {"label": "评分", "path": candidate.score_report_path or f"ideation/scoring/U{population.generation}.json"}
+        )
         detail_by_action = {
-            "inspect_score": {"label": "Score", "path": candidate.score_report_path or f"ideation/scoring/U{population.generation}.json"},
-            "inspect_evidence": {"label": "Evidence", "path": "ideation/evidence/evidence_index.jsonl"},
-            "inspect_lineage": {"label": "Lineage", "path": f"ideation/candidates/{candidate.candidate_id}.v{candidate.version}.json"},
-            "inspect_hypotheses": {"label": "Draft hypotheses", "items": [item.statement for item in candidate.hypotheses]},
-            "inspect_contributions": {"label": "Contributions", "items": [item.statement for item in candidate.contributions]},
+            "inspect_score": score_detail,
+            "inspect_evidence": {
+                "label": "证据",
+                "path": "ideation/evidence/evidence_index.jsonl",
+                "rows": readable_gene_rows(),
+            },
+            "inspect_lineage": {"label": "演化谱系", "path": f"ideation/candidates/{candidate.candidate_id}.v{candidate.version}.json"},
+            "inspect_hypotheses": {
+                "label": "候选假设",
+                "rows": [
+                    {
+                        "label": getattr(item, "hypothesis_id", f"H{index}"),
+                        "summary": str(getattr(item, "statement", "")),
+                        "source": "观察信号：" + str(getattr(item, "observable_prediction", "")),
+                    }
+                    for index, item in enumerate(candidate.hypotheses, start=1)
+                ],
+            },
+            "inspect_contributions": {
+                "label": "贡献包",
+                "rows": [
+                    {
+                        "label": getattr(item, "contribution_id", f"C{index}"),
+                        "summary": str(getattr(item, "statement", "")),
+                        "source": "若成立：" + str(getattr(item, "what_changes_if_true", "")),
+                    }
+                    for index, item in enumerate(candidate.contributions, start=1)
+                ],
+            },
             "inspect_genome": {"label": "Idea Genome", "path": f"ideation/candidates/{candidate.candidate_id}.v{candidate.version}.json"},
+            "inspect_files": {
+                "label": "关联产物",
+                "paths": [
+                    f"ideation/candidates/{candidate.candidate_id}.v{candidate.version}.json",
+                    candidate.score_report_path or f"ideation/scoring/U{population.generation}.json",
+                    *candidate.artifact_paths,
+                ],
+            },
         }
         detail = detail_by_action.get(directive.action, {})
         return {
-            "title": f"{detail.get('label', 'Candidate')} · {candidate_id}",
-            "summary": "This is a read-only view based on the current Candidate artifacts. No model call, Population change, or merge is performed.",
+            "title": f"{detail.get('label', 'Candidate')} · {display_by_internal.get(candidate_id, candidate_id)}",
+            "summary": "这是基于当前 Candidate 产物的只读视图；不会调用模型、改变 Population 或进行合并。",
             "kind": directive.action,
-            "candidate": self._native_candidate_summary(candidate),
+            "candidate": candidate_summary(candidate),
             "detail": detail,
             "artifact_paths": candidate.artifact_paths,
         }
@@ -3086,7 +5167,18 @@ class StateMachine:
         else:
             raise KeyError(f"Unsupported T4 pre-run option: {option_id}")
 
+        catalog_context = materialize_t4_cross_domain_catalog_context(workspace_dir)
         inspection = inspect_t4_inputs(workspace_dir)
+        if catalog_context.get("status") == "degraded":
+            inspection = inspection.model_copy(
+                update={
+                    "warnings": [
+                        *inspection.warnings,
+                        "Cross-domain catalog 未能自动物化："
+                        + str(catalog_context.get("warning") or "请检查 catalog 诊断；T4 仍会保留已确认方向名称作为受限创意上下文。"),
+                    ]
+                }
+            )
         if inspection.status == "blocked":
             return self._pause_for_t4_prerun_gate(state, workspace_dir)
         suggested_profile = suggest_target_profile(workspace_dir)
@@ -3113,11 +5205,13 @@ class StateMachine:
                 "schema_version": "1.0.0",
                 "semantics": "t4_pre_run_confirmation",
                 "input_fingerprint": inspection.input_fingerprint,
+                "input_fingerprints": build_t4_input_fingerprints(workspace_dir),
                 "run_config_fingerprint": run_config_fingerprint(config),
                 "selected_option": option_id,
                 "captured": captured,
                 "target_profile": model_dump(target_profile, mode="json"),
                 "inspection_status": inspection.status,
+                "cross_domain_catalog_context": catalog_context,
                 "confirmed_at": _now_iso(),
             },
         )
@@ -3185,6 +5279,10 @@ class StateMachine:
         - `branches: {option_id: next_task}`
         """
         option_id = gate_result.get("option_id") or gate_result.get("key")
+        if node.task_id in _CCF_TEMPLATE_GATE_TASKS:
+            template_id = normalize_ccf_template_id(str(option_id or "").removeprefix("ccf_"))
+            if template_id in ccf_template_ids():
+                return _CCF_TEMPLATE_GATE_TASKS[node.task_id]
         gate_spec = self.gates.get(self._gate_id_for_node(node), {})
         option = self._find_option(gate_spec, option_id) or self._find_option_from_node(node, option_id)
         next_state = None
@@ -3377,8 +5475,10 @@ class StateMachine:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             return
-        if node.task_id == "T3.6-TEMPLATE-GATE":
+        if node.task_id in {"T3.6-TEMPLATE-GATE", "T3.6-CCF-TEMPLATE-GATE"}:
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "basic_en")
+            if option_id == "ccf":
+                return
             payload = _template_selection_from_gate(
                 task_id=node.task_id,
                 gate_id=self._gate_id_for_node(node),
@@ -3394,10 +5494,13 @@ class StateMachine:
             return
         if node.task_id == "T3.6-GATE-CORPUS":
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "")
+            captured = gate_result.get("captured") if isinstance(gate_result.get("captured"), dict) else {}
             scope = "complete" if option_id in {"complete", "full", "expand", "补检", "完整"} else "conservative"
             payload = {
                 "scope": scope,
                 "selected_option": option_id,
+                "supplement_target_papers": captured.get("supplement_target_papers"),
+                "supplement_focus": str(captured.get("supplement_focus") or "").strip(),
                 "note": (
                     "one-shot targeted survey expansion plan"
                     if scope == "complete"
@@ -3493,7 +5596,34 @@ class StateMachine:
             if option_id == "select_or_reframe":
                 selected_candidate_id = selected_candidate_id_from_gate_input(workspace_dir, captured)
                 if selected_candidate_id:
+                    selection_ready, selection_error = candidate_selection_readiness(
+                        workspace_dir,
+                        candidate_id=selected_candidate_id,
+                    )
+                    if not selection_ready:
+                        rejection_path = workspace_dir / "ideation" / "_gate1_selection_rejected.json"
+                        rejection_path.write_text(
+                            json.dumps(
+                                {
+                                    "schema_version": "1.0.0",
+                                    "semantics": "t4_gate1_selection_rejected",
+                                    "candidate_id": selected_candidate_id,
+                                    "reason": selection_error,
+                                    "recommended_action": "evolve_or_upgrade_before_selection",
+                                    "decided_at": _now_iso(),
+                                },
+                                ensure_ascii=False,
+                                indent=2,
+                            )
+                            + "\n",
+                            encoding="utf-8",
+                        )
+                        return
                     payload["selected_candidate_id"] = selected_candidate_id
+                    payload["selection_warnings"] = candidate_selection_warnings_for_workspace(
+                        workspace_dir,
+                        candidate_id=selected_candidate_id,
+                    )
                     payload["pre_novelty_artifacts"] = compile_pre_novelty_hypothesis_brief(
                         workspace_dir,
                         selection_fingerprint=payload["selection_fingerprint"],
@@ -3509,8 +5639,10 @@ class StateMachine:
                 next_task=next_task,
             )
             return
-        if node.task_id == "T8-STYLE-GATE":
+        if node.task_id in {"T8-STYLE-GATE", "T8-CCF-TEMPLATE-GATE"}:
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "ccf_neurips")
+            if option_id == "ccf":
+                return
             payload = _template_selection_from_gate(
                 task_id=node.task_id,
                 gate_id=self._gate_id_for_node(node),
@@ -3526,7 +5658,8 @@ class StateMachine:
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             return
         if node.task_id == "T5-EXECUTOR-GATE":
-            if next_task == "T5-HANDOFF":
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "codex_cli")
+            if next_task in {"T5-HANDOFF", "T5-REBOOST-GATE"} or option_id == "revise_handoff":
                 outputs = node.outputs or {}
                 for rel_path in outputs.values():
                     path = workspace_dir / rel_path
@@ -3543,7 +5676,6 @@ class StateMachine:
                     }
                     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
                     return
-            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "codex_cli")
             aliases = {
                 "mock": "mock_dry_run",
                 "dry": "mock_dry_run",
@@ -3569,7 +5701,7 @@ class StateMachine:
                 notes=notes,
             )
             selection["next_state"] = next_task
-            path = workspace_dir / "external_executor" / "executor_selection.json"
+            path = workspace_dir / "external_executor" / "report" / "executor_selection.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(selection, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             patch_external_executor_files_with_selection(workspace_dir, selection)
@@ -3640,6 +5772,11 @@ class StateMachine:
         if workspace_dir is None:
             raise ValueError("workspace_dir is required for __parse_from_output__ targets")
 
+        # ``T7.5`` is no longer part of the current main state machine, but
+        # persisted extension/legacy workspaces can still carry its explicit
+        # ``__parse_from_output__`` transition.  Keep that old state readable
+        # and translate it into the current T5 handoff or T8 entry instead of
+        # treating a successful legacy evaluation as an unsupported state.
         if current_task == "T7.5":
             return self._parse_t75_decision(workspace_dir)
         if current_task == "T4.5":
@@ -3698,9 +5835,11 @@ class StateMachine:
             "passed",
             "pass_to_experiment",
             "pass_with_required_baselines",
+            "continue_to_t5",
+            "continue_to_experiment",
+            # Legacy aliases accepted only for older novelty_audit.md files.
             "go_t7",
             "continue_to_t7",
-            "continue_to_experiment",
         }
         if verdict_token in pass_tokens:
             formal_ok, _formal_error = _validate_t45_post_novelty_formalization(workspace_dir, audit_path)
@@ -3710,8 +5849,56 @@ class StateMachine:
                 return "T5-REBOOST-GATE"
             if "T5-HANDOFF" in self.nodes:
                 return "T5-HANDOFF"
-            return "T7" if "T7" in self.nodes else "failed"
+            return "failed"
         return human_review
+
+    def _parse_t75_decision(self, workspace_dir: Path) -> str:
+        """Translate a persisted legacy T7.5 recommendation into current flow.
+
+        T7/T7.5 have been removed from the normal workflow: current external
+        executors publish their verified report directly to the T8 handoff.
+        A pre-existing workspace can nevertheless contain a completed T7.5
+        node with ``next_on_success: __parse_from_output__``.  Its historical
+        recommendation must remain resumable, but it must never revive the
+        removed internal T7 executor.  The aliases below therefore map old
+        experiment requests to the current external-experiment entry and old
+        writing requests through the normal writing-style/resource boundary.
+        """
+
+        default_t8_entry = self._default_t8_entry(workspace_dir)
+        decision_path = workspace_dir / "evaluation" / "evaluation_decision.md"
+        if not decision_path.is_file():
+            return default_t8_entry
+
+        text = decision_path.read_text(encoding="utf-8", errors="replace")
+        match = re.search(r"next_task:\s*([A-Za-z0-9_.-]+)", text, re.DOTALL)
+        if match is None:
+            return default_t8_entry
+
+        raw_target = match.group(1).strip()
+        aliases = {
+            # T7 is an historical internal executor name.  The current
+            # equivalent is the external handoff/reboost entry selected by
+            # the installed state-machine topology.
+            "T5": self._default_experiment_entry(),
+            "T6": self._default_experiment_entry(),
+            "T7": self._default_experiment_entry(),
+            # Writing must start from a validated style choice and the
+            # resource index whenever the current topology supplies them.
+            "T8": default_t8_entry,
+            "T8-WRITE": default_t8_entry,
+            "T8-SEC-LIMITATIONS": "T8-SEC-CONCLUSION",
+            "terminate": "done",
+            "terminal": "done",
+            "stop": "done",
+            "end": "done",
+        }
+        target = aliases.get(raw_target, raw_target)
+        if target not in self.nodes and raw_target in self.nodes:
+            return raw_target
+        if target not in self.nodes:
+            return default_t8_entry
+        return target
 
     def _parse_t36_survey_decision(self, workspace_dir: Path) -> str:
         """Route the optional T3.6 survey branch from drafts/survey/decision.json."""
@@ -3846,46 +6033,11 @@ class StateMachine:
             return None
         return data if isinstance(data, dict) else None
 
-    def _parse_t75_decision(self, workspace_dir: Path) -> str:
-        """T7.5 完成后，解析 evaluation_decision.md 的推荐下一步。"""
-
-        default_t8_entry = self._default_t8_entry(workspace_dir)
-        decision_path = workspace_dir / "evaluation" / "evaluation_decision.md"
-        if not decision_path.exists():
-            return default_t8_entry
-
-        text = decision_path.read_text(encoding="utf-8", errors="replace")
-        match = re.search(r"next_task:\s*([A-Za-z0-9_.-]+)", text, re.DOTALL)
-        if match is None:
-            return default_t8_entry
-
-        raw_target = match.group(1).strip()
-        aliases = {
-            "T5": self._default_experiment_entry(),
-            "T6": self._default_experiment_entry(),
-            "T7": self._default_experiment_entry(),
-            "T8": self._default_t8_entry(workspace_dir),
-            "T8-WRITE": self._default_t8_entry(workspace_dir),
-            "T8-SEC-LIMITATIONS": "T8-SEC-CONCLUSION",
-            "terminate": "done",
-            "terminal": "done",
-            "stop": "done",
-            "end": "done",
-        }
-        target = aliases.get(raw_target, raw_target)
-        if target not in self.nodes and raw_target in self.nodes:
-            return raw_target
-        if target not in self.nodes:
-            return default_t8_entry
-        return target
-
     def _default_experiment_entry(self) -> str:
         if "T5-REBOOST-GATE" in self.nodes:
             return "T5-REBOOST-GATE"
         if "T5-HANDOFF" in self.nodes:
             return "T5-HANDOFF"
-        if "T7" in self.nodes:
-            return "T7"
         if "T5" in self.nodes:
             return "T5"
         return "failed"
@@ -4188,6 +6340,22 @@ class StateMachine:
 
         if node.inputs:
             params["inputs"] = dict(node.inputs)
+            if workspace_dir is not None:
+                # A path-only signature treats a user-expanded literature
+                # query, a repaired artifact, and an unchanged retry as the
+                # same attempt.  Bind deadlock detection to the actual declared
+                # input contents instead.  This preserves protection against a
+                # true no-change loop while allowing a documented recovery to
+                # retry after its inputs changed.
+                try:
+                    params["input_fingerprints"] = build_input_fingerprints(
+                        workspace_dir,
+                        {str(name): str(path) for name, path in node.inputs.items()},
+                    )
+                except Exception as exc:
+                    # An unreadable input remains part of the execution identity
+                    # rather than making deadlock detection itself fail.
+                    params["input_fingerprints"] = {"_error": type(exc).__name__}
         if node.outputs:
             params["outputs"] = dict(node.outputs)
         if node.llm:
@@ -4198,6 +6366,10 @@ class StateMachine:
             params["mode"] = node.mode
         if node.extra:
             params["extra"] = dict(node.extra)
+        # Older workspaces store path-only hashes.  Versioning the identity
+        # format lets them resume once under the content-aware guard instead of
+        # being permanently blocked by a historical false positive.
+        params["deadlock_identity_version"] = "content_fingerprint_v1"
 
         if state is not None:
             directive = state.task_context.get("human_iteration_directive")
@@ -4210,6 +6382,10 @@ class StateMachine:
                 }
 
         if node.task_id == "T4" and state is not None:
+            # Source changes to the native controller are a genuine execution
+            # change.  Without this marker, a fixed validator or repair path
+            # can be blocked by the history of the buggy implementation.
+            params["t4_implementation_fingerprint"] = _t4_execution_implementation_fingerprint()
             selection_fingerprint = ""
             if workspace_dir is not None:
                 selection_path = workspace_dir / "ideation" / "_gate1_user_selection.json"
@@ -4269,3 +6445,27 @@ class StateMachine:
 
         normalized = json.dumps(params, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _t36_supplement_recommendation(workspace_dir: Path) -> dict[str, Any]:
+    """Recommend a supplement target from visible survey coverage."""
+
+    plan_path = workspace_dir / "drafts" / "survey" / "survey_plan.json"
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        plan = {}
+    taxonomy = ((plan.get("taxonomy") or {}).get("tree") if isinstance(plan, dict) and isinstance(plan.get("taxonomy"), dict) else []) or []
+    outline = plan.get("outline") if isinstance(plan, dict) and isinstance(plan.get("outline"), list) else []
+    weak = ((plan.get("coverage_selfcheck") or {}).get("classes_needing_more_lit") if isinstance(plan, dict) and isinstance(plan.get("coverage_selfcheck"), dict) else []) or []
+    deep_notes = len(list((workspace_dir / "literature" / "deep_read_notes").glob("*.md")))
+    base = 8 + min(4, len(outline)) + min(8, 2 * len(weak)) + min(6, len(taxonomy) // 2)
+    if deep_notes >= 20:
+        base -= 4
+    suggested = max(8, min(30, base))
+    return {
+        "suggested_target_records": suggested,
+        "basis": {"deep_note_count": deep_notes, "taxonomy_class_count": len(taxonomy), "outline_section_count": len(outline), "explicit_weak_class_count": len(weak)},
+        "coverage_purpose": ["historical development", "frontier progress", "weak taxonomy classes", "confirmed Cross-domain bridges"],
+        "boundary": "This is a retrieval target, not a citation quota. Records with abstracts become canonical shallow reading notes; full/partial notes remain required for substantive claims.",
+    }

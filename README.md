@@ -7,8 +7,7 @@ ResearchOS is an artifact-first research runtime for auditable literature work, 
 ```text
 T1 scope -> T2 discover -> T3 read -> T3.5 synthesize
   -> optional T3.6 survey -> T4 ideas -> T4.5 novelty
-  -> T5 executor handoff -> T7 evidence and claims
-  -> T8 manuscript -> T9 submission bundle
+  -> T5 external execution -> T8 manuscript -> T9 submission bundle
 ```
 
 ## Before You Run
@@ -104,29 +103,44 @@ python -m researchos.cli run --workspace ./workspace/project-a
 
 English wording such as `candidate pool 30, deep read 15, abstract read 15, English manuscript, exclude Chinese literature` is equivalent. The confirmed values are saved in `literature/literature_params.json` before retrieval starts.
 
-T3 processes full-text papers individually because page coverage and section evidence are paper-specific. Its post-read abstract sweep is different: when the active provider reports a usable context window, ResearchOS packs multiple independent abstracts into a provider-context-sized call, then writes one separate `ABSTRACT-ONLY` note per paper. There is no fixed "papers per batch" limit. The provider binding and its tokenizer determine the packing plan; malformed batch output falls back only for the affected paper(s).
+T3 processes strong-evidence papers individually because page coverage and section evidence are paper-specific. Its post-read abstract sweep packs independent abstracts into provider-context-sized calls and writes one separate `ABSTRACT-ONLY` note per paper. A requested "abstract read N" is a real note-count target: metadata-only triage never counts, readable backlog records refill a shortfall, and an unresolved shortfall pauses T3 rather than entering T3.5. Shallow papers with a local PDF are listed in `literature/reading_upgrade_queue.jsonl` for a real full-text or scoped partial-text upgrade; downloading a PDF never promotes evidence. Books, monographs, and sources over 100 pages default to question-driven chapter/page reading with recorded coverage.
+
+To pause a live command, press `Ctrl+C` once. ResearchOS persists the workspace as `PAUSED` and prints the matching `resume` command. `Ctrl+Z` only suspends the shell job; use `fg` and then `Ctrl+C` to recover from an accidental suspend.
 
 ## Daily Commands
 
 | Goal | Command |
 | --- | --- |
+| Initialize an empty project | `python -m researchos.cli init-workspace --workspace ./workspace/project-a --project-id project-a --topic "research topic"` |
+| Start a complete pipeline in a new workspace | `python -m researchos.cli run --workspace ./workspace/project-a` |
 | Inspect current stage and pause reason | `python -m researchos.cli status --workspace ./workspace/project-a` |
 | Scan all local workspaces, active processes, gates, and stale states | `python -m researchos.cli workspace-status --workspace-root ./workspace` |
 | Continue a paused project | `python -m researchos.cli resume --workspace ./workspace/project-a` |
+| Revalidate T3 and fill only missing reading coverage | `python -m researchos.cli resume --workspace ./workspace/project-a --from-task T3` |
 | Re-enter this workspace at T4 after validating T4 prerequisites | `python -m researchos.cli resume --workspace ./workspace/project-a --from-task T4` |
+| Add missing T4 inputs from another workspace, then resume this project | `python -m researchos.cli resume --workspace ./workspace/t4-debug --from ./workspace/project-a --from-task T4` |
+| Return to the optional Survey decision | `python -m researchos.cli resume --workspace ./workspace/project-a --from-task T3.6` |
 | Start a new full pipeline at T4 using validated upstream artifacts from another workspace | `python -m researchos.cli run --workspace ./workspace/project-b --from ./workspace/project-a --start-task T4` |
 | Debug only T4 in a fresh workspace copied from another project | `python -m researchos.cli run-task T4 --workspace ./workspace/t4-debug --from ./workspace/project-a` |
 | Run T5 research reboost only | `python -m researchos.cli run-task T5-REBOOST --workspace ./workspace/project-a` |
+| Run the T5 executor-selection gate after T5 specialization | `python -m researchos.cli run-task T5-EXECUTOR-GATE --workspace <workspace>` |
 | Run one task without advancing the full pipeline | `python -m researchos.cli run-task T3.6-SEC-INTRO --workspace ./workspace/project-a` |
 | Validate one task's artifacts | `python -m researchos.cli validate --task T3.6-SEC-INTRO --workspace ./workspace/project-a` |
 | Regenerate the deterministic Survey audit without an LLM | `python -m researchos.cli audit-survey --workspace ./workspace/project-a` |
 | Inspect a recorded run | `python -m researchos.cli trace <run-id> --workspace ./workspace/project-a` |
-| Check environment and TeX selection | `python -m researchos.cli doctor --workspace ./workspace/project-a` |
+| Configure and verify the shared LLM connection | `python -m researchos.cli configure-llm` |
+| Check the configured LLM connection only | `python -m researchos.cli selftest` |
+| Check Python, PDF, and TeX prerequisites | `python -m researchos.cli doctor --workspace ./workspace/project-a` |
 | Check state-machine and runtime configuration | `python -m researchos.cli validate-config` |
+| List independently runnable Skills | `python -m researchos.cli list-skills --workspace ./workspace/project-a` |
+| Browse Skills and their readiness conditions | `python -m researchos.cli browse-skills --workspace ./workspace/project-a` |
+| Inspect a Skill's input/output/recovery contract | `python -m researchos.cli describe-skill pdf-note-card --workspace ./workspace/project-a` |
+| Start or resume a guided Skill | `python -m researchos.cli run-skill pdf-note-card --workspace ./workspace/project-a --session-id reading-01` |
+| Inspect resumable Skill sessions | `python -m researchos.cli skill-status --workspace ./workspace/project-a` |
 
-Use `run --from <source-workspace> --start-task <task>` only to initialize a new target workspace from another project's validated upstream artifacts. It is not a merge operation. The recovery guide is in [Quick Start](docs/en/QUICKSTART.md).
+Use `run --from <source-workspace> --start-task <task>` only to initialize a new target workspace from another project's validated upstream artifacts. `run-task <task> --from <source-workspace>` performs the same declared-input copy but executes only that task. For every literature-dependent downstream stage (`T3.5`, `T3.6`, `T4`, `T5`, and `T8`), the import closure includes the complete `literature/` tree, so initialized empty note directories cannot suppress real source paper cards. `bridge_notes/` remains the paper-note root; `cross_domain_catalogs/` is the independent retrieval catalog and is imported alongside it. The import happens before the model connection check, so a provider outage does not discard the prepared debugging workspace. Neither command is a state merge. The recovery guide is in [Quick Start](docs/en/QUICKSTART.md).
 
-`resume --from-task <task>` is the deliberate same-workspace recovery command. It validates the target task's prerequisites, clears the old pending gate, and records the re-entry in `state.yaml`. After an optional Survey has finished, `resume --from-task T4` is the supported way to proceed without revisiting its post-Survey gate; it still refuses to run if T4 inputs are incomplete.
+`resume --from-task <task>` is the deliberate same-workspace recovery command. It validates the target task's prerequisites, clears the old pending gate, and records the re-entry in `state.yaml`. Add `--from <source-workspace>` when an existing target needs missing declared inputs before it resumes; source state/history are never merged. Public names are accepted: `T3.6` means `T3.6-GATE-SURVEY`, the "write a Survey?" decision; `T8` means the writing-style Gate. After an optional Survey has finished, `resume --from-task T4` is the supported way to proceed without revisiting its post-Survey gate; it still refuses to run if T4 inputs are incomplete.
 
 | Workspace situation | Use | Behaviour |
 | --- | --- | --- |
@@ -134,6 +148,7 @@ Use `run --from <source-workspace> --start-task <task>` only to initialize a new
 | Paused after Ctrl+C, a provider outage, or a gate | `resume` | Continues the same workspace from durable artifacts. |
 | Existing workspace, restart a validated later stage | `resume --from-task T4` | Re-enters only after the selected task's prerequisites pass. |
 | Another project's upstream artifacts | `run --from <source> --start-task T4` | Creates a distinct target workspace and copies only declared prerequisites. |
+| Isolated debugging with another project's materials | `run-task T4 --from <source>` | Copies the task's declared inputs first, then runs only T4; source state and artifacts are untouched. |
 | Existing `state.yaml`, but `run` was entered again | Do not continue | The command refuses to overwrite or implicitly resume; use `resume`. |
 | No `state.yaml`, but `resume` was entered | Do not create | The command refuses to manufacture a project; use `run`. |
 | `COMPLETED` workspace | Start a new workspace | `resume` is refused so completed artifacts are not silently rewritten. |
@@ -188,6 +203,7 @@ ResearchOS exposes both atomic Skills and composed, resumable research workflows
 | Build a review corpus | `literature-review-studio` | Review scope -> retrieval -> reading coverage -> taxonomy readiness -> Survey handoff |
 | Prepare a Survey safely | `survey-evidence-package` | Corpus sufficiency -> taxonomy/storyline -> targeted supplement decision -> T3.6 handoff |
 | Generate cross-domain directions | `cross-domain-idea-studio` | Bridge evidence -> transfer-risk audit -> candidate jury -> human selection |
+| Start or resume native idea evolution | `t4-evolution` | Inspect T4 evidence/state -> explain preserved Population -> safe native pipeline handoff |
 | Read several papers together | `paper-reading-workbench` | DOI/PDF intake -> prioritized cards -> question answers -> cross-paper learning |
 | Build or repair writing evidence | `related-work-builder`, `draft-evidence-repair` | Traceable Related Work or manuscript claim/citation repair package |
 

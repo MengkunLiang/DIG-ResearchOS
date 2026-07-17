@@ -9,6 +9,7 @@ ABSTRACT-ONLY，不能作为全文机制结论。
 from __future__ import annotations
 
 import csv
+from datetime import datetime, timezone
 import io
 import inspect
 import json
@@ -42,6 +43,9 @@ _DEFAULT_CONFIG = {
     "include_metadata_only": True,
     "exclude_semantic_excluded": True,
     "metadata_triage_report": "literature/metadata_triage.md",
+    "manifest_path": "literature/shallow_read_manifest.json",
+    "reading_upgrade_queue": "literature/reading_upgrade_queue.jsonl",
+    "max_auto_full_text_pages": 100,
     "priority_weights": {
         "relevance": 0.70,
         "resource": 0.20,
@@ -53,11 +57,32 @@ _DEFAULT_CONFIG = {
     },
 }
 
+SHALLOW_READ_MANIFEST_REL_PATH = "literature/shallow_read_manifest.json"
+READING_UPGRADE_QUEUE_REL_PATH = "literature/reading_upgrade_queue.jsonl"
+WORKSPACE_LITERATURE_PARAMS_REL_PATH = "literature/literature_params.json"
+
 
 AbstractReader = Callable[[dict[str, Any], str], str | Awaitable[str]]
 AbstractBatchReader = Callable[[list[dict[str, Any]], str], Any | Awaitable[Any]]
 MetadataTriageReader = Callable[[list[dict[str, Any]], str], str | Awaitable[str]]
 PromptTokenCounter = Callable[[str], int]
+
+
+def has_shallow_read_coverage_contract(workspace: Path) -> bool:
+    """Whether this workspace explicitly adopted the T2/T3 shallow target.
+
+    A normal current workflow writes ``literature_params.json`` at the T2
+    confirmation gate. A historical workspace may instead only retain a prior
+    shallow manifest. Either artifact means that downstream consumers must
+    verify coverage. If neither exists, do not retrospectively impose the
+    current global default on a legacy T3 resume that never selected a target.
+    """
+
+    literature_dir = workspace / "literature"
+    return (
+        (literature_dir / "literature_params.json").is_file()
+        or (literature_dir / "shallow_read_manifest.json").is_file()
+    )
 
 ABSTRACT_CORE_HEADING = "## A. Core Approach / Perspective"
 ABSTRACT_BRIDGE_HEADING = "## B. Bridge Point"
@@ -120,7 +145,7 @@ def build_sweep_candidates(
     abstract_dir = workspace / "literature" / "shallow_read_notes"
     if abstract_dir.exists():
         for note_path in abstract_dir.glob("*.md"):
-            if is_paper_note_file(note_path):
+            if _is_abstract_note_card(note_path):
                 existing_abstract_note_count += 1
                 completed_keys.update(paper_note_match_keys(note_path))
 
@@ -151,12 +176,23 @@ def build_sweep_candidates(
     # is only a bounded refill source for numeric targets, never an unbounded sweep.
     if remaining_lite_slots is None:
         return primary_candidates
-    if len(primary_candidates) >= remaining_lite_slots:
-        return primary_candidates[:remaining_lite_slots]
 
-    selected = list(primary_candidates)
+    # ``lite_paper_num`` is an actual ABSTRACT-ONLY reading target, not a cap
+    # shared with metadata triage.  The previous implementation selected a
+    # mixed list first, so metadata-only records silently consumed the slots
+    # that the researcher had asked to read.  Retain metadata triage as a
+    # separate, non-evidence output, but fill reading coverage with records
+    # that really have an abstract (or a future text-reading upgrade).
+    readable_primary = [item for item in primary_candidates if _has_abstract(item)]
+    metadata_primary = [item for item in primary_candidates if not _has_abstract(item)]
+    selected = list(readable_primary[:remaining_lite_slots])
     refill_slots = remaining_lite_slots - len(selected)
-    if refill_slots > 0 and backlog_sources and _allow_readable_backlog_refill(cfg):
+    if refill_slots > 0 and _allow_readable_backlog_refill(cfg):
+        if not backlog_sources:
+            # A numeric coverage promise plus the explicit replacement policy
+            # authorizes a bounded readable refill.  Requiring users to repeat
+            # ``papers_backlog`` in ``sources`` made the policy a no-op.
+            backlog_sources = ["papers_backlog"]
         backlog_candidates = _filter_sweep_pool(
             workspace,
             backlog_sources,
@@ -174,7 +210,12 @@ def build_sweep_candidates(
         _sort_sweep_candidates(backlog_candidates)
         selected.extend(backlog_candidates[:refill_slots])
 
-    return selected[:remaining_lite_slots]
+    # Metadata-only records remain useful for acquisition triage, but never
+    # reduce the requested number of readable shallow notes.  They only come
+    # from the declared retained sources, never from an unbounded backlog.
+    if include_metadata_only:
+        selected.extend(metadata_primary)
+    return selected
 
 
 def _normalize_sources(raw: Any) -> list[str]:
@@ -321,16 +362,22 @@ def _abstract_sweep_plan_summary(workspace: Path, config: dict[str, Any], candid
         "existing_shallow_read_notes": existing_notes,
         "remaining_target": remaining_target,
         "selected_for_this_run": len(candidates),
+        "selected_readable_for_this_run": sum(1 for candidate in candidates if _has_abstract(candidate)),
+        "selected_metadata_triage_for_this_run": sum(1 for candidate in candidates if not _has_abstract(candidate)),
         "candidate_queue_dispositions": queue_counts,
         "candidate_source_roles": source_roles,
     }
+
+
+def _has_abstract(record: dict[str, Any]) -> bool:
+    return bool(str(record.get("abstract") or "").strip())
 
 
 def _existing_abstract_note_count(workspace: Path) -> int:
     abstract_dir = workspace / "literature" / "shallow_read_notes"
     if not abstract_dir.exists():
         return 0
-    return sum(1 for note_path in abstract_dir.glob("*.md") if is_paper_note_file(note_path))
+    return sum(1 for note_path in abstract_dir.glob("*.md") if _is_abstract_note_card(note_path))
 
 
 def _load_queue_disposition(workspace: Path) -> dict[str, dict[str, Any]]:
@@ -1271,7 +1318,22 @@ def _run_abstract_sweep_sync(
     candidates = build_sweep_candidates(workspace, cfg)
     if not candidates:
         plan_summary = _abstract_sweep_plan_summary(workspace, cfg, [])
-        return {"enabled": True, "candidates_found": 0, "notes_generated": 0, "sweep_plan": plan_summary}
+        return _finalize_sweep_result(
+            workspace,
+            cfg,
+            {
+                "enabled": True,
+                "reader_mode": "deterministic_fallback",
+                "candidates_found": 0,
+                "notes_generated": 0,
+                "llm_notes_generated": 0,
+                "fallback_notes_generated": 0,
+                "metadata_triage_count": 0,
+                "metadata_triage_llm": 0,
+                "sweep_plan": plan_summary,
+            },
+            candidates=[],
+        )
     plan_summary = _abstract_sweep_plan_summary(workspace, cfg, candidates)
 
     # 确保输出目录存在
@@ -1337,19 +1399,24 @@ def _run_abstract_sweep_sync(
         },
     )
 
-    return {
-        "enabled": True,
-        "reader_mode": "deterministic_fallback",
-        "candidates_found": len(candidates),
-        "sweep_plan": plan_summary,
-        "notes_generated": notes_generated,
-        "llm_notes_generated": 0,
-        "fallback_notes_generated": notes_generated,
-        "metadata_triage_count": len(metadata_only_papers),
-        "metadata_triage_llm": 0,
-        "metadata_triage_report": metadata_report_path,
-        "output_dir": str(abstract_dir.relative_to(workspace)),
-    }
+    return _finalize_sweep_result(
+        workspace,
+        cfg,
+        {
+            "enabled": True,
+            "reader_mode": "deterministic_fallback",
+            "candidates_found": len(candidates),
+            "sweep_plan": plan_summary,
+            "notes_generated": notes_generated,
+            "llm_notes_generated": 0,
+            "fallback_notes_generated": notes_generated,
+            "metadata_triage_count": len(metadata_only_papers),
+            "metadata_triage_llm": 0,
+            "metadata_triage_report": metadata_report_path,
+            "output_dir": str(abstract_dir.relative_to(workspace)),
+        },
+        candidates=candidates,
+    )
 
 
 async def _run_abstract_sweep_async(
@@ -1369,7 +1436,22 @@ async def _run_abstract_sweep_async(
     candidates = build_sweep_candidates(workspace, cfg)
     if not candidates:
         plan_summary = _abstract_sweep_plan_summary(workspace, cfg, [])
-        return {"enabled": True, "candidates_found": 0, "notes_generated": 0, "sweep_plan": plan_summary}
+        return _finalize_sweep_result(
+            workspace,
+            cfg,
+            {
+                "enabled": True,
+                "reader_mode": "llm_callback_no_outputs" if abstract_reader is not None else "deterministic_fallback",
+                "candidates_found": 0,
+                "notes_generated": 0,
+                "llm_notes_generated": 0,
+                "fallback_notes_generated": 0,
+                "metadata_triage_count": 0,
+                "metadata_triage_llm": 0,
+                "sweep_plan": plan_summary,
+            },
+            candidates=[],
+        )
     plan_summary = _abstract_sweep_plan_summary(workspace, cfg, candidates)
 
     abstract_dir = workspace / "literature" / "shallow_read_notes"
@@ -1538,34 +1620,419 @@ async def _run_abstract_sweep_async(
         },
     )
 
-    return {
-        "enabled": True,
-        "reader_mode": _reader_mode(
-            abstract_reader=abstract_reader,
-            metadata_triage_reader=metadata_triage_reader,
-            llm_notes_generated=llm_notes_generated,
-            metadata_triage_llm=metadata_triage_llm,
-            llm_batch_calls=llm_batch_calls,
-        ),
-        "candidates_found": len(candidates),
-        "sweep_plan": plan_summary,
-        "notes_generated": notes_generated,
-        "llm_notes_generated": llm_notes_generated,
-        "fallback_notes_generated": fallback_notes_generated,
-        "metadata_triage_count": metadata_triage_count,
-        "metadata_triage_llm": metadata_triage_llm,
-        "metadata_triage_report": metadata_report_path,
-        "reader_errors": reader_errors[:10],
-        "llm_batch_calls": llm_batch_calls,
-        "batch_fallback_count": batch_fallback_count,
-        "batching": {
-            "provider_context_window": provider_context_window,
-            "batch_count": len(batch_plan),
-            "readable_paper_count": len(readable_papers),
-            "mode": "provider_context_adaptive" if abstract_batch_reader is not None else "per_paper_reader",
+    return _finalize_sweep_result(
+        workspace,
+        cfg,
+        {
+            "enabled": True,
+            "reader_mode": _reader_mode(
+                abstract_reader=abstract_reader,
+                metadata_triage_reader=metadata_triage_reader,
+                llm_notes_generated=llm_notes_generated,
+                metadata_triage_llm=metadata_triage_llm,
+                llm_batch_calls=llm_batch_calls,
+            ),
+            "candidates_found": len(candidates),
+            "sweep_plan": plan_summary,
+            "notes_generated": notes_generated,
+            "llm_notes_generated": llm_notes_generated,
+            "fallback_notes_generated": fallback_notes_generated,
+            "metadata_triage_count": metadata_triage_count,
+            "metadata_triage_llm": metadata_triage_llm,
+            "metadata_triage_report": metadata_report_path,
+            "reader_errors": reader_errors[:10],
+            "llm_batch_calls": llm_batch_calls,
+            "batch_fallback_count": batch_fallback_count,
+            "batching": {
+                "provider_context_window": provider_context_window,
+                "batch_count": len(batch_plan),
+                "readable_paper_count": len(readable_papers),
+                "mode": "provider_context_adaptive" if abstract_batch_reader is not None else "per_paper_reader",
+            },
+            "output_dir": str(abstract_dir.relative_to(workspace)),
         },
-        "output_dir": str(abstract_dir.relative_to(workspace)),
+        candidates=candidates,
+    )
+
+
+def validate_abstract_sweep_coverage(
+    workspace: Path,
+    config: dict[str, Any] | None = None,
+    *,
+    require_manifest: bool = True,
+) -> tuple[bool, str | None]:
+    """Validate the durable shallow-reading contract independently of T3 LLM state.
+
+    Metadata triage is deliberately excluded.  It is a resource-acquisition
+    aid, not an abstract reading event and therefore cannot satisfy a numeric
+    ``lite_paper_num`` selected by the researcher.
+    """
+
+    cfg = _resolve_config(config)
+    if not cfg.get("enabled", False):
+        return True, None
+    target = _numeric_lite_target(cfg)
+    manifest_rel = _manifest_rel_path(cfg)
+    manifest_path = workspace / manifest_rel
+    if not manifest_path.is_file():
+        if require_manifest:
+            return False, f"缺少 {manifest_rel}；摘要轻读覆盖尚未生成，不能确认 T3 完成。"
+        return True, None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return False, f"{manifest_rel} 不可读取：{type(exc).__name__}。"
+    if not isinstance(manifest, dict):
+        return False, f"{manifest_rel} 必须是 JSON 对象。"
+
+    note_entries = manifest.get("shallow_note_entries")
+    if not isinstance(note_entries, list):
+        return False, f"{manifest_rel} 缺少 shallow_note_entries，无法验证实际浅读文件。"
+    invalid_paths: list[str] = []
+    valid_count = 0
+    for item in note_entries:
+        if not isinstance(item, dict):
+            continue
+        rel_path = str(item.get("path") or "").strip()
+        if not rel_path:
+            continue
+        path = workspace / rel_path
+        if _is_abstract_note_card(path):
+            valid_count += 1
+        else:
+            invalid_paths.append(rel_path)
+    if invalid_paths:
+        return False, (
+            f"摘要轻读 Manifest 引用了不可读或非 ABSTRACT-ONLY 的文件："
+            + ", ".join(invalid_paths[:5])
+        )
+
+    if target is not None and valid_count < target:
+        metadata_count = int(manifest.get("metadata_triage_count") or 0)
+        return False, (
+            f"浅读覆盖仅完成 {valid_count}/{target}；metadata-only triage {metadata_count} 篇不计入阅读覆盖。"
+            "系统会从可读 backlog 补位；若仍不足，必须定向补检后再进入 T3.5。"
+        )
+    status = str(manifest.get("status") or "").strip().casefold()
+    if status == "blocked":
+        return False, str(manifest.get("blocking_reason") or "摘要轻读覆盖未完成。")
+    return True, None
+
+
+def _finalize_sweep_result(
+    workspace: Path,
+    config: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Persist the exact shallow-reading outcome before downstream validation."""
+
+    manifest = _write_shallow_read_manifest(workspace, config, result, candidates)
+    upgrade_queue = _write_reading_upgrade_queue(workspace, config)
+    result.update(
+        {
+            "manifest_path": _manifest_rel_path(config),
+            "shallow_read_note_count": int(manifest.get("actual_shallow_read_count") or 0),
+            "shallow_read_target": manifest.get("target"),
+            "unfulfilled_target": int(manifest.get("unfulfilled_target") or 0),
+            "status": str(manifest.get("status") or "unknown"),
+            "blocking_reason": str(manifest.get("blocking_reason") or ""),
+            "reading_upgrade_queue": upgrade_queue.get("path", ""),
+            "reading_upgrade_candidate_count": int(upgrade_queue.get("candidate_count") or 0),
+        }
+    )
+    return result
+
+
+def _write_shallow_read_manifest(
+    workspace: Path,
+    config: dict[str, Any],
+    result: dict[str, Any],
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    entries = _current_shallow_note_entries(workspace)
+    target = _numeric_lite_target(config)
+    actual = len(entries)
+    unfulfilled = max(0, target - actual) if target is not None else 0
+    metadata_triage_count = int(result.get("metadata_triage_count") or 0)
+    if unfulfilled:
+        status = "blocked"
+        blocking_reason = (
+            f"浅读覆盖仅完成 {actual}/{target}；metadata-only triage {metadata_triage_count} 篇不计入阅读覆盖。"
+            "应先从可读 backlog 补足；若可读资料仍不足，进入定向补检。"
+        )
+    else:
+        status = "completed"
+        blocking_reason = ""
+    selected_readable = [_candidate_manifest_view(item) for item in candidates if _has_abstract(item)]
+    selected_metadata = [_candidate_manifest_view(item) for item in candidates if not _has_abstract(item)]
+    payload = {
+        "schema_version": "1.0.0",
+        "semantics": "researchos_shallow_read_coverage_manifest",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "target": target if target is not None else "all_readable",
+        "target_semantics": (
+            "numeric target counts only valid ABSTRACT-ONLY note cards; metadata-only triage never counts as reading coverage"
+        ),
+        "status": status,
+        "actual_shallow_read_count": actual,
+        "unfulfilled_target": unfulfilled,
+        "metadata_triage_count": metadata_triage_count,
+        "notes_generated_this_run": int(result.get("notes_generated") or 0),
+        "existing_valid_notes_before_run": int(
+            (result.get("sweep_plan") or {}).get("existing_shallow_read_notes") or 0
+        ),
+        "sweep_plan": result.get("sweep_plan") if isinstance(result.get("sweep_plan"), dict) else {},
+        "selected_readable_candidates": selected_readable,
+        "selected_metadata_triage_candidates": selected_metadata,
+        "shallow_note_entries": entries,
+        "blocking_reason": blocking_reason,
     }
+    path = workspace / _manifest_rel_path(config)
+    _write_json_atomically(path, payload)
+    return payload
+
+
+def _current_shallow_note_entries(workspace: Path) -> list[dict[str, Any]]:
+    root = workspace / "literature" / "shallow_read_notes"
+    if not root.is_dir():
+        return []
+    entries: list[dict[str, Any]] = []
+    for path in sorted(root.glob("*.md"), key=lambda item: item.as_posix()):
+        if not _is_abstract_note_card(path):
+            continue
+        try:
+            rel_path = path.relative_to(workspace).as_posix()
+        except ValueError:
+            continue
+        entries.append(
+            {
+                "paper_id": _note_paper_id(path),
+                "path": rel_path,
+                "size": path.stat().st_size,
+            }
+        )
+    return entries
+
+
+def _is_abstract_note_card(path: Path) -> bool:
+    if not path.is_file() or not is_paper_note_file(path):
+        return False
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    return "abstract-only" in text.casefold()
+
+
+def _note_paper_id(path: Path) -> str:
+    try:
+        head = path.read_text(encoding="utf-8", errors="replace")[:4096]
+    except OSError:
+        return path.stem
+    match = re.search(r"(?im)^\s*-\s*\*\*ID\*\*\s*:\s*(.+?)\s*$", head)
+    if match:
+        value = match.group(1).strip().strip("`[]")
+        if value:
+            return value
+    return path.stem
+
+
+def _candidate_manifest_view(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "paper_id": _normalize_id(record),
+        "title": str(record.get("title") or "").strip(),
+        "source_role": str(record.get("t2_pool_role") or "").strip(),
+        "has_abstract": _has_abstract(record),
+    }
+
+
+def _numeric_lite_target(config: dict[str, Any]) -> int | None:
+    raw = config.get("lite_paper_num")
+    if raw in (None, "", "all", "ALL", "all_readable", "ALL_READABLE", "unlimited", "UNLIMITED"):
+        return None
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def _manifest_rel_path(config: dict[str, Any]) -> str:
+    value = str(config.get("manifest_path") or SHALLOW_READ_MANIFEST_REL_PATH).replace("\\", "/").strip()
+    if not value.startswith("literature/") or not value.endswith(".json"):
+        return SHALLOW_READ_MANIFEST_REL_PATH
+    return value
+
+
+def _write_reading_upgrade_queue(workspace: Path, config: dict[str, Any]) -> dict[str, Any]:
+    """Offer real local PDFs for optional evidence upgrades without faking a read."""
+
+    queue_rel = str(config.get("reading_upgrade_queue") or READING_UPGRADE_QUEUE_REL_PATH).replace("\\", "/").strip()
+    if not queue_rel.startswith("literature/") or not queue_rel.endswith(".jsonl"):
+        queue_rel = READING_UPGRADE_QUEUE_REL_PATH
+    records = _literature_record_index(workspace)
+    ranks = _deep_read_queue_ranks(workspace)
+    max_pages = _positive_int(config.get("max_auto_full_text_pages"), default=100)
+    entries: list[dict[str, Any]] = []
+    for note in _current_shallow_note_entries(workspace):
+        record = _match_record_for_note(note, records)
+        if record is None:
+            continue
+        pdf_path, page_count = _local_pdf_details(workspace, record)
+        if not pdf_path:
+            continue
+        queue_rank = _record_queue_rank(record, ranks)
+        long_form = _record_is_long_form(record, page_count, max_pages)
+        entries.append(
+            {
+                "paper_id": _normalize_id(record) or str(note.get("paper_id") or ""),
+                "title": str(record.get("title") or "").strip(),
+                "source_shallow_note": str(note.get("path") or ""),
+                "local_pdf_path": pdf_path,
+                "page_count": page_count,
+                "queue_rank": queue_rank,
+                "queue_path": "literature/deep_read_queue.jsonl" if queue_rank is not None else "",
+                "recommended_scope": "targeted_partial_text" if long_form else "full_text_candidate",
+                "evidence_boundary": "PDF availability is not reading evidence; record page coverage before changing evidence level.",
+                "upgrade_status": "not_read",
+            }
+        )
+    entries.sort(key=lambda item: (item.get("recommended_scope") != "full_text_candidate", str(item.get("paper_id") or "")))
+    path = workspace / queue_rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text("".join(json.dumps(item, ensure_ascii=False) + "\n" for item in entries), encoding="utf-8")
+    temporary.replace(path)
+    return {"path": queue_rel, "candidate_count": len(entries)}
+
+
+def _literature_record_index(workspace: Path) -> dict[str, dict[str, Any]]:
+    index: dict[str, dict[str, Any]] = {}
+    for source in ("papers_dedup", "papers_backlog", "papers_verified"):
+        path = workspace / "literature" / f"{source}.jsonl"
+        if not path.is_file():
+            continue
+        for record in load_jsonl(path):
+            if not isinstance(record, dict):
+                continue
+            for key in _sweep_identity_keys(record):
+                existing = index.get(key)
+                if existing is None or _record_has_local_pdf(workspace, record):
+                    index[key] = record
+    return index
+
+
+def _deep_read_queue_ranks(workspace: Path) -> dict[str, int]:
+    ranks: dict[str, int] = {}
+    path = workspace / "literature" / "deep_read_queue.jsonl"
+    for index, record in enumerate(load_jsonl(path), start=1):
+        rank = _positive_int(record.get("queue_rank"), default=index)
+        for key in _sweep_identity_keys(record):
+            ranks.setdefault(key, rank)
+    return ranks
+
+
+def _match_record_for_note(note: dict[str, Any], index: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    paper_id = str(note.get("paper_id") or "").strip()
+    candidates = {paper_id, _normalize_id({"id": paper_id})}
+    source_path = str(note.get("path") or "")
+    candidates.add(Path(source_path).stem)
+    for value in candidates:
+        normalized = str(value or "").strip()
+        if normalized in index:
+            return index[normalized]
+        alias = re.sub(r"[^0-9A-Za-z]+", "_", normalized.casefold()).strip("_")
+        if alias in index:
+            return index[alias]
+    return None
+
+
+def _local_pdf_details(workspace: Path, record: dict[str, Any]) -> tuple[str, int | None]:
+    acquisition = record.get("pdf_acquisition") if isinstance(record.get("pdf_acquisition"), dict) else {}
+    candidates = (
+        record.get("local_pdf_path"),
+        acquisition.get("pdf_path"),
+        record.get("seed_pdf_path"),
+    )
+    for value in candidates:
+        rel_path = str(value or "").replace("\\", "/").lstrip("./")
+        if rel_path and (workspace / rel_path).is_file():
+            return rel_path, _page_count_from_record(record, acquisition)
+    receipt = _pdf_acquisition_receipt(workspace, record)
+    if receipt is not None:
+        rel_path = str(receipt.get("pdf_path") or "").replace("\\", "/").lstrip("./")
+        if rel_path and (workspace / rel_path).is_file():
+            return rel_path, _page_count_from_record(record, receipt)
+    return "", None
+
+
+def _record_has_local_pdf(workspace: Path, record: dict[str, Any]) -> bool:
+    return bool(_local_pdf_details(workspace, record)[0])
+
+
+def _pdf_acquisition_receipt(workspace: Path, record: dict[str, Any]) -> dict[str, Any] | None:
+    path = workspace / "literature" / "pdf_acquisition_manifest.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    receipts = payload.get("receipts") if isinstance(payload, dict) else []
+    record_keys = _sweep_identity_keys(record)
+    for receipt in receipts if isinstance(receipts, list) else []:
+        if not isinstance(receipt, dict):
+            continue
+        receipt_keys = {str(value).strip() for value in receipt.get("identity_keys") or [] if str(value).strip()}
+        paper_id = str(receipt.get("paper_id") or "").strip()
+        if paper_id:
+            receipt_keys.add(paper_id)
+            receipt_keys.add(_normalize_id({"id": paper_id}))
+        if record_keys & receipt_keys:
+            return receipt
+    return None
+
+
+def _page_count_from_record(record: dict[str, Any], acquisition: dict[str, Any]) -> int | None:
+    for value in (acquisition.get("page_count"), record.get("page_count"), record.get("num_pages"), record.get("number_of_pages")):
+        try:
+            page_count = int(value)
+        except (TypeError, ValueError):
+            continue
+        if page_count > 0:
+            return page_count
+    return None
+
+
+def _record_queue_rank(record: dict[str, Any], ranks: dict[str, int]) -> int | None:
+    for key in _sweep_identity_keys(record):
+        if key in ranks:
+            return ranks[key]
+    return None
+
+
+def _record_is_long_form(record: dict[str, Any], page_count: int | None, max_pages: int) -> bool:
+    type_text = " ".join(
+        str(record.get(key) or "").casefold()
+        for key in ("type", "work_type", "publication_type", "document_type", "genre")
+    )
+    if any(token in type_text for token in ("book", "monograph", "book chapter", "edited volume")):
+        return True
+    return bool(page_count and page_count > max_pages)
+
+
+def _positive_int(value: Any, *, default: int) -> int:
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        result = default
+    return max(1, result)
+
+
+def _write_json_atomically(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
 
 
 async def _call_abstract_reader(

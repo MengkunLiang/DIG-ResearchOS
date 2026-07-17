@@ -27,7 +27,7 @@ The skill owns one versioned implementation package and these child artifacts:
 external_executor/implementation_preflight.json
 external_executor/implementation_change_contract.json
 external_executor/implementation_report.json
-external_executor/workdir/implementation/**
+external_executor/expr/implementation/**
 result_pack.implementations
 ```
 

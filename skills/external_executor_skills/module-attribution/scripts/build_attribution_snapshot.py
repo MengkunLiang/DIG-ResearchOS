@@ -141,7 +141,7 @@ def main() -> int:
         if str(run.get("iteration_id")) != str(args.iteration_id):
             continue
         run_id = str(run.get("run_id") or stable_id("RUN", args.iteration_id, len(runs)))
-        status = str(run.get("status", run.get("run_status", ""))).lower()
+        status = str(run.get("run_status") or run.get("status") or "").lower()
         run_type = str(run.get("run_type", "")).lower()
         state_map = normalize_state_map(run.get("module_states"))
         for mid in listify(run.get("disabled_modules") or run.get("removed_modules")):

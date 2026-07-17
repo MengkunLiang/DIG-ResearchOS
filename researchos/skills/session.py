@@ -634,12 +634,15 @@ def render_skill_description(
     workflow: SkillWorkflow | None = None,
     capability_profiles: tuple[str, ...] = (),
     tools: list[str] | None = None,
+    execution_scope: str = "standalone",
+    execution_owner: str = "",
 ) -> str:
     """Render the deterministic, copyable user contract for ``describe-skill``."""
 
     width = 76
     lines = ["═" * width, f"Skill · {skill_name}", "═" * width]
     lines.append(f"路径：{skill_path}")
+    lines.append(_skill_execution_scope_text(execution_scope, execution_owner))
     if capability_profiles:
         lines.append("能力档位：" + ", ".join(capability_profiles))
     if tools:
@@ -690,6 +693,8 @@ def render_skill_description_rich(
     workflow: SkillWorkflow | None = None,
     capability_profiles: tuple[str, ...] = (),
     tools: list[str] | None = None,
+    execution_scope: str = "standalone",
+    execution_owner: str = "",
     no_color: bool = False,
     verbose: bool = False,
 ) -> str:
@@ -701,6 +706,7 @@ def render_skill_description_rich(
                 Group(
                     Text(brief_skill_copy(description)),
                     Text(f"位置：{skill_path}", style="dim"),
+                    Text(_skill_execution_scope_text(execution_scope, execution_owner), style="yellow"),
                     Text("此 Skill 尚未声明可自动检查的材料要求；请先查看它的使用说明。", style="yellow"),
                 ),
                 title=f"SKILL · {skill_name}",
@@ -712,6 +718,7 @@ def render_skill_description_rich(
     overview = [
         Text(brief_skill_copy(interaction.summary or description), style="bold"),
         Text(f"位置：{skill_path}", style="dim"),
+        Text(_skill_execution_scope_text(execution_scope, execution_owner), style="cyan"),
         Text(f"交互方式：{'引导式' if interaction.mode == 'guided' else '兼容模式'} · {interaction.language}", style="cyan"),
     ]
     if capability_profiles:
@@ -758,6 +765,18 @@ def render_skill_description_rich(
         Panel(Group(*renderables), title=f"Skill · {skill_name}", border_style="cyan", expand=True),
         no_color=no_color,
     )
+
+
+def _skill_execution_scope_text(scope: str, owner: str) -> str:
+    """Describe launch ownership without leaking runtime implementation detail."""
+
+    if scope == "standalone":
+        return "运行范围：可独立启动"
+    if scope == "state_machine":
+        return f"运行范围：由工作流阶段 {owner} 管理，不能通过 run-skill 直接启动"
+    if scope == "executor_template":
+        return f"运行范围：{owner} 的模板，不能通过 run-skill 直接启动"
+    return f"运行范围：内部使用，由 {owner} 管理，不能通过 run-skill 直接启动"
 
 
 def render_skill_completion_panel(*, workspace: Path, session_id: str) -> str:

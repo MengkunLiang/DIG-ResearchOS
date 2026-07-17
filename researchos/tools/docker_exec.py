@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Optional Docker isolation tool for legacy experiment/debug workflows.
 
-ResearchOS Core does not depend on this tool. The default T5/T7 path hands off
+ResearchOS Core does not depend on this tool. The default T5 external-execution path hands off
 work to an external executor in the user-visible workspace, and T9 uses local
 LaTeX backends. `docker_exec` remains available for explicit legacy experiment
 debugging or project-specific isolated commands.

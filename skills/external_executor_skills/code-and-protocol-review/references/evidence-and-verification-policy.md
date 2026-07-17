@@ -14,6 +14,8 @@ For each claim:
 
 Builder summaries, earlier runs, partial output, or “should pass” are not fresh evidence.
 
+Run-derived evidence accepted for review must be read from `external_executor/raw_results/`. Review-only logs may remain under `external_executor/reviews/`, but they do not replace raw experiment logs, metrics, run records, or checkpoints.
+
 ## Evidence classes
 
 ```text

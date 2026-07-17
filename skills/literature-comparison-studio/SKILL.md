@@ -118,15 +118,6 @@ workflow:
 
 # Literature Comparison Studio
 
-Use the source manifest or an explicitly scoped topic-plus-count request only as a
-starting point. For topic retrieval, persist the query, requested count, candidate list,
-selection rule, and access results before extracting evidence. A DOI/title result is
-metadata evidence; a PDF is not evidence until the relevant text/section has been read. Create
-or reuse lightweight paper cards only within the declared workspace paths. If a
-decision-critical comparison axis cannot be sourced, leave it `unknown`, place it in
-the missing-evidence ledger, and ask the human for an upload or a narrower question.
+Use the source manifest or an explicitly scoped topic-plus-count request only as a starting point. For topic retrieval, persist the query, requested count, candidate list, selection rule, and access results before extracting evidence. A DOI/title result is metadata evidence; a PDF is not evidence until the relevant text/section has been read. Create or reuse lightweight paper cards only within the declared workspace paths. If a decision-critical comparison axis cannot be sourced, leave it `unknown`, place it in the missing-evidence ledger, and ask the human for an upload or a narrower question.
 
-Every nontrivial matrix cell and every statement in `comparison_claims.md` needs a
-source file plus note field or section anchor. Explicitly distinguish observed facts,
-analytical comparison, and proposed research implication. Never create a dataset,
-metric, baseline, result, or citation from a title, common convention, or model memory.
+Every nontrivial matrix cell and every statement in `comparison_claims.md` needs a source file plus note field or section anchor. Explicitly distinguish observed facts, analytical comparison, and proposed research implication. Never create a dataset, metric, baseline, result, or citation from a title, common convention, or model memory.

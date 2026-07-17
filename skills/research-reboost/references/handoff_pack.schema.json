@@ -224,9 +224,11 @@
             "novelty_audit",
             "paper_note",
             "bridge_paper_note",
+            "cross_domain_catalog",
             "abstract_note",
             "resource",
             "user_seed",
+            "pre_novelty_context",
             "other"
           ]
         },
@@ -1311,6 +1313,9 @@
           "$ref": "#/$defs/non_empty_string"
         },
         "requires_t7_audit": {
+          "type": "boolean"
+        },
+        "requires_handoff_validation": {
           "type": "boolean"
         },
         "required_fields": {

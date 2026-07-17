@@ -14,6 +14,11 @@ from typing import Any, Iterable
 
 SECRET_NAME_RE = re.compile(r"TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL|COOKIE|AUTH|PRIVATE", re.I)
 
+APPROVED_RESOURCE_ROOTS = (
+    "resource",
+    "resources",
+)
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -61,7 +66,12 @@ def resolve_in_workspace(workspace: Path, value: str) -> Path:
     path = Path(value).expanduser()
     if not path.is_absolute():
         path = workspace / path
-    return path.resolve(strict=False)
+    resolved = path.resolve(strict=False)
+    try:
+        resolved.relative_to(workspace.resolve(strict=False))
+    except ValueError as exc:
+        raise ValueError(f"Path escapes workspace: {value}") from exc
+    return resolved
 
 
 def relpath(workspace: Path, path: Path) -> str:
@@ -74,6 +84,15 @@ def is_within(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def approved_resource_roots(workspace: Path) -> tuple[Path, ...]:
+    return tuple((workspace / relative).resolve(strict=False) for relative in APPROVED_RESOURCE_ROOTS)
+
+
+def is_approved_resource_path(workspace: Path, path: Path) -> bool:
+    """Return whether ``path`` is under a declared immutable resource root."""
+    return any(is_within(path, root) for root in approved_resource_roots(workspace))
 
 
 def parse_allowed_paths(workspace: Path) -> tuple[list[Path], list[Path]]:

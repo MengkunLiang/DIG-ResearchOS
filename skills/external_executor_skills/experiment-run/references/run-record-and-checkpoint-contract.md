@@ -57,6 +57,8 @@
 
 The record describes one attempt. It is immutable after terminal finalization except that the root may later copy it into a new record with `run_status=stale` and an explicit invalidation reason.
 
+Run records are read from `external_executor/raw_results/` through their request/checkpoint references. `cwd` identifies the executed deployment under `external_executor/expr/`; raw-result refs identify the durable evidence under `external_executor/raw_results/`.
+
 ## Artifact reference
 
 ```json

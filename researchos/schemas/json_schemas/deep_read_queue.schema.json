@@ -84,6 +84,7 @@
         "mainline_deep",
         "mainline_screened",
         "bridge_deep",
+        "bridge_probe",
         "bridge_screened"
       ]
     }

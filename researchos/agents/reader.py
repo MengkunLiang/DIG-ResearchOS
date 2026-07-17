@@ -31,6 +31,7 @@ from ..runtime.t3_notes_manifest import (
     format_completion_diagnostics,
     target_entries,
 )
+from ..runtime.bridge_catalog import load_bridge_catalog_summaries
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_mode_params
 from ..runtime.prompts import render_prompt
@@ -105,6 +106,8 @@ class ReaderAgent(Agent):
         if is_placeholder_text(seed_constraints):
             seed_constraints = ""
         queue_config = load_deep_read_queue_config(ctx.workspace_dir)
+        read_params = get_effective_reader_read_params(ctx.workspace_dir)
+        abstract_sweep = read_params.get("abstract_sweep") if isinstance(read_params.get("abstract_sweep"), dict) else {}
         context_vars = {
             "project": project,
             "seed_outline_profile_preview": seed_outline_profile[:6000],
@@ -126,6 +129,14 @@ class ReaderAgent(Agent):
             "deep_read_target": queue_config.deep_read_target,
             "deep_read_max": queue_config.deep_read_max,
             "probe_pool": queue_config.probe_pool,
+            "shallow_read_target": abstract_sweep.get("lite_paper_num", "all_readable"),
+            "reading_upgrade_queue_path": str(
+                abstract_sweep.get("reading_upgrade_queue", "literature/reading_upgrade_queue.jsonl")
+            ),
+            "max_auto_full_text_pages": _positive_int(
+                abstract_sweep.get("max_auto_full_text_pages"),
+                default=100,
+            ),
             "queue_count": 0,
             "queue_preview": [],
             "resume_queue_path": "",
@@ -180,7 +191,10 @@ class ReaderAgent(Agent):
             context_vars["deep_read_max"] = queue_config.deep_read_max
             context_vars["probe_pool"] = queue_config.probe_pool
             # pending queue 是恢复运行时真正还需要处理的工作清单；只要文件存在，就优先信任它。
-            active_queue = pending_queue_papers if pending_queue_path.exists() else queue_papers
+            # An empty pending file means the active worklist was exhausted;
+            # it must not erase the durable queue context used for bridge
+            # coverage, manifests, or a resumed human inspection.
+            active_queue = pending_queue_papers if pending_queue_papers else queue_papers
             context_vars["queue_count"] = len(active_queue)
             context_vars["queue_preview"] = active_queue[:10]
             context_vars["resume_queue_path"] = str(ctx.extra.get("resume_queue_path", "")).strip()
@@ -192,6 +206,11 @@ class ReaderAgent(Agent):
             context_vars["seed_papers_in_dedup_count"] = seed_in_dedup_count
             context_vars["seed_papers_missing_from_dedup_count"] = seed_missing_count
             context_vars["resume_mode"] = context_vars["resume_mode"] or bool(existing_notes)
+            context_vars["bridge_catalog_preview"] = load_bridge_catalog_summaries(
+                ctx.workspace_dir,
+                records_per_bridge=2,
+                abstract_excerpt_chars=360,
+            )
         elif mode == "synthesize":
             note_files = _iter_paper_note_paths(ctx.workspace_dir / "literature")
             note_count = len(note_files)
@@ -228,6 +247,16 @@ class ReaderAgent(Agent):
                 metadata_triage_path,
                 default="",
             )[:1200]
+            # The retrieval catalog is deliberately separate from paper
+            # notes.  Give the synthesis LLM a bounded preview so it can use
+            # B1/B2/... as a source of historical framing, comparison axes,
+            # and testable transfer questions even before a bridge paper is
+            # upgraded to a reading note.
+            context_vars["bridge_catalog_preview"] = load_bridge_catalog_summaries(
+                ctx.workspace_dir,
+                records_per_bridge=2,
+                abstract_excerpt_chars=420,
+            )
             context_vars["agent_guidance"] = load_agent_guidance("literature-synthesis")
 
         return render_prompt(self.spec.prompt_template, ctx, **context_vars)
@@ -240,12 +269,14 @@ class ReaderAgent(Agent):
                 return prepend_resume_prefix(
                     ctx,
                     (
-                    "请继续T3深度阅读流程。先扫描literature/deep_read_notes/、comparison_table.csv和"
+                    "请继续T3深度阅读流程。目录不能传给 read_file：先用 list_files/grep_search 扫描 literature/deep_read_notes/ 中的具体 note，随后读取需要核验的文件；再读取 comparison_table.csv和"
                     "related_work.bib中的现有进度，先补齐已有笔记缺失的表格/Bib条目，再只处理"
                     "尚未完成的论文。若存在 literature/deep_read_queue_pending.jsonl，"
                     "优先按这个剩余队列执行。用户提供的 seed papers 必须最高优先级；如果它们已在"
                     "deep_read_queue、papers_verified 或 papers_dedup 里，必须先读；如果缺失，也要明确记录这个缺口。"
-                    "凡是能拿到PDF的论文，必须用extract_pdf_text覆盖到最后一页，并在Reading Coverage记录页码范围。"
+                    "优先检查阅读升级队列和 PDF 页数；常规论文可覆盖到最后一页，书籍或超过阈值的长资料应按研究问题定向读页并记录范围。"
+                    "若存在 literature/cross_domain_catalogs/，先把它当作独立的阅读优先级和迁移问题线索；"
+                    "不要为了填满 bridge_notes 把 catalog 复制成论文笔记，也不要把未读记录写成已确认机制。"
                     ),
                 )
             return prepend_resume_prefix(
@@ -254,15 +285,19 @@ class ReaderAgent(Agent):
                 "请开始T3深度阅读流程。优先按 literature/deep_read_queue.jsonl 执行；如果该文件不存在，"
                 "先回退到 literature/papers_verified.jsonl，再回退到 literature/papers_dedup.jsonl。"
                 "为每篇产出deep_read_notes/{id}.md，同时累积comparison_table.csv和related_work.bib。"
-                "用户提供的 seed papers 必须最高优先级。凡是能拿到PDF的论文，必须全文读到最后一页，"
-                "不能只读前几页；如果只读到部分页面，Status必须写PARTIAL-TEXT。"
+                "用户提供的 seed papers 必须最高优先级。PDF 可得不等于已经读过：常规长度论文可全文读到最后一页，"
+                "书籍和长资料应按问题定向阅读并明确标为 PARTIAL-TEXT。"
+                "Cross-domain catalog 若存在，可帮助选择值得升级阅读的 bridge 记录；它不是每条都必须深读的配额。"
                 ),
             )
         return prepend_resume_prefix(
             ctx,
             (
-            "请开始T3.5综合流程。综合 literature/deep_read_notes/、bridge_notes/ 与 shallow_read_notes/ 中的论文阅读笔记；"
-            "摘要阅读笔记用于扩展 taxonomy、趋势、比较与问题发现，全文/部分全文和跨领域笔记用于核心机制与方法论断。"
+            "请开始T3.5综合流程。目录不能传给 read_file：先用 list_files/grep_search 找到 literature/deep_read_notes/、bridge_notes/ 与 shallow_read_notes/ 中的具体论文阅读笔记，再定向读取；"
+            "先读取 literature/cross_domain_catalogs/index.json，再按其路径读取 B1/B2/... 的 bridge_context.json 与 paper_catalog.json。"
+            "Cross-domain catalog 是独立的交叉信息层，可用于历史发展、相邻概念、比较维度、结构类比和待验证研究问题，"
+            "即使尚无 bridge 专属深读笔记也必须保留其价值；但它不是机制/结果的直接证据。"
+            "摘要阅读笔记用于扩展 taxonomy、趋势、比较与问题发现，全文/部分全文和已升级的跨领域笔记用于核心机制与方法论断。"
             "先用你的LLM能力分析方法家族、共同假设、趋势和问题，再调用 build_synthesis_workbench "
             "生成结构化证据、outline和写作指导。工具产物不是最终结论；你必须审阅后亲自写出"
             "literature/synthesis.md，包含5个必需章节：方法家族分类、共同假设、"
@@ -443,6 +478,22 @@ class ReaderAgent(Agent):
                 ok, err = _validate_abstract_note_structure(note_path)
                 if not ok:
                     return False, f"[abstract sweep] {err}"
+
+        abstract_cfg = mode_params.get("abstract_sweep")
+        if isinstance(abstract_cfg, dict) and abstract_cfg.get("enabled", False):
+            from ..runtime.abstract_sweep import validate_abstract_sweep_coverage
+
+            coverage_ok, coverage_error = validate_abstract_sweep_coverage(
+                ctx.workspace_dir,
+                abstract_cfg,
+                # The runner sets this transient marker only while it is
+                # validating the deep-read completion that precedes the
+                # deterministic post-read sweep.  CLI validation and every
+                # persisted/resume validation remain strict.
+                require_manifest=not bool(ctx.extra.get("_t3_pending_abstract_sweep")),
+            )
+            if not coverage_ok:
+                return False, f"[abstract sweep] {coverage_error}"
 
         return True, None
 
@@ -888,6 +939,14 @@ def _expected_notes_ratio(raw: object) -> float:
     if ratio <= 0:
         return 1.0
     return min(1.0, ratio)
+
+
+def _positive_int(value: object, *, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(1, parsed)
 
 
 def _require_deep_read_target(params: dict[str, object]) -> bool:

@@ -127,6 +127,14 @@ states:
       access_audit: literature/access_audit.md         # PDF/可读性审计清单
       search_log: literature/search_log.md             # 检索日志
       missing_areas: literature/missing_areas.md       # 识别的研究空白
+      # Cross-domain catalog entries are valid creative/contextual inputs even
+      # when no canonical deep-reading note was produced for a track.
+    optional_outputs:
+      # A catalog only exists when T1 actually declared Cross-domain lanes.
+      # It is checked semantically by Scout when active, but a bridge-free or
+      # legacy T2 run must be able to continue without synthetic files.
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
     next_on_success: T2-COVERAGE-GATE
     next_on_failure: failed
 
@@ -141,6 +149,10 @@ states:
     inputs:
       search_log: literature/search_log.md
       missing_areas: literature/missing_areas.md
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
+      bridge_notes_dir: literature/bridge_notes
       domain_map: literature/domain_map.json
       access_audit: literature/access_audit.md
       deep_read_queue: literature/deep_read_queue.jsonl
@@ -171,6 +183,11 @@ states:
       seed_outline_profile: user_seeds/seed_outline_profile.json # 可选：结构化种子提纲，作为阅读维度先验
       seed_constraints: user_seeds/seed_constraints.md  # 可选：用户阅读/范围约束
       seed_external_resources: user_seeds/seed_external_resources.jsonl # 可选：法规/标准/外部资源线索
+      # Cross-domain catalog is a separate, optional information layer. It
+      # can inform T3 without turning into a deep-reading-note obligation.
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
     outputs:
       deep_read_notes_dir: literature/deep_read_notes           # 论文笔记目录
       comparison_table: literature/comparison_table.csv # 方法对比表
@@ -199,6 +216,10 @@ states:
       bridge_notes_dir: literature/bridge_notes # 输入：跨领域全文/部分全文论文笔记
       shallow_read_notes_dir: literature/shallow_read_notes # 输入：摘要级弱证据提示
       metadata_triage_report: literature/metadata_triage.md # 输入：metadata-only 候选补资源线索，不作 claim 证据
+      literature_manifest: literature/literature_manifest.json # 统一、可追踪的论文笔记清单
+      bridge_domain_plan: literature/bridge_domain_plan.json # 跨领域检索计划，可独立于深读笔记存在
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
     outputs:
       synthesis: literature/synthesis.md                # 文献综述
       synthesis_workbench: literature/synthesis_workbench.json # 结构化证据工作台
@@ -220,9 +241,13 @@ states:
     inputs:
       project: project.yaml
       synthesis: literature/synthesis.md
+      literature_manifest: literature/literature_manifest.json
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       comparison_table: literature/comparison_table.csv
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -252,6 +277,26 @@ states:
     next_on_success: T3.6-PLAN
     next_on_failure: failed
 
+  # T3.6 CCF template selection: the first template gate selects the family;
+  # this second gate selects one concrete bundled conference template.
+  T3.6-CCF-TEMPLATE-GATE:
+    agent: survey_writer
+    mode: template_gate
+    extra:
+      immediate_gate: true
+    gate: t36_ccf_template_gate
+    inputs:
+      project: project.yaml
+      survey_decision: drafts/survey/decision.json
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
+    outputs:
+      writing_template: drafts/survey/writing_template.json
+    next_on_success: T3.6-PLAN
+    next_on_failure: failed
+
   # T3.6-PLAN 状态：综述 taxonomy 与章节大纲规划
   # 用途：LLM 基于 synthesis/workbench/domain_map 与两类论文阅读笔记设计 taxonomy，而不是转写 synthesis.md。
   T3.6-PLAN:
@@ -266,8 +311,12 @@ states:
       deep_read_notes_dir: literature/deep_read_notes
       bridge_notes_dir: literature/bridge_notes
       shallow_read_notes_dir: literature/shallow_read_notes
+      literature_manifest: literature/literature_manifest.json
       related_work_bib: literature/related_work.bib
       writing_template: drafts/survey/writing_template.json
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -308,6 +357,7 @@ states:
       survey_plan: drafts/survey/survey_plan.json
       deep_read_notes_dir: literature/deep_read_notes
       shallow_read_notes_dir: literature/shallow_read_notes
+      literature_manifest: literature/literature_manifest.json
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -328,12 +378,19 @@ states:
       corpus_decision: drafts/survey/corpus_decision.json
       domain_map: literature/domain_map.json
       papers_verified: literature/papers_verified.jsonl
+      bridge_notes_dir: literature/bridge_notes
+      literature_manifest: literature/literature_manifest.json
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
       seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       survey_expansion: drafts/survey/survey_expansion.json
+      survey_supplement_search_log: literature/survey_supplement/search_log.jsonl
+      survey_supplement_papers: literature/survey_supplement/papers_retrieved.jsonl
     next_on_success: T3.6-STATE
     next_on_failure: failed
 
@@ -352,6 +409,10 @@ states:
       domain_map: literature/domain_map.json
       comparison_table: literature/comparison_table.csv
       related_work_bib: literature/related_work.bib
+      literature_manifest: literature/literature_manifest.json
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -371,9 +432,13 @@ states:
       project: project.yaml
       survey_plan: drafts/survey/survey_plan.json
       survey_state: drafts/survey/survey_state.json
+      literature_manifest: literature/literature_manifest.json
       deep_read_notes_dir: literature/deep_read_notes
       shallow_read_notes_dir: literature/shallow_read_notes
       bridge_notes_dir: literature/bridge_notes
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
     outputs:
       survey_visual_manifest: drafts/survey/figures/survey_visual_manifest.json
     next_on_success: T3.6-SEC-BACKGROUND
@@ -393,6 +458,9 @@ states:
       survey_visual_manifest: drafts/survey/figures/survey_visual_manifest.json
       comparison_table: literature/comparison_table.csv
       related_work_bib: literature/related_work.bib
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -416,6 +484,9 @@ states:
       survey_visual_manifest: drafts/survey/figures/survey_visual_manifest.json
       domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -442,6 +513,9 @@ states:
       deep_read_notes_dir: literature/deep_read_notes
       shallow_read_notes_dir: literature/shallow_read_notes
       related_work_bib: literature/related_work.bib
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -470,6 +544,9 @@ states:
       deep_read_notes_dir: literature/deep_read_notes
       shallow_read_notes_dir: literature/shallow_read_notes
       related_work_bib: literature/related_work.bib
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -498,6 +575,9 @@ states:
       deep_read_notes_dir: literature/deep_read_notes
       shallow_read_notes_dir: literature/shallow_read_notes
       related_work_bib: literature/related_work.bib
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -526,6 +606,9 @@ states:
       deep_read_notes_dir: literature/deep_read_notes
       shallow_read_notes_dir: literature/shallow_read_notes
       related_work_bib: literature/related_work.bib
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -550,6 +633,9 @@ states:
       synthesis_workbench: literature/synthesis_workbench.json
       survey_visual_manifest: drafts/survey/figures/survey_visual_manifest.json
       related_work_bib: literature/related_work.bib
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -572,6 +658,9 @@ states:
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -593,6 +682,9 @@ states:
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -617,6 +709,9 @@ states:
       challenges_section: drafts/survey/sections/challenges.tex
       future_section: drafts/survey/sections/future.tex
       related_work_bib: literature/related_work.bib
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -637,6 +732,9 @@ states:
       section_outline: drafts/survey/section_outlines/conclusion.md
       challenges_section: drafts/survey/sections/challenges.tex
       future_section: drafts/survey/sections/future.tex
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -661,6 +759,9 @@ states:
       challenges_section: drafts/survey/sections/challenges.tex
       future_section: drafts/survey/sections/future.tex
       conclusion_section: drafts/survey/sections/conclusion.tex
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -680,6 +781,9 @@ states:
       sections_dir: drafts/survey/sections
       survey_plan: drafts/survey/survey_plan.json
       related_work_bib: literature/related_work.bib
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -708,6 +812,9 @@ states:
       domain_map: literature/domain_map.json
       comparison_table: literature/comparison_table.csv
       related_work_bib: literature/related_work.bib
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -751,6 +858,9 @@ states:
       survey_tex: drafts/survey/survey.tex
       survey_audit_json: drafts/survey/survey_audit.json
       survey_compile_report: drafts/survey/survey_compile_report.json
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -787,6 +897,7 @@ states:
     inputs:
       project: project.yaml                             # 项目配置
       synthesis: literature/synthesis.md               # 文献综述
+      literature_manifest: literature/literature_manifest.json # 跨任务统一文献清单
       comparison_table: literature/comparison_table.csv # 方法对比表
       missing_areas: literature/missing_areas.md       # 研究空白
       domain_map: literature/domain_map.json            # 引用图领域地图与 novelty 近邻信号
@@ -795,6 +906,11 @@ states:
       survey_insights: ideation/survey_insights.json    # 可选：T3.6 综述支线导出的 taxonomy/challenge/future 素材
       seed_ideas: user_seeds/seed_ideas.md            # 种子想法（可选）
       seed_constraints: user_seeds/seed_constraints.md # 种子约束（可选）
+      deep_read_notes_dir: literature/deep_read_notes # 全文/部分全文论文阅读笔记（可选）
+      shallow_read_notes_dir: literature/shallow_read_notes # 摘要级论文阅读笔记（可选）
+      bridge_notes_dir: literature/bridge_notes # Bridge 文献阅读笔记（可选）
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
     outputs:
       evidence_index: ideation/evidence/evidence_index.jsonl # Evidence Index 与 Permission
       evolution_state: ideation/evolution/state.json   # 当前 Population 指针与 fingerprint
@@ -805,6 +921,7 @@ states:
       candidate_directions: ideation/_candidate_directions.json # 主线与补充候选方向池
       gate1_candidate_cards: ideation/_gate1_candidate_cards.md # Gate1 用户可读候选卡片
       gate1_selection_brief: ideation/_gate1_selection_brief.md # Gate1 全量候选选择简报
+      final_portfolio_cards: ideation/final_cards/portfolio_cards.json # Portfolio 完整 LLM Idea Card；缺失时进入定向修复
     optional_outputs:
       bridge_coverage_review: ideation/bridge_coverage_review.json # 已确认 bridge 候选的上桌/裁决/逃生舱记录
       hypothesis_brief: ideation/hypothesis_brief.yaml # 完整选择后生成的 Pre-Novelty brief
@@ -830,6 +947,7 @@ states:
     gate: t4_gate1_selection_gate
     inputs:
       candidate_directions: ideation/_candidate_directions.json
+      final_portfolio_cards: ideation/final_cards/portfolio_cards.json
       gate1_candidate_cards: ideation/_gate1_candidate_cards.md
       gate1_selection_brief: ideation/_gate1_selection_brief.md
       pass1_forward_candidates: ideation/_pass1_forward_candidates.json
@@ -839,7 +957,10 @@ states:
       gate1_user_selection: ideation/_gate1_user_selection.json
     optional_outputs:
       gate1_user_selection: ideation/_gate1_user_selection.json
-    next_on_success: T4
+    # Generic/legacy proceed_candidate fallback must match the public Gate
+    # semantics: selected complete Candidate enters the T4.5 novelty gate.
+    # Native evolution directives override this only for explicit evolution.
+    next_on_success: T4.5
     next_on_failure: failed
 
   # T4.5 状态：新颖性审计（Novelty Auditing）
@@ -853,10 +974,14 @@ states:
       selected_candidate: ideation/selected/selected_candidate.json
       t45_search_targets: ideation/selected/t45_search_targets.json
       synthesis: literature/synthesis.md                # 输入：文献综述
+      literature_manifest: literature/literature_manifest.json # 跨任务统一文献清单
       comparison_table: literature/comparison_table.csv # 输入：对比表
       idea_scorecard: ideation/idea_scorecard.yaml      # 输入：idea scorecard（含 mechanism 字段）
       deep_read_notes_dir: literature/deep_read_notes           # 可选：section 级全文/部分全文证据卡
       bridge_notes_dir: literature/bridge_notes # 可选：跨域证据卡
+      bridge_domain_plan: literature/bridge_domain_plan.json # Cross-domain 检索/裁决计划
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       shallow_read_notes_dir: literature/shallow_read_notes # 可选：摘要线索卡，不能单独确认碰撞
     outputs:
       novelty_audit: ideation/novelty_audit.md          # 新颖性审计报告
@@ -900,7 +1025,7 @@ states:
 
   # T5-REBOOST-GATE 状态：ResearchOS 直接调用 LLM API 执行 skills/research-reboost
   # 用途：把研究目标、方法机制、baseline、claim/evidence 边界重排成外部执行器上下文，
-  # 并编译外部执行器 handoff、prompt、schema 和 allowed paths。
+  # 并编译外部执行器 handoff、AGENTS/CLAUDE 控制说明、schema 和 allowed paths。
   # 项目专属 Skill Suite 在下一节点独立生成，以便编译、发布和审阅各自可恢复。
   T5-REBOOST-GATE:
     skill: research-reboost
@@ -912,7 +1037,11 @@ states:
         references/handoff_pack.schema.json 对 Pre-T5 材料做语义重编译。read_file
         只用于当前 workspace 内的材料，不要读取仓库级 skills/...、references/... 或 scripts/...。
         先读取必要的 workspace 源文件并自行编译完整 handoff_pack 对象，然后调用
-        compile_research_reboost_handoff(handoff_pack=...) 发布、校验并生成 executor 控制文件。
+        compile_research_reboost_handoff(handoff_pack=...) 发布、校验并生成 executor 控制文件；
+        reboost 过程报告写入 external_executor/report/。
+        每个必要源文件最多读取一次；不要反复 list/read 同一批目录或大文件。若已读取必要源文件但
+        完整 JSON 对象会导致输出过长或模型超时，应立即调用 compile_research_reboost_handoff()
+        让发布工具执行确定性恢复编译，而不是继续补读材料。
         不要执行实验、实现代码、选择执行器或写 result_pack。
     inputs:
       project: project.yaml
@@ -928,29 +1057,25 @@ states:
       deep_read_notes_dir: literature/deep_read_notes
       bridge_notes_dir: literature/bridge_notes
       shallow_read_notes_dir: literature/shallow_read_notes
+      literature_manifest: literature/literature_manifest.json
       notes_manifest: literature/notes_manifest.json
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
     outputs:
       handoff_pack: external_executor/handoff_pack.json
-      reboost_report: external_executor/reboost_report.json
-      executor_prompt: external_executor/executor_prompt.md
+      reboost_report: external_executor/report/reboost_report.json
+      reboost_validation_report: external_executor/report/reboost_validation_report.json
+      paper_card_evidence_index: external_executor/paper_card_evidence_index.json
       expected_outputs_schema: external_executor/expected_outputs_schema.json
       allowed_paths: external_executor/allowed_paths.txt
-      executor_selection: external_executor/executor_selection.json
-      input_manifest: external_executor/input_manifest.json
-      codex_prompt: external_executor/codex_prompt.md
-      claude_code_prompt: external_executor/claude_code_prompt.md
-      manual_instructions: external_executor/manual_instructions.md
       agents_md: external_executor/AGENTS.md
       claude_md: external_executor/CLAUDE.md
-      external_readme: external_executor/README.md
-      dir_guide: external_executor/_DIR_GUIDE.md
-      job_state: external_executor/job_state.json
-      expr_dir: external_executor/expr
     next_on_success: T5-SPECIALIZE-EXECUTOR-SKILLS
     next_on_failure: failed
 
   # T5-HANDOFF 状态：legacy 兼容入口，外部实验执行器协议编译
-  # 用途：ResearchOS 编译实验契约、allowed paths 与 Codex/Claude/manual/mock 执行 prompt。
+  # 用途：ResearchOS 编译实验契约、allowed paths 与 AGENTS/CLAUDE 执行控制说明。
   # 注意：推荐新路径为 T5-REBOOST -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-EXECUTOR-GATE。
   T5-HANDOFF:
     agent: experimenter
@@ -963,21 +1088,21 @@ states:
       novelty_audit: ideation/novelty_audit.md
       idea_scorecard: ideation/idea_scorecard.yaml
       synthesis: literature/synthesis.md
+      literature_manifest: literature/literature_manifest.json
       comparison_table: literature/comparison_table.csv
       deep_read_notes_dir: literature/deep_read_notes
       bridge_notes_dir: literature/bridge_notes
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
       shallow_read_notes_dir: literature/shallow_read_notes
       notes_manifest: literature/notes_manifest.json
     outputs:
       handoff_pack: external_executor/handoff_pack.json
-      executor_prompt: external_executor/executor_prompt.md
       expected_outputs_schema: external_executor/expected_outputs_schema.json
       allowed_paths: external_executor/allowed_paths.txt
-      executor_selection: external_executor/executor_selection.json
+      executor_selection: external_executor/report/executor_selection.json
       input_manifest: external_executor/input_manifest.json
-      codex_prompt: external_executor/codex_prompt.md
-      claude_code_prompt: external_executor/claude_code_prompt.md
-      manual_instructions: external_executor/manual_instructions.md
       agents_md: external_executor/AGENTS.md
       claude_md: external_executor/CLAUDE.md
       external_readme: external_executor/README.md
@@ -1023,12 +1148,18 @@ states:
       expected_outputs_schema: external_executor/expected_outputs_schema.json
       allowed_paths: external_executor/allowed_paths.txt
       agents_md: external_executor/AGENTS.md
+      # Optional contextual input layer.  Catalog records support project-Skill
+      # framing and retrieval planning; canonical paper notes remain the only
+      # source for direct research claims or verified citations.
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
     outputs:
       project_skill_context: external_executor/project_skill_context.yaml
       project_skill_context_schema: external_executor/schemas/project_skill_context.schema.json
       skills_dir: external_executor/skills
-      skill_specialization_report: external_executor/skill_specialization_report.json
-      skill_specialization_execution: external_executor/skill_specialization_execution.json
+      skill_specialization_report: external_executor/report/skill_specialization_report.json
+      skill_specialization_execution: external_executor/report/skill_specialization_execution.json
     next_on_success: T5-EXECUTOR-GATE
     next_on_failure: failed
 
@@ -1068,31 +1199,34 @@ states:
       project_skill_context: external_executor/project_skill_context.yaml
       project_skill_context_schema: external_executor/schemas/project_skill_context.schema.json
       skills_dir: external_executor/skills
-      skill_specialization_report: external_executor/skill_specialization_report.json
-      skill_specialization_execution: external_executor/skill_specialization_execution.json
+      skill_specialization_report: external_executor/report/skill_specialization_report.json
+      skill_specialization_execution: external_executor/report/skill_specialization_execution.json
     outputs:
-      executor_selection: external_executor/executor_selection.json
+      executor_selection: external_executor/report/executor_selection.json
     gate:
       type: t5_executor_gate
     next_on_success: __parse_from_output__
     next_on_failure: failed
 
-  # T5-EXTERNAL-WAIT 状态：等待外部执行器写回 result pack
-  # 用途：不启动 LLM；runtime 检查 external_executor/result_pack.json 和 executor_status.json。
-  # 缺失时 PAUSED，外部执行完后 resume 自动进入 T7-INGEST。
+  # T5-EXTERNAL-WAIT 状态：等待外部执行器写回结果材料
+  # 用途：不启动 LLM；runtime 检查 executor_research_report.md、result_pack.json 和 executor_status.json。
+  # 外部执行阶段的 T8 核心交接材料为 external_executor/executor_research_report.md。
+  # 缺失执行状态时 PAUSED，外部执行完后 resume 自动进入 T8。
   T5-EXTERNAL-WAIT:
     agent: experimenter
     mode: external_wait
     inputs:
-      executor_selection: external_executor/executor_selection.json
+      executor_selection: external_executor/report/executor_selection.json
       handoff_pack: external_executor/handoff_pack.json
       expected_outputs_schema: external_executor/expected_outputs_schema.json
       allowed_paths: external_executor/allowed_paths.txt
       result_pack: external_executor/result_pack.json
       executor_status: external_executor/executor_status.json
+      executor_research_report: external_executor/executor_research_report.md
+      external_executor_dir: external_executor
     outputs:
       wait_acceptance_report: external_executor/wait_acceptance_report.json
-    next_on_success: T7-INGEST
+    next_on_success: T8-STYLE-GATE
     next_on_failure: failed
 
   # T5-DRY-RUN 状态：mock 外部执行器协议 dry-run
@@ -1101,7 +1235,7 @@ states:
     agent: experimenter
     mode: dry_run
     inputs:
-      executor_selection: external_executor/executor_selection.json
+      executor_selection: external_executor/report/executor_selection.json
       handoff_pack: external_executor/handoff_pack.json
       expected_outputs_schema: external_executor/expected_outputs_schema.json
     outputs:
@@ -1112,96 +1246,7 @@ states:
       raw_results_dir: external_executor/raw_results
       configs_dir: external_executor/configs
       logs_dir: external_executor/logs
-    next_on_success: T7-INGEST
-    next_on_failure: failed
-
-  # T7-INGEST 状态：摄取外部执行器结果
-  # 用途：把外部 result_pack 规范化为 ResearchOS 下游兼容 results_summary 与 evidence_index。
-  T7-INGEST:
-    agent: experimenter
-    mode: result_ingest
-    inputs:
-      result_pack: external_executor/result_pack.json
-      executor_status: external_executor/executor_status.json
-      handoff_pack: external_executor/handoff_pack.json
-    outputs:
-      results_summary: experiments/results_summary.json
-      run_records: experiments/run_records.jsonl
-      evidence_index: experiments/evidence_index.json
-      ingest_report: experiments/ingest_report.json
-    next_on_success: T7-AUDIT
-    next_on_failure: failed
-
-  # T7-AUDIT 状态：实验诚信审计
-  # 用途：审计 provenance、mock_only、metric、seed、artifact 引用；不信执行器总结。
-  T7-AUDIT:
-    agent: experimenter
-    mode: integrity_audit
-    inputs:
-      results_summary: experiments/results_summary.json
-      evidence_index: experiments/evidence_index.json
-      run_records: experiments/run_records.jsonl
-      exp_plan: ideation/exp_plan.yaml
-      novelty_audit: ideation/novelty_audit.md
-      deep_read_notes_dir: literature/deep_read_notes
-      bridge_notes_dir: literature/bridge_notes
-      shallow_read_notes_dir: literature/shallow_read_notes
-    outputs:
-      integrity_audit: experiments/integrity_audit.json
-      result_audit: experiments/result_audit.json
-      experiment_fairness_review: experiments/experiment_fairness_review.md
-      method_audit: experiments/method_audit.json
-      framework_figure_audit: experiments/framework_figure_audit.json
-      method_writing_resources: drafts/method_writing_resources.json
-    next_on_success: T7-POST-NOVELTY
-    next_on_failure: failed
-
-  # T7-POST-NOVELTY 状态：实验后 novelty/collision 复核
-  # 用途：基于实现/结果/required baseline 覆盖情况，给 T7-CLAIMS 和 T8 写作提供 claim 降级边界。
-  T7-POST-NOVELTY:
-    agent: experimenter
-    mode: post_novelty
-    inputs:
-      hypotheses: ideation/hypotheses.md
-      exp_plan: ideation/exp_plan.yaml
-      novelty_audit: ideation/novelty_audit.md
-      required_baselines: novelty/required_baselines.json
-      result_pack: external_executor/result_pack.json
-      results_summary: experiments/results_summary.json
-      integrity_audit: experiments/integrity_audit.json
-      patch_log: external_executor/patches/patch_log.jsonl
-      repo_snapshot: external_executor/repo_snapshot.json
-    outputs:
-      post_experiment_novelty_check: novelty/post_experiment_novelty_check.json
-      post_experiment_collision_cases: novelty/post_experiment_collision_cases.md
-    next_on_success: T7-CLAIMS
-    next_on_failure: failed
-
-  # T7-CLAIMS 状态：result-to-claim 与 writing evidence pack
-  # 用途：把审计后的实验数字转成保守 claim mapping，并交给 T8 作为证据包。
-  T7-CLAIMS:
-    agent: experimenter
-    mode: result_to_claim
-    inputs:
-      results_summary: experiments/results_summary.json
-      integrity_audit: experiments/integrity_audit.json
-      evidence_index: experiments/evidence_index.json
-      exp_plan: ideation/exp_plan.yaml
-      hypotheses: ideation/hypotheses.md
-      novelty_audit: ideation/novelty_audit.md
-      deep_read_notes_dir: literature/deep_read_notes
-      bridge_notes_dir: literature/bridge_notes
-      shallow_read_notes_dir: literature/shallow_read_notes
-    outputs:
-      experimental_claims: experiments/experimental_claims.json
-      result_to_claim: drafts/result_to_claim.json
-      experiment_evidence_pack: drafts/experiment_evidence_pack.json
-      iteration_log: experiments/iteration_log.md
-      must_not_claim: drafts/must_not_claim.md
-      claim_support_matrix: drafts/claim_support_matrix.csv
-      limitations_from_experiments: drafts/limitations_from_experiments.md
-      figure_table_evidence_map: drafts/figure_table_evidence_map.json
-    next_on_success: T7.5
+    next_on_success: T8-STYLE-GATE
     next_on_failure: failed
 
   # T5 状态：legacy 试点实验（仅兼容显式 run-task，不在主链自动使用）
@@ -1250,63 +1295,8 @@ states:
         - FAIL: 新颖性不足，需要重新构思
 
         是否继续？
-    next_on_success: T7
+    next_on_success: done
     next_on_failure: T4
-
-  # T7 状态：legacy 完整实验（仅兼容显式 run-task，不在主链自动使用）
-  # 用途：旧模式由 ResearchOS 内部执行完整实验；新主链使用 T7-INGEST/AUDIT/CLAIMS。
-  T7:
-    agent: experimenter
-    mode: full
-    extra:
-      experiment_entrypoint: direct_full_from_t45
-      skipped_optional_tasks:
-        - T5
-        - T6
-    inputs:
-      project: project.yaml                           # 项目配置
-      hypotheses: ideation/hypotheses.md             # 研究假设
-      exp_plan: ideation/exp_plan.yaml               # 实验计划
-      risks: ideation/risks.md                       # 风险评估
-      novelty_audit: ideation/novelty_audit.md       # T4.5 新颖性预审结果
-      idea_scorecard: ideation/idea_scorecard.yaml   # idea 证据链
-      synthesis: literature/synthesis.md             # 文献综合
-      comparison_table: literature/comparison_table.csv # 方法对比表
-      pilot_results: pilot/pilot_results.json        # 试点结果（可选，若单独跑过 T5）
-      pilot_code: pilot/pilot_code                   # 试点代码（可选）
-      novelty_report: novelty/novelty_report.md      # 新颖性最终报告（可选，若单独跑过 T6）
-      must_add_baselines: novelty/must_add_baselines.md # 必须补充的基线（可选）
-    outputs:
-      results_summary: experiments/results_summary.json # 结果摘要
-      runs_dir: experiments/runs                       # 运行结果目录
-      configs_dir: experiments/configs                  # 配置目录
-      iteration_log: experiments/iteration_log.md     # 迭代日志
-      # `experiments/ablations.csv` is protocol-dependent: legacy T7 writes
-      # it only when exp_plan.yaml or an explicit human decision requires it.
-    next_on_success: T7.5
-    next_on_failure: failed
-
-  # T7.5 状态：PI 评估（Experiment Evaluation）
-  # 用途：在外部实验审计/result-to-claim 和论文写作之间增加一层 PI 评估与人工确认
-  # Agent：pi（evaluate 模式）
-  T7.5:
-    agent: pi
-    mode: evaluate
-    inputs:
-      results_summary: experiments/results_summary.json
-      iteration_log: experiments/iteration_log.md
-      integrity_audit: experiments/integrity_audit.json
-      experimental_claims: experiments/experimental_claims.json
-      result_to_claim: drafts/result_to_claim.json
-      experiment_evidence_pack: drafts/experiment_evidence_pack.json
-      exp_plan: ideation/exp_plan.yaml
-    outputs:
-      evaluation_decision: evaluation/evaluation_decision.md
-    gate:
-      type: t75_human_review_gate
-    # 正常情况下 gate 会先拦截；保留 parse 目标作为兜底和“按 PI 推荐推进”的统一语义。
-    next_on_success: __parse_from_output__
-    next_on_failure: failed
 
   # T8-STYLE-GATE 状态：写作风格确认
   # 用途：根据目标 venue 确认 IS / CCF-A / both 写作风格
@@ -1324,6 +1314,21 @@ states:
     next_on_success: T8-RESOURCE
     next_on_failure: failed
 
+  # T8 CCF template selection: keeps venue choice separate from the exact
+  # local LaTeX package so the first menu remains compact.
+  T8-CCF-TEMPLATE-GATE:
+    agent: writer
+    mode: style_gate
+    extra:
+      immediate_gate: true
+    gate: t8_ccf_template_gate
+    inputs:
+      project: project.yaml
+    outputs:
+      writing_style: drafts/writing_style.json
+    next_on_success: T8-RESOURCE
+    next_on_failure: failed
+
   # T8-RESOURCE 状态：论文写作资源索引（Manuscript Resource Indexing）
   # 用途：索引全部写作资料，并生成章节计划
   # Agent：writer（论文写作）
@@ -1333,11 +1338,10 @@ states:
     inputs:
       project: project.yaml
       writing_style: drafts/writing_style.json
-      results_summary: experiments/results_summary.json
-      experiment_evidence_pack: drafts/experiment_evidence_pack.json
-      result_to_claim: drafts/result_to_claim.json
-      integrity_audit: experiments/integrity_audit.json
+      executor_research_report: external_executor/executor_research_report.md
+      external_executor_dir: external_executor
       synthesis: literature/synthesis.md
+      literature_manifest: literature/literature_manifest.json
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib
@@ -1350,13 +1354,14 @@ states:
       deep_read_notes_dir: literature/deep_read_notes
       bridge_notes_dir: literature/bridge_notes
       shallow_read_notes_dir: literature/shallow_read_notes
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
     outputs:
       manuscript_resource_index: drafts/manuscript_resource_index.json
       section_plan: drafts/section_plan.json
       evidence_plan: drafts/evidence_plan.json
       figure_table_plan: drafts/figure_table_plan.json
-      result_to_claim: drafts/result_to_claim.json
-      experiment_evidence_pack: drafts/experiment_evidence_pack.json
       cdr_claim_ledger: drafts/cdr_claim_ledger.json
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
@@ -1373,10 +1378,12 @@ states:
     inputs:
       project: project.yaml                             # 输入：项目配置
       writing_style: drafts/writing_style.json
-      results_summary: experiments/results_summary.json # 输入：实验结果
+      executor_research_report: external_executor/executor_research_report.md # 输入：外部执行阶段核心报告
+      external_executor_dir: external_executor
       experiment_evidence_pack: drafts/experiment_evidence_pack.json
       result_to_claim: drafts/result_to_claim.json
       synthesis: literature/synthesis.md                # 输入：文献综述
+      literature_manifest: literature/literature_manifest.json
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib     # 输入：引用库
@@ -1390,6 +1397,9 @@ states:
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
       alignment_matrix: drafts/alignment_matrix.json
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
     outputs:
       outline: drafts/outline.md                       # 论文大纲
       writing_storyline: drafts/writing_storyline.md   # venue-aware argument and evidence chain
@@ -1405,11 +1415,12 @@ states:
     inputs:
       project: project.yaml
       writing_style: drafts/writing_style.json
-      results_summary: experiments/results_summary.json
+      executor_research_report: external_executor/executor_research_report.md
+      external_executor_dir: external_executor
       experiment_evidence_pack: drafts/experiment_evidence_pack.json
       result_to_claim: drafts/result_to_claim.json
-      integrity_audit: experiments/integrity_audit.json
       synthesis: literature/synthesis.md
+      literature_manifest: literature/literature_manifest.json
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib
@@ -1425,6 +1436,9 @@ states:
       figure_registry: drafts/figure_registry.json
       alignment_matrix: drafts/alignment_matrix.json
       ablations: experiments/ablations.csv
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
     outputs:
       paper_state: drafts/paper_state.json
       section_outlines_dir: drafts/section_outlines
@@ -1445,7 +1459,8 @@ states:
       idea_scorecard: ideation/idea_scorecard.yaml
       novelty_audit: ideation/novelty_audit.md
       design_rationale_tuples_dir: ideation/_design_rationale_tuples
-      results_summary: experiments/results_summary.json
+      executor_research_report: external_executor/executor_research_report.md
+      external_executor_dir: external_executor
       experiment_evidence_pack: drafts/experiment_evidence_pack.json
       result_to_claim: drafts/result_to_claim.json
       configs_dir: experiments/configs
@@ -1472,10 +1487,10 @@ states:
       project: project.yaml
       paper_state: drafts/paper_state.json
       section_outline: drafts/section_outlines/experiments.md
-      results_summary: experiments/results_summary.json
+      executor_research_report: external_executor/executor_research_report.md
+      external_executor_dir: external_executor
       experiment_evidence_pack: drafts/experiment_evidence_pack.json
       result_to_claim: drafts/result_to_claim.json
-      integrity_audit: experiments/integrity_audit.json
       ablations: experiments/ablations.csv
       exp_plan: ideation/exp_plan.yaml
       seed_ensemble_summary: experiments/seed_ensemble_summary.json
@@ -1504,6 +1519,7 @@ states:
       paper_state: drafts/paper_state.json
       section_outline: drafts/section_outlines/related_work.md
       synthesis: literature/synthesis.md
+      literature_manifest: literature/literature_manifest.json
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib
@@ -1515,6 +1531,9 @@ states:
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
       alignment_matrix: drafts/alignment_matrix.json
+      bridge_domain_plan: literature/bridge_domain_plan.json
+      bridge_catalog_index: literature/cross_domain_catalogs/index.json
+      cross_domain_catalogs_dir: literature/cross_domain_catalogs
     outputs:
       section: drafts/sections/related_work.tex
     next_on_success: T8-SEC-ANALYSIS
@@ -1529,7 +1548,8 @@ states:
       project: project.yaml
       paper_state: drafts/paper_state.json
       section_outline: drafts/section_outlines/analysis.md
-      results_summary: experiments/results_summary.json
+      executor_research_report: external_executor/executor_research_report.md
+      external_executor_dir: external_executor
       experiment_evidence_pack: drafts/experiment_evidence_pack.json
       result_to_claim: drafts/result_to_claim.json
       ablations: experiments/ablations.csv
@@ -1558,8 +1578,10 @@ states:
       paper_state: drafts/paper_state.json
       section_outline: drafts/section_outlines/introduction.md
       synthesis: literature/synthesis.md
+      literature_manifest: literature/literature_manifest.json
       hypotheses: ideation/hypotheses.md
-      results_summary: experiments/results_summary.json
+      executor_research_report: external_executor/executor_research_report.md
+      external_executor_dir: external_executor
       experiment_evidence_pack: drafts/experiment_evidence_pack.json
       result_to_claim: drafts/result_to_claim.json
       methodology_section: drafts/sections/methodology.tex
@@ -1591,7 +1613,8 @@ states:
       experiments_section: drafts/sections/experiments.tex
       risks: ideation/risks.md
       novelty_audit: ideation/novelty_audit.md
-      results_summary: experiments/results_summary.json
+      executor_research_report: external_executor/executor_research_report.md
+      external_executor_dir: external_executor
       experiment_evidence_pack: drafts/experiment_evidence_pack.json
       result_to_claim: drafts/result_to_claim.json
       iteration_log: experiments/iteration_log.md
@@ -1635,11 +1658,12 @@ states:
     mode: draft
     inputs:
       project: project.yaml                             # 输入：项目配置
-      results_summary: experiments/results_summary.json # 输入：实验结果
+      executor_research_report: external_executor/executor_research_report.md # 输入：外部执行阶段核心报告
+      external_executor_dir: external_executor
       experiment_evidence_pack: drafts/experiment_evidence_pack.json
       result_to_claim: drafts/result_to_claim.json
-      integrity_audit: experiments/integrity_audit.json
       synthesis: literature/synthesis.md                # 输入：文献综合
+      literature_manifest: literature/literature_manifest.json
       related_work_bib: literature/related_work.bib      # 输入：引用库
       hypotheses: ideation/hypotheses.md                # 输入：研究假设
       novelty_audit: ideation/novelty_audit.md          # 输入：T4.5 新颖性预审
@@ -1672,11 +1696,13 @@ states:
     inputs:
       project: project.yaml
       paper: drafts/paper.tex
-      results_summary: experiments/results_summary.json
+      executor_research_report: external_executor/executor_research_report.md
+      external_executor_dir: external_executor
       experiment_evidence_pack: drafts/experiment_evidence_pack.json
       result_to_claim: drafts/result_to_claim.json
       paper_claim_audit: drafts/paper_claim_audit.md
       synthesis: literature/synthesis.md
+      literature_manifest: literature/literature_manifest.json
       related_work_bib: literature/related_work.bib
       ablations: experiments/ablations.csv
       manuscript_resource_index: drafts/manuscript_resource_index.json
@@ -1704,11 +1730,13 @@ states:
     inputs:
       project: project.yaml                             # 输入：项目配置
       paper: drafts/paper.tex                           # 输入：论文草稿
-      results_summary: experiments/results_summary.json # 输入：实验结果
+      executor_research_report: external_executor/executor_research_report.md # 输入：外部执行阶段核心报告
+      external_executor_dir: external_executor
       experiment_evidence_pack: drafts/experiment_evidence_pack.json
       result_to_claim: drafts/result_to_claim.json
       paper_claim_audit: drafts/paper_claim_audit.md
       related_work_bib: literature/related_work.bib      # 输入：引用库
+      literature_manifest: literature/literature_manifest.json
       manuscript_audit: drafts/manuscript_audit.md       # 输入：机械审计报告
       craft_audit: drafts/craft_audit.md
       self_check: drafts/self_check.md                   # 输入：作者自查
@@ -1733,11 +1761,13 @@ states:
       paper_state: drafts/paper_state.json              # 输入：逐章节共享状态
       review_report: drafts/review_rounds/round_1.md   # 输入：审稿报告
       section_review_dir: drafts/review_rounds/round_1_sections
-      results_summary: experiments/results_summary.json
+      executor_research_report: external_executor/executor_research_report.md
+      external_executor_dir: external_executor
       experiment_evidence_pack: drafts/experiment_evidence_pack.json
       result_to_claim: drafts/result_to_claim.json
       paper_claim_audit: drafts/paper_claim_audit.md
       synthesis: literature/synthesis.md
+      literature_manifest: literature/literature_manifest.json
       related_work_bib: literature/related_work.bib
       ablations: experiments/ablations.csv
       sections_dir: drafts/sections
@@ -1770,11 +1800,13 @@ states:
     inputs:
       project: project.yaml                             # 输入：项目配置
       paper: drafts/paper.tex                           # 输入：修订后的论文
-      results_summary: experiments/results_summary.json
+      executor_research_report: external_executor/executor_research_report.md
+      external_executor_dir: external_executor
       experiment_evidence_pack: drafts/experiment_evidence_pack.json
       result_to_claim: drafts/result_to_claim.json
       paper_claim_audit: drafts/paper_claim_audit.md
       related_work_bib: literature/related_work.bib
+      literature_manifest: literature/literature_manifest.json
       manuscript_audit: drafts/manuscript_audit.md
       craft_audit: drafts/craft_audit.md
       previous_review: drafts/review_rounds/round_1.md
@@ -1800,11 +1832,13 @@ states:
       review_report: drafts/review_rounds/round_2.md   # 输入：审稿报告
       section_review_dir: drafts/review_rounds/round_2_sections
       previous_review: drafts/review_rounds/round_1.md
-      results_summary: experiments/results_summary.json
+      executor_research_report: external_executor/executor_research_report.md
+      external_executor_dir: external_executor
       experiment_evidence_pack: drafts/experiment_evidence_pack.json
       result_to_claim: drafts/result_to_claim.json
       paper_claim_audit: drafts/paper_claim_audit.md
       synthesis: literature/synthesis.md
+      literature_manifest: literature/literature_manifest.json
       related_work_bib: literature/related_work.bib
       ablations: experiments/ablations.csv
       sections_dir: drafts/sections
@@ -1836,9 +1870,10 @@ states:
     inputs:
       project: project.yaml
       paper: drafts/paper.tex
+      executor_research_report: external_executor/executor_research_report.md
+      external_executor_dir: external_executor
       result_to_claim: drafts/result_to_claim.json
       experiment_evidence_pack: drafts/experiment_evidence_pack.json
-      integrity_audit: experiments/integrity_audit.json
       post_experiment_novelty_check: novelty/post_experiment_novelty_check.json
       must_not_claim: drafts/must_not_claim.md
       claim_ledger: drafts/claim_ledger.json

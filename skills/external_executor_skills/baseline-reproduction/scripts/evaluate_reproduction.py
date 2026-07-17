@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from _common import dump_json_atomic, finite_number, load_json, stable_id, utc_now
+from _common import dump_json_atomic, find_workspace, finite_number, is_within, load_json, stable_id, utc_now
 
 
 def compare(value: float, ref: dict) -> dict:
@@ -35,6 +35,10 @@ def main() -> int:
     ap.add_argument("--environment", required=True)
     ap.add_argument("--output", required=True)
     args = ap.parse_args()
+    output = Path(args.output).resolve()
+    workspace = find_workspace(output)
+    if not is_within(output, workspace / "external_executor" / "raw_results"):
+        raise SystemExit("Reproduction evaluations must be written under external_executor/raw_results")
     plan = load_json(Path(args.plan_fragment).resolve())
     run = load_json(Path(args.run_record).resolve())
     metrics = load_json(Path(args.metrics).resolve())
@@ -89,7 +93,7 @@ def main() -> int:
         "reference_comparisons": comparisons, "findings": findings,
         "review_required": True, "notes": ["formal_review_candidate is not formal approval."],
     }
-    dump_json_atomic(Path(args.output).resolve(), payload)
+    dump_json_atomic(output, payload)
     print(f"{outcome}: {comp}")
     return 0 if comp != "not_comparable" else 2
 

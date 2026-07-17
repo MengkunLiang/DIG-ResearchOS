@@ -7,7 +7,7 @@ external_executor/result_diagnosis_preflight.json
 external_executor/diagnosis_evidence_snapshot.json
 external_executor/diagnosis_statistics.json
 external_executor/result_diagnosis_report.json
-external_executor/workdir/result_diagnosis/**
+external_executor/result_diagnosis/**
 ```
 
 The root owns manifest registration, executor status and iteration decisions.

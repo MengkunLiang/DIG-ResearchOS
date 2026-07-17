@@ -20,7 +20,7 @@ The change contract is the immutable boundary between root-approved intent and B
     "fingerprint": "",
     "read_only": true
   },
-  "implementation_root": "external_executor/workdir/implementation/...",
+  "implementation_root": "external_executor/expr/implementation/...",
   "protocol_fingerprint": "",
   "fairness_fingerprint": "",
   "approved_changes": [],

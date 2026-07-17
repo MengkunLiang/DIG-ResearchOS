@@ -28,6 +28,18 @@ MANIFEST_NAMES = {
 CONFIG_SUFFIXES = {".yaml", ".yml", ".json", ".toml", ".ini", ".cfg"}
 DATA_SUFFIXES = {".csv", ".tsv", ".parquet", ".arrow", ".jsonl", ".h5", ".hdf5", ".npz", ".npy", ".pt", ".pth"}
 CHECKPOINT_SUFFIXES = {".ckpt", ".safetensors", ".bin", ".onnx", ".pb", ".pt", ".pth"}
+DEFAULT_ROOTS = ["resources", "resource", "user_seeds"]
+RESOURCE_ALIASES = {"resource", "resources"}
+EXECUTION_ROOT = "external_executor/expr"
+
+
+def normalized_root(value: str) -> str:
+    return value.replace("\\", "/").strip().rstrip("/")
+
+
+def is_execution_root(value: str) -> bool:
+    root = normalized_root(value)
+    return root == EXECUTION_ROOT or root.startswith(f"{EXECUTION_ROOT}/")
 
 
 def git_metadata(path: Path) -> dict[str, Any]:
@@ -98,12 +110,22 @@ def main() -> int:
 
     workspace = resolve_workspace(args.workspace)
     output = resolve_in_workspace(workspace, args.output)
-    roots = args.root or ["external_executor/expr", "resources", "user_seeds", "external_executor/workdir/resources"]
+    roots = args.root or DEFAULT_ROOTS
     items = []
     missing_roots = []
+    skipped_roots = []
     for root_value in roots:
+        normalized = normalized_root(root_value)
+        if is_execution_root(root_value):
+            skipped_roots.append({
+                "root": root_value,
+                "reason": "external_executor/expr is the formal execution area, not a resource inventory source",
+            })
+            continue
         root = resolve_in_workspace(workspace, root_value)
         if not root.exists():
+            if normalized in RESOURCE_ALIASES and any((workspace / alias).exists() for alias in RESOURCE_ALIASES - {normalized}):
+                continue
             missing_roots.append(root_value)
             continue
         candidates = [root] if root.is_file() else sorted([p for p in root.iterdir() if p.name not in {".git", "__pycache__"}], key=lambda p: p.name.lower())
@@ -118,8 +140,9 @@ def main() -> int:
         "status": "partial" if missing_roots else "complete",
         "roots_checked": roots,
         "missing_roots": missing_roots,
+        "skipped_roots": skipped_roots,
         "items": items,
-        "non_execution_statement": "No candidate code, setup, notebook, container, training, evaluation, or download script was executed.",
+        "non_execution_statement": "No candidate code, setup, notebook, container, training, evaluation, or download script was executed. By-hand local resources belong under resources/; remote acquisitions and reimplementations belong under resource/.",
     }
     assert_write_allowed(workspace, output)
     dump_json_atomic(output, payload)

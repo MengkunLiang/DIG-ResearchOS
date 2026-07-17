@@ -38,7 +38,7 @@ Write only:
 - `external_executor/module_attribution_snapshot.json`;
 - `external_executor/module_attribution_facts.json`;
 - `external_executor/module_attribution_report.json`;
-- versioned analysis artifacts under `external_executor/workdir/module_attribution/`;
+- versioned analysis artifacts under `external_executor/module_attribution/`;
 - `result_pack.json#module_attributions` through the narrow apply script.
 
 Do not change runs, raw results, implementations, configs, reviews, diagnosis records, experiment plans, iteration plans/decisions, claim boundaries, method specifications, executor status, manifest, budget, or sibling sections. Return control to `research-execution` after applying the report.
@@ -87,7 +87,7 @@ Do not infer a module intervention from a variant name alone when explicit switc
 ```bash
 python <skill-dir>/scripts/inventory_modules.py \
   --snapshot <workspace>/external_executor/module_attribution_snapshot.json \
-  --output <workspace>/external_executor/workdir/module_attribution/<iteration-id>/module_registry.json
+  --output <workspace>/external_executor/module_attribution/<iteration-id>/module_registry.json
 ```
 
 Read `references/module-and-mechanism-contract.md`. Each module record distinguishes:
@@ -106,7 +106,7 @@ Implementation presence is `implementation_fact`, not evidence of benefit.
 python <skill-dir>/scripts/normalize_attribution_evidence.py \
   --snapshot <workspace>/external_executor/module_attribution_snapshot.json \
   --module-registry <module-registry.json> \
-  --output <workspace>/external_executor/workdir/module_attribution/<iteration-id>/intervention_observations.json
+  --output <workspace>/external_executor/module_attribution/<iteration-id>/intervention_observations.json
 ```
 
 Classify each observation as one of:
@@ -128,7 +128,7 @@ Read `references/ablation-and-intervention-analysis.md`, then run:
 ```bash
 python <skill-dir>/scripts/compute_ablation_effects.py \
   --observations <intervention-observations.json> \
-  --output <workspace>/external_executor/workdir/module_attribution/<iteration-id>/ablation_effects.json
+  --output <workspace>/external_executor/module_attribution/<iteration-id>/ablation_effects.json
 ```
 
 Pair full/reference and intervened observations only when they agree on:
@@ -157,7 +157,7 @@ Read `references/interaction-and-confounding.md`, then run:
 python <skill-dir>/scripts/analyze_interactions.py \
   --observations <intervention-observations.json> \
   --ablation-effects <ablation-effects.json> \
-  --output <workspace>/external_executor/workdir/module_attribution/<iteration-id>/interaction_and_confounds.json
+  --output <workspace>/external_executor/module_attribution/<iteration-id>/interaction_and_confounds.json
 ```
 
 When a complete factorial contrast exists, compute pairwise difference-in-differences for module interactions. Otherwise record interaction as unsupported; do not estimate it from two independent single-module effects.

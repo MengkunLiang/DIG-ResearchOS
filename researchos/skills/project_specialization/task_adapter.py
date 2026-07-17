@@ -28,7 +28,7 @@ from .validation import (
 TASK_ID = "T5-SPECIALIZE-EXECUTOR-SKILLS"
 SKILL_NAME = "project-skill-specialization"
 SKILL_REL_PATH = "skills/project-skill-specialization/SKILL.md"
-EXECUTION_REL_PATH = "external_executor/skill_specialization_execution.json"
+EXECUTION_REL_PATH = "external_executor/report/skill_specialization_execution.json"
 EXPECTED_SKILL_COUNT = 13
 ACTIVE_EXECUTOR_STATUSES = {"running", "experiment_running", "claimed_by_executor"}
 
@@ -50,8 +50,11 @@ OPTIONAL_SOURCE_INPUTS = (
     "literature/synthesis_workbench.json",
     "literature/domain_map.json",
     "literature/comparison_table.csv",
+    "literature/bridge_domain_plan.json",
+    "literature/cross_domain_catalogs/index.json",
     "literature/deep_read_notes",
     "literature/bridge_notes",
+    "literature/cross_domain_catalogs",
     "literature/shallow_read_notes",
     "literature/notes_manifest.json",
 )
@@ -361,7 +364,7 @@ def validate_project_skill_specialization_outputs(
     if result.errors:
         errors.extend(result.errors)
     if result.status == "failed":
-        errors.append(make_error("validate_only_failed", "Project Skill Specializer validate-only failed", path="external_executor/skill_specialization_report.json"))
+        errors.append(make_error("validate_only_failed", "Project Skill Specializer validate-only failed", path="external_executor/report/skill_specialization_report.json"))
 
     if not paths.output_schema_path.is_file():
         errors.append(make_error("context_schema_missing", "workspace project_skill_context.schema.json missing", path="external_executor/schemas/project_skill_context.schema.json"))
@@ -380,10 +383,10 @@ def validate_project_skill_specialization_outputs(
             if not isinstance(report, dict):
                 raise TypeError("report root must be an object")
         except Exception as exc:  # noqa: BLE001
-            errors.append(make_error("specialization_report_unreadable", str(exc), path="external_executor/skill_specialization_report.json"))
+            errors.append(make_error("specialization_report_unreadable", str(exc), path="external_executor/report/skill_specialization_report.json"))
             report = {}
     else:
-        errors.append(make_error("specialization_report_missing", "skill_specialization_report.json missing", path="external_executor/skill_specialization_report.json"))
+        errors.append(make_error("specialization_report_missing", "skill_specialization_report.json missing", path="external_executor/report/skill_specialization_report.json"))
 
     context: dict[str, Any] = {}
     if paths.output_context_path.is_file():
@@ -415,9 +418,9 @@ def validate_project_skill_specialization_outputs(
     report_status = str(report.get("status") or result.status or "failed")
     required_uncertain = list(report.get("required_uncertain_fields") or [])
     if report_status == "ready" and required_uncertain:
-        errors.append(make_error("ready_with_required_uncertain_fields", "ready report must not contain required uncertain fields", path="external_executor/skill_specialization_report.json"))
+        errors.append(make_error("ready_with_required_uncertain_fields", "ready report must not contain required uncertain fields", path="external_executor/report/skill_specialization_report.json"))
     if report_status == "incomplete" and not required_uncertain:
-        errors.append(make_error("incomplete_without_required_uncertain_fields", "incomplete report must list required uncertain fields", path="external_executor/skill_specialization_report.json"))
+        errors.append(make_error("incomplete_without_required_uncertain_fields", "incomplete report must list required uncertain fields", path="external_executor/report/skill_specialization_report.json"))
 
     return TaskValidation(
         status="fail" if errors else "pass",
@@ -437,28 +440,28 @@ def _validate_report_contract(report: Mapping[str, Any], mapping: Mapping[str, A
     skills = mapping.get("skills") if isinstance(mapping.get("skills"), Mapping) else {}
     expected_names = {str(name) for name in skills}
     if report.get("schema_version") != "skill_specialization_report.v1":
-        errors.append(make_error("report_schema_version_invalid", "report schema_version must be skill_specialization_report.v1", path="external_executor/skill_specialization_report.json"))
+        errors.append(make_error("report_schema_version_invalid", "report schema_version must be skill_specialization_report.v1", path="external_executor/report/skill_specialization_report.json"))
     if report.get("status") not in {"ready", "incomplete"}:
-        errors.append(make_error("report_status_invalid", "report status must be ready or incomplete", path="external_executor/skill_specialization_report.json"))
+        errors.append(make_error("report_status_invalid", "report status must be ready or incomplete", path="external_executor/report/skill_specialization_report.json"))
     if report.get("context_file") != "external_executor/project_skill_context.yaml":
-        errors.append(make_error("report_context_file_invalid", "report context_file path is incorrect", path="external_executor/skill_specialization_report.json"))
+        errors.append(make_error("report_context_file_invalid", "report context_file path is incorrect", path="external_executor/report/skill_specialization_report.json"))
     if report.get("context_schema") != "external_executor/schemas/project_skill_context.schema.json":
-        errors.append(make_error("report_context_schema_invalid", "report context_schema path is incorrect", path="external_executor/skill_specialization_report.json"))
+        errors.append(make_error("report_context_schema_invalid", "report context_schema path is incorrect", path="external_executor/report/skill_specialization_report.json"))
     if int(report.get("skills_total") or 0) != EXPECTED_SKILL_COUNT:
-        errors.append(make_error("report_skill_total_invalid", "report skills_total must be 13", path="external_executor/skill_specialization_report.json"))
+        errors.append(make_error("report_skill_total_invalid", "report skills_total must be 13", path="external_executor/report/skill_specialization_report.json"))
     if int(report.get("skills_specialized") or 0) != EXPECTED_SKILL_COUNT:
-        errors.append(make_error("report_skill_count_invalid", "report skills_specialized must be 13", path="external_executor/skill_specialization_report.json"))
+        errors.append(make_error("report_skill_count_invalid", "report skills_specialized must be 13", path="external_executor/report/skill_specialization_report.json"))
     report_skills = report.get("skills")
     if not isinstance(report_skills, list):
-        errors.append(make_error("report_skills_invalid", "report skills must be a list", path="external_executor/skill_specialization_report.json"))
+        errors.append(make_error("report_skills_invalid", "report skills must be a list", path="external_executor/report/skill_specialization_report.json"))
         return errors
     reported_names = {str(item.get("skill_name")) for item in report_skills if isinstance(item, Mapping)}
     missing = sorted(expected_names - reported_names)
     extra = sorted(reported_names - expected_names)
     if missing:
-        errors.append(make_error("report_skills_missing", "report missing skills: " + ", ".join(missing), path="external_executor/skill_specialization_report.json"))
+        errors.append(make_error("report_skills_missing", "report missing skills: " + ", ".join(missing), path="external_executor/report/skill_specialization_report.json"))
     if extra:
-        errors.append(make_error("report_skills_extra", "report contains unexpected skills: " + ", ".join(extra), path="external_executor/skill_specialization_report.json"))
+        errors.append(make_error("report_skills_extra", "report contains unexpected skills: " + ", ".join(extra), path="external_executor/report/skill_specialization_report.json"))
     return errors
 
 
@@ -523,6 +526,7 @@ def build_project_skill_specialization_fingerprint(
             items[f"workspace:{rel}"] = _fingerprint_path(path, display_path=rel)
     repo_paths = {
         "repo:project_skill": _skill_dir(repo_root),
+        "repo:project_specialization_compiler": repo_root / "researchos" / "skills" / "project_specialization",
         "repo:skill_specialization_mapping": paths.mapping_path,
         "repo:project_skill_context_schema": paths.schema_path,
         "repo:external_executor_templates": paths.template_root,
@@ -680,9 +684,65 @@ def project_skill_specialization_post_hook(ctx: ExecutionContext, result: AgentR
         result.message = result.error
         return
     result.outputs_produced["skill_specialization_execution"] = execution_path
-    result.outputs_produced.setdefault("skill_specialization_report", ctx.workspace_dir / "external_executor/skill_specialization_report.json")
+    result.outputs_produced.setdefault("skill_specialization_report", ctx.workspace_dir / "external_executor/report/skill_specialization_report.json")
     result.metadata.setdefault("project_skill_specialization", {})
     result.metadata["project_skill_specialization"] = _summary_for_metadata(record)
+
+
+def write_deterministic_project_skill_specialization_execution(
+    *,
+    workspace: Path,
+    repo_root: Path | None = None,
+) -> dict[str, Any]:
+    """Write the task execution record for deterministic/offline repair runs."""
+
+    repo_root = (repo_root or repository_root()).resolve()
+    workspace = workspace.resolve()
+    validation = validate_project_skill_specialization_outputs(
+        workspace=workspace,
+        repo_root=repo_root,
+    )
+    fingerprint = build_project_skill_specialization_fingerprint(
+        workspace=workspace,
+        repo_root=repo_root,
+    )
+    final_status = validation.report_status if validation.ok else "failed"
+    record = {
+        "schema_version": "project_skill_specialization_execution.v1",
+        "task_id": TASK_ID,
+        "skill_name": SKILL_NAME,
+        "skill_path": SKILL_REL_PATH,
+        "mode": "build",
+        "status": final_status,
+        "input_fingerprint": str(fingerprint.get("hash") or ""),
+        "input_fingerprints": fingerprint.get("items") if isinstance(fingerprint.get("items"), Mapping) else {},
+        "llm_run": {
+            "trace_id": "deterministic-cli",
+            "trace_file": "",
+            "model_profile": "deterministic",
+            "model_tier": "deterministic",
+            "model": "deterministic_project_specialization",
+            "endpoint": "local",
+            "started_at": "",
+            "finished_at": _now_iso(),
+            "finish_reason": "finished" if validation.ok else "error",
+            "reused_existing_artifacts": False,
+        },
+        "outputs": {
+            "context": "external_executor/project_skill_context.yaml",
+            "schema": "external_executor/schemas/project_skill_context.schema.json",
+            "skills": "external_executor/skills",
+            "report": "external_executor/report/skill_specialization_report.json",
+            "execution": EXECUTION_REL_PATH,
+        },
+        "skills_specialized": int(validation.report.get("skills_specialized") or validation.skills_specialized),
+        "required_uncertain_fields": list(validation.report.get("required_uncertain_fields") or validation.required_uncertain_fields),
+        "warnings": _dedupe_messages(list(validation.warnings)),
+        "errors": _dedupe_messages(list(validation.errors)),
+        "validation": validation.to_record(),
+    }
+    _atomic_write_json(workspace / EXECUTION_REL_PATH, record)
+    return record
 
 
 def _execution_record(
@@ -728,7 +788,7 @@ def _execution_record(
             "context": "external_executor/project_skill_context.yaml",
             "schema": "external_executor/schemas/project_skill_context.schema.json",
             "skills": "external_executor/skills",
-            "report": "external_executor/skill_specialization_report.json",
+            "report": "external_executor/report/skill_specialization_report.json",
             "execution": EXECUTION_REL_PATH,
         },
         "skills_specialized": int(report.get("skills_specialized") or validation.skills_specialized),
@@ -747,7 +807,7 @@ def _summary_for_metadata(record: Mapping[str, Any]) -> dict[str, Any]:
         "status": record.get("status"),
         "skills": int(record.get("skills_specialized") or 0),
         "context": "external_executor/project_skill_context.yaml",
-        "report": "external_executor/skill_specialization_report.json",
+        "report": "external_executor/report/skill_specialization_report.json",
         "execution": EXECUTION_REL_PATH,
         "required_uncertain_count": len(required) if isinstance(required, list) else 0,
         "trace": (record.get("llm_run") or {}).get("trace_id") if isinstance(record.get("llm_run"), Mapping) else "",

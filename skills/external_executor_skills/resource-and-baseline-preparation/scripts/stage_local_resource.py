@@ -32,7 +32,7 @@ def ignore(directory: str, names: list[str]) -> set[str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Copy local material into controlled workdir with provenance.")
+    parser = argparse.ArgumentParser(description="Copy local material into resources/byhand/ with provenance.")
     parser.add_argument("--workspace")
     parser.add_argument("--source", required=True)
     parser.add_argument("--candidate-id", required=True)
@@ -45,7 +45,7 @@ def main() -> int:
         raise SystemExit(f"Source does not exist: {source}")
     reject_symlinks(source)
 
-    destination = workspace / "external_executor" / "workdir" / "resources" / "local" / args.candidate_id
+    destination = workspace / "resources" / "byhand" / args.candidate_id
     assert_write_allowed(workspace, destination)
     if destination.exists():
         if not args.force:
@@ -68,6 +68,7 @@ def main() -> int:
         "destination_path": relpath(workspace, destination),
         "source_manifest_sha256": source_manifest["manifest_sha256"],
         "staged_manifest_sha256": staged_manifest["manifest_sha256"],
+        "source_category": "byhand",
         "source_total_bytes": source_manifest["total_bytes"],
         "staged_total_bytes": staged_manifest["total_bytes"],
         "source_mutated": False,

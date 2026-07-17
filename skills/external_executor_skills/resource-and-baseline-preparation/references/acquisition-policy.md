@@ -2,11 +2,11 @@
 
 ## Purpose
 
-This policy governs how Phase B obtains experiment resources. Authority comes from `handoff_pack.json`, `context_alignment.confirmed_execution_scope`, `AGENTS.md`, `executor_selection.json`, and `allowed_paths.txt`. For ResearchOS T5 external execution, the default authority allows public GitHub access, public dataset download, and baseline reimplementation inside allowed paths, subject to license and security review.
+This policy governs how Phase B obtains experiment resources. Authority comes from `handoff_pack.json`, `context_alignment.confirmed_execution_scope`, `AGENTS.md`, `external_executor/report/executor_selection.json`, and `allowed_paths.txt`. For ResearchOS T5 external execution, the default authority allows public remote platform access, public dataset download, and baseline reimplementation inside allowed paths, subject to license and security review.
 
 ## Modes
 
-| Mode | Local inspection | GitHub search/acquisition | Dataset download | Baseline reimplementation |
+| Mode | Local inspection | Public remote search/acquisition | Dataset download | Baseline reimplementation |
 | --- | --- | --- | --- | --- |
 | `local_only` | allowed | forbidden | forbidden unless the data already exists locally | forbidden |
 | `github_allowed` | allowed | allowed only when `network_allowed=true` and domain is allowed | allowed only when `dataset_download_allowed=true` | forbidden |
@@ -14,20 +14,20 @@ This policy governs how Phase B obtains experiment resources. Authority comes fr
 
 A boolean flag cannot broaden a stricter mode. A mode cannot override `AGENTS.md`, path policy, restricted-data terms, or license restrictions.
 
-When a legacy handoff omits the acquisition policy, use the ResearchOS default mode `github_and_reimplementation` with `network_allowed=true`, `dataset_download_allowed=true`, and `baseline_reimplementation_allowed=true`. Do not treat a scaffold-only `external_executor/expr/` as a missing-material blocker.
+When a legacy handoff omits the acquisition policy, use the ResearchOS default mode `github_and_reimplementation` with `network_allowed=true`, `dataset_download_allowed=true`, and `baseline_reimplementation_allowed=true`. Do not inspect `external_executor/expr/` for baseline, benchmark, dataset, checkpoint, or evaluation resources. That directory is the formal execution area after baseline and method construction; by-hand local resource candidates belong under `resources/` or `user_seeds/`. Public remote acquisitions and baseline reimplementations must be placed under `resource/`.
 
 ## Ordered acquisition path
 
 For every requirement:
 
 ```text
-local verified material
-  -> authorized remote discovery and immutable acquisition
-  -> authorized reimplementation
+local verified material under resources/
+  -> authorized remote discovery and immutable acquisition from public sources
+  -> authorized baseline reimplementation
   -> unavailable / blocker
 ```
 
-Move to the next path only for the still-unsatisfied requirement. Record why every prior path failed.
+Move to the next path only for the still-unsatisfied requirement. After each path, review candidates against the requirement matrix and stop for that requirement if it is satisfied. Record why every prior path failed before proceeding. If the final reimplementation path is unavailable or still insufficient for a minimum-loop required resource, block and request human supplementation or scope review.
 
 ## Remote-search privacy
 
@@ -58,6 +58,19 @@ When a public-safe query cannot be formed without revealing private material, re
 - Do not acquire Git submodules, LFS objects, release assets, or external datasets unless separately authorized and recorded.
 - Pin Git resources to a commit SHA. A tag may be used for discovery, but store the resolved commit.
 - Pin data and checkpoint resources by published version, immutable revision, content hash, or archived snapshot.
+- Search across multiple relevant allowed public source classes when local resources are insufficient: paper/project pages, official repositories, benchmark/dataset organizations, model or dataset hubs, public archives, and supplement pages. Do not stop at the first convenient repository when official or protocol-bearing sources remain unchecked.
+
+## First remote platforms
+
+Search and attempt acquisition on these platform groups before broadening:
+
+| Resource kind | First platforms |
+| --- | --- |
+| Baseline | Hugging Face; OpenReview; GitLab; Bitbucket; ModelScope; Zenodo |
+| Dataset | Hugging Face; OpenML; Kaggle; UCI; Zenodo; Dataverse; DataCite |
+| Benchmark | OpenML; Hugging Face Leaderboards; Codabench; EvalAI; HELM; relevant domain platforms such as OGB, MTEB, OpenCompass |
+
+Other public platforms are fallback sources only after the relevant first-platform group cannot satisfy the requirement or cannot provide enough provenance.
 
 ## Dataset access
 

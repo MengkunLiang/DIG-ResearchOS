@@ -157,6 +157,7 @@ class CliProgressEmitter:
         self._last_message_kind: str | None = None
         self._active_task_id: str | None = None
         self._t4_input_trace_emitted = False
+        self._t4_last_request_heartbeat_signature: tuple[str, str, str] | None = None
         self._suppressed_t4_tool_results: dict[str, int] = {}
         self._workspace = Path(workspace) if workspace is not None else None
         self._runtime_dir_name = runtime_dir_name
@@ -342,6 +343,7 @@ class CliProgressEmitter:
     ) -> None:
         self._active_task_id = task_id
         self._t4_input_trace_emitted = False
+        self._t4_last_request_heartbeat_signature = None
         self._suppressed_t4_tool_results = {}
         if task_id in self._structured_runs:
             return
@@ -402,6 +404,8 @@ class CliProgressEmitter:
         next_artifact: str | None = None,
         artifact_completed: int | None = None,
         artifact_total: int | None = None,
+        current_deliverable: str | None = None,
+        following_phase: str | None = None,
     ) -> None:
         """Show that the provider request was actually submitted immediately.
 
@@ -421,9 +425,23 @@ class CliProgressEmitter:
                 next_artifact=next_artifact,
                 artifact_completed=artifact_completed,
                 artifact_total=artifact_total,
+                current_deliverable=current_deliverable,
+                following_phase=following_phase,
             )
             return
         if task_id == "T4":
+            signature = (
+                " ".join(str(activity or "").split()),
+                " ".join(str(current_deliverable or next_artifact or "").split()),
+                " ".join(str(following_phase or "").split()),
+            )
+            # The T4 controller can submit several role calls while one public
+            # phase is still running.  Repeating “模型请求已提交” for every
+            # role makes the terminal look stalled.  A changed public phase or
+            # deliverable remains visible immediately.
+            if signature == self._t4_last_request_heartbeat_signature:
+                return
+            self._t4_last_request_heartbeat_signature = signature
             self.emit(f"{stage_display_name(task_id)}：模型请求已提交，正在{activity or '整理研究构思与依据'}。")
             return
         self.emit(f"[{stage_display_name(task_id)}] 模型请求已提交，正在处理当前工作。")
@@ -439,6 +457,8 @@ class CliProgressEmitter:
         next_artifact: str | None = None,
         artifact_completed: int | None = None,
         artifact_total: int | None = None,
+        current_deliverable: str | None = None,
+        following_phase: str | None = None,
     ) -> None:
         """Show a heartbeat for an in-flight provider call.
 
@@ -458,6 +478,8 @@ class CliProgressEmitter:
                 next_artifact=next_artifact,
                 artifact_completed=artifact_completed,
                 artifact_total=artifact_total,
+                current_deliverable=current_deliverable,
+                following_phase=following_phase,
             )
             return
         if task_id == "T4":
@@ -754,6 +776,22 @@ class CliProgressEmitter:
         else:
             self.emit("[Pipeline] 已暂停", important=True)
 
+    def pipeline_waiting_human(self, *, task: str, gate_id: str | None = None) -> None:
+        """Report a completed computational stage that now needs a decision.
+
+        This deliberately differs from ``pipeline_paused``: a human Gate is
+        an expected ownership boundary, so presenting it as an error causes
+        users to rerun completed LLM work and makes an intact T4 Population
+        look corrupt.
+        """
+
+        suffix = f"（{gate_id}）" if gate_id else ""
+        self.emit(
+            f"[Pipeline] Gate{suffix} 正等待可提交的输入：候选、评分和证据产物均已保存。"
+            "本次会话未收到输入时会安全暂停；下次运行 resume 将回到此处，不会重复模型调用。",
+            important=True,
+        )
+
     def gate_needed(self, *, gate_id: str, task: str) -> None:
         self.emit(f"{self.SEPARATOR}\n[Gate] {task}: 等待你的选择", important=True)
 
@@ -948,7 +986,7 @@ def _t4_artifact_stage(output_path: str | None) -> str | None:
     path = str(output_path or "")
     stages = {
         "ideation/t4_progress.md": "正在记录候选构建阶段和输入范围。",
-        "ideation/bridge_coverage_review.json": "正在记录桥接候选的证据边界和暂缓原因。",
+        "ideation/bridge_coverage_review.json": "正在记录 Cross-domain 候选的证据边界和后续复核需要。",
     }
     return stages.get(path)
 
@@ -1043,11 +1081,12 @@ def describe_output_artifact(path: str, *, task_id: str = "") -> str:
     prefix_rules = (
         ("literature/deep_read_notes/", "一篇论文阅读笔记，记录论文原文依据、证据强度和适用边界。"),
         ("literature/bridge_notes/", "跨领域论文的阅读笔记，用于核验机制是否可以迁移。"),
+        ("literature/cross_domain_catalogs/", "跨领域检索目录，保存 B1–B# 的上下文、摘要线索和阅读升级方向，不是论文阅读笔记。"),
         ("literature/shallow_read_notes/", "摘要级轻读笔记，只能支撑背景或待核验线索。"),
         ("drafts/section_outlines/", "章节级证据补充或局部写作大纲，供对应论文段落回查。"),
         ("drafts/sections/", "单个论文章节的草稿与局部证据绑定结果。"),
-        ("experiments/", "实验运行、结果或审计材料，供结果摄取和写作 evidence pack 使用。"),
-        ("external_executor/", "外部执行器交接、运行或结果回传材料。"),
+        ("experiments/", "旧内部实验或可选归档材料；当前写作优先读取外部执行器报告。"),
+        ("external_executor/", "外部执行器交接、运行和 T8 写作交接材料。"),
         ("submission/", "投稿包、模板迁移或最终编译核验材料。"),
     )
     for prefix, description in prefix_rules:
@@ -1069,8 +1108,7 @@ def next_step_after_completed_task(task_id: str) -> str | None:
         "T4": "进入候选方向选择：你可以选择、合并、重构或要求重新分析候选方向。",
         "T4.5": "进入 T5 前的研究意图整理与外部实验交接准备。",
         "T5-HANDOFF": "进入项目专属 Skill 与实验材料确认流程。",
-        "T7-INGEST": "进入实验完整性审计，并把结果与可写入论文的主张对应起来。",
-        "T7-CLAIMS": "进入写作放行评估，确认实验与证据是否足够支撑论文。",
+        "T5-EXTERNAL-WAIT": "外部执行器完成后直接进入 T8 写作风格确认。",
         "T8-RESOURCE": "进入论文结构与章节级写作计划。",
         "T8-WRITE": "进入章节级写作与证据绑定。",
         "T8-DRAFT": "进入作者自查、双轮审稿和修订流程。",
@@ -1104,12 +1142,7 @@ def describe_task_artifacts(task_id: str) -> str:
         "T5-EXPR-MATERIAL-GATE": "外部实验材料放置确认与 expr 目录快照",
         "T5-EXECUTOR-GATE": "用户选择实验执行方式的 gate 记录",
         "T5-DRY-RUN": "mock 外部执行器协议验证产物",
-        "T5-EXTERNAL-WAIT": "外部执行器 result pack 的等待/校验状态",
-        "T7-INGEST": "规范化实验结果、provenance 和结果摘要",
-        "T7-AUDIT": "实验完整性、method drift、framework figure 和 provenance 审计",
-        "T7-POST-NOVELTY": "结合实验结果后的新颖性复核和 claim 边界",
-        "T7-CLAIMS": "result-to-claim 映射和写作 evidence pack",
-        "T7.5": "判断实验与证据是否足够支撑进入论文写作",
+        "T5-EXTERNAL-WAIT": "外部执行器状态、核心 executor_research_report.md 和 T8 handoff 校验状态",
         "T8-RESOURCE": "写作资源索引、证据计划、图表计划和引用资源映射",
         "T8-STYLE-GATE": "目标模板/语言/venue 风格选择记录",
         "T8-WRITE": "论文总大纲、章节结构和资源驱动写作计划",
@@ -1161,7 +1194,7 @@ def summarize_tool_arguments(tool_name: str, arguments: dict[str, Any], *, verbo
         fields = [
             ("query", query),
             ("max", arguments.get("max_results") or arguments.get("per_page") or arguments.get("rows")),
-            ("bucket", arguments.get("query_bucket") or arguments.get("search_bucket")),
+            ("检索方向", arguments.get("query_bucket") or arguments.get("search_bucket")),
             ("bridge", arguments.get("bridge_id")),
         ]
         return _join_fields(fields, max_len=max_len)

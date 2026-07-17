@@ -949,8 +949,12 @@ class BuildVerifiedPapersTool(Tool):
             verified_record["access_level_hint"] = "FULL_TEXT_LOCAL"
             verified_record["access_score"] = 1.0
             verified_record["access_score_estimate"] = 1.0
-            verified_record["evidence_level"] = "FULL_TEXT"
-            verified_record.pop("_needs_reader_evidence_level", None)
+            # Local file availability is not reading completion. Preserve the
+            # conservative level until T3 records actual page coverage.
+            verified_record.setdefault(
+                "evidence_level",
+                "ABSTRACT_ONLY" if str(verified_record.get("abstract") or "").strip() else "METADATA_ONLY",
+            )
             await self._backfill_verified_abstract(client, verified_record, {})
             return verified_record, None
 
@@ -1005,7 +1009,9 @@ class BuildVerifiedPapersTool(Tool):
                 confidence=round(similarity * (1.0 if year_match else 0.6), 2),
             )
 
-        # 本地 PDF 是最强的二级证据，因此在 verified 层里明确升成 pdf_verified。
+        # 本地 PDF is strong *access* evidence, so verification may record a
+        # local-file match.  It is not reading evidence and must not by itself
+        # promote ``evidence_level``.
         normalized_id = str(paper.get("canonical_id") or paper.get("id") or "").replace(":", "_").replace("/", "_")
         has_local_pdf = bool(normalized_id and (self.policy.workspace_dir / "literature" / "pdfs" / f"{normalized_id}.pdf").exists())
         verified_record = dict(paper)

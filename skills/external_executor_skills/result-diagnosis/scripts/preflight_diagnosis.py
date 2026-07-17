@@ -82,7 +82,7 @@ def main() -> int:
         ext/"diagnosis_evidence_snapshot.json",
         ext/"diagnosis_statistics.json",
         ext/"result_diagnosis_report.json",
-        ext/"workdir"/"result_diagnosis",
+        ext/"result_diagnosis",
     ]
     for target in targets:
         try:

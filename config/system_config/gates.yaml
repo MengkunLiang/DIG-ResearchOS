@@ -31,45 +31,45 @@
 # 如需启用 Gate，请参考上述示例添加配置
 gates:
   t4_prerun_gate:
-    title: "T4 · Research Idea Formation & Evolution"
-    description: "Review the available evidence and choose how T4 should form and evolve the candidate population. No model call starts until you confirm."
+    title: "T4 · 研究方向形成与演化"
+    description: "请根据下列说明选择本轮运行方式。选择后系统才会调用模型；已有 Population、评分和谱系都会保留，可 resume 或 rollback。"
     options:
       - id: start_standard
-        label: "Start Standard (recommended)"
-        description: "One complete P0 -> P1 Evolution Round. All Parents, Children, and generations are saved for resume and rollback."
+        label: "标准运行（推荐）"
+        description: "完成两轮 P0 → P1 → P2：形成初始候选、独立评分、生成少量 Mutation / Crossover Child，并在第二轮深化机制、反事实与验证设计后保留 1–3 个候选供你选择。适合第一次进入 T4，想获得完整且可回退的候选组合。"
         is_default: true
         collect_input: [publication_orientation]
         input_prompts:
-          publication_orientation: "本轮论文取向（直接回车沿用系统建议；也可输入‘偏 UTD，但技术要扎实’、‘目标 CCF A’或‘Hybrid’）"
+          publication_orientation: "论文取向（直接回车采用建议；也可输入“偏 UTD，但技术要扎实”“目标 CCF A”或“Hybrid”）"
       - id: start_quick
-        label: "Run Quick"
-        description: "Build and score the initial population without generating Children. Suitable for inspecting the search space first."
+        label: "快速查看"
+        description: "只形成并评分初始 Population P0，不生成 Child。适合先确认研究空间和候选类型是否合理；不会删除已有版本。"
         collect_input: [publication_orientation]
         input_prompts:
-          publication_orientation: "本轮论文取向（直接回车沿用系统建议；也可用一句话说明）"
+          publication_orientation: "论文取向（直接回车采用建议；也可用一句话说明）"
       - id: start_deep
-        label: "Run Deep"
-        description: "Run two Evolution Rounds. This takes longer and keeps every intermediate generation."
+        label: "深入探索"
+        description: "连续运行三轮 Evolution，并保留每一代中间结果。适合材料较充分、愿意等待更久并比较更多演化路线的情况。"
         collect_input: [publication_orientation]
         input_prompts:
-          publication_orientation: "本轮论文取向（直接回车沿用系统建议；也可用一句话说明）"
+          publication_orientation: "论文取向（直接回车采用建议；也可用一句话说明）"
       - id: start_auto
-        label: "Use Auto"
-        description: "Let the controller decide whether another round is useful, up to its configured limit."
+        label: "自动判断"
+        description: "由 Controller 根据候选质量与多样性决定是否值得继续下一轮，运行时间可能变化。适合不想自己决定轮数的情况。"
         collect_input: [publication_orientation]
         input_prompts:
-          publication_orientation: "本轮论文取向（直接回车沿用系统建议；也可用一句话说明）"
+          publication_orientation: "论文取向（直接回车采用建议；也可用一句话说明）"
       - id: adjust
-        label: "Adjust settings"
-        description: "Describe a different mode, crossover preference, or visible portfolio size. Material changes are validated before execution."
+        label: "调整运行方式"
+        description: "用一句话修改模式、是否尝试 Crossover 或展示候选数量。涉及材料范围的变化会再次确认。"
         collect_input:
           - settings
       - id: inspect_materials
-        label: "Inspect materials and pause"
-        description: "Keep this preflight view only. No model call or population change occurs; resume returns to this confirmation."
+        label: "仅查看材料后暂停"
+        description: "只查看当前证据和输入，不调用模型、不生成候选；下次 resume 会回到这里。适合先核对材料。"
       - id: pause
-        label: "Pause"
-        description: "Save the current preflight state without starting T4. Resume returns to this confirmation."
+        label: "暂停"
+        description: "保存当前准备状态，不开始 T4；下次 resume 会回到这里。"
   # 预算门控：限制单次运行的最大成本
   # 典型场景：不希望某次真实 API 调试失控烧钱。
   budget_gate:
@@ -220,8 +220,7 @@ gates:
           survey_retrieval_preference: targeted_supplement_before_writing
 
   # T3.6 综述写作语言与 LaTeX 模板确认：
-  # 这是 runtime 级确定 gate，选完后写 drafts/survey/writing_template.json。
-  # CCF 默认 NeurIPS；UTD 默认 INFORMS；也可以只选基础中文/英文模板。
+  # CCF 先选择模板大类，再选择已上传的具体会议模板。
   t36_template_gate:
     title: "T3.6 综述语言与模板确认"
     description: "请先确认综述正文语言和 LaTeX 模板。这里决定后续 survey plan 和 TeX assembly 使用的模板，不需要先运行 LLM。"
@@ -230,7 +229,7 @@ gates:
         literal: |
           如何选择：
           - 只想先写内容稿：中文选“中文基础模板”，英文选“英文基础模板”。
-          - CCF/AI/CS 会议综述：默认选“CCF 默认 NeurIPS”；若目标更明确，也可直接选 ICLR、ICML 或 KDD。当前本地可编译入口支持 template_id=neurips/iclr/icml/kdd。
+          - CCF/AI/CS 会议综述：先选“CCF / CS 会议模板”，下一页再从本地模板中选择具体会议。系统会区分有官方 `.tex` 入口的模板与只有 class/style 包的模板。
           - UTD/Management Science/ISR/INFORMS/CDS 风格：选“UTD/INFORMS”。默认使用本地官方 INFORMS ISRE 2024 模板包；若最终投稿到其他 INFORMS 期刊，可再替换为对应官方期刊包。
           - 不确定投哪里：先选基础英文或基础中文，后续 T8/T9 仍可重新确认。
       project_summary:
@@ -258,42 +257,11 @@ gates:
           template_family: basic_zh
           template_id: basic_zh
           writing_language: zh
-      - id: ccf_neurips
-        label: "CCF 默认 NeurIPS"
-        description: "英文 CCF/AI/CS 会议稿默认入口；本地默认模板为 NeurIPS。"
-        aliases: ["ccf", "neurips", "ccf-a", "会议"]
-        next: T3.6-PLAN
-        captured_defaults:
-          template_family: ccf
-          template_id: neurips
-          writing_language: en
-      - id: ccf_iclr
-        label: "CCF + ICLR"
-        description: "英文 CCF/AI/ML 会议稿，使用本地 ICLR 2026 样式入口。"
-        aliases: ["iclr", "iclr2026"]
-        next: T3.6-PLAN
-        captured_defaults:
-          template_family: ccf
-          template_id: iclr
-          writing_language: en
-      - id: ccf_icml
-        label: "CCF + ICML"
-        description: "英文 CCF/AI/ML 会议稿，使用本地 ICML 2026 样式入口。"
-        aliases: ["icml", "icml2026"]
-        next: T3.6-PLAN
-        captured_defaults:
-          template_family: ccf
-          template_id: icml
-          writing_language: en
-      - id: ccf_kdd
-        label: "CCF + KDD"
-        description: "英文 CCF/数据挖掘会议稿，使用本地 ACM/KDD 样式入口。"
-        aliases: ["kdd", "sigkdd", "kdd2026"]
-        next: T3.6-PLAN
-        captured_defaults:
-          template_family: ccf
-          template_id: kdd
-          writing_language: en
+      - id: ccf
+        label: "CCF / CS 会议模板"
+        description: "下一步选择具体会议模板；原 workspace 和已有写作文件不会被删除。"
+        aliases: ["ccf", "ccf-a", "会议", "conference"]
+        next: T3.6-CCF-TEMPLATE-GATE
       - id: utd_informs
         label: "UTD/INFORMS"
         description: "英文 UTD/Management Science/ISR/INFORMS/CDS 风格稿件，使用本地官方 INFORMS ISRE 2024 模板包。"
@@ -313,12 +281,21 @@ gates:
           - template_id
           - writing_language
 
+  t36_ccf_template_gate:
+    title: "选择 CCF / CS 会议模板"
+    description: "请从本地已检测到的会议模板中选择一个。带“官方 LaTeX 入口”的模板会直接用于组装；带“本地模板包”的条目会生成匿名写作外壳，投稿前仍应核对该会议当年的官方模板。"
+    presentation:
+      project_summary:
+        from_file: project.yaml
+        max_chars: 1200
+    options: []
+
   # T3.6 综述语料范围确认：
   # conservative 只使用现有 T2/T3 语料；complete 只做一次性定向补检计划，
   # 不自动回到 T2/T3 无限循环。
   t36_corpus_gate:
     title: "T3.6 综述素材范围"
-    description: "请确认综述写作使用现有语料，还是生成一次性定向补检计划来补 taxonomy 空类或弱类。"
+    description: "请确认综述写作使用现有语料，还是执行一次定向补充检索。系统会根据当前 notes、taxonomy 和章节结构给出覆盖建议；检索到且带摘要的材料会进入统一 shallow_read_notes，仍不会自动变成强证据。"
     presentation:
       survey_plan:
         from_file: drafts/survey/survey_plan.json
@@ -336,7 +313,12 @@ gates:
         label: "使用现有语料"
         next: T3.6-STATE
       - id: complete
-        label: "生成一次性补检计划"
+        label: "执行定向补充检索"
+        description: "按你确认的目标篇数补充历史发展、前沿进展和薄弱 taxonomy 类的候选文献；带摘要的结果会形成可复用的 shallow 阅读笔记，每条均保留来源与证据边界。"
+        collect_input: [supplement_target_papers, supplement_focus]
+        input_prompts:
+          supplement_target_papers: "目标补充记录数（直接回车采用系统建议；可输入任意正整数）"
+          supplement_focus: "优先补什么（例如：历史发展、前沿进展、某个 taxonomy 类、cross-domain bridge；可留空）"
         next: T3.6-EXPAND
 
   # T3.6 综述完成后的去向确认：
@@ -374,95 +356,172 @@ gates:
 
   # T4 候选方向选择：
   # 候选池已经写入结果文件，系统在这里暂停，让用户选择、合并、重构或要求重分析。
+  t4_recovery_gate:
+    title: "T4 恢复决策"
+    description: "T4 未能安全抵达 Gate1，但已保存的 Candidate、评分、谱系和诊断仍可使用。请选择继续修复、查看现有候选或暂停。"
+    options:
+      - id: retry_t4
+        label: "继续修复并重试"
+      - id: open_gate1
+        label: "查看已保存 Candidate"
+      - id: pause
+        label: "暂停"
+      - id: exit
+        label: "结束本次运行"
+
+  t36_assemble_recovery_gate:
+    title: "综述拼装审计需要决策"
+    description: "已保存全部 section、survey.tex 与审计诊断。继续修复时只处理审计指出的来源文件，不会用无关引用或虚构内容强行通过。"
+    options:
+      - id: retry_survey_repair
+        label: "继续定向修复"
+      - id: pause_review
+        label: "暂停并检查审计"
+      - id: exit
+        label: "结束本次综述运行"
+
+  t36_compile_recovery_gate:
+    title: "综述 PDF 编译需要决策"
+    description: "编译阶段不会改写正文。已保存 TeX、section、审计和 compile report；请选择重试编译、回到 Review 修复来源文件，或暂停检查环境。"
+    options:
+      - id: retry_compile
+        label: "重试编译"
+      - id: return_to_review
+        label: "回到 Review 修复来源文件"
+      - id: pause_review
+        label: "暂停并检查编译报告"
+      - id: exit
+        label: "结束本次综述运行"
+
+  # 通用运行时恢复：由 StateMachine 动态持久化，覆盖校验修复耗尽、模型服务短暂不可用、
+  # 可恢复环境暂停和旧 bounded-recovery 记录。即使旧 workspace 比该配置先创建，持久化的
+  # presentation/options 仍是权威来源，resume 不依赖此装饰项才能工作。
+  runtime_recovery_gate:
+    title: "运行恢复需要决策"
+    description: "任务在可恢复的运行时问题后暂停。已保存的 artifacts、诊断和恢复状态会保留；选择继续时只修复实际问题，不放松证据、引用或状态完整性。"
+    options:
+      - id: retry_targeted_repair
+        label: "继续定向修复"
+      - id: extend_recovery_window
+        label: "使用旧兼容修复窗口后重试"
+      - id: inspect_then_pause
+        label: "检查后暂停"
+      - id: exit
+        label: "结束本次运行"
+
   t4_gate1_selection_gate:
-    title: "T4 · Research Idea Decision"
-    description: "ResearchOS 已保留完整 Candidate Population 和历史版本。先查看 1–3 个 Portfolio Candidates；再决定是进入 Pre-Novelty review、继续 Evolution、比较证据，还是回滚。"
+    title: "T4 · 研究方向决策"
+    description: "当前候选已经生成并完成初步评分。你现在只需要决定：推进一个方向，继续优化，还是暂时不做选择。其他候选和历史版本都会保留。"
     options:
       - id: proceed_candidate
-        label: "Proceed with a Candidate"
-        description: "选择一个完整 Candidate，生成 Pre-Novelty brief；Population 保留，随后进入 T4.5 novelty/collision audit。"
-        next: T4
+        label: "推进一个候选"
+        description: "选择 D1、D2 或 D3，进入新颖性与文献碰撞检查。不会删除其他候选，后续仍可返回。"
+        # A public “推进 D#” is selection for the novelty gate.  Evolution,
+        # refinement and composition are handled by their distinct native
+        # directives and may return to T4 only after their own confirmation.
+        next: T4.5
         collect_input:
           - directive
-      - id: another_generation
-        label: "Run another Generation"
-        description: "从当前 Population 生成并独立评分新一代；当前版本保留，可 Rollback；不会进入 T4.5。"
-        next: T4
+        input_prompts:
+          directive: "要推进哪个候选？例如：D1 或 推进 D1"
       - id: focus_evolution
-        label: "Focus Evolution"
-        description: "只优化一个 Candidate 的主要 bottleneck；其他 Candidate 保留不被覆盖。"
+        label: "优化一个候选"
+        description: "针对某个候选的主要问题生成改进版本，例如优化理论机制、假设、贡献或实验可行性。"
         next: T4
         collect_input:
           - directive
+        input_prompts:
+          directive: "想优化哪个候选、重点是什么？例如：优化 D2 的实验可行性"
+      - id: another_generation
+        label: "再探索一轮"
+        description: "基于当前全部候选继续生成一代新方案并重新比较。当前候选和评分都会保留。"
+        next: T4
+      - id: inspect
+        label: "查看候选详情"
+        description: "查看或对比候选的摘要、评分理由、假设、贡献、证据来源和主要风险；只读，不调用模型。"
+        next: T4
+        collect_input:
+          - directive
+        input_prompts:
+          directive: "想查看什么？例如：查看 D1、查看 D1 的评分、对比 D1 和 D3"
+      - id: pause
+        label: "暂不决定"
+        description: "保存当前状态，下次从这里继续，不重复已完成的 T4 模型调用。"
+        next: T4
+      - id: more_actions
+        label: "更多操作"
+        description: "展开低频高级操作：构建跨候选新方案、组合组件、调整投稿取向、重跑来源通道、回到上一代等。"
+        next: T4
       - id: create_crossover
-        label: "Create a Crossover"
-        description: "从两个完整 Candidate 建立 Gene Donor Map。系统先做 Compatibility Check；不通过不会生成 Child。"
+        label: "构建跨候选新方案"
+        description: "分析两个候选是否兼容，兼容后再生成新的独立候选。"
+        advanced: true
         next: T4
         collect_input:
           - directive
       - id: compose
-        label: "Compose selected components"
-        description: "从不同 Candidate 的 Hypothesis、Contribution 或 Gene 构建新方案。先 Compatibility Check，再由你二次确认；绝不直接拼接文本。"
+        label: "组合指定组件"
+        description: "从不同候选中选择假设、贡献或方法模块，构建新方案。"
+        advanced: true
         next: T4
         collect_input:
           - directive
       - id: keep_parallel
-        label: "Keep multiple Ideas in parallel"
-        description: "将多个完整 Candidate 保留为独立方向，不默认合并，也不覆盖当前 Population。"
+        label: "并行保留多个方向"
+        description: "将多个候选标记为独立研究方向，后续分别推进。"
+        advanced: true
         next: T4
         collect_input:
           - directive
       - id: show_population
-        label: "View remaining Population"
-        description: "查看未进入 display Portfolio 的 Active Candidates；只读，不调用模型。"
+        label: "查看完整候选池"
+        description: "查看未进入当前推荐列表的候选，不生成新内容。"
+        advanced: true
         next: T4
-      - id: inspect
-        label: "Inspect Score / Evidence / Lineage"
-        description: "查看指定 Candidate 的评分、论文阅读笔记来源或 Parent–Child lineage；只读。"
-        next: T4
-        collect_input:
-          - directive
       - id: regenerate_route
-        label: "Regenerate a Route"
-        description: "重新运行指定生成 Route；旧 route output 保留，并在新 Population snapshot 中重新评分。"
+        label: "重新探索指定来源"
+        description: "重新运行某个 Idea 来源通道，并保留此前结果。"
+        advanced: true
         next: T4
         collect_input:
           - directive
       - id: change_orientation
-        label: "Change Publication Orientation"
-        description: "保留当前 Candidate 和 Core Scientific Score；独立重评 Profile Fit，并按新取向重新选择 Portfolio。"
+        label: "调整投稿取向"
+        description: "按 UTD、CCF 或 Hybrid 取向重新评估适配度；不改变候选本身的科研评分。"
+        advanced: true
         next: T4
         collect_input:
           - directive
         input_prompts:
           directive: "新的论文取向（例如‘更偏 UTD，但保留技术机制’、‘改成 CCF A’或‘Hybrid’）"
       - id: rollback
-        label: "Rollback to the previous Population"
-        description: "只切换 active Population pointer；后续 Generation 不删除，之后仍可重新前进。"
-        next: T4
-      - id: pause
-        label: "Pause"
-        description: "保存当前 Gate 状态。下次 resume 直接回到此处，不重复模型调用。"
+        label: "回到上一代"
+        description: "将上一代候选池设为当前版本，不删除后续结果。"
+        advanced: true
         next: T4
       # Legacy aliases are retained so persisted selections and scripted callers
       # from earlier ResearchOS workspaces still resolve correctly.
       - id: select_or_reframe
-        label: "Legacy: select or reframe"
+        label: "兼容旧记录：选择或重构"
+        advanced: true
         next: T4
         collect_input:
           - selection
       - id: merge
-        label: "Legacy: merge Candidates"
+        label: "兼容旧记录：合并 Candidate"
+        advanced: true
         next: T4
         collect_input:
           - merge_plan
       - id: new_idea
         label: "补充新想法"
+        advanced: true
         next: T4
         collect_input:
           - new_idea
       - id: reanalyze
         label: "重新分析候选池"
+        advanced: true
         next: T4
         collect_input:
           - feedback
@@ -481,12 +540,13 @@ gates:
         - author_name
         - institution_identifiable
 
-  # T7.5 评估后的人类确认门：
-  # 先展示 PI 生成的 evaluation_decision.md，再由人决定是否启动写论文、
-  # 继续补实验，或回到更上游重构假设。
+  # Legacy-only compatibility presentation.  T7/T7.5 are deliberately absent
+  # from the current main state machine; this declaration lets a persisted
+  # pre-migration Workspace render its saved evaluation decision and translate
+  # it to the current T5 handoff or T8 style/resource path during Resume.
   t75_human_review_gate:
-    title: "T7.5 评估确认"
-    description: "PI 已完成实验评估。请结合评估报告确认下一步。"
+    title: "旧版 T7.5 评估恢复"
+    description: "这是旧 Workspace 保留的实验评估决策。继续写作会进入当前写作风格和资源准备流程，不会重新启用旧版内部实验节点。"
     presentation:
       evaluation_decision:
         from_file: evaluation/evaluation_decision.md
@@ -499,16 +559,16 @@ gates:
           default: "T8-STYLE-GATE"
     options:
       - id: follow_recommendation
-        label: "按 PI 推荐推进"
+        label: "按已保存建议继续"
         next: "__parse_from_output__"
       - id: go_write
-        label: "直接启动写作"
+        label: "进入当前写作流程"
         next: T8-STYLE-GATE
       - id: rerun_t7
-        label: "回到外部实验链补实验"
+        label: "返回当前外部实验交接"
         next: T5-REBOOST-GATE
       - id: rethink_t4
-        label: "回到 T4 重构假设"
+        label: "回到 T4 重构候选"
         next: T4
       - id: stop_project
         label: "结束当前项目"
@@ -524,7 +584,7 @@ gates:
         literal: |
           如何选择：
           - IS/UTD/CDS 期刊稿：选“IS + INFORMS”，默认 template_family=utd, template_id=informs。
-          - CCF-A 会议稿：默认选“CCF-A + NeurIPS”，也可直接选 ICLR、ICML 或 KDD。当前本地可编译入口支持 template_id=neurips/iclr/icml/kdd。
+          - CCF/CS 会议稿：先选“CCF / CS 会议模板”，下一页再从所有本地模板中选择具体会议。系统会明确显示官方 `.tex` 入口与仅含 class/style 的模板包。
           - 同时准备两套稿：选“Both + 基础英文”，先共享资源索引与 alignment matrix。
           - 只想确定中英、不套 venue：选中文基础或英文基础。
           - Management Science/ISR/INFORMS 默认使用本地官方 INFORMS ISRE 2024 模板包；若最终投稿到其他 INFORMS 期刊，可再替换对应官方 ZIP。
@@ -545,46 +605,11 @@ gates:
           template_family: utd
           template_id: informs
           writing_language: en
-      - id: ccf_neurips
-        label: "CCF-A + NeurIPS"
-        description: "CCF-A/AI/CS 会议写法，英文 NeurIPS 模板。"
-        aliases: ["ccf", "ccf_a", "ccf-a", "neurips", "conference"]
-        next: T8-RESOURCE
-        captured_defaults:
-          venue_style: ccf_a
-          template_family: ccf
-          template_id: neurips
-          writing_language: en
-      - id: ccf_iclr
-        label: "CCF-A + ICLR"
-        description: "CCF-A/AI/ML 会议写法，英文 ICLR 2026 样式入口。"
-        aliases: ["iclr", "iclr2026"]
-        next: T8-RESOURCE
-        captured_defaults:
-          venue_style: ccf_a
-          template_family: ccf
-          template_id: iclr
-          writing_language: en
-      - id: ccf_icml
-        label: "CCF-A + ICML"
-        description: "CCF-A/AI/ML 会议写法，英文 ICML 2026 样式入口。"
-        aliases: ["icml", "icml2026"]
-        next: T8-RESOURCE
-        captured_defaults:
-          venue_style: ccf_a
-          template_family: ccf
-          template_id: icml
-          writing_language: en
-      - id: ccf_kdd
-        label: "CCF-A + KDD"
-        description: "CCF-A/数据挖掘会议写法，英文 ACM/KDD 样式入口。"
-        aliases: ["kdd", "sigkdd", "kdd2026"]
-        next: T8-RESOURCE
-        captured_defaults:
-          venue_style: ccf_a
-          template_family: ccf
-          template_id: kdd
-          writing_language: en
+      - id: ccf
+        label: "CCF / CS 会议模板"
+        description: "下一步选择具体会议模板；写作结构将按 conference paper 的需要准备。"
+        aliases: ["ccf", "ccf_a", "ccf-a", "会议", "conference"]
+        next: T8-CCF-TEMPLATE-GATE
       - id: both_basic_en
         label: "Both + 基础英文"
         description: "同时准备 IS/CCF-A 两套写作结构，先用英文基础模板。"
@@ -626,8 +651,17 @@ gates:
           - template_id
           - writing_language
 
+  t8_ccf_template_gate:
+    title: "选择 CCF / CS 会议模板"
+    description: "请选择本地会议模板。官方 LaTeX 入口会直接用于正文组装；只有 class/style 的模板包会使用匿名写作外壳，并在写作产物中保留提交前核对官方模板的提示。"
+    presentation:
+      project_summary:
+        from_file: project.yaml
+        max_chars: 1200
+    options: []
+
   # T4.5 非通过 verdict 的人工确认门：
-  # Novelty Auditor 可以建议 reframe/drop，但最终是否回 T4、继续 T7 或停止由用户决定。
+  # Novelty Auditor 可以建议 reframe/drop，但最终是否回 T4、继续外部实验链或停止由用户决定。
   t45_human_review_gate:
     title: "T4.5 新颖性审计人工决策"
     description: "T4.5 的 Final Gate Verdict 未直接通过。请查看审计报告和候选池后决定下一步，系统不会自动拒绝或自动回退。"
@@ -654,7 +688,7 @@ gates:
         from_file: ideation/rejected_ideas.md
         max_chars: 3000
     options:
-      - id: continue_to_t7
+      - id: continue_to_t5
         label: "继续进入外部实验链"
         next: T5-REBOOST-GATE
       - id: return_to_t4
@@ -717,9 +751,6 @@ gates:
         from_dir: external_executor/expr
         glob: "*"
         max_items: 50
-      materials_checklist:
-        from_file: external_executor/expr/MATERIALS_CHECKLIST.json
-        max_chars: 4000
       handoff_summary:
         from_file: external_executor/handoff_pack.json
         max_chars: 4000
@@ -727,7 +758,7 @@ gates:
         literal: |
           材料就绪后，下一步会进入外部执行器选择 gate。
           如果选择 Codex CLI，系统会提示你在 workspace 根目录启动 Codex CLI，让它读取 external_executor/AGENTS.md 并执行 external_executor/skills/research-execution/SKILL.md。
-          Codex 完成后应写回 external_executor/result_pack.json、external_executor/executor_status.json 和 external_executor/run_manifest.json，然后使用 python -m researchos.cli resume --workspace <workspace> 恢复。
+          Codex 完成后应写回 external_executor/executor_research_report.md、external_executor/result_pack.json、external_executor/executor_status.json 和 external_executor/run_manifest.json，然后使用 python -m researchos.cli resume --workspace <workspace> 恢复。
     options:
       - id: materials_ready
         label: "材料已放置，继续"
@@ -761,21 +792,16 @@ gates:
         from_file: external_executor/allowed_paths.txt
         max_chars: 2500
       skill_specialization_report:
-        from_file: external_executor/skill_specialization_report.json
-        max_chars: 2500
-      codex_prompt:
-        from_file: external_executor/codex_prompt.md
-        max_chars: 2500
-      claude_prompt:
-        from_file: external_executor/claude_code_prompt.md
+        from_file: external_executor/report/skill_specialization_report.json
         max_chars: 2500
       codex_resume_instructions:
         literal: |
           Codex CLI 选择后的操作：
           1. 在当前 workspace 根目录启动 Codex CLI。
           2. 对 Codex 说：请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research-execution/SKILL.md。
-          3. Codex 完成后必须写出 external_executor/result_pack.json、external_executor/executor_status.json 和 external_executor/run_manifest.json。
+          3. Codex 完成后必须写出 external_executor/executor_research_report.md、external_executor/result_pack.json、external_executor/executor_status.json 和 external_executor/run_manifest.json。
           4. 回到 ResearchOS，运行 python -m researchos.cli resume --workspace <workspace>。
+          选择执行器后，系统会写入 external_executor/report/executor_selection.json、external_executor/report/executor_capabilities.json，并 patch AGENTS.md/CLAUDE.md。
     options:
       - id: codex_cli
         label: "Codex CLI 真实执行"

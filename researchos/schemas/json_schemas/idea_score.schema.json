@@ -15,7 +15,7 @@
     "profile_fit": {
       "type": "object",
       "properties": {
-        "profile_type": {"enum": ["management_is", "technical_cs", "hybrid", "custom"]},
+        "profile_type": {"enum": ["utd_is", "ccf_cs", "management_is", "technical_cs", "hybrid", "custom"]},
         "overall_fit": {"type": "number", "minimum": 1, "maximum": 5},
         "dimensions": {"type": "object"},
         "rationale": {"type": "string"},

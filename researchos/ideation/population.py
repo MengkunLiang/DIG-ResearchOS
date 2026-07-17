@@ -113,27 +113,54 @@ def select_evolution_parents(
     maximum: int,
     profile_weight: float = 0.0,
 ) -> tuple[list[str], dict[str, str]]:
-    """Choose family-covered elite/repairable/high-upside parents, never top-K only."""
+    """Choose Pareto-visible, family-diverse Parents without diagnostic scoring.
 
+    ``profile_weight`` is retained as an API compatibility parameter. Target
+    Profile remains valuable context for the LLM and the Human Gate, but it is
+    not a fourth score or an automatic parent-selection multiplier.
+    """
+
+    del profile_weight
     score_by_id = {report.candidate_id: report for report in scores}
     dossier_by_id = {item.candidate_id: item for item in dossiers}
     selected: list[str] = []
     reasons: dict[str, str] = {}
+    available = [candidate_id for candidate_id in dossier_by_id if candidate_id in score_by_id]
+    pareto_layers = _pareto_layers(available, score_by_id)
+
+    # First make non-dominated Candidates visible. This avoids a scalar
+    # ``overall`` score hiding a Candidate that is especially strong on one of
+    # the three formal scientific dimensions.
+    for candidate_id in _flatten_layers(pareto_layers):
+        if len(selected) >= maximum:
+            break
+        family = _family_for_candidate(candidate_id, families)
+        if any(_family_for_candidate(existing, families) == family for existing in selected):
+            continue
+        selected.append(candidate_id)
+        report = score_by_id[candidate_id]
+        reasons[candidate_id] = "wildcard" if report.wildcard_recommended else "pareto_family_representative"
+
+    # Then ensure every Family with a scored Candidate can contribute one
+    # Parent before using a scalar tie-break. This is a diversity scheduling
+    # choice, not a scientific judgement about the Family.
     for family in families:
         ranked = sorted(
             (candidate_id for candidate_id in family.member_ids if candidate_id in score_by_id and candidate_id in dossier_by_id),
-            key=lambda candidate_id: _parent_priority(score_by_id[candidate_id], profile_weight=profile_weight),
+            key=lambda candidate_id: _parent_priority(score_by_id[candidate_id]),
             reverse=True,
         )
         if not ranked or len(selected) >= maximum:
             continue
+        if any(candidate_id in selected for candidate_id in ranked):
+            continue
         choice = ranked[0]
         selected.append(choice)
         score = score_by_id[choice]
-        reasons[choice] = "high_upside" if score.high_upside else "family_representative"
+        reasons[choice] = "wildcard" if score.wildcard_recommended else "family_representative"
     for candidate_id, report in sorted(
         score_by_id.items(),
-        key=lambda item: _parent_priority(item[1], profile_weight=profile_weight),
+        key=lambda item: _parent_priority(item[1]),
         reverse=True,
     ):
         if len(selected) >= maximum:
@@ -141,7 +168,7 @@ def select_evolution_parents(
         if candidate_id in selected or candidate_id not in dossier_by_id:
             continue
         selected.append(candidate_id)
-        reasons[candidate_id] = "elite" if report.overall_readiness >= 4 else "repairable"
+        reasons[candidate_id] = "wildcard" if report.wildcard_recommended else "core_score_representative"
     return selected, reasons
 
 
@@ -268,7 +295,7 @@ def detect_complexity_inflation(child: CandidateDossier, parents: list[Candidate
         new_data_requirements=data_requirements,
         new_experiment_stages=stages,
         expected_gain="Requires independent union scoring.",
-        decision_hint="reject_inflation" if growth == "high" else "acceptable",
+        decision_hint="review_complexity" if growth == "high" else "acceptable",
     )
 
 
@@ -318,37 +345,113 @@ def select_survivors(
     *,
     target_size: int,
 ) -> tuple[list[str], list[str], dict[str, str]]:
-    """Perform contract-first family survival and quality/diversity selection."""
+    """Perform object isolation then Pareto/diversity survival.
+
+    Only runtime-invalid objects are excluded here. Evidence calibration,
+    validation feasibility, Profile Fit, uncertainty, and scientific upside
+    are retained as diagnostics; none can invalidate a Candidate or become a
+    hidden numerical survival dimension.
+    """
 
     score_by_id = {item.candidate_id: item for item in scores}
     contract_by_id = {item.candidate_id: item for item in contracts}
     delta_by_id = {item.child_id: item for item in deltas}
-    complexity_by_id = {item.candidate_id: item for item in complexity_reports}
     viable = [
         item.candidate_id for item in dossiers
         if item.candidate_id in score_by_id
         and contract_by_id.get(item.candidate_id, IdeaContractResult(candidate_id=item.candidate_id, status="fail", contracts={})).status != "fail"
-        and complexity_by_id.get(item.candidate_id, ComplexityReport(candidate_id=item.candidate_id, complexity_growth="low")).decision_hint != "reject_inflation"
         and delta_by_id.get(item.candidate_id, GeneDelta(child_id=item.candidate_id, parent_ids=[item.candidate_id], classification="substantive", word_count_growth_ratio=1)).classification not in {"cosmetic", "regressive"}
     ]
     selected: list[str] = []
     decisions: dict[str, str] = {}
-    for family in families:
-        candidates = [candidate_id for candidate_id in family.member_ids if candidate_id in viable]
-        if not candidates:
-            continue
-        winner = max(candidates, key=lambda candidate_id: score_by_id[candidate_id].overall_readiness)
-        selected.append(winner)
-        decisions[winner] = "family_survivor"
-    remaining = sorted(
-        (candidate_id for candidate_id in viable if candidate_id not in selected),
-        key=lambda candidate_id: score_by_id[candidate_id].overall_readiness,
-        reverse=True,
-    )
-    selected.extend(remaining[: max(0, target_size - len(selected))])
-    selected = selected[:target_size]
-    for candidate_id in selected:
-        decisions.setdefault(candidate_id, "quality_diversity_survivor")
+    family_counts: dict[str, int] = defaultdict(int)
+    dossier_by_id = {item.candidate_id: item for item in dossiers}
+    scoreable = [candidate_id for candidate_id in viable if candidate_id in score_by_id]
+    layers = _pareto_layers(scoreable, score_by_id)
+
+    # First pass applies a soft Family cap. A Population with too few Families
+    # is completed below rather than manufactured or globally rejected.
+    for layer_index, layer in enumerate(layers):
+        remaining = set(layer)
+        while remaining and len(selected) < target_size:
+            eligible = [
+                candidate_id
+                for candidate_id in remaining
+                if family_counts[_family_for_candidate(candidate_id, families)] < 2
+            ]
+            if not eligible:
+                break
+            choice = max(
+                eligible,
+                key=lambda candidate_id: _survival_choice_priority(
+                    candidate_id,
+                    score_by_id=score_by_id,
+                    dossiers_by_id=dossier_by_id,
+                    selected_ids=selected,
+                    delta_by_id=delta_by_id,
+                ),
+            )
+            remaining.remove(choice)
+            selected.append(choice)
+            family_counts[_family_for_candidate(choice, families)] += 1
+            decisions[choice] = "family_survivor" if layer_index == 0 and family_counts[_family_for_candidate(choice, families)] == 1 else "quality_diversity_survivor"
+
+    # The cap is intentionally soft: retain real Candidates when the current
+    # scientific space genuinely contains fewer than two Families.
+    if len(selected) < target_size:
+        for layer in layers:
+            for candidate_id in sorted(
+                (item for item in layer if item not in selected),
+                key=lambda item: _survival_choice_priority(
+                    item,
+                    score_by_id=score_by_id,
+                    dossiers_by_id=dossier_by_id,
+                    selected_ids=selected,
+                    delta_by_id=delta_by_id,
+                ),
+                reverse=True,
+            ):
+                if len(selected) >= target_size:
+                    break
+                selected.append(candidate_id)
+                family_counts[_family_for_candidate(candidate_id, families)] += 1
+                decisions[candidate_id] = "quality_diversity_survivor"
+
+    # Preserve at most one explicitly requested Wildcard if ordinary Pareto
+    # and Family selection would hide it. This is a qualitative Human/LLM
+    # signal, never a manufactured numerical boost.
+    wildcards = [candidate_id for candidate_id in scoreable if score_by_id[candidate_id].wildcard_recommended]
+    if wildcards and not any(candidate_id in selected for candidate_id in wildcards):
+        wildcard = max(wildcards, key=lambda candidate_id: _core_mean(score_by_id[candidate_id]))
+        if len(selected) < target_size:
+            selected.append(wildcard)
+            decisions[wildcard] = "wildcard_preserved"
+        elif selected:
+            replaceable = [candidate_id for candidate_id in selected if not score_by_id[candidate_id].wildcard_recommended]
+            if replaceable:
+                displaced = min(replaceable, key=lambda candidate_id: _core_mean(score_by_id[candidate_id]))
+                selected[selected.index(displaced)] = wildcard
+                decisions[wildcard] = "wildcard_preserved"
+                decisions[displaced] = "archived_after_wildcard_preservation"
+    # A provider outage does not make a scientifically valid Parent disappear.
+    # Unscored candidates are appended deterministically after independently
+    # scored survivors. They are visible as unranked and never beat a scored
+    # candidate merely because a synthetic fallback score was assigned.
+    unscored_viable = [
+        item.candidate_id
+        for item in dossiers
+        if item.candidate_id not in score_by_id
+        and contract_by_id.get(
+            item.candidate_id,
+            IdeaContractResult(candidate_id=item.candidate_id, status="fail", contracts={}),
+        ).status != "fail"
+    ]
+    for candidate_id in unscored_viable:
+        if len(selected) >= target_size:
+            break
+        if candidate_id not in selected:
+            selected.append(candidate_id)
+            decisions[candidate_id] = "unscored_retained_for_review"
     archived = [item.candidate_id for item in dossiers if item.candidate_id not in selected]
     for candidate_id in archived:
         decisions[candidate_id] = "archived_after_survival"
@@ -365,12 +468,18 @@ def select_portfolio(
 ) -> PortfolioSelection:
     score_by_id = {item.candidate_id: item for item in scores}
     candidate_families = {candidate_id: family.family_id for family in families for candidate_id in family.member_ids}
-    weight = min(0.5, max(0.0, float(profile_weight)))
-    ranked = sorted(
-        population.active_candidate_ids,
-        key=lambda candidate_id: _portfolio_priority(score_by_id[candidate_id], profile_weight=weight),
+    # Publication Orientation controls narrative focus and a separately
+    # displayed Profile Fit. It must not convert a venue preference into a
+    # hidden score multiplier for the scientific Portfolio.
+    del profile_weight
+    ranked_scored = sorted(
+        [candidate_id for candidate_id in population.active_candidate_ids if candidate_id in score_by_id],
+        key=lambda candidate_id: _portfolio_priority(score_by_id[candidate_id]),
         reverse=True,
     )
+    ranked = ranked_scored + [
+        candidate_id for candidate_id in population.active_candidate_ids if candidate_id not in score_by_id
+    ]
     chosen: list[str] = []
     families_seen: set[str] = set()
     for candidate_id in ranked:
@@ -381,10 +490,31 @@ def select_portfolio(
         families_seen.add(family_id)
         if len(chosen) == maximum:
             break
+    # Reserve space for an explicitly LLM-identified high-upside Wildcard when
+    # the ordinary readiness ranking would otherwise hide it.  This is not a
+    # fabricated score and it does not make the Candidate selection-ready; it
+    # merely keeps a conjectural research programme visible to the human.
+    wildcard_ids = [
+        candidate_id
+        for candidate_id in ranked_scored
+        if score_by_id[candidate_id].wildcard_recommended or score_by_id[candidate_id].high_upside
+    ]
+    if maximum > 1 and wildcard_ids and not any(candidate_id in wildcard_ids for candidate_id in chosen):
+        wildcard = wildcard_ids[0]
+        if len(chosen) < maximum:
+            chosen.append(wildcard)
+        elif chosen:
+            chosen[-1] = wildcard
     if not chosen and ranked:
         chosen.append(ranked[0])
     lead = chosen[0] if chosen else None
-    high_upside = [item.candidate_id for item in scores if item.high_upside and item.candidate_id in chosen and item.candidate_id != lead]
+    high_upside = [
+        item.candidate_id
+        for item in scores
+        if (item.high_upside or item.wildcard_recommended)
+        and item.candidate_id in chosen
+        and item.candidate_id != lead
+    ]
     return PortfolioSelection(
         population_id=population.population_id,
         lead_id=lead,
@@ -392,22 +522,144 @@ def select_portfolio(
         high_upside_ids=high_upside,
         reasons={
             item: (
-                "quality-diversity portfolio selection; Profile Fit used as a secondary tie-breaker"
-                if weight
-                else "quality-diversity portfolio selection"
+                (
+                    "unscored candidate retained visibly; ranking is unavailable until an independent score succeeds"
+                    if item not in score_by_id
+                    else (
+                        "LLM-identified high-upside Wildcard retained for human comparison; current maturity remains explicit"
+                        if score_by_id[item].wildcard_recommended
+                        else "quality-diversity portfolio selection based on the three formal scientific dimensions"
+                    )
+                )
             )
             for item in chosen
         },
     )
 
 
-def _parent_priority(report: ScoreReport, *, profile_weight: float = 0.0) -> tuple[float, int, float]:
-    return (_portfolio_priority(report, profile_weight=profile_weight), int(report.high_upside), -report.score_uncertainty)
+def _core_mean(report: ScoreReport) -> float:
+    """Return a derived scalar only for deterministic tie-breaking.
+
+    The three formal dimensions remain separately available to Pareto ranking.
+    This mean never incorporates evidence, validation, uncertainty, Profile
+    Fit, or upside diagnostics.
+    """
+
+    scores = report.scores
+    return round(
+        (scores.research_value + scores.mechanism_integrity + scores.contribution_distinctiveness) / 3,
+        6,
+    )
 
 
-def _portfolio_priority(report: ScoreReport, *, profile_weight: float) -> float:
-    weight = min(0.5, max(0.0, float(profile_weight)))
-    return round(report.overall_readiness * (1 - weight) + report.profile_fit.overall_fit * weight, 6)
+def _core_vector(report: ScoreReport) -> tuple[float, float, float]:
+    scores = report.scores
+    return (scores.research_value, scores.mechanism_integrity, scores.contribution_distinctiveness)
+
+
+def _pareto_layers(candidate_ids: list[str], score_by_id: dict[str, ScoreReport]) -> list[list[str]]:
+    """Return deterministic non-dominated layers over the three core scores."""
+
+    remaining = set(candidate_ids)
+    layers: list[list[str]] = []
+    while remaining:
+        non_dominated = [
+            candidate_id
+            for candidate_id in remaining
+            if not any(
+                _dominates(score_by_id[other], score_by_id[candidate_id])
+                for other in remaining
+                if other != candidate_id
+            )
+        ]
+        if not non_dominated:  # Defensive only; finite strict comparisons always progress.
+            non_dominated = list(remaining)
+        layer = sorted(non_dominated, key=lambda item: (-_core_mean(score_by_id[item]), item))
+        layers.append(layer)
+        remaining.difference_update(layer)
+    return layers
+
+
+def _dominates(left: ScoreReport, right: ScoreReport) -> bool:
+    left_vector = _core_vector(left)
+    right_vector = _core_vector(right)
+    return all(left_value >= right_value for left_value, right_value in zip(left_vector, right_vector)) and any(
+        left_value > right_value for left_value, right_value in zip(left_vector, right_vector)
+    )
+
+
+def _flatten_layers(layers: list[list[str]]) -> list[str]:
+    return [candidate_id for layer in layers for candidate_id in layer]
+
+
+def _family_for_candidate(candidate_id: str, families: list[IdeaFamily]) -> str:
+    for family in families:
+        if candidate_id in family.member_ids:
+            return family.family_id
+    return candidate_id
+
+
+def _survival_choice_priority(
+    candidate_id: str,
+    *,
+    score_by_id: dict[str, ScoreReport],
+    dossiers_by_id: dict[str, CandidateDossier],
+    selected_ids: list[str],
+    delta_by_id: dict[str, GeneDelta],
+) -> tuple[float, float, float, int, int, str]:
+    """Choose within one Pareto layer using non-score evolution metadata.
+
+    Scientific scores are first. Parent--Child improvement and structural
+    diversity only resolve candidates already in the same Pareto layer; the
+    qualitative wildcard flags retain a distinct route to human comparison.
+    """
+
+    report = score_by_id[candidate_id]
+    child_gain = 0.0
+    delta = delta_by_id.get(candidate_id)
+    if delta is not None:
+        parent_reports = [score_by_id[parent_id] for parent_id in delta.parent_ids if parent_id in score_by_id]
+        if parent_reports:
+            parent = max(parent_reports, key=_core_mean)
+            child_gain = max(
+                current - previous
+                for current, previous in zip(_core_vector(report), _core_vector(parent))
+            )
+    candidate = dossiers_by_id[candidate_id]
+    if not selected_ids:
+        diversity = 1.0
+    else:
+        diversity = min(
+            1.0 - genome_similarity(candidate.genome, dossiers_by_id[selected].genome)
+            for selected in selected_ids
+            if selected in dossiers_by_id
+        )
+    return (
+        _core_mean(report),
+        round(child_gain, 6),
+        round(diversity, 6),
+        int(report.wildcard_recommended),
+        int(report.high_upside),
+        candidate_id,
+    )
+
+
+def _parent_priority(report: ScoreReport) -> tuple[float, int, int]:
+    return (
+        _core_mean(report),
+        int(report.wildcard_recommended),
+        int(report.high_upside),
+    )
+
+
+def _portfolio_priority(report: ScoreReport) -> float:
+    return _core_mean(report)
+
+
+def _survival_priority(report: ScoreReport) -> float:
+    """Compatibility helper for callers that need a scalar core-score view."""
+
+    return _core_mean(report)
 
 
 def _tokens(value: str) -> set[str]:

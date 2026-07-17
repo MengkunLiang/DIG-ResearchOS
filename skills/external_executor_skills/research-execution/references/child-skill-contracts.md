@@ -9,15 +9,15 @@ Read this before dispatching a child. Child skills return control to `research-e
 | `context-alignment` | Controls, handoff, source checks | `context_alignment` | Scope and authority are non-blocking |
 | `resource-and-baseline-preparation` | Confirmed scope, acquisition policy | Requirements, inventories, reviews, readiness | Minimum-loop readiness decided |
 | `experiment-design` | Readiness, claims, method intent, budget | Plan, protocol fingerprint, claim-evidence matrix | Required experiments are specified or unsupported |
-| `baseline-reproduction` | Approved resource and protocol | Reproduction records, raw evidence, risks | Reproduction status and provenance are explicit |
+| `baseline-reproduction` | Approved resource and protocol | Baseline deployment in `external_executor/expr/`, raw evidence in `external_executor/raw_results/`, risks | Reproduction status and provenance are explicit |
 | `method-refinement` | Method intent, plan, diagnosis | Implementation spec, delta, scope requests | Every change is classified and scoped |
-| `implementation` | Approved spec and iteration plan | Code/config/patch/tests | Declared delta is implemented and testable |
+| `implementation` | Approved spec and iteration plan | Code/config/patch/tests deployed under `external_executor/expr/` | Declared delta is implemented and testable |
 | `code-and-protocol-review` | Code, config, tests, protocol | Review verdict and evidence | `pass`, `needs_fix`, or `blocked` is evidence-backed |
-| `experiment-run` | Approved run level and budget | Runs, logs, metrics, checkpoints | Each run has complete status and provenance |
+| `experiment-run` | Approved run level and budget | Runs from `external_executor/expr/`; logs, metrics, records, checkpoints in `external_executor/raw_results/` | Each run has complete status and provenance |
 | `result-diagnosis` | New usable runs | Per-iteration diagnosis | Findings cite evidence and confidence |
 | `module-attribution` | Diagnosis and controlled evidence | Per-iteration attribution | Attribution basis is explicit |
 | `evidence-packaging` | Pinned final snapshot | Realized method, framework, figure/table inventory | Package maps to code and evidence |
-| `writer-handoff` | Valid package and risks | Writer handoff, validation | Handoff is ready for T7 audit |
+| `writer-handoff` | Valid package and risks | Writer handoff, validation | `executor_research_report.md` is ready for T8 |
 
 ## Dispatch envelope
 

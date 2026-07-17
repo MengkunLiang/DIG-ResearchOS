@@ -245,7 +245,7 @@ def _record_failure(paths, report: dict[str, Any], *, dry_run: bool) -> Path:
     if _published_report_is_usable(paths):
         target = _failure_report_path(paths)
         report["previous_suite_preserved"] = True
-        report["published_suite_report"] = "external_executor/skill_specialization_report.json"
+        report["published_suite_report"] = "external_executor/report/skill_specialization_report.json"
     if not dry_run:
         _atomic_write_json(target, report)
     return target
@@ -442,12 +442,12 @@ def _validate_existing(paths, schema: Mapping[str, Any], mapping: Mapping[str, A
     if not paths.output_context_path.is_file():
         errors.append(make_error("context_path_missing", "project_skill_context.yaml missing", path="external_executor/project_skill_context.yaml"))
     if not paths.output_report_path.is_file():
-        errors.append(make_error("context_path_missing", "skill_specialization_report.json missing", path="external_executor/skill_specialization_report.json"))
+        errors.append(make_error("context_path_missing", "skill_specialization_report.json missing", path="external_executor/report/skill_specialization_report.json"))
     else:
         try:
             existing_report = json.loads(paths.output_report_path.read_text(encoding="utf-8"))
         except Exception as exc:
-            errors.append(make_error("schema_invalid", f"skill_specialization_report.json is invalid JSON: {exc}", path="external_executor/skill_specialization_report.json"))
+            errors.append(make_error("schema_invalid", f"skill_specialization_report.json is invalid JSON: {exc}", path="external_executor/report/skill_specialization_report.json"))
     if not paths.output_skills_path.is_dir():
         errors.append(make_error("context_path_missing", "external_executor/skills missing", path="external_executor/skills"))
     if not errors:
@@ -481,7 +481,7 @@ def _validate_existing(paths, schema: Mapping[str, Any], mapping: Mapping[str, A
             make_error(
                 "schema_invalid",
                 "skill_specialization_report.status must be ready or incomplete",
-                path="external_executor/skill_specialization_report.json",
+                path="external_executor/report/skill_specialization_report.json",
             )
         )
         _extend_errors(report, errors)

@@ -1,27 +1,25 @@
 """Experimenter Agent — 外部实验协议主链与 legacy 内部实验兼容模式
 
 业务需求：
-- 主链模式：reboost / handoff / executor_gate / external_wait / dry_run / result_ingest / integrity_audit / post_novelty / result_to_claim
-- 主链语义：ResearchOS 编译协议、选择外部执行器、摄取和审计结果，再生成 result-to-claim
-- 兼容模式：pilot（T5）和 full（T7）仍可显式 run-task 调用
+- 主链模式：reboost / handoff / executor_gate / external_wait / dry_run
+- 主链语义：ResearchOS 编译协议、选择外部执行器，并等待外部执行器生成 T8 handoff 报告
+- 兼容模式：pilot（legacy T5）仍可显式 run-task 调用；旧 full 内部实验不再是公开节点
 - Pilot 兼容模式：小规模验证实验，强制 smoke test，产出 motivation_validation.md
 - Full 兼容模式：完整实验；消融、seed policy 和迭代检查只在项目协议明确要求时执行
 - 读取 ideation/exp_plan.yaml（T4 的输出）
 - 主链不在 ResearchOS runtime 中实现或运行真实实验；真实执行由 Codex/Claude Code/manual executor 在隔离路径完成
-- ResearchOS 不接受执行器自然语言总结作为事实，只接受 raw artifact、config、log、hash、ingest/audit/result-to-claim
+- ResearchOS 不接受执行器自然语言总结作为事实；T8 核心输入是 external_executor/executor_research_report.md，并可回查 raw artifact、config、log、hash
 
 外部实验主链输出：
-- T5-REBOOST-GATE/T5-REBOOST: external_executor/handoff_pack.json、external_executor/reboost_report.json、AGENTS.md、CLAUDE.md、README.md、executor_prompt.md、codex_prompt.md、claude_code_prompt.md、expected_outputs_schema.json、allowed_paths.txt
+- T5-REBOOST-GATE/T5-REBOOST: external_executor/handoff_pack.json、external_executor/report/reboost_report.json、external_executor/report/reboost_validation_report.json、paper_card_evidence_index.json、expected_outputs_schema.json、allowed_paths.txt、AGENTS.md、CLAUDE.md
 - T5-SPECIALIZE-EXECUTOR-SKILLS: schema-validated project_skill_context.yaml、skill_specialization_report.json、skills/
 - specialize-executor-skills: 同一确定性编译器的显式 CLI 入口；可选的 LLM 增强只可在 suite 已发布后运行
 - T5-HANDOFF: legacy 兼容入口，生成 handoff；其项目 Skill suite 也由专门的 specialization 节点发布
-- T5-EXECUTOR-GATE: external_executor/executor_selection.json
+- T5-EXECUTOR-GATE: external_executor/report/executor_selection.json
 - T5-EXTERNAL-WAIT: external_executor/wait_acceptance_report.json
 - T5-DRY-RUN: external_executor/result_pack.json、executor_status.json、run_manifest.json、heartbeat.json、raw_results/configs/logs
-- T7-INGEST: experiments/results_summary.json、run_records.jsonl、evidence_index.json、ingest_report.json
-- T7-AUDIT: experiments/integrity_audit.json、experiments/result_audit.json、experiments/method_audit.json、experiments/framework_figure_audit.json、experiments/experiment_fairness_review.md
-- T7-POST-NOVELTY: novelty/post_experiment_novelty_check.json、novelty/post_experiment_collision_cases.md
-- T7-CLAIMS: experiments/experimental_claims.json、drafts/result_to_claim.json、drafts/experiment_evidence_pack.json、experiments/iteration_log.md、drafts/must_not_claim.md
+- T5-to-T8 handoff: external_executor/executor_research_report.md
+- Supporting context for T8: external_executor/ and optional legacy experiments/
 
 Legacy Pilot 模式（T5）输入：
 - ideation/exp_plan.yaml: 实验计划
@@ -36,7 +34,7 @@ Legacy Pilot 模式（T5）输出：
 - pilot/smoke_test_passed.marker: 烟测通过标记（鲁棒性要求 §3.1）
 - pilot/docker_digests.txt: 已实际使用的 Docker 镜像 digest
 
-Legacy Full 模式（T7）输入：
+Legacy Full 模式（旧内部完整实验，当前主链不再调用）输入：
 - ideation/exp_plan.yaml: 实验计划
 - ideation/hypotheses.md: 研究假设
 - project.yaml: 项目配置
@@ -45,7 +43,7 @@ Legacy Full 模式（T7）输入：
 - pilot/pilot_results.json: 试点结果（可选）
 - novelty/novelty_report.md: 新颖性最终报告（可选）
 
-Legacy Full 模式（T7）输出：
+Legacy Full 模式（旧内部完整实验，当前主链不再调用）输出：
 - experiments/results_summary.json: 实验结果汇总（必须包含 quality_status 字段）
 - experiments/iteration_log.md: 实验迭代日志
 - experiments/ablations.csv: 仅在已声明消融协议时生成的结果
@@ -77,6 +75,8 @@ from ..schemas.validator import validate_record
 from ..schemas.validator import validate_task_artifacts
 from ..tools.docker_exec import check_docker_environment, get_default_image, load_project_config
 from ..tools.external_experiment import (
+    EXECUTOR_SELECTION_PATH,
+    LEGACY_EXECUTOR_SELECTION_PATH,
     SKILL_SUITE,
     research_reboost_skill_prompt_excerpt,
     validate_context_reboost_handoff,
@@ -158,22 +158,12 @@ def run_experimenter_preflight(ctx: ExecutionContext) -> tuple[bool, str | None]
     if ctx.mode in EXTERNAL_EXPERIMENT_MODES:
         return True, None
 
-    if ctx.task_id not in {"T5", "T7"}:
+    if ctx.task_id != "T5":
         return True, None
 
     ok, err = run_integrity_gate(ctx)
     if not ok:
         return False, err
-
-    if ctx.task_id == "T7":
-        ws = ctx.workspace_dir
-        required_direct_inputs = [
-            "ideation/novelty_audit.md",
-            "literature/synthesis.md",
-        ]
-        missing = [rel for rel in required_direct_inputs if not (ws / rel).exists()]
-        if missing:
-            return False, f"legacy T7 preflight 失败：direct-full 缺少必要输入 {missing}"
 
     ws = ctx.workspace_dir
     project = load_project(ctx)
@@ -434,17 +424,22 @@ def _require_external_files(ws: Path, rel_paths: list[str]) -> tuple[bool, str |
     return True, None
 
 
+def _read_executor_selection_artifact(ws: Path) -> tuple[dict[str, Any] | None, str | None, str]:
+    errors: list[str] = []
+    for rel in (EXECUTOR_SELECTION_PATH, LEGACY_EXECUTOR_SELECTION_PATH):
+        selection, err = _read_json_artifact(ws, rel)
+        if err is None:
+            return selection, None, rel
+        errors.append(err)
+    return None, errors[0] if errors else f"{EXECUTOR_SELECTION_PATH} 缺失", EXECUTOR_SELECTION_PATH
+
+
 def _validate_external_handoff(ws: Path, *, require_specialization: bool = False) -> tuple[bool, str | None]:
     required = [
         "external_executor/handoff_pack.json",
-        "external_executor/executor_prompt.md",
         "external_executor/expected_outputs_schema.json",
         "external_executor/allowed_paths.txt",
-        "external_executor/executor_selection.json",
         "external_executor/input_manifest.json",
-        "external_executor/codex_prompt.md",
-        "external_executor/claude_code_prompt.md",
-        "external_executor/manual_instructions.md",
         "external_executor/AGENTS.md",
         "external_executor/CLAUDE.md",
         "external_executor/README.md",
@@ -458,7 +453,7 @@ def _validate_external_handoff(ws: Path, *, require_specialization: bool = False
                 "external_executor/project_skill_context.yaml",
                 "external_executor/schemas/project_skill_context.schema.json",
                 "external_executor/skills/research-execution/SKILL.md",
-                "external_executor/skill_specialization_report.json",
+                "external_executor/report/skill_specialization_report.json",
             ]
         )
     ok, err = _require_external_files(ws, required)
@@ -540,23 +535,16 @@ def _validate_external_handoff(ws: Path, *, require_specialization: bool = False
     ):
         if not isinstance(required_fields, list) or field not in required_fields:
             return False, f"expected_outputs_schema.json required 缺少 {field}"
-    selection, err = _read_json_artifact(ws, "external_executor/executor_selection.json")
+    selection, err, selection_rel = _read_executor_selection_artifact(ws)
     if err:
         return False, err
-    if selection.get("semantics") != "external_executor_selection":
-        return False, "external_executor/executor_selection.json semantics 不正确"
+    if not selection or selection.get("semantics") != "external_executor_selection":
+        return False, f"{selection_rel} semantics 不正确"
     manifest, err = _read_json_artifact(ws, "external_executor/input_manifest.json")
     if err:
         return False, err
     if manifest.get("semantics") != "external_executor_input_manifest":
         return False, "external_executor/input_manifest.json semantics 不正确"
-    prompt = (ws / "external_executor" / "executor_prompt.md").read_text(encoding="utf-8", errors="replace")
-    if "external_executor/result_pack.json" not in prompt:
-        return False, "executor_prompt.md 必须明确要求写 external_executor/result_pack.json"
-    for rel in ("external_executor/codex_prompt.md", "external_executor/claude_code_prompt.md", "external_executor/manual_instructions.md"):
-        text = (ws / rel).read_text(encoding="utf-8", errors="replace")
-        if "external_executor/result_pack.json" not in text:
-            return False, f"{rel} 必须明确 result_pack 输出协议"
     for rel in ("external_executor/AGENTS.md", "external_executor/CLAUDE.md", "external_executor/README.md"):
         text = (ws / rel).read_text(encoding="utf-8", errors="replace")
         if "dry_run: UNSET" not in text and "dry_run:" not in text:
@@ -573,7 +561,7 @@ def _validate_external_handoff(ws: Path, *, require_specialization: bool = False
             return False, "external_executor/project_skill_context.yaml 缺失"
         if not schema_path.is_file():
             return False, "external_executor/schemas/project_skill_context.schema.json 缺失"
-        report, err = _read_json_artifact(ws, "external_executor/skill_specialization_report.json")
+        report, err = _read_json_artifact(ws, "external_executor/report/skill_specialization_report.json")
         if err:
             return False, err
         ok, err = _validate_specialization_report(report)
@@ -588,6 +576,58 @@ def _validate_external_handoff(ws: Path, *, require_specialization: bool = False
         return False, err
     if job_state.get("semantics") != "external_executor_job_state":
         return False, "external_executor/job_state.json semantics 不正确"
+    return True, None
+
+
+def _validate_reboost_handoff_controls(ws: Path) -> tuple[bool, str | None]:
+    required = [
+        "external_executor/handoff_pack.json",
+        "external_executor/report/reboost_report.json",
+        "external_executor/report/reboost_validation_report.json",
+        "external_executor/paper_card_evidence_index.json",
+        "external_executor/expected_outputs_schema.json",
+        "external_executor/allowed_paths.txt",
+        "external_executor/AGENTS.md",
+        "external_executor/CLAUDE.md",
+    ]
+    ok, err = _require_external_files(ws, required)
+    if not ok:
+        return False, err
+
+    schema, err = _read_json_artifact(ws, "external_executor/expected_outputs_schema.json")
+    if err:
+        return False, err
+    if schema.get("semantics") != "expected_external_executor_outputs_schema":
+        return False, "expected_outputs_schema.json semantics 不正确"
+
+    validation, err = _read_json_artifact(ws, "external_executor/report/reboost_validation_report.json")
+    if err:
+        return False, err
+    if validation.get("valid") is not True:
+        return False, "external_executor/report/reboost_validation_report.json 必须 valid=true"
+
+    paper_index, err = _read_json_artifact(ws, "external_executor/paper_card_evidence_index.json")
+    if err:
+        return False, err
+    if paper_index.get("semantics") != "paper_card_evidence_index":
+        return False, "external_executor/paper_card_evidence_index.json semantics 不正确"
+
+    allowed_text = (ws / "external_executor" / "allowed_paths.txt").read_text(
+        encoding="utf-8",
+        errors="replace",
+    )
+    if "external_executor/" not in allowed_text or "no  researchos/" not in allowed_text:
+        return False, "external_executor/allowed_paths.txt 必须包含外部执行边界和 ResearchOS 源码保护"
+
+    agents_text = (ws / "external_executor" / "AGENTS.md").read_text(encoding="utf-8", errors="replace")
+    if "external_executor/skills/research-execution/SKILL.md" not in agents_text:
+        return False, "external_executor/AGENTS.md 必须能一句话启动 root skill"
+    if "external_executor/result_pack.json" not in agents_text:
+        return False, "external_executor/AGENTS.md 必须明确 result_pack 输出协议"
+
+    claude_text = (ws / "external_executor" / "CLAUDE.md").read_text(encoding="utf-8", errors="replace")
+    if "external_executor/result_pack.json" not in claude_text:
+        return False, "external_executor/CLAUDE.md 必须明确 result_pack 输出协议"
     return True, None
 
 
@@ -614,9 +654,9 @@ def _validate_specialized_skill_file(ws: Path, skill_name: str) -> tuple[bool, s
 
 def _validate_specialization_report(report: dict[str, Any]) -> tuple[bool, str | None]:
     if report.get("schema_version") != "skill_specialization_report.v1":
-        return False, "external_executor/skill_specialization_report.json schema_version 不正确"
+        return False, "external_executor/report/skill_specialization_report.json schema_version 不正确"
     if report.get("status") not in {"ready", "incomplete"}:
-        return False, "external_executor/skill_specialization_report.json status 必须为 ready 或 incomplete"
+        return False, "external_executor/report/skill_specialization_report.json status 必须为 ready 或 incomplete"
     if report.get("context_file") != "external_executor/project_skill_context.yaml":
         return False, "skill_specialization_report.context_file 不正确"
     if report.get("context_schema") != "external_executor/schemas/project_skill_context.schema.json":
@@ -636,11 +676,11 @@ def _validate_specialization_report(report: dict[str, Any]) -> tuple[bool, str |
 
 
 def _validate_external_executor_selection(ws: Path) -> tuple[bool, str | None]:
-    selection, err = _read_json_artifact(ws, "external_executor/executor_selection.json")
+    selection, err, selection_rel = _read_executor_selection_artifact(ws)
     if err:
         return False, err
-    if selection.get("semantics") != "external_executor_selection":
-        return False, "external_executor/executor_selection.json semantics 不正确"
+    if not selection or selection.get("semantics") != "external_executor_selection":
+        return False, f"{selection_rel} semantics 不正确"
     selected = selection.get("selected_executor")
     if selected not in {"mock_dry_run", "codex_cli", "claude_code_window", "manual"}:
         return False, "executor_selection.selected_executor 必须是 mock_dry_run/codex_cli/claude_code_window/manual"
@@ -649,10 +689,6 @@ def _validate_external_executor_selection(ws: Path) -> tuple[bool, str | None]:
     for rel in (
         "external_executor/AGENTS.md",
         "external_executor/CLAUDE.md",
-        "external_executor/executor_prompt.md",
-        "external_executor/codex_prompt.md",
-        "external_executor/claude_code_prompt.md",
-        "external_executor/manual_instructions.md",
     ):
         path = ws / rel
         if path.exists() and "UNSET" in path.read_text(encoding="utf-8", errors="replace"):
@@ -672,7 +708,7 @@ def _validate_external_wait(ws: Path) -> tuple[bool, str | None]:
 def _validate_external_dry_run(ws: Path) -> tuple[bool, str | None]:
     required = [
         "external_executor/handoff_pack.json",
-        "external_executor/executor_selection.json",
+        EXECUTOR_SELECTION_PATH,
         "external_executor/result_pack.json",
         "external_executor/executor_status.json",
         "external_executor/run_manifest.json",
@@ -687,10 +723,10 @@ def _validate_external_dry_run(ws: Path) -> tuple[bool, str | None]:
     ok, err = _validate_external_executor_selection(ws)
     if not ok:
         return False, err
-    selection, err = _read_json_artifact(ws, "external_executor/executor_selection.json")
+    selection, err, _selection_rel = _read_executor_selection_artifact(ws)
     if err:
         return False, err
-    if selection.get("selected_executor") != "mock_dry_run":
+    if not selection or selection.get("selected_executor") != "mock_dry_run":
         return False, "T5-DRY-RUN 只能在 T5-EXECUTOR-GATE 选择 mock_dry_run 后运行"
     result_pack, err = _read_json_artifact(ws, "external_executor/result_pack.json")
     if err:
@@ -841,15 +877,15 @@ def _validate_external_binding_fingerprints(
         rel = str(summary.get(rel_key) or evidence.get(rel_key) or report.get(rel_key) or "").strip()
         expected_hash = str(summary.get(hash_key) or evidence.get(hash_key) or report.get(hash_key) or "").strip()
         if not rel or not expected_hash:
-            return False, f"T7 external binding 缺少外部执行器绑定字段: {rel_key}/{hash_key}"
+            return False, f"external executor binding 缺少外部执行器绑定字段: {rel_key}/{hash_key}"
         path = ws / rel
         if not path.exists() or not path.is_file():
-            return False, f"T7 external binding 绑定的外部源文件不存在: {rel}"
+            return False, f"external executor binding 绑定的外部源文件不存在: {rel}"
         if _sha256_file(path) != expected_hash:
-            return False, f"T7 external binding 外部源文件 hash 不匹配: {rel}"
+            return False, f"external executor binding 外部源文件 hash 不匹配: {rel}"
     selected = str(summary.get("selected_executor") or report.get("selected_executor") or "").strip()
     if selected not in {"mock_dry_run", "codex_cli", "claude_code_window", "manual"}:
-        return False, "T7 external binding 缺少合法 selected_executor"
+        return False, "external executor binding 缺少合法 selected_executor"
     return True, None
 
 
@@ -937,7 +973,7 @@ def _validate_post_experiment_novelty(ws: Path) -> tuple[bool, str | None]:
         return False, "post_experiment_novelty_check.json semantics 不正确"
     if check.get("novelty_after_implementation") not in {"strong", "moderate", "weak", "collision_risk"}:
         return False, "post_experiment_novelty_check.novelty_after_implementation 不正确"
-    if check.get("recommended_next_task") not in {"T7-CLAIMS", "T5-REBOOST-GATE", "T5-HANDOFF", "T4"}:
+    if check.get("recommended_next_task") not in {"T8-RESOURCE", "T5-REBOOST-GATE", "T5-HANDOFF", "T4"}:
         return False, "post_experiment_novelty_check.recommended_next_task 不正确"
     if check.get("contribution_drift") not in {"none", "minor", "major", "unknown"}:
         return False, "post_experiment_novelty_check.contribution_drift 不正确"
@@ -1012,10 +1048,10 @@ def _validate_external_result_to_claim(ws: Path) -> tuple[bool, str | None]:
 
 
 class ExperimenterAgent(Agent):
-    """实验执行 Agent。支持 pilot（T5）和 full（T7）两种模式。
+    """实验执行 Agent。支持当前 T5 外部执行链和 legacy pilot 调试。
 
     - pilot 模式：小规模验证实验，强制 smoke test，使用 pilot_plan 中明确声明的 seed
-    - full 模式：完整实验；ablation 与 seed policy 仅按来源明确的协议执行
+    - full 模式：旧内部完整实验兼容代码路径；当前主状态机和 run-task 不再暴露
     """
 
     def __init__(self, mode: str | None = None):
@@ -1177,11 +1213,12 @@ class ExperimenterAgent(Agent):
                     "先读取当前 workspace 的 Pre-T5 源文件，由当前 LLM 编译完整 `handoff_pack` 对象。"
                     "然后调用 `compile_research_reboost_handoff(handoff_pack=...)`。该工具会按 "
                     "`references/handoff_pack.schema.json` 和 `scripts/validate_handoff.py` 校验并 pretty-print "
-                    "`external_executor/handoff_pack.json`，同时写 `external_executor/reboost_report.json`、"
-                    "`reboost_validation_report.json`、AGENTS/CLAUDE/README、prompt、expected schema、"
-                    "allowed paths、input manifest、job_state 和 expr scaffold。项目专属 executor Skills 会在下一步 "
+                    "`external_executor/handoff_pack.json`，同时写 `external_executor/report/reboost_report.json`、"
+                    "`external_executor/report/reboost_validation_report.json`、paper_card_evidence_index、"
+                    "expected schema、allowed paths、AGENTS/CLAUDE。executor_selection 由后续 "
+                    "T5-EXECUTOR-GATE 按所选执行器生成；不会生成 Codex/Claude/manual prompt 文件。项目专属 executor Skills 会在下一步 "
                     "`T5-SPECIALIZE-EXECUTOR-SKILLS` 中由确定性编译器单独发布。\n\n"
-                    "完成后读取 `external_executor/reboost_report.json`；如果 validation_ok=true，"
+                    "完成后读取 `external_executor/report/reboost_report.json`；如果 validation_ok=true，"
                     "调用 finish_task。`compile_research_reboost_handoff` 是 handoff pack 的唯一写入者；"
                     "不要用 write_file 修改它，不要手写压缩成一行的 JSON；不要生成或改写 "
                     "`external_executor/skills/`。"
@@ -1193,9 +1230,9 @@ class ExperimenterAgent(Agent):
                 (
                     "请执行外部实验 T5-HANDOFF：调用 build_experiment_handoff_pack，"
                     "读取并保留 T5-REBOOST-GATE 已写入的 external_executor/handoff_pack.json#context_reboost，"
-                    "然后补全 external_executor/handoff_pack.json、executor_prompt.md、"
-                    "expected_outputs_schema.json、allowed_paths.txt、AGENTS.md、CLAUDE.md、README.md、"
-                    "job_state.json 和 Codex/Claude/manual prompt。不要运行真实实验；执行器选择由 "
+                    "然后补全 external_executor/handoff_pack.json、expected_outputs_schema.json、"
+                    "allowed_paths.txt、AGENTS.md、CLAUDE.md、README.md、job_state.json。"
+                    "不要运行真实实验；执行器选择由 "
                     "T5-EXECUTOR-GATE 完成。"
                 ),
             )
@@ -1231,7 +1268,7 @@ class ExperimenterAgent(Agent):
             return prepend_resume_prefix(
                 ctx,
                 (
-                    "请执行 T7-INGEST：调用 ingest_external_results，把 external_executor/result_pack.json "
+                    "请执行旧结果摄取兼容流程：调用 ingest_external_results，把 external_executor/result_pack.json "
                     "规范化为 experiments/results_summary.json、run_records.jsonl、evidence_index.json "
                     "和 ingest_report.json。不要相信自然语言总结。"
                 ),
@@ -1240,7 +1277,7 @@ class ExperimenterAgent(Agent):
             return prepend_resume_prefix(
                 ctx,
                 (
-                    "请执行 T7-AUDIT：调用 audit_experiment_integrity，审计 experiments/results_summary.json "
+                    "请执行旧实验完整性审计兼容流程：调用 audit_experiment_integrity，审计 experiments/results_summary.json "
                     "和 evidence_index.json 的 provenance、mock_only、metric、seed、artifact 引用和 required baseline 覆盖。"
                 ),
             )
@@ -1248,7 +1285,7 @@ class ExperimenterAgent(Agent):
             return prepend_resume_prefix(
                 ctx,
                 (
-                    "请执行 T7-POST-NOVELTY：调用 build_post_experiment_novelty_check，"
+                    "请执行旧实验后 novelty 复核兼容流程：调用 build_post_experiment_novelty_check，"
                     "基于 results_summary、integrity_audit、required_baselines 和 novelty_audit 生成 "
                     "novelty/post_experiment_novelty_check.json 与 post_experiment_collision_cases.md。"
                     "该节点不自动拒绝 idea，只把 claim 降级边界写成 artifact。"
@@ -1258,7 +1295,7 @@ class ExperimenterAgent(Agent):
             return prepend_resume_prefix(
                 ctx,
                 (
-                    "请执行 T7-CLAIMS：调用 map_results_to_claims，再调用 build_experiment_evidence_pack，"
+                    "请执行旧 result-to-claim 兼容流程：调用 map_results_to_claims，再调用 build_experiment_evidence_pack，"
                     "生成 experiments/experimental_claims.json、drafts/result_to_claim.json、"
                     "drafts/experiment_evidence_pack.json、drafts/must_not_claim.md、"
                     "drafts/claim_support_matrix.csv、drafts/limitations_from_experiments.md、"
@@ -1292,7 +1329,7 @@ class ExperimenterAgent(Agent):
                 return prepend_resume_prefix(
                     ctx,
                     (
-                    "请继续 legacy T7 Full 实验任务。\n"
+                    "请继续旧内部完整实验兼容任务。\n"
                     "优先复用 experiments/ 下已有代码、运行目录和中间结果，只补剩余的 summary / ablation / log 产物，"
                     "不要从头重建整个实验目录。"
                     ),
@@ -1300,9 +1337,9 @@ class ExperimenterAgent(Agent):
             return prepend_resume_prefix(
                 ctx,
                 (
-                "请按 system prompt 执行 legacy T7 Full 实验任务。\n"
+                "请按 system prompt 执行旧内部完整实验兼容任务。\n"
                 "实验计划在 ideation/exp_plan.yaml 中。\n"
-                "注意：默认主链现在使用外部实验 handoff/ingest/audit/claims；本模式仅用于显式 legacy 调试。"
+                "注意：默认主链现在使用外部执行器报告直连 T8；本模式仅用于显式 legacy 调试。"
                 "如果 pilot 或 novelty_final 产物不存在，"
                 "请基于 hypotheses、exp_plan、ideation/novelty_audit.md、synthesis.md 和 comparison_table.csv "
                 "只编译已被这些材料或人工确认支持的实验协议，并在 iteration_log.md 中明确记录 direct_full_from_t45。\n"
@@ -1392,14 +1429,14 @@ class ExperimenterAgent(Agent):
             ok, err = validate_context_reboost_handoff(ws)
             if not ok:
                 return False, err
-            report, report_err = _read_json_artifact(ws, "external_executor/reboost_report.json")
+            report, report_err = _read_json_artifact(ws, "external_executor/report/reboost_report.json")
             if report_err:
                 return False, report_err
             if report.get("semantics") != "external_executor_context_reboost_report":
-                return False, "external_executor/reboost_report.json semantics 不正确"
+                return False, "external_executor/report/reboost_report.json semantics 不正确"
             if report.get("handoff_pack") != "external_executor/handoff_pack.json":
-                return False, "external_executor/reboost_report.json 必须指向 handoff_pack"
-            return _validate_external_handoff(ws, require_specialization=False)
+                return False, "external_executor/report/reboost_report.json 必须指向 handoff_pack"
+            return _validate_reboost_handoff_controls(ws)
         if mode == "handoff":
             return _validate_external_handoff(ws)
         if mode == "executor_gate":
@@ -1558,7 +1595,7 @@ class ExperimenterAgent(Agent):
                 )
             docker_success_count = ctx.extra.get("docker_exec_success_count")
             if docker_success_count is not None and int(docker_success_count or 0) < 1:
-                return False, "T7 要求至少一次成功的 docker_exec 执行，不能只用 bash_run 本地运行"
+                return False, "旧内部完整实验要求至少一次成功的 docker_exec 执行，不能只用 bash_run 本地运行"
 
             # 2. Ablation validation follows only the declared experiment
             # protocol.  A missing plan does not authorize a generic three-row

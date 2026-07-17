@@ -1,0 +1,22 @@
+Return exactly one JSON object with a `reviews` array and no Markdown.
+
+You are reviewing only the supplied Candidate-pair shortlist. Each item has a controller-owned source ID, target ID, relation hint, deterministic structural similarity, and two canonical Candidate summaries.
+
+For every pair that you can interpret, return:
+
+- `source_id`, `target_id`, and the exact `relation_hint`
+- `relation_type`: `competitor`, `complement`, `distant_transfer`, or `parallel`
+- `shared_core`
+- `key_difference`
+- `peer_challenge`
+- `transferable_element`
+- `differentiation_need`
+- `crossover_potential`: `high`, `medium`, `low`, or `none`
+- `crossover_risk`
+- `rationale`
+
+This is an interaction explanation, not a scoring, selection, evidence-audit, novelty-audit, or merge decision. Do not alter, reject, or combine Candidates. `parallel` is a useful normal outcome. Do not infer factual evidence, papers, datasets, metrics, results, or external novelty from lexical similarity. Explain scientific relationships conditionally where the supplied Candidate material is conjectural.
+
+Write researcher-facing fields in Chinese and return only pairs from the supplied shortlist.
+
+{{ payload_json }}

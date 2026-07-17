@@ -48,14 +48,17 @@ def default_resource_acquisition_policy() -> dict[str, Any]:
             "archive.ics.uci.edu",
         ],
         "material_absence_policy": (
-            "external_executor/expr may contain only README/checklist scaffolding; "
-            "continue by authorized acquisition or reimplementation when local materials are absent."
+            "external_executor/expr may be empty or contain only workspace guide files; "
+            "check resources/ for by-hand local materials; continue by authorized acquisition "
+            "into resource/ or reimplementation into resource/ when local materials are absent."
         ),
     }
 
 
 def selected_executor(root: Path) -> str:
-    path = resolve_in_workspace(root, "external_executor/executor_selection.json")
+    path = resolve_in_workspace(root, "external_executor/report/executor_selection.json")
+    if not path.is_file():
+        path = resolve_in_workspace(root, "external_executor/executor_selection.json")
     if not path.is_file():
         return ""
     try:
@@ -226,7 +229,9 @@ def main() -> int:
     if allowed_entries and not output_allowed:
         add(report, "errors", "output_not_allowed", output_relative)
 
-    capabilities_path = resolve_in_workspace(root, "external_executor/executor_capabilities.json")
+    capabilities_path = resolve_in_workspace(root, "external_executor/report/executor_capabilities.json")
+    if not capabilities_path.is_file():
+        capabilities_path = resolve_in_workspace(root, "external_executor/executor_capabilities.json")
     capabilities: dict[str, Any] = {}
     if capabilities_path.is_file():
         try:
@@ -236,7 +241,12 @@ def main() -> int:
             add(report, "warnings", "invalid_capabilities", str(exc))
     else:
         capabilities = default_executor_capabilities(root)
-        add(report, "warnings", "capabilities_inferred", "executor_capabilities.json is absent; inferred from executor_selection.json")
+        add(
+            report,
+            "warnings",
+            "capabilities_inferred",
+            "external_executor/report/executor_capabilities.json is absent; inferred from external_executor/report/executor_selection.json",
+        )
     if policy.get("network_allowed") is True:
         if not capabilities:
             add(report, "errors", "network_capability_unconfirmed", "policy requires network but executor capabilities are not declared")

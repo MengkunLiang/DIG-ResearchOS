@@ -36,7 +36,7 @@ def main() -> int:
     if requirement.get("resource_type") != "baseline_implementation":
         raise SystemExit("Reimplementation scaffold is only for baseline_implementation requirements")
 
-    dest = workspace / "external_executor" / "workdir" / "resources" / "reimplementations" / slugify(args.baseline_name)
+    dest = workspace / "resource" / "reproduction" / slugify(args.baseline_name)
     assert_write_allowed(workspace, dest)
     if dest.exists() and not args.force:
         raise SystemExit(f"Destination exists: {dest}")
@@ -56,6 +56,7 @@ def main() -> int:
         "created_at": utc_now(),
         "requirement_id": args.requirement_id,
         "baseline_name": args.baseline_name,
+        "source_category": "reproduction",
         "implementation_label": "executor_reimplementation",
         "official": False,
         "source_refs": args.source,

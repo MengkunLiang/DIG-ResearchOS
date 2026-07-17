@@ -68,11 +68,14 @@ def main() -> int:
         if args.workspace:
             workspace = resolve_workspace(args.workspace)
             report_path = (
-                workspace / "external_executor/skill_specialization_report.json"
+                workspace / "external_executor/report/skill_specialization_report.json"
             )
         else:
             report_path = Path(args.report).expanduser().resolve()
-            workspace = report_path.parent.parent
+            if report_path.parent.name == "report" and report_path.parent.parent.name == "external_executor":
+                workspace = report_path.parent.parent.parent
+            else:
+                workspace = report_path.parent.parent
 
         report = load_report(report_path)
         status = report.get("status")

@@ -17,8 +17,15 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 
+from ..latex_templates import (
+    is_ccf_package_shell,
+    is_ccf_template_path,
+    render_ccf_package_shell,
+    resolve_latex_template as resolve_catalog_latex_template,
+)
 from ..literature_citations import load_or_build_citation_map
-from ..literature_identity import is_paper_note_file
+from ..runtime.bridge_catalog import load_bridge_catalog_summaries
+from ..runtime.literature_contract import build_literature_manifest, iter_literature_note_cards
 from ..writing_profiles import (
     resolve_venue_writing_profile,
     section_word_budget_ranges,
@@ -1491,12 +1498,17 @@ class BindReviewRoundTool(Tool):
 
 
 def build_resource_index(workspace: Path, *, include_previews: bool = True) -> dict[str, Any]:
+    literature_manifest = build_literature_manifest(workspace, write=True)
     artifacts: list[dict[str, Any]] = []
     for rel in [
         "project.yaml",
         "literature/synthesis.md",
         "literature/synthesis_workbench.json",
         "literature/comparison_table.csv",
+        "literature/bridge_domain_plan.json",
+        "literature/literature_manifest.json",
+        "literature/cross_domain_catalogs/index.json",
+        "literature/cross_domain_catalogs",
         "literature/related_work.bib",
         "ideation/hypotheses.md",
         "ideation/exp_plan.yaml",
@@ -1505,6 +1517,14 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
         "ideation/risks.md",
         "novelty/novelty_report.md",
         "novelty/must_add_baselines.md",
+        "external_executor/executor_research_report.md",
+        "external_executor/result_pack.json",
+        "external_executor/executor_status.json",
+        "external_executor/run_manifest.json",
+        "external_executor/raw_results",
+        "external_executor/configs",
+        "external_executor/logs",
+        "external_executor/expr",
         "experiments/results_summary.json",
         "experiments/integrity_audit.json",
         "experiments/evidence_index.json",
@@ -1525,15 +1545,10 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
         if path.exists():
             artifacts.append(_artifact_entry(workspace, path, include_preview=include_previews))
 
-    note_patterns = [
-        "literature/deep_read_notes/*.md",
-        "literature/shallow_read_notes/*.md",
-        "literature/bridge_notes/**/*.md",
-    ]
-    for pattern in note_patterns:
-        for path in sorted(workspace.glob(pattern)):
-            if is_paper_note_file(path):
-                artifacts.append(_artifact_entry(workspace, path, include_preview=False))
+    for card in iter_literature_note_cards(workspace, include_shallow=True):
+        path = workspace / card.rel_path
+        if path.is_file():
+            artifacts.append(_artifact_entry(workspace, path, include_preview=False))
 
     for pattern in [
         "experiments/runs/**/*",
@@ -1550,6 +1565,22 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
     citation_refs = _extract_citation_reference_summary(workspace)
     citation_quality = _extract_citation_quality_summary(workspace / "literature" / "notes_manifest.json")
     paper_note_cards = _extract_paper_note_cards(workspace)
+    bridge_catalogs = load_bridge_catalog_summaries(
+        workspace,
+        records_per_bridge=2,
+        abstract_excerpt_chars=360,
+    )
+    known_artifact_paths = {str(item.get("path") or "") for item in artifacts if isinstance(item, dict)}
+    for catalog in bridge_catalogs:
+        if not isinstance(catalog, dict):
+            continue
+        for rel in (str(catalog.get("context_path") or ""), str(catalog.get("catalog_path") or "")):
+            if not rel or rel in known_artifact_paths:
+                continue
+            path = workspace / rel
+            if path.is_file():
+                artifacts.append(_artifact_entry(workspace, path, include_preview=False))
+                known_artifact_paths.add(rel)
     result_metrics = _extract_result_metrics(workspace / "experiments" / "results_summary.json")
     result_metrics.extend(_extract_evidence_pack_metrics(workspace / "drafts" / "experiment_evidence_pack.json"))
     result_metrics = _dedupe_metric_records(result_metrics)
@@ -1561,6 +1592,13 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
         "artifacts": artifacts,
         "figures": figures,
         "tables": tables,
+        "literature_manifest_path": "literature/literature_manifest.json",
+        "literature_manifest_sha256": _sha256_path(workspace / "literature" / "literature_manifest.json")
+        if (workspace / "literature" / "literature_manifest.json").is_file()
+        else "",
+        "literature_manifest_counts": literature_manifest.get("counts")
+        if isinstance(literature_manifest.get("counts"), dict)
+        else {},
         "bib_keys": bib_keys,
         "citation_map_summary": citation_refs["summary"],
         "citation_ref_by_note_id": citation_refs["citation_ref_by_note_id"],
@@ -1568,6 +1606,15 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
         "unmapped_note_ids": citation_refs["unmapped_note_ids"],
         "citation_quality": citation_quality,
         "paper_note_cards": paper_note_cards,
+        "cross_domain_catalog_context": {
+            "semantics": "cross_domain_catalog_context_not_direct_manuscript_claim_evidence",
+            "tracks": bridge_catalogs,
+            "usage_boundary": (
+                "Use catalog tracks to explain adjacent history, scope, contrastive positioning, external-validity risks, "
+                "or future reading needs. Catalog records are never citation anchors or direct proof of a mechanism, result, "
+                "baseline equivalence, or novelty assertion; use a linked canonical note for those claims."
+            ),
+        },
         "result_metrics": result_metrics,
         "ablation_columns": ablation_columns,
         "writing_guidance": {
@@ -1686,76 +1733,74 @@ def _extract_paper_note_cards(workspace: Path, *, limit: int = 80) -> list[dict[
             source_file = str(entry.get("source_file") or "").strip()
             if source_file:
                 by_source_file[source_file] = entry
+                by_source_file[Path(source_file).name] = entry
 
     cards: list[dict[str, Any]] = []
-    note_roots = [
-        workspace / "literature" / "deep_read_notes",
-        workspace / "literature" / "bridge_notes",
-        workspace / "literature" / "shallow_read_notes",
-    ]
-    for root in note_roots:
-        if not root.exists():
+    build_literature_manifest(workspace, write=True)
+    for manifest_card in iter_literature_note_cards(workspace, include_shallow=True):
+        path = workspace / manifest_card.rel_path
+        if not path.is_file():
             continue
-        pattern = "**/*.md" if root.name == "bridge_notes" else "*.md"
-        for path in sorted(root.glob(pattern)):
-            if not is_paper_note_file(path):
-                continue
-            text = path.read_text(encoding="utf-8", errors="replace")
-            note_id = path.stem
-            entry = by_source_file.get(path.name) or by_note_id.get(note_id) or {}
-            card = {
-                "note_id": str(entry.get("note_id") or note_id),
-                "paper_id": _markdown_field(text, "ID") or str(entry.get("paper_id") or note_id),
-                "title": _first_markdown_heading(text) or str(entry.get("title") or note_id),
-                "path": _rel_path(workspace, path),
-                "bib_key": str(entry.get("bib_key") or ""),
-                "citation_ref": str(entry.get("citation_ref") or ""),
-                "evidence_level": _evidence_level_from_note(text),
-                "citation_use": _markdown_field(text, "Citation Use") or "unknown",
-                "citation_quality_score": _parse_float(_markdown_field(text, "Citation Quality Score")),
-                "problem_motivation": _note_section_excerpt(text, "1. Problem & Motivation"),
-                "method_overview": _note_section_excerpt(text, "2. Method Overview", "2. Method Summary"),
-                "core_approach_view": _note_section_excerpt(
-                    text,
-                    "A. Core Approach / Perspective",
-                    "A. 核心做法/视角",
-                ),
-                "bridge_point": _note_section_excerpt(text, "B. Bridge Point", "B. 桥接点"),
-                "key_results": _note_section_excerpt(text, "3. Key Results", "3. Key Claimed Results"),
-                "gaps": _note_section_excerpt(text, "9. Weaknesses / Gaps"),
-                "raw_abstract": _note_section_excerpt(text, "Raw Abstract", limit=480),
-                "reading_coverage": _note_section_excerpt(text, "12. Reading Coverage", "Source"),
-                "mechanism_claim": _note_section_excerpt(text, "13. Mechanism Claim"),
-                "design_rationale": _note_section_excerpt(text, "14. Design Rationale"),
-                "artifact_design": _note_section_excerpt(text, "15. Artifact & Design Principles"),
-                "data_view": _note_section_excerpt(text, "16. Data View & Evaluation Mode"),
-                "boundary_conditions": _note_section_excerpt(text, "18. Boundary Conditions"),
-                "cross_paper_tension": _note_section_excerpt(text, "19. Cross-Paper Tension"),
-            }
-            card["sections_available"] = [
-                key
-                for key in (
-                    "problem_motivation",
-                    "method_overview",
-                    "core_approach_view",
-                    "bridge_point",
-                    "key_results",
-                    "gaps",
-                    "mechanism_claim",
-                    "design_rationale",
-                    "artifact_design",
-                    "data_view",
-                    "boundary_conditions",
-                    "cross_paper_tension",
-                    "raw_abstract",
-                )
-                if str(card.get(key) or "").strip()
-            ]
-            card["claim_usable"] = _paper_note_card_claim_usable(card)
-            warning = _paper_note_card_quality_warning(card)
-            if warning:
-                card["quality_warning"] = warning
-            cards.append(card)
+        text = path.read_text(encoding="utf-8", errors="replace")
+        note_id = path.stem
+        rel_path = _rel_path(workspace, path)
+        entry = by_source_file.get(rel_path) or by_source_file.get(path.name) or by_note_id.get(note_id) or {}
+        card = {
+            "note_id": str(entry.get("note_id") or note_id),
+            "paper_id": _markdown_field(text, "ID") or str(entry.get("paper_id") or manifest_card.paper_id or note_id),
+            "title": _first_markdown_heading(text) or str(entry.get("title") or note_id),
+            "path": rel_path,
+            "root_type": manifest_card.root_type,
+            "manifest_evidence_level": manifest_card.evidence_level,
+            "sha256": manifest_card.sha256,
+            "bib_key": str(entry.get("bib_key") or ""),
+            "citation_ref": str(entry.get("citation_ref") or ""),
+            "evidence_level": _evidence_level_from_note(text),
+            "citation_use": _markdown_field(text, "Citation Use") or "unknown",
+            "citation_quality_score": _parse_float(_markdown_field(text, "Citation Quality Score")),
+            "problem_motivation": _note_section_excerpt(text, "1. Problem & Motivation"),
+            "method_overview": _note_section_excerpt(text, "2. Method Overview", "2. Method Summary"),
+            "core_approach_view": _note_section_excerpt(
+                text,
+                "A. Core Approach / Perspective",
+                "A. 核心做法/视角",
+            ),
+            "bridge_point": _note_section_excerpt(text, "B. Bridge Point", "B. 桥接点"),
+            "key_results": _note_section_excerpt(text, "3. Key Results", "3. Key Claimed Results"),
+            "gaps": _note_section_excerpt(text, "9. Weaknesses / Gaps"),
+            "raw_abstract": _note_section_excerpt(text, "Raw Abstract", limit=480),
+            "reading_coverage": _note_section_excerpt(text, "12. Reading Coverage", "Source"),
+            "mechanism_claim": _note_section_excerpt(text, "13. Mechanism Claim"),
+            "design_rationale": _note_section_excerpt(text, "14. Design Rationale"),
+            "artifact_design": _note_section_excerpt(text, "15. Artifact & Design Principles"),
+            "data_view": _note_section_excerpt(text, "16. Data View & Evaluation Mode"),
+            "boundary_conditions": _note_section_excerpt(text, "18. Boundary Conditions"),
+            "cross_paper_tension": _note_section_excerpt(text, "19. Cross-Paper Tension"),
+        }
+        card["sections_available"] = [
+            key
+            for key in (
+                "problem_motivation",
+                "method_overview",
+                "core_approach_view",
+                "bridge_point",
+                "key_results",
+                "gaps",
+                "mechanism_claim",
+                "design_rationale",
+                "artifact_design",
+                "data_view",
+                "boundary_conditions",
+                "cross_paper_tension",
+                "raw_abstract",
+            )
+            if str(card.get(key) or "").strip()
+        ]
+        card["claim_usable"] = _paper_note_card_claim_usable(card)
+        warning = _paper_note_card_quality_warning(card)
+        if warning:
+            card["quality_warning"] = warning
+        cards.append(card)
     cards.sort(
         key=lambda item: (
             not bool(item.get("claim_usable")),
@@ -1860,7 +1905,10 @@ def _parse_float(value: str) -> float:
 
 def build_section_plan(index: dict[str, Any], *, target_venue: str = "", paper_type: str = "auto") -> dict[str, Any]:
     artifact_paths = {item["path"] for item in index.get("artifacts", [])}
-    has_results = "experiments/results_summary.json" in artifact_paths
+    has_results = (
+        "external_executor/executor_research_report.md" in artifact_paths
+        or "experiments/results_summary.json" in artifact_paths
+    )
     has_ablations = "experiments/ablations.csv" in artifact_paths
     has_bib = "literature/related_work.bib" in artifact_paths
     sections = []
@@ -1891,7 +1939,7 @@ def build_section_plan(index: dict[str, Any], *, target_venue: str = "", paper_t
             "drafts/sections/experiments.tex",
             "drafts/sections/analysis.tex",
             "drafts/sections/conclusion.tex",
-            "experiments/results_summary.json",
+            "external_executor/executor_research_report.md",
         ],
         ["problem/method/result/contribution compressed to venue-appropriate abstract"],
         ["Write last after all main sections exist; do not introduce claims absent from the paper."],
@@ -1905,7 +1953,7 @@ def build_section_plan(index: dict[str, Any], *, target_venue: str = "", paper_t
             "drafts/cdr_claim_ledger.json",
             "literature/synthesis.md",
             "ideation/hypotheses.md",
-            "experiments/results_summary.json",
+            "external_executor/executor_research_report.md",
             "drafts/sections/methodology.tex",
             "drafts/sections/experiments.tex",
             "drafts/sections/related_work.tex",
@@ -1926,6 +1974,7 @@ def build_section_plan(index: dict[str, Any], *, target_venue: str = "", paper_t
             "literature/deep_read_notes",
             "literature/shallow_read_notes",
             "literature/bridge_notes",
+            "literature/cross_domain_catalogs",
             "literature/related_work.bib",
             "ideation/idea_scorecard.yaml",
         ],
@@ -1945,8 +1994,8 @@ def build_section_plan(index: dict[str, Any], *, target_venue: str = "", paper_t
             "ideation/idea_scorecard.yaml",
             "ideation/novelty_audit.md",
             "ideation/_design_rationale_tuples",
-            "experiments/configs",
-            "experiments/code",
+            "external_executor/expr",
+            "external_executor/configs",
         ],
         ["method overview", "algorithm/procedure", "implementation details"],
         ["Explain mechanism and design choices; separate proposed method from experimental protocol."],
@@ -1957,10 +2006,10 @@ def build_section_plan(index: dict[str, Any], *, target_venue: str = "", paper_t
             "drafts/paper_state.json",
             "drafts/section_outlines/experiments.md",
             "drafts/alignment_matrix.json",
-            "experiments/results_summary.json",
+            "external_executor/executor_research_report.md",
             "experiments/ablations.csv",
-            "experiments/runs",
-            "experiments/configs",
+            "external_executor/raw_results",
+            "external_executor/configs",
             "experiments/seed_ensemble_summary.json",
             "ideation/exp_plan.yaml",
             "drafts/figure_table_plan.json",
@@ -1977,6 +2026,7 @@ def build_section_plan(index: dict[str, Any], *, target_venue: str = "", paper_t
             "drafts/alignment_matrix.json",
             "drafts/sections/methodology.tex",
             "drafts/sections/experiments.tex",
+            "external_executor/executor_research_report.md",
             "experiments/ablations.csv",
             "experiments/iteration_log.md",
             "ideation/novelty_audit.md",
@@ -1995,7 +2045,7 @@ def build_section_plan(index: dict[str, Any], *, target_venue: str = "", paper_t
             "ideation/risks.md",
             "experiments/iteration_log.md",
             "ideation/novelty_audit.md",
-            "experiments/results_summary.json",
+            "external_executor/executor_research_report.md",
         ],
         ["concise contribution recap", "limitations subsection", "future work"],
         [
@@ -2063,7 +2113,7 @@ def build_evidence_and_figure_plans(
             "candidate_evidence": available(
                 "ideation/hypotheses.md",
                 "ideation/idea_scorecard.yaml",
-                "experiments/results_summary.json",
+                "external_executor/executor_research_report.md",
                 "experiments/ablations.csv",
                 "drafts/experiment_evidence_pack.json",
                 "drafts/result_to_claim.json",
@@ -2093,7 +2143,8 @@ def build_evidence_and_figure_plans(
                 "ideation/hypotheses.md",
                 "ideation/exp_plan.yaml",
                 "ideation/idea_scorecard.yaml",
-                "experiments/configs",
+                "external_executor/expr",
+                "external_executor/configs",
             ),
             "llm_task": "Explain the proposed mechanism and algorithmic procedure from hypotheses and exp_plan; tools do not infer the method.",
             "cdr_field": "design_rationale",
@@ -2103,11 +2154,12 @@ def build_evidence_and_figure_plans(
             "section": "experiments",
             "claim_type": "empirical_result",
             "candidate_evidence": available(
-                "experiments/results_summary.json",
+                "external_executor/executor_research_report.md",
                 "experiments/ablations.csv",
                 "experiments/seed_ensemble_summary.json",
                 "experiments/iteration_log.md",
-                "experiments/integrity_audit.json",
+                "external_executor/raw_results",
+                "external_executor/run_manifest.json",
                 "drafts/experiment_evidence_pack.json",
                 "drafts/result_to_claim.json",
             ),
@@ -2122,6 +2174,7 @@ def build_evidence_and_figure_plans(
             "candidate_evidence": available(
                 "experiments/ablations.csv",
                 "experiments/iteration_log.md",
+                "external_executor/executor_research_report.md",
                 "ideation/novelty_audit.md",
                 "drafts/experiment_evidence_pack.json",
                 "drafts/result_to_claim.json",
@@ -2137,7 +2190,7 @@ def build_evidence_and_figure_plans(
                 "ideation/risks.md",
                 "ideation/novelty_audit.md",
                 "experiments/iteration_log.md",
-                "experiments/integrity_audit.json",
+                "external_executor/executor_research_report.md",
                 "drafts/result_to_claim.json",
                 "novelty/novelty_report.md",
             ),
@@ -2181,7 +2234,10 @@ def build_evidence_and_figure_plans(
             "figure_id": "fig:main_results",
             "type": "result_plot",
             "status": "available_or_generate_from_results",
-            "source_artifacts": available("experiments/results_summary.json", "experiments/runs"),
+            "source_artifacts": available(
+                "external_executor/executor_research_report.md",
+                "external_executor/raw_results",
+            ),
             "intended_section": "experiments",
             "message_slot": "experiments_main_result",
             "notes": "Plot headline metric vs. strongest baselines when result artifacts contain comparable runs.",
@@ -2199,7 +2255,7 @@ def build_evidence_and_figure_plans(
             "table_id": "tab:main_results",
             "type": "result_table",
             "status": "generate_from_results",
-            "source_artifacts": available("experiments/results_summary.json"),
+            "source_artifacts": available("external_executor/executor_research_report.md"),
             "intended_section": "experiments",
             "message_slot": "experiments_main_result",
             "notes": "Prefer a compact table when baselines, metrics, and seed statistics are clearer than a plot.",
@@ -2240,6 +2296,7 @@ def _load_cdr_source_texts(workspace: Path) -> dict[str, str]:
         "ideation/idea_scorecard.yaml",
         "ideation/hypotheses.md",
         "ideation/novelty_audit.md",
+        "external_executor/executor_research_report.md",
         "experiments/results_summary.json",
         "literature/synthesis.md",
         "literature/synthesis_workbench.json",
@@ -2380,6 +2437,7 @@ def build_paper_state(
     note_id_by_bib_key = index.get("note_id_by_bib_key", {}) if isinstance(index, dict) else {}
     unmapped_note_ids = index.get("unmapped_note_ids", []) if isinstance(index, dict) else []
     paper_note_cards = index.get("paper_note_cards", []) if isinstance(index, dict) else []
+    bridge_catalog_context = index.get("cross_domain_catalog_context", {}) if isinstance(index, dict) else {}
     sections: dict[str, dict[str, Any]] = {}
     planned_sections = {
         normalize_section_id(str(item.get("id", ""))): item
@@ -2431,6 +2489,7 @@ def build_paper_state(
             "note_id_by_bib_key": note_id_by_bib_key if isinstance(note_id_by_bib_key, dict) else {},
             "unmapped_note_ids": unmapped_note_ids if isinstance(unmapped_note_ids, list) else [],
             "paper_note_cards": paper_note_cards if isinstance(paper_note_cards, list) else [],
+            "cross_domain_catalog_context": bridge_catalog_context if isinstance(bridge_catalog_context, dict) else {},
             "result_metrics": metrics,
             "claim_slots": claim_slots,
             "planned_visuals": visuals,
@@ -2495,6 +2554,8 @@ def build_section_outlines(
     if isinstance(shared, dict) and isinstance(shared.get("alignment_matrix"), list):
         alignment_rows = [item for item in shared.get("alignment_matrix", []) if isinstance(item, dict)]
     note_cards = shared.get("paper_note_cards", []) if isinstance(shared, dict) and isinstance(shared.get("paper_note_cards"), list) else []
+    bridge_catalog_context = shared.get("cross_domain_catalog_context", {}) if isinstance(shared, dict) and isinstance(shared.get("cross_domain_catalog_context"), dict) else {}
+    bridge_catalogs = bridge_catalog_context.get("tracks") if isinstance(bridge_catalog_context.get("tracks"), list) else []
 
     outlines: dict[str, str] = {}
     for section_id in SECTION_WRITING_SEQUENCE:
@@ -2542,6 +2603,17 @@ def build_section_outlines(
             lines.append("- No seeded internal alignment id found; if the paper has a contribution, read `drafts/alignment_matrix.json` and fill the missing mapping.")
         lines.extend(["", "## Note Card Retrieval Plan"])
         lines.extend(_note_card_retrieval_lines(section_id, note_cards))
+        if bridge_catalogs and section_id in {"introduction", "related_work", "analysis", "conclusion"}:
+            lines.extend(["", "## Cross-domain Catalog Context"])
+            lines.append(
+                "- Catalog tracks are contextual input only. They may sharpen historical framing, contrastive positioning, boundaries, or future-reading needs; do not cite them or treat them as direct mechanism/result evidence."
+            )
+            for catalog in bridge_catalogs[:6]:
+                if not isinstance(catalog, dict):
+                    continue
+                lines.append(
+                    f"- {catalog.get('bridge_id')}: {catalog.get('name') or ''} | records={catalog.get('record_count', 0)} | catalog={catalog.get('catalog_path', '')}"
+                )
         lines.extend(["", "## Claim Slots"])
         for slot in slots_by_section.get(section_id, []):
             lines.append(
@@ -2614,9 +2686,9 @@ def _note_card_retrieval_lines(section_id: str, note_cards: list[Any]) -> list[s
     cards = _section_note_cards(section_id, note_cards, limit=8)
     if not cards:
         if any(isinstance(card, dict) for card in note_cards):
-            lines.append("- Indexed paper-reading notes exist, but none meet the claim-usable threshold for this section; read `literature/deep_read_notes/` or `literature/bridge_notes/` directly for claim evidence, and use `literature/shallow_read_notes/` for background, coverage, trends, or limitations.")
+            lines.append("- Indexed paper-reading notes exist, but none meet the claim-usable threshold for this section. Enumerate `literature/deep_read_notes/`, `literature/bridge_notes/`, and `literature/shallow_read_notes/` with `list_files` or `grep_search`, then read only specific note files and sections; never pass a directory path to `read_file`.")
         else:
-            lines.append("- No structured paper-reading notes are indexed; read `literature/deep_read_notes/`, `literature/shallow_read_notes/`, and `literature/synthesis_workbench.json` directly if citations or coverage context are needed.")
+            lines.append("- No structured paper-reading notes are indexed. Use `literature/synthesis_workbench.json` for bounded coverage context, and only read note files after enumerating concrete files under the canonical note roots.")
         return [f"- {line}" if not line.lstrip().startswith("-") else line for line in lines]
     lines.append("- Relevant indexed note cards:")
     fields = _note_card_fields_for_section(section_id)
@@ -2760,6 +2832,8 @@ def build_section_evidence_supplement(
     note_cards = resource_index.get("paper_note_cards", []) if isinstance(resource_index, dict) else []
     if not isinstance(note_cards, list):
         note_cards = []
+    bridge_catalog_context = resource_index.get("cross_domain_catalog_context", {}) if isinstance(resource_index, dict) else {}
+    bridge_catalogs = bridge_catalog_context.get("tracks") if isinstance(bridge_catalog_context, dict) and isinstance(bridge_catalog_context.get("tracks"), list) else []
     budget = note_card_budget_for_section(section_id)
     requested_min = int(min_cards or 0)
     if requested_min > 0:
@@ -2818,6 +2892,17 @@ def build_section_evidence_supplement(
             _append_section_card(lines, card, fields, weak=True)
     else:
         lines.append("- No additional weak/background cards surfaced.")
+    if bridge_catalogs and section_id in {"introduction", "related_work", "analysis", "conclusion"}:
+        lines.extend(["", "## Cross-domain Catalog Context (Not Citation Evidence)"])
+        lines.append(
+            "- Use these tracks only to locate a historical comparison, adjacent concept, construct boundary, external-validity risk, or reading upgrade. Do not cite a catalog record or use it as direct support for a mechanism, result, baseline equivalence, or novelty claim."
+        )
+        for catalog in bridge_catalogs[:6]:
+            if not isinstance(catalog, dict):
+                continue
+            lines.append(
+                f"- {catalog.get('bridge_id')}: {catalog.get('name') or ''} | records={catalog.get('record_count', 0)} | path={catalog.get('catalog_path', '')}"
+            )
     lines.extend(
         [
             "",
@@ -2833,6 +2918,7 @@ def build_section_evidence_supplement(
         "weak_or_background_count": len(weak_cards),
         "claim_usable_note_ids": [str(card.get("note_id") or "") for card in claim_usable],
         "weak_or_background_note_ids": [str(card.get("note_id") or "") for card in weak_cards],
+        "cross_domain_catalog_count": len(bridge_catalogs),
         "note_card_budget": {**budget, "requested_minimum": requested_min, "selected": len(claim_usable)},
         "retrieval_actions": retrieval_actions,
         "markdown": "\n".join(lines),
@@ -3013,6 +3099,8 @@ def assemble_sections(
                 body_parts=body_parts,
                 bib_stem="related_work",
             )
+        elif is_ccf_package_shell(template_path):
+            rendered = render_ccf_package_shell(template_path, body)
         else:
             rendered = _replace_template_document_body(template_text, body)
     else:
@@ -3089,45 +3177,7 @@ def _repo_root() -> Path:
 
 
 def _resolve_latex_template(repo_root: Path, family: str, template_id: str, writing_language: str) -> Path | None:
-    base = repo_root / "latex_templete"
-    family = str(family or "").strip().lower()
-    template_id = str(template_id or "").strip().lower()
-    writing_language = str(writing_language or "").strip().lower()
-    candidates: list[Path] = []
-    if family == "basic_zh":
-        candidates.append(base / "normal" / "basic_zh.tex")
-    elif family == "basic_en":
-        candidates.append(base / "normal" / "basic_en.tex")
-    elif family == "utd":
-        tid = template_id or "informs"
-        if tid in {"informs", "mnsc", "isre", "isr", "ijds"}:
-            candidates.append(
-                base
-                / "utd"
-                / "informs"
-                / "INFORMS-ISRE-Template-6-10-2024"
-                / "INFORMS-ISRE-Template.tex"
-            )
-            candidates.append(base / "utd" / "informs" / "informs_fallback.tex")
-        candidates.append(base / "utd" / "informs_basic.tex")
-    elif family == "ccf":
-        tid = template_id or "neurips"
-        if tid == "neurips":
-            candidates.append(base / "ccf-latex-templates" / "NeurIPS" / "neurips_2026.tex")
-        elif tid == "kdd":
-            candidates.append(base / "ccf-latex-templates" / "SIGKDD" / "kdd_basic.tex")
-            candidates.extend((base / "ccf-latex-templates" / "SIGKDD").glob("*.tex"))
-        elif tid == "icml":
-            candidates.append(base / "ccf-latex-templates" / "ICML" / "example_paper.tex")
-        elif tid == "iclr":
-            candidates.append(base / "ccf-latex-templates" / "ICLR" / "iclr2026_basic.tex")
-            candidates.append(base / "ccf-latex-templates" / "ICLR" / "iclr2026_conference.sty")
-    if not candidates:
-        candidates.append(base / "normal" / ("basic_zh.tex" if writing_language == "zh" else "basic_en.tex"))
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
+    return resolve_catalog_latex_template(repo_root, family, template_id, writing_language)
 
 
 def _replace_template_document_body(template: str, body: str) -> str:
@@ -3138,16 +3188,88 @@ def _replace_template_document_body(template: str, body: str) -> str:
     rest = template[match.end() :]
     end_match = re.search(r"\\end\{document\}", rest, flags=re.IGNORECASE)
     suffix = rest[end_match.end() :] if end_match else ""
-    preamble = re.sub(r"(?ms)^\\title\{.*?\}\s*", "", preamble)
-    preamble = re.sub(r"(?ms)^\\author\{.*?\}\s*", "", preamble)
-    preamble = re.sub(r"(?m)^\\date\{.*?\}\s*", "", preamble)
+    preamble = _make_optional_template_packages_resilient(_remove_template_title_author(preamble))
     preamble, bib_style = _extract_template_bib_style(preamble, rest)
+    if _uses_automatic_bibliography_style(preamble):
+        bib_style = ""
     body = _set_document_bibliography(
         body,
         bib_stem="related_work",
-        bib_style=bib_style or "plainnat",
+        bib_style=bib_style or ("" if _uses_automatic_bibliography_style(preamble) else "plainnat"),
     )
+    if "{acmart}" in preamble:
+        body = _move_abstract_before_maketitle(body)
     return preamble.rstrip() + "\n\n\\begin{document}\n" + body.strip() + "\n\\end{document}" + suffix
+
+
+def _remove_template_title_author(preamble: str) -> str:
+    """Remove template metadata while respecting nested LaTeX braces."""
+
+    cleaned = preamble
+    for command in ("title", "author", "date"):
+        cleaned = _remove_braced_command(cleaned, command)
+    return cleaned
+
+
+def _remove_braced_command(text: str, command: str) -> str:
+    pattern = re.compile(rf"(?m)^\\{re.escape(command)}\s*\{{")
+    match = pattern.search(text)
+    while match is not None:
+        index = match.end()
+        depth = 1
+        while index < len(text) and depth:
+            char = text[index]
+            if char == "%":
+                newline = text.find("\n", index)
+                index = len(text) if newline < 0 else newline + 1
+                continue
+            if char == "\\":
+                index += 2
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+            index += 1
+        if depth:
+            break
+        text = text[: match.start()] + text[index:].lstrip()
+        match = pattern.search(text)
+    return text
+
+
+def _make_optional_template_packages_resilient(preamble: str) -> str:
+    """Keep cosmetic font packages optional when the TeX installation lacks them."""
+
+    for package in ("inconsolata", "soul"):
+        preamble = re.sub(
+            rf"(?m)^\\usepackage(?:\[[^\]]*\])?\{{{package}\}}\s*$",
+            rf"\\IfFileExists{{{package}.sty}}{{\\usepackage{{{package}}}}}{{}}",
+            preamble,
+        )
+    # Some bundled ACL packages omit acl_natbib.bst. Suppress the package's
+    # implicit style assignment while loading it, then let the assembled
+    # document use the standard plainnat style already present in TeX Live.
+    preamble = re.sub(
+        r"(?m)^(\\usepackage(?:\[[^\]]*\])?\{acl\})\s*$",
+        "\\\\let\\\\researchosoriginalbibstyle\\\\bibliographystyle\n"
+        "\\\\renewcommand{\\\\bibliographystyle}[1]{}\n"
+        r"\1\n"
+        "\\\\let\\\\bibliographystyle\\\\researchosoriginalbibstyle",
+        preamble,
+    )
+    return preamble
+
+
+def _uses_automatic_bibliography_style(preamble: str) -> bool:
+    return bool(re.search(r"\\usepackage(?:\[[^\]]*\])?\{aaai2026\}", preamble))
+
+
+def _move_abstract_before_maketitle(body: str) -> str:
+    """Match acmart's required abstract ordering without changing prose."""
+
+    pattern = re.compile(r"(\\maketitle\s*)(\\begin\{abstract\}.*?\\end\{abstract\}\s*)", re.DOTALL)
+    return pattern.sub(lambda match: match.group(2) + match.group(1), body, count=1)
 
 
 def _is_informs_template(template_path: Path | None, template_text: str) -> bool:
@@ -3156,16 +3278,7 @@ def _is_informs_template(template_path: Path | None, template_text: str) -> bool
 
 
 def _is_ccf_template(template_path: Path | None, template_id: str) -> bool:
-    if not template_path:
-        return False
-    path_text = template_path.as_posix().lower()
-    aliases = {
-        "neurips": "/ccf-latex-templates/neurips/",
-        "kdd": "/ccf-latex-templates/sigkdd/",
-        "icml": "/ccf-latex-templates/icml/",
-        "iclr": "/ccf-latex-templates/iclr/",
-    }
-    return aliases.get(template_id, "") in path_text
+    return is_ccf_template_path(template_path, template_id)
 
 
 def _render_informs_document(
@@ -3367,6 +3480,8 @@ def _set_document_bibliography(body: str, *, bib_stem: str, bib_style: str) -> s
     body = re.sub(r"\\bibliography\{[^}]*\}", lambda _m: f"\\bibliography{{{bib_stem}}}", body)
     if "\\bibliography{" not in body:
         body = body.rstrip() + f"\n\n\\bibliography{{{bib_stem}}}\n"
+    if not bib_style.strip():
+        return body
     return re.sub(
         r"(\\bibliography\{[^}]*\})",
         lambda m: f"\\bibliographystyle{{{bib_style}}}\n" + m.group(1),
@@ -3389,6 +3504,14 @@ def _copy_latex_template_support_files(template_path: Path | None, target_dir: P
 
 def _template_support_sources(template_path: Path) -> list[Path]:
     support = list(template_path.parent.iterdir())
+    # AAAI/IJCAI request classic algorithm packages but their uploaded bundles
+    # omit them. The bundled ICML package contains the same generic files.
+    fallback_root = _repo_root() / "latex_templete" / "ccf-latex-templates" / "ICML"
+    existing = {source.name for source in support}
+    for name in ("algorithm.sty", "algorithmic.sty"):
+        fallback = fallback_root / name
+        if name not in existing and fallback.exists():
+            support.append(fallback)
     if _is_ccf_template(template_path, "iclr") and template_path.suffix.lower() == ".sty":
         shell = template_path.parent / "iclr2026_basic.tex"
         if shell.exists():
@@ -3400,7 +3523,7 @@ def _is_template_support_file(source: Path) -> bool:
     suffix = source.suffix.lower()
     if suffix in {".sty", ".cls", ".bst"}:
         return True
-    if source.name in {"checklist.tex", "iclr2026_basic.tex"}:
+    if source.name in {"checklist.tex", "iclr2026_basic.tex", "preamble.tex"}:
         return True
     return source.stem.lower() == "informs_logo" and suffix in {".pdf", ".eps"}
 
@@ -4699,6 +4822,7 @@ def craft_audit_input_fingerprints(
     deep_read_notes_dir: str = "literature/deep_read_notes",
     shallow_read_notes_dir: str = "literature/shallow_read_notes",
     bridge_notes_dir: str = "literature/bridge_notes",
+    cross_domain_catalogs_dir: str = "literature/cross_domain_catalogs",
     paper_state_path: str = "drafts/paper_state.json",
     alignment_matrix_path: str = "drafts/alignment_matrix.json",
     cdr_claim_ledger_path: str = "drafts/cdr_claim_ledger.json",
@@ -4711,6 +4835,7 @@ def craft_audit_input_fingerprints(
         "deep_read_notes_dir": deep_read_notes_dir,
         "shallow_read_notes_dir": shallow_read_notes_dir,
         "bridge_notes_dir": bridge_notes_dir,
+        "cross_domain_catalogs_dir": cross_domain_catalogs_dir,
         "paper_state": paper_state_path,
         "alignment_matrix": alignment_matrix_path,
         "cdr_claim_ledger": cdr_claim_ledger_path,
@@ -4741,7 +4866,7 @@ REVIEW_ROUND_INPUT_PATHS = {
     "cdr_claim_ledger": "drafts/cdr_claim_ledger.json",
     "alignment_matrix": "drafts/alignment_matrix.json",
     "related_work_bib": "literature/related_work.bib",
-    "results_summary": "experiments/results_summary.json",
+    "executor_research_report": "external_executor/executor_research_report.md",
 }
 
 
@@ -5141,6 +5266,18 @@ def _unique_strings(values: Any) -> list[str]:
 
 def _artifact_entry(workspace: Path, path: Path, *, include_preview: bool) -> dict[str, Any]:
     rel = path.relative_to(workspace).as_posix()
+    # Resource indexes can contain both durable files and contextual roots.
+    # In particular, a Cross-domain catalog root is a meaningful T8 input even
+    # when every configured bridge has zero retrieved records.  Treating it as
+    # a text file makes that valid state crash before related-work context is
+    # compiled.  Direct claim use still flows through canonical note cards;
+    # this entry only inventories the directory.
+    if path.is_dir():
+        return {
+            "path": rel,
+            "kind": "directory",
+            "file_count": sum(1 for child in path.rglob("*") if child.is_file()),
+        }
     entry = {
         "path": rel,
         "kind": _artifact_kind(rel),
