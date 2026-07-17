@@ -1099,6 +1099,8 @@ Bridge cap 是候选级硬边界：同一 confirmed bridge 的候选即使同时
 
 如果 Seed、Bridge 或 citation hub 保护位使实际深读数超过正常目标，abstract sweep 会相应减少浅读目标，使总覆盖仍等于确认的保留候选数；调整会记录在 `shallow_read_manifest.json` 的 `sweep_plan` 中，而不会静默扩大到 backlog。
 
+用户显式给出互相冲突的数字时，Gate 在开始检索前优先保留阅读分配的明确意图。例如输入“候选 20，精读 5，摘要轻读 25”会在确认页说明 `5+25=30`，并把本轮候选数调整为 30，等待确认；它不会把额外 10 篇伪装成从 `papers_backlog.jsonl` 自动补读。
+
 当前排序和处置的核心思想是：
 
 - seed papers 最高优先级

@@ -1097,6 +1097,8 @@ Current core parameters preferentially come from workspace-local `literature/lit
 
 When Seed, Bridge, or citation-hub protection causes the actual deep-read count to exceed its normal target, the abstract sweep reduces the shallow target by the same amount so total coverage remains equal to the confirmed retained-candidate count. The adjustment is recorded in `shallow_read_manifest.json` under `sweep_plan`; it does not silently expand into backlog.
 
+When a user explicitly supplies conflicting numbers, the gate preserves the explicit reading allocation before retrieval begins. For example, `候选 20，精读 5，摘要轻读 25` produces a confirmation notice that `5+25=30` and adjusts the round to 30 candidates. It waits for confirmation rather than disguising the additional 10 papers as automatic reads from `papers_backlog.jsonl`.
+
 The core idea of current ranking and disposition is:
 
 - Seed papers have the highest priority

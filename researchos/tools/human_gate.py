@@ -3672,6 +3672,22 @@ def _format_t2_selected_parameters_summary(value: dict[str, Any]) -> str:
         "effective_non_seed_chinese_action": quality.get("effective_non_seed_chinese_action"),
     }
     lines.extend(_format_t2_explained_summary_lines(explained_summary))
+    coverage_adjustment = data.get("coverage_adjustment")
+    if isinstance(coverage_adjustment, dict):
+        requested = coverage_adjustment.get("requested_active_pool_max")
+        effective = coverage_adjustment.get("effective_active_pool_max")
+        human_summary = str(coverage_adjustment.get("human_summary") or "").strip()
+        lines.extend(
+            [
+                "候选数已按阅读分配调整:",
+                human_summary
+                or (
+                    f"精读与摘要轻读之和超过原候选 {requested} 篇；"
+                    f"本轮候选已调整为 {effective} 篇。"
+                ),
+                "这是在开始 T2 前扩大本轮候选范围，不是从后备清单静默追加阅读。",
+            ]
+        )
     captured = data.get("captured") if isinstance(data.get("captured"), dict) else {}
     parser_source = str(captured.get("parser_source") or "").strip()
     if parser_source:

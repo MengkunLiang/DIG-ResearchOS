@@ -1365,6 +1365,7 @@ def build_literature_param_payload(
     option = _normalize_literature_param_option(selected_option)
     payload = _clone_literature_param_preset(option if option in _LITERATURE_PARAM_PRESETS else "survey_balanced")
     captured = captured or {}
+    coverage_adjustment: dict[str, Any] | None = None
     _apply_literature_quality_overrides(payload, captured, workspace_dir=workspace_dir)
     if option == "custom":
         base_option = _normalize_literature_param_option(
@@ -1404,6 +1405,7 @@ def build_literature_param_payload(
             default=active_default,
             minimum=1,
         )
+        requested_active_pool = active_pool if explicit_active_pool else None
         active_pool = max(active_pool, deep_target)
         if coverage_total is not None:
             active_pool = max(active_pool, coverage_total)
@@ -1419,6 +1421,19 @@ def build_literature_param_payload(
             # reading pool.  This keeps the persisted plan internally
             # consistent instead of creating an impossible T3 coverage gate.
             active_pool = max(active_pool, deep_target + abstract_target)
+        if requested_active_pool is not None and active_pool > requested_active_pool:
+            coverage_adjustment = {
+                "requested_active_pool_max": requested_active_pool,
+                "effective_active_pool_max": active_pool,
+                "deep_read_target": deep_target,
+                "abstract_sweep_target": abstract_target,
+                "reason": "explicit_reading_allocation_exceeds_requested_candidate_count",
+                "human_summary": (
+                    f"精读 {deep_target} 篇与摘要轻读 {abstract_target} 篇合计 {active_pool} 篇，"
+                    f"超过你输入的候选 {requested_active_pool} 篇；"
+                    f"本轮候选已调整为 {active_pool} 篇。"
+                ),
+            }
         if captured.get("deep_read_min") not in (None, ""):
             deep_min = _safe_int(captured.get("deep_read_min"), default=max(1, int(round(deep_target * 0.8))), minimum=1)
             deep_min = min(deep_min, deep_target)
@@ -1494,6 +1509,8 @@ def build_literature_param_payload(
             },
         }
     )
+    if coverage_adjustment is not None:
+        payload["coverage_adjustment"] = coverage_adjustment
     if workspace_dir is not None:
         payload["detected_profile_before_gate"] = _detect_literature_profile_hint(workspace_dir)
     return payload
