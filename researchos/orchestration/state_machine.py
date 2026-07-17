@@ -399,16 +399,10 @@ def _ccf_template_gate_options(*, task_id: str) -> list[dict[str, Any]]:
     next_task = _CCF_TEMPLATE_GATE_TASKS[task_id]
     options: list[dict[str, Any]] = []
     for entry in ccf_template_entries(repo_root=repo_root, available_only=True):
-        package_note = (
-            "使用本地官方 LaTeX 入口。"
-            if entry.has_official_entry
-            else "只有本地 class/style 模板包；ResearchOS 会生成匿名写作外壳，提交前请替换为该 venue 最新官方入口。"
-        )
         options.append(
             {
                 "id": ccf_template_option_id(entry.template_id),
                 "label": entry.label,
-                "description": package_note,
                 "aliases": [entry.template_id, entry.label.casefold()],
                 "next": next_task,
                 "captured_defaults": {
