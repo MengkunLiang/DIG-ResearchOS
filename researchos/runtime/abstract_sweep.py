@@ -98,6 +98,67 @@ def _resolve_config(raw: dict[str, Any] | None) -> dict[str, Any]:
     return cfg
 
 
+def _cap_shallow_target_to_distinct_reading_pool(
+    workspace: Path,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Keep deep and shallow reading within the confirmed distinct-paper pool.
+
+    A confirmed T2/T3 plan defines ``active_pool_max`` as the number of
+    different papers that must receive a reading record.  Protected seed,
+    bridge, or citation-hub records can make the actual deep-read queue larger
+    than its ordinary target.  In that case, the shallow target must shrink by
+    the same amount.  It must not silently pull extra papers from backlog and
+    turn, for example, a 20-paper plan into a 35-paper plan.
+    """
+
+    raw_target = config.get("lite_paper_num")
+    if raw_target in (None, "", "all", "ALL", "all_readable", "ALL_READABLE", "unlimited", "UNLIMITED"):
+        return config
+    try:
+        requested_target = max(0, int(raw_target))
+    except (TypeError, ValueError):
+        return config
+
+    params_path = workspace / WORKSPACE_LITERATURE_PARAMS_REL_PATH
+    queue_path = workspace / "literature" / "deep_read_queue.jsonl"
+    if not params_path.is_file() or not queue_path.is_file():
+        return config
+    try:
+        params = json.loads(params_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return config
+    if not isinstance(params, dict):
+        return config
+    try:
+        active_pool = int(((params.get("t2_finalize") or {}).get("active_pool_max")))
+    except (AttributeError, TypeError, ValueError):
+        return config
+    if active_pool < 1:
+        return config
+
+    deep_count = sum(
+        1
+        for record in load_jsonl(queue_path)
+        if str(record.get("read_disposition") or "").strip() == "deep_read"
+        and record.get("triaged_out") is not True
+    )
+    remaining_shallow_capacity = max(0, active_pool - deep_count)
+    if requested_target <= remaining_shallow_capacity:
+        return config
+
+    adjusted = dict(config)
+    adjusted["configured_lite_paper_num"] = requested_target
+    adjusted["lite_paper_num"] = remaining_shallow_capacity
+    adjusted["distinct_pool_adjustment"] = {
+        "active_pool_max": active_pool,
+        "actual_deep_read_count": deep_count,
+        "effective_shallow_target": remaining_shallow_capacity,
+        "reason": "actual_deep_read_count_exceeds_the_planned_deep_read_allocation",
+    }
+    return adjusted
+
+
 # ---------------------------------------------------------------------------
 # Candidate selection
 # ---------------------------------------------------------------------------
@@ -108,7 +169,7 @@ def build_sweep_candidates(
 ) -> list[dict]:
     """从 verified/dedup/backlog 中筛选 abstract sweep 候选。"""
 
-    cfg = _resolve_config(config)
+    cfg = _cap_shallow_target_to_distinct_reading_pool(workspace, _resolve_config(config))
     lite_raw = cfg.get("lite_paper_num")
     if lite_raw in (None, "", "all", "ALL", "all_readable", "ALL_READABLE", "unlimited", "UNLIMITED"):
         lite_num: int | None = None
@@ -358,7 +419,7 @@ def _abstract_sweep_plan_summary(workspace: Path, config: dict[str, Any], candid
         queue_counts[read_disposition] = queue_counts.get(read_disposition, 0) + 1
         role = str(candidate.get("t2_pool_role") or "unknown")
         source_roles[role] = source_roles.get(role, 0) + 1
-    return {
+    summary = {
         "target_total": target_total,
         "existing_shallow_read_notes": existing_notes,
         "remaining_target": remaining_target,
@@ -368,6 +429,11 @@ def _abstract_sweep_plan_summary(workspace: Path, config: dict[str, Any], candid
         "candidate_queue_dispositions": queue_counts,
         "candidate_source_roles": source_roles,
     }
+    adjustment = config.get("distinct_pool_adjustment")
+    if isinstance(adjustment, dict):
+        summary["distinct_pool_adjustment"] = adjustment
+        summary["configured_target_total"] = config.get("configured_lite_paper_num")
+    return summary
 
 
 def _has_abstract(record: dict[str, Any]) -> bool:
@@ -1312,7 +1378,7 @@ def _run_abstract_sweep_sync(
 ) -> dict:
     """Synchronous compatibility path used by tests/offline runs."""
 
-    cfg = _resolve_config(config)
+    cfg = _cap_shallow_target_to_distinct_reading_pool(workspace, _resolve_config(config))
     if not cfg.get("enabled", False):
         return {"enabled": False, "candidates_found": 0, "notes_generated": 0}
 
@@ -1430,7 +1496,7 @@ async def _run_abstract_sweep_async(
     provider_context_window: int | None = None,
     prompt_token_counter: PromptTokenCounter | None = None,
 ) -> dict:
-    cfg = _resolve_config(config)
+    cfg = _cap_shallow_target_to_distinct_reading_pool(workspace, _resolve_config(config))
     if not cfg.get("enabled", False):
         return {"enabled": False, "candidates_found": 0, "notes_generated": 0}
 
@@ -1669,7 +1735,7 @@ def validate_abstract_sweep_coverage(
     ``lite_paper_num`` selected by the researcher.
     """
 
-    cfg = _resolve_config(config)
+    cfg = _cap_shallow_target_to_distinct_reading_pool(workspace, _resolve_config(config))
     if not cfg.get("enabled", False):
         return True, None
     target = _numeric_lite_target(cfg)

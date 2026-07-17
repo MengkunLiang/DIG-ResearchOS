@@ -1097,6 +1097,8 @@ Bridge cap 是候选级硬边界：同一 confirmed bridge 的候选即使同时
 
 `active_pool_max` 在 gate 中称为“保留候选数”，它也是本轮不同论文的阅读覆盖上限。T2 从检索结果中保留这些论文进入后续阅读处置，并在其中分配 deep-read 与 abstract-only 轻读，因此这两个数量应相加为保留候选数，而不是在候选数之外再次叠加。它不是最终引用篇数；超出部分仍写入 `papers_backlog.jsonl`，可追溯和回捞。`deep_read_target` 是正常精读目标，`deep_read_max` 是保护位和高优先级 seed/bridge/citation hub 合并后的精读上限；保护项会占用精读名额，而不是无限额外追加。`deep_read_queue.jsonl` 同时是保留候选的阅读处置账本：deep-read 记录由 T3 精读，shallow 记录由 abstract sweep 生成 abstract-only 轻量笔记；超过 `bridge_pool_cap` 的 bridge 记录标为 `read_disposition=deferred` 与 `triaged_reason=bridge_pool_cap_exceeded`，默认不进入轻读证据，但保留覆盖账本和人工回捞路径。缺摘要的 metadata-only 候选进入 `metadata_triage.md` 批量报告；它们不算 abstract note 证据，并会尽量由 backlog 中有摘要/PDF 的候选替换，以完成已经确认的阅读覆盖。无 `deep_read_queue` 的旧 workspace fallback 仍使用 `expected_notes_ratio=1.0`，默认要求输入池 100% 覆盖。
 
+如果 Seed、Bridge 或 citation hub 保护位使实际深读数超过正常目标，abstract sweep 会相应减少浅读目标，使总覆盖仍等于确认的保留候选数；调整会记录在 `shallow_read_manifest.json` 的 `sweep_plan` 中，而不会静默扩大到 backlog。
+
 当前排序和处置的核心思想是：
 
 - seed papers 最高优先级
