@@ -66,6 +66,10 @@ maximum_rounds: 3
 family_similarity_threshold: 0.45
 complexity_growth_ratio_limit: 1.8
 one_repair_attempt_per_route: true
+# Crossover compatibility reviews use a nested Gene Donor Map. Deterministic
+# aliases are normalized first; remaining semantic shape errors can receive
+# this many replacement-review attempts without creating a Child prematurely.
+crossover_structured_repair_attempts: 3
 # Candidate dossiers carry a large evidence-bound schema. Limit concurrent
 # provider calls so repairs do not saturate a single endpoint and turn a short
 # P0 formation phase into a queue of long-running requests.

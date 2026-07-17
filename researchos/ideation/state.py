@@ -623,21 +623,21 @@ class T4ArtifactStore:
         """Normalize resumable crossover records and leave an audit receipt.
 
         Older providers sometimes wrote a full complexity explanation into the
-        enum-sized ``complexity_risk`` field.  The model-level normalizer keeps
-        that explanation as a conflict note and uses a conservative high-risk
-        label, but a completed workspace should not have to rely on every
-        future consumer remembering to serialize that normalization.  This
-        migration rewrites only successfully parsed compatibility decisions,
-        never touches plans, Parents, Children, or scientific prose outside
-        the original decision record.
+        enum-sized ``complexity_risk`` field or omitted the ``donors`` envelope
+        around an otherwise explicit Gene Donor Map. The model-level normalizer
+        retains the original decision semantics, but a completed workspace
+        should not rely on every future consumer remembering that conversion.
+        This migration rewrites only successfully parsed compatibility
+        decisions, never touches plans, Parents, Children, or scientific prose
+        outside the original decision record.
         """
 
         plans_dir = self.path("ideation/evolution/plans")
-        receipt_rel = "ideation/evolution/migrations/crossover_compatibility_v2.json"
+        receipt_rel = "ideation/evolution/migrations/crossover_compatibility_v3.json"
         receipt: dict[str, Any] = {
             "schema_version": "1.0.0",
             "semantics": "t4_crossover_compatibility_migration",
-            "migration": "crossover_compatibility_v2",
+            "migration": "crossover_compatibility_v3",
             "scanned_plan_paths": [],
             "migrated_plan_paths": [],
             "migrated_decision_count": 0,

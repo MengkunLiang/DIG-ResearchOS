@@ -434,8 +434,9 @@ class LLMCandidateEnricher(IdeaEnricherPort):
 class LLMIdeaScorer(IdeaScoringPort):
     """Independent scorer. Its payload omits route, lineage, and ranking fields."""
 
-    def __init__(self, invoker: LLMJsonRoleInvoker) -> None:
+    def __init__(self, invoker: LLMJsonRoleInvoker, *, crossover_structured_repair_attempts: int = 3) -> None:
         self.invoker = invoker
+        self.crossover_structured_repair_attempts = max(1, min(int(crossover_structured_repair_attempts), 8))
 
     async def score_population(self, *, candidates: list[CandidateDossier], scoring_batch_id: str, blind: bool) -> list[ScoreReport]:
         return await self._score_population(
@@ -787,21 +788,36 @@ class LLMIdeaScorer(IdeaScoringPort):
                 for left, right in pairs if left in by_id and right in by_id
             ],
         }
-        data = await self._invoke_crossover_review(payload=payload, repair_reason="")
-        try:
-            return _parse_crossover_decisions(data, pair_by_id)
-        except ValueError as exc:
-            # Compatibility review is scorer-only. One repair can correct a
-            # field-direction/schema mistake but never authorizes a Child.
-            payload["repair_reason"] = str(exc)[:1600]
-            data = await self._invoke_crossover_review(payload=payload, repair_reason=str(exc))
-            return _parse_crossover_decisions(data, pair_by_id)
+        data = await self._invoke_crossover_review(payload=payload, repair_reason="", repair_attempt=0)
+        for repair_attempt in range(0, self.crossover_structured_repair_attempts + 1):
+            try:
+                return _parse_crossover_decisions(data, pair_by_id)
+            except ValueError as exc:
+                if repair_attempt >= self.crossover_structured_repair_attempts:
+                    raise
+                # Compatibility review is scorer-only. A replacement review
+                # can correct field-direction/schema mistakes but can never
+                # authorize a Child without the same strict downstream checks.
+                payload["repair_reason"] = str(exc)[:1600]
+                data = await self._invoke_crossover_review(
+                    payload=payload,
+                    repair_reason=str(exc),
+                    repair_attempt=repair_attempt + 1,
+                )
+        raise RuntimeError("unreachable crossover repair loop")
 
-    async def _invoke_crossover_review(self, *, payload: dict[str, Any], repair_reason: str) -> dict[str, Any]:
+    async def _invoke_crossover_review(
+        self,
+        *,
+        payload: dict[str, Any],
+        repair_reason: str,
+        repair_attempt: int,
+    ) -> dict[str, Any]:
         repair_instruction = ""
         if repair_reason:
             repair_instruction = (
-                " This is one structured-output repair. Return a complete replacement decisions array. The previous output failed because: "
+                f" This is structured-output repair attempt {repair_attempt} of {self.crossover_structured_repair_attempts}. "
+                "Return a complete replacement decisions array. The previous output failed because: "
                 f"{repair_reason[:900]}. For every approved decision, `proposed_gene_donor_map.donors` must map canonical genome gene names "
                 "such as `problem`, `mechanism`, or `validation_logic` to one of that pair's exact parent IDs. Do not reverse this mapping, "
                 "use prose as a donor ID, or create a Child."

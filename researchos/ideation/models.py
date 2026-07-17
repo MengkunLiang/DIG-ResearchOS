@@ -1367,6 +1367,21 @@ _CROSSOVER_EXPLANATION_KEYS = (
     "assessment",
     "value",
 )
+_CROSSOVER_DONOR_GENE_NAMES = frozenset(
+    {
+        "problem",
+        "opportunity",
+        "challenged_assumption",
+        "core_thesis",
+        "mechanism",
+        "design_or_artifact",
+        "contribution_package",
+        "hypothesis_bundle",
+        "validation_logic",
+        "boundary_conditions",
+        "risks",
+    }
+)
 _CROSSOVER_AUXILIARY_FIELDS = (
     "explanation",
     "reviewer_explanation",
@@ -1404,6 +1419,34 @@ def _normalize_crossover_review_payload(value: Any) -> Any:
     normalized = dict(value)
     decision = normalize_crossover_decision(normalized.get("decision"))
     normalized["decision"] = decision
+
+    # Some providers persist an approved donor map directly as
+    # ``{problem: ParentA, mechanism: ParentB}`` instead of the typed
+    # ``{donors: {...}}`` envelope. This conversion is safe only when every
+    # key is an explicit canonical genome gene and every value remains a
+    # stable string candidate ID. It changes no donor assignment, creates no
+    # new gene, and is therefore valid for both live output and legacy resume.
+    donor_map = normalized.get("proposed_gene_donor_map")
+    if decision == "approved" and isinstance(donor_map, dict) and not isinstance(donor_map.get("donors"), dict):
+        flat_donors = {
+            str(gene).strip(): str(donor).strip()
+            for gene, donor in donor_map.items()
+            if str(gene).strip() in _CROSSOVER_DONOR_GENE_NAMES and isinstance(donor, str) and donor.strip()
+        }
+        unsupported_keys = {
+            str(gene).strip()
+            for gene in donor_map
+            if str(gene).strip() not in _CROSSOVER_DONOR_GENE_NAMES | {"synthesized_genes"}
+        }
+        if flat_donors and not unsupported_keys and len(flat_donors) == len(
+            [gene for gene in donor_map if str(gene).strip() in _CROSSOVER_DONOR_GENE_NAMES]
+        ):
+            synthesized = donor_map.get("synthesized_genes")
+            normalized["proposed_gene_donor_map"] = {
+                "donors": flat_donors,
+                "synthesized_genes": synthesized if isinstance(synthesized, list) else [],
+            }
+
     for field in (
         "problem_compatibility",
         "bottleneck_complementarity",
@@ -1575,6 +1618,27 @@ class CrossoverCompatibilityDecision(_StrictModel):
         if isinstance(value, (tuple, set)):
             return [" ".join(str(item).split()) for item in value if " ".join(str(item).split())]
         return value
+
+    @model_validator(mode="after")
+    def approved_donor_map_integrity(self) -> "CrossoverCompatibilityDecision":
+        """Require an approved map to stay inside the reviewed pair.
+
+        The LLM adapter already performs this check for live responses. Keeping
+        it on the durable model closes the resume/migration path as well, so a
+        legacy flat map can receive its missing envelope without authorizing a
+        donor from a different Candidate or an unrecognized genome field.
+        """
+
+        if self.decision != "approved":
+            return self
+        donor_map = self.proposed_gene_donor_map
+        if donor_map is None:
+            raise ValueError("approved crossover requires a Gene Donor Map")
+        if not set(donor_map.donors).issubset(_CROSSOVER_DONOR_GENE_NAMES):
+            raise ValueError("approved crossover uses an unsupported Gene Donor Map key")
+        if not set(donor_map.donors.values()).issubset(set(self.parent_ids)):
+            raise ValueError("approved crossover uses a donor outside the reviewed pair")
+        return self
 
 
 class HumanCompositionCompatibility(_StrictModel):

@@ -3794,14 +3794,18 @@ class AgentRunner:
             ),
             call=role_call,
         )
+        t4_settings = load_t4_evolution_settings()
         generator = LLMIdeaGenerator(invoker)
         enricher = LLMCandidateEnricher(invoker)
-        scorer = LLMIdeaScorer(invoker)
+        scorer = LLMIdeaScorer(
+            invoker,
+            crossover_structured_repair_attempts=t4_settings.crossover_structured_repair_attempts,
+        )
         evolver = LLMIdeaEvolver(invoker)
         final_card_compiler = LLMFinalIdeaCardCompiler(invoker)
         controller = IdeaEvolutionController(
             workspace_dir=ctx.workspace_dir,
-            settings=load_t4_evolution_settings(),
+            settings=t4_settings,
             generator=generator,
             scorer=scorer,
             evolver=evolver,
@@ -3819,6 +3823,8 @@ class AgentRunner:
             # proves the active Population, Portfolio, candidate dossiers and
             # independent scores agree, then writes only the missing receipt.
             # It never creates a Candidate or changes a score.
+            compatibility_migration = store.migrate_crossover_compatibility_records()
+            ctx.extra["t4_compatibility_migration"] = compatibility_migration
             cards_before_recovery, _cards_before_recovery_error = validate_t4_portfolio_final_cards(ctx.workspace_dir)
             if not cards_before_recovery:
                 reconciled_checkpoint, reconciliation_error = store.ensure_final_card_checkpoint_for_completed_population(

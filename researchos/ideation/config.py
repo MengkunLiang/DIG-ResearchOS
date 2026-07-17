@@ -82,6 +82,10 @@ class T4EvolutionSettings(_ConfigModel):
     family_similarity_threshold: float = Field(default=0.45, ge=0, le=1)
     complexity_growth_ratio_limit: float = Field(default=1.8, ge=1, le=5)
     one_repair_attempt_per_route: bool = True
+    # Crossover reviewers return a compact but nested schema. Keep several
+    # repair attempts available for semantic field-shape mistakes; this is
+    # separate from provider/network retries and never auto-approves a Child.
+    crossover_structured_repair_attempts: int = Field(default=3, ge=1, le=8)
     route_max_concurrency: int = Field(default=2, ge=1, le=4)
     # Score reports are evidence-dense. Small sequential batches keep a long
     # population from truncating its later candidates at the provider boundary.

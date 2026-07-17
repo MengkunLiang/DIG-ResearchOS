@@ -2689,12 +2689,12 @@ class StateMachine:
         compatibility_migration: dict[str, Any] | None = None
         recovery_stage = ""
         if workspace_dir is not None:
-            cards_ready, raw_card_error = validate_t4_portfolio_final_cards(workspace_dir)
-            card_error = str(raw_card_error or "")
             operation = state.task_context.get("t4_operation_request")
             try:
                 store = T4ArtifactStore(workspace_dir)
                 compatibility_migration = store.migrate_crossover_compatibility_records()
+                cards_ready, raw_card_error = validate_t4_portfolio_final_cards(workspace_dir)
+                card_error = str(raw_card_error or "")
                 if not cards_ready:
                     # Older runs can complete survival and write Portfolio
                     # before the durable pre-card receipt introduced later.
@@ -2776,7 +2776,7 @@ class StateMachine:
                         "status": compatibility_migration.get("status"),
                         "migrated_decision_count": compatibility_migration.get("migrated_decision_count"),
                         "unresolved_count": len(compatibility_migration.get("unresolved") or []),
-                        "receipt": "ideation/evolution/migrations/crossover_compatibility_v2.json",
+                        "receipt": "ideation/evolution/migrations/crossover_compatibility_v3.json",
                     }
                     if isinstance(compatibility_migration, dict)
                     else None
