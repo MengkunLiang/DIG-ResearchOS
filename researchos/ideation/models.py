@@ -362,6 +362,11 @@ class ProvisionalHypothesis(_StrictModel):
     mechanism: str = Field(min_length=1)
     observable_prediction: str = Field(min_length=1)
     discriminating_test: str = Field(min_length=1)
+    # This is a forward-looking implication of the provisional hypothesis,
+    # not a claim that it has already been established.  Keeping it here lets
+    # a Child retain useful scientific interpretation without confusing it
+    # with a Contribution-level result.
+    what_changes_if_true: str = ""
     evidence_status: str = "proposed_not_verified"
 
     _id = field_validator("hypothesis_id")(_validate_identifier)
@@ -1125,6 +1130,7 @@ class CreativeContext(_StrictModel):
     evidence_status: Literal["supported", "conjectural", "mixed"] = "conjectural"
     verification_required: bool = True
     reading_or_validation_upgrades: list[str] = Field(default_factory=list)
+    extended_validation_design: str = ""
 
 
 class CandidateDossier(_StrictModel):

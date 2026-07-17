@@ -2564,6 +2564,33 @@ def _parse_offspring_response(
 
 _SOURCE_REF_FIELDS = frozenset({"source_path", "locator", "citation_key", "paper_id", "note"})
 _IDEA_GENE_FIELDS = frozenset({"value", "provenance"})
+_CANDIDATE_STATUS_ALIASES = {
+    # A model commonly uses these labels to mean that it has proposed a new
+    # candidate.  Before survival selection, the lifecycle state is owned by
+    # the controller, so every such newly emitted Candidate is active.
+    "draft": CandidateStatus.ACTIVE.value,
+    "proposed": CandidateStatus.ACTIVE.value,
+    "proposal": CandidateStatus.ACTIVE.value,
+    "pending": CandidateStatus.ACTIVE.value,
+    "pending_review": CandidateStatus.ACTIVE.value,
+    "under_review": CandidateStatus.ACTIVE.value,
+}
+_LINEAGE_CREATED_BY_ALIASES = {
+    "idea_evolver": "evolver",
+    "idea_evolver_agent": "evolver",
+    "ideaevolveragent": "evolver",
+    "candidate_evolver": "evolver",
+    "idea_generator": "generator",
+    "idea_generator_agent": "generator",
+    "ideageneratoragent": "generator",
+}
+_COMPLEXITY_INFLATION_ALIASES = {
+    "minimal": "low",
+    "minor": "low",
+    "moderate": "medium",
+    "major": "high",
+    "severe": "high",
+}
 _GENOME_GENE_NAMES = (
     "problem",
     "opportunity",
@@ -2580,7 +2607,7 @@ _GENOME_GENE_NAMES = (
 
 
 def _normalize_candidate_dossier_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Normalize repeated EvidenceAtom display fields before strict validation.
+    """Normalize non-scientific provider aliases before strict validation.
 
     The model receives both the Candidate and Evidence schemas.  It can copy
     display-only fields such as ``reading_level`` into a nested ``SourceRef``
@@ -2590,6 +2617,31 @@ def _normalize_candidate_dossier_payload(payload: dict[str, Any]) -> dict[str, A
     """
 
     normalized = dict(payload)
+    raw_status = normalized.get("status")
+    if isinstance(raw_status, str):
+        status_key = re.sub(r"[\s-]+", "_", raw_status.strip().casefold())
+        if status_key in _CANDIDATE_STATUS_ALIASES:
+            normalized["status"] = _CANDIDATE_STATUS_ALIASES[status_key]
+
+    lineage = normalized.get("lineage")
+    if isinstance(lineage, dict):
+        normalized_lineage = dict(lineage)
+        raw_created_by = normalized_lineage.get("created_by")
+        if isinstance(raw_created_by, str):
+            created_by_key = re.sub(r"[\s-]+", "_", raw_created_by.strip().casefold())
+            if created_by_key in _LINEAGE_CREATED_BY_ALIASES:
+                normalized_lineage["created_by"] = _LINEAGE_CREATED_BY_ALIASES[created_by_key]
+        raw_complexity = normalized_lineage.get("complexity_inflation")
+        if isinstance(raw_complexity, str):
+            # The controller independently recomputes complexity from the
+            # Child and Parents. This field is only the model's lifecycle
+            # annotation, so a labeled explanation such as
+            # "moderate: added a control" can safely retain its severity.
+            complexity_key = re.split(r"[:;,(]", raw_complexity, maxsplit=1)[0].strip().casefold()
+            if complexity_key in _COMPLEXITY_INFLATION_ALIASES:
+                normalized_lineage["complexity_inflation"] = _COMPLEXITY_INFLATION_ALIASES[complexity_key]
+        normalized["lineage"] = normalized_lineage
+
     artifacts = normalized.pop("artifacts", None)
     if "artifact_paths" not in normalized and isinstance(artifacts, list):
         normalized["artifact_paths"] = [str(item) for item in artifacts if isinstance(item, str)]

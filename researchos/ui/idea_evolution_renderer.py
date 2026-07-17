@@ -356,7 +356,22 @@ def _render_offspring_event(output: Console, *, status: str, payload: dict[str, 
         return
 
     reason = str(payload.get("failure_reason") or "").strip()
-    parts = [f"× {parent} 的 Child 未保留", "两次生成或结构修复后仍未通过计划约束；Parent 保留"]
+    failure_kind = str(payload.get("failure_kind") or "").strip()
+    if failure_kind == "structured_output":
+        parts = [
+            f"! {parent} 的 Child 输出格式待修复",
+            "尚未进入科学评估或生存筛选；Parent 保留，恢复后可重试",
+        ]
+    elif failure_kind == "plan_contract":
+        parts = [
+            f"× {parent} 的 Child 未被采纳",
+            "不符合已批准的演化计划约束；Parent 保留",
+        ]
+    else:
+        parts = [
+            f"! {parent} 的 Child 本轮未形成可用结果",
+            "尚未据此判断研究方向价值；Parent 保留，恢复后可重试",
+        ]
     if reason:
         parts.append(f"记录：{reason}")
     if progress:

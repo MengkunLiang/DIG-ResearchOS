@@ -80,6 +80,44 @@ _NO_CHILD_CROSSOVER_PLAN_STATUSES = frozenset(
 )
 
 
+def _classify_offspring_failure(error: Exception) -> str:
+    """Keep model-format failures distinct from scientific plan rejection.
+
+    A malformed Candidate is never evidence that an Evolution Plan is a bad
+    research direction.  The classification controls only recovery artifacts
+    and normal UI wording; admission still uses the same strict validation.
+    """
+
+    message = str(error).casefold()
+    if any(
+        marker in message
+        for marker in (
+            "validation error for",
+            "input should be",
+            "extra inputs are not permitted",
+            "field required",
+            "invalid json",
+            "returned a non-object child",
+            "must return a children array",
+            "deferred_plans must be an array",
+        )
+    ):
+        return "structured_output"
+    if any(
+        marker in message
+        for marker in (
+            "does not match an approved evolution plan",
+            "multiple offspring match the same approved evolution plan",
+            "offspring must never overwrite a parent",
+            "evolution output must contain exactly one child",
+            "does not preserve approved parent lineage",
+            "does not match the approved crossover",
+        )
+    ):
+        return "plan_contract"
+    return "generation_or_repair"
+
+
 def _meaningful_explanation(value: object) -> bool:
     text = " ".join(str(value or "").split())
     return bool(text) and not bool(_EXPLANATION_PLACEHOLDER_RE.fullmatch(text))
@@ -1931,10 +1969,11 @@ class IdeaEvolutionController:
                         continue
                     self._validate_children(generated, [plan], parents)
                 except Exception as repair_error:
+                    failure_kind = _classify_offspring_failure(repair_error)
                     self._write_offspring_diagnostic(plan=plan, attempt=2, error=repair_error)
-                    # The Parent Population remains valid. Archive this one failed
-                    # plan and continue with any Children that did satisfy the
-                    # lineage and evidence contract; a later user request can
+                    # The Parent Population remains valid. Record this failed
+                    # attempt and continue with any Children that did satisfy
+                    # the lineage and evidence contract; a later resume can
                     # regenerate the plan without replaying the entire round.
                     self.store.write_json(
                         f"ideation/evolution/offspring/{re.sub(r'[^a-zA-Z0-9_.-]+', '_', plan.plan_id).strip('_') or 'evolution_plan'}.failed.json",
@@ -1945,7 +1984,14 @@ class IdeaEvolutionController:
                             "plan_fingerprint": plan.plan_fingerprint,
                             "input_fingerprint": input_fingerprint,
                             "run_config_fingerprint": run_config_fingerprint,
-                            "status": "archived_after_repair",
+                            "status": (
+                                "blocked_for_structured_output_repair"
+                                if failure_kind == "structured_output"
+                                else "not_admitted_after_plan_validation"
+                                if failure_kind == "plan_contract"
+                                else "retryable_generation_or_repair_failure"
+                            ),
+                            "failure_kind": failure_kind,
                             "reason": str(repair_error),
                         },
                     )
@@ -1958,6 +2004,7 @@ class IdeaEvolutionController:
                             completed=plan_index,
                             total=total_plans,
                             failure_reason=str(repair_error),
+                            failure_kind=failure_kind,
                         ),
                     )
                     continue
@@ -1994,6 +2041,7 @@ class IdeaEvolutionController:
         child: CandidateDossier | None = None,
         deferral: EvolutionPlanDeferral | None = None,
         failure_reason: str = "",
+        failure_kind: str = "",
     ) -> dict[str, Any]:
         """Expose only artifact-backed Child lifecycle facts to the UI layer."""
 
@@ -2033,6 +2081,7 @@ class IdeaEvolutionController:
             "deferral_reason": deferral.rationale if deferral is not None else "",
             "revisit_condition": deferral.revisit_condition if deferral is not None else "",
             "failure_reason": failure_reason,
+            "failure_kind": failure_kind,
             "completed": max(0, completed),
             "total": max(0, total),
         }
