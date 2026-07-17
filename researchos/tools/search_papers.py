@@ -8,6 +8,7 @@ from __future__ import annotations
 - 返回给 LLM 的内容尽量紧凑，但 `data` 中保留结构化字段，方便后续 agent 写文件。
 """
 
+import asyncio
 from datetime import datetime
 import os
 from typing import Any, Literal
@@ -64,8 +65,20 @@ class SearchPapersTool(Tool):
 
     def __init__(self, s2_api_key: str | None = None):
         self.s2_api_key = s2_api_key or os.environ.get("S2_API_KEY")
+        # Tool instances are built once per Agent run.  Keep provider health
+        # in that narrow scope so a temporary public API outage does not make
+        # the model spend the rest of the same run issuing paraphrased queries.
+        self._temporarily_unavailable_sources: set[str] = set()
+        # Tool calls from one LLM response are scheduled concurrently.  A
+        # narrow lock lets the first failing request establish provider health
+        # before queued paraphrases can start their own network waits.
+        self._search_lock = asyncio.Lock()
 
     async def execute(self, **kwargs: Any) -> ToolResult:
+        async with self._search_lock:
+            return await self._execute_serialized(**kwargs)
+
+    async def _execute_serialized(self, **kwargs: Any) -> ToolResult:
         params = SearchPapersParams(**kwargs)
         query = clean_search_query(params.query)
         if not query:
@@ -77,10 +90,29 @@ class SearchPapersTool(Tool):
         params.bridge_id = None
         papers: list[dict[str, Any]] = []
         source_used = params.source
+        source_failures: list[dict[str, Any]] = []
+        completed_sources: list[str] = []
 
-        if params.source in {"auto", "semantic_scholar"}:
+        requested_sources = self._requested_sources(params.source)
+        available_sources = [
+            source
+            for source in requested_sources
+            if source not in self._temporarily_unavailable_sources
+        ]
+        if not available_sources:
+            return self._provider_circuit_open_result(
+                params=params,
+                query_bucket=query_bucket,
+                bridge_id=bridge_id,
+            )
+
+        if (
+            params.source in {"auto", "semantic_scholar"}
+            and "semantic_scholar" in available_sources
+        ):
             try:
                 papers = await self._s2_search(params)
+                completed_sources.append("semantic_scholar")
             except ModuleNotFoundError:
                 return ToolResult(
                     ok=False,
@@ -88,15 +120,30 @@ class SearchPapersTool(Tool):
                     error="dependency_missing",
                 )
             except Exception as exc:
-                is_http_error = httpx is not None and isinstance(exc, httpx.HTTPError)
-                if params.source == "semantic_scholar" or not is_http_error:
+                if not self._is_expected_http_failure(exc):
                     raise ToolRuntimeError(self.name, exc) from exc
+                failure = self._provider_failure("semantic_scholar", exc)
+                source_failures.append(failure)
+                if bool(failure.get("retriable")):
+                    self._temporarily_unavailable_sources.add("semantic_scholar")
+                if params.source == "semantic_scholar":
+                    return self._search_failure_result(
+                        params=params,
+                        query_bucket=query_bucket,
+                        bridge_id=bridge_id,
+                        source_failures=source_failures,
+                    )
             if papers:
                 source_used = "semantic_scholar"
 
-        if not papers and params.source in {"auto", "arxiv"}:
+        if (
+            not papers
+            and params.source in {"auto", "arxiv"}
+            and "arxiv" in available_sources
+        ):
             try:
                 papers = await self._arxiv_search(params)
+                completed_sources.append("arxiv")
             except ModuleNotFoundError:
                 return ToolResult(
                     ok=False,
@@ -104,8 +151,30 @@ class SearchPapersTool(Tool):
                     error="dependency_missing",
                 )
             except Exception as exc:
-                raise ToolRuntimeError(self.name, exc) from exc
+                if not self._is_expected_http_failure(exc):
+                    raise ToolRuntimeError(self.name, exc) from exc
+                failure = self._provider_failure("arxiv", exc)
+                source_failures.append(failure)
+                if bool(failure.get("retriable")):
+                    self._temporarily_unavailable_sources.add("arxiv")
+                return self._search_failure_result(
+                    params=params,
+                    query_bucket=query_bucket,
+                    bridge_id=bridge_id,
+                    source_failures=source_failures,
+                )
             source_used = "arxiv"
+
+        # A provider can have been circuit-open before this invocation while
+        # the other provider fails now.  Do not turn that dual outage into a
+        # misleading successful empty result.
+        if source_failures and not completed_sources:
+            return self._search_failure_result(
+                params=params,
+                query_bucket=query_bucket,
+                bridge_id=bridge_id,
+                source_failures=source_failures,
+            )
 
         papers = filter_usable_papers(papers)
 
@@ -119,6 +188,128 @@ class SearchPapersTool(Tool):
                 "query": params.query,
                 "query_bucket": query_bucket,
                 "bridge_id": bridge_id,
+                "source_failures": source_failures,
+                "completed_sources": completed_sources,
+            },
+        )
+
+    @staticmethod
+    def _requested_sources(source: Literal["semantic_scholar", "arxiv", "auto"]) -> list[str]:
+        if source == "auto":
+            return ["semantic_scholar", "arxiv"]
+        return [source]
+
+    @staticmethod
+    def _is_expected_http_failure(exc: Exception) -> bool:
+        return httpx is not None and isinstance(exc, httpx.HTTPError)
+
+    @staticmethod
+    def _provider_label(provider: str) -> str:
+        return "Semantic Scholar" if provider == "semantic_scholar" else "arXiv"
+
+    def _provider_failure(self, provider: str, exc: Exception) -> dict[str, Any]:
+        """Describe an expected public-API failure without exposing a traceback.
+
+        ``scholarly_http_failure`` is also used by metadata retrieval.  Reusing
+        its classification keeps retry and provenance semantics identical while
+        allowing a multi-source search to retain both attempted providers.
+        """
+
+        from .http_outcomes import scholarly_http_failure
+
+        result = scholarly_http_failure(
+            source=self._provider_label(provider),
+            exc=exc,
+            attempts=1,
+            fallback_available=provider == "semantic_scholar",
+            action="论文检索",
+        )
+        return {
+            "provider": provider,
+            "display_source": self._provider_label(provider),
+            **result.data,
+        }
+
+    def _search_failure_result(
+        self,
+        *,
+        params: SearchPapersParams,
+        query_bucket: str | None,
+        bridge_id: str | None,
+        source_failures: list[dict[str, Any]],
+    ) -> ToolResult:
+        providers = [str(item.get("provider") or "") for item in source_failures]
+        temporary_all_source_failure = (
+            params.source == "auto"
+            and set(self._requested_sources("auto")).issubset(providers)
+            and all(bool(item.get("retriable")) for item in source_failures)
+        )
+        if temporary_all_source_failure:
+            error = "retrieval_temporarily_unavailable"
+            content = (
+                "外部论文检索暂时不可用，本轮未新增论文。Semantic Scholar 与 arXiv 均未能完成请求；"
+                "请停止本轮同义或近似查询，使用已有的本地论文卡、阅读笔记和比较表继续审计，"
+                "并在报告中明确近期外部覆盖未完成。"
+            )
+        else:
+            error = str(source_failures[-1].get("failure_class") or "external_search_failed")
+            content = (
+                "外部论文检索未完成，本轮未新增论文。请记录该来源覆盖限制；"
+                "不要把未检出论文表述为已完成的近期文献覆盖。"
+            )
+        return ToolResult(
+            ok=False,
+            content=content,
+            error=error,
+            data={
+                "source": params.source,
+                "query": params.query,
+                "query_bucket": query_bucket,
+                "bridge_id": bridge_id,
+                "attempted_sources": providers,
+                "source_failures": source_failures,
+                "failure_class": error,
+                "retriable": any(bool(item.get("retriable")) for item in source_failures),
+                "fallback_available": False,
+            },
+        )
+
+    def _provider_circuit_open_result(
+        self,
+        *,
+        params: SearchPapersParams,
+        query_bucket: str | None,
+        bridge_id: str | None,
+    ) -> ToolResult:
+        requested_sources = self._requested_sources(params.source)
+        source_failures = [
+            {
+                "provider": provider,
+                "display_source": self._provider_label(provider),
+                "failure_class": "provider_circuit_open",
+                "retriable": True,
+                "circuit_open": True,
+            }
+            for provider in requested_sources
+        ]
+        return ToolResult(
+            ok=False,
+            content=(
+                "外部论文检索在本轮已确认暂时不可用；为避免重复等待，未发起相近查询。"
+                "请基于已有本地证据继续，并在审计中把近期外部覆盖标记为未完成。"
+            ),
+            error="retrieval_temporarily_unavailable",
+            data={
+                "source": params.source,
+                "query": params.query,
+                "query_bucket": query_bucket,
+                "bridge_id": bridge_id,
+                "attempted_sources": requested_sources,
+                "source_failures": source_failures,
+                "failure_class": "retrieval_temporarily_unavailable",
+                "retriable": True,
+                "fallback_available": False,
+                "circuit_open": True,
             },
         )
 

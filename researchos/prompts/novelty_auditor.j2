@@ -88,25 +88,32 @@
 - 应用场景关键词（当前任务、数据、约束、用户群或使用场景）
 - 技术组合（如果存在，写清每个组件的作用和组合动机）
 
-#### 2.2 搜索近期相关工作
-使用 `search_papers` 搜索近12个月的相关工作：
+#### 2.2 先用本地证据，再做收缩的近期检索
 
-**搜索策略**：
-- 查询1：核心方法 + 应用场景
-- 查询2：核心技术术语 / 机制术语
-- 查询3：问题描述 / failure mode / evaluation setting
+先读取并使用当前工作区已经保存的 `synthesis.md`、`comparison_table.csv`、论文卡、深读/部分全文笔记、bridge notes 和 cross-domain catalog。它们是本轮审计的首要可核验证据。摘要笔记只能帮助定位近期趋势、反例和补检线索，不能单独确认 mechanism collision 或 true collision。
 
-**搜索参数**：
+外部检索只补充当前语料没有覆盖的近期工作。按共享机制、问题框架或 baseline 缺口把假设聚成少量检索簇，而不是机械地为每个假设重复相似查询。每个检索簇先执行 **一个** 聚焦查询，优先使用“核心机制 + 任务/应用边界”，并限制返回规模：
+
 ```python
 search_papers(
     query="<核心概念>",
     source="auto",
-    max_results=30,
+    max_results=12,
     year_from={{ recent_year_from }}  # 近12个月按运行日期动态计算
 )
 ```
 
-对每篇搜索到的论文，判断相似度：
+只有当首个查询成功、且仍有一项明确且重要的机制歧义、疑似撞车或必要 baseline 未解决时，才可追加 **一个** 更窄的查询（`max_results<=10`）。不要因为不同假设共享术语而复述检索，也不要为了满足数量要求追加泛化或同义改写查询。
+
+若 `search_papers` 返回 timeout、network_unavailable、rate_limited、`retrieval_temporarily_unavailable` 或包含 `circuit_open=true`：
+
+- 立即停止本轮全部同义、近似和改写的外部查询，不要换关键词重试；
+- 在 `novelty_audit.md` 的“搜索策略”和“风险提示”中写明“外部近期检索暂时不可用”，列出已尝试的来源和未覆盖边界；
+- 继续使用已有的可核验本地材料完成有条件的审计，但只能表述为“在可用语料中未发现碰撞”，不得写成“已完成近期外部文献覆盖”或“未发现任何相关工作”；
+- 将外部覆盖限制纳入 Final Gate Verdict 的不确定性说明。不得编造新论文、作者、年份或检索命中数。
+
+对每篇真实检索到的论文，判断相似度：
+
 - **High Overlap（高度重叠）**: 核心方法几乎一样，只是参数或数据集不同
 - **Medium Overlap（中度重叠）**: 有部分重叠但有明显差异化空间
 - **Low Overlap（低度重叠）**: 相关但方法不同
@@ -163,16 +170,16 @@ extract_design_rationale_tuple(
 
 `contribution_type=routine` 不是禁止记录，但不能作为通过结论；如果最后发现 routine，Final Gate Verdict 必须要求回到 T4 或重新 framing。
 
-#### 2.36 用 Mechanism Query 搜索（第4类查询）
+#### 2.36 必要时补充 Mechanism Query
 
-除了原有的3类搜索查询，新增第4类 mechanism-focused 查询：
+只有当已有本地论文卡、首个外部查询结果和 comparison table 仍无法澄清关键机制是否相同，且本轮外部检索尚未失败时，才可补充一个 mechanism-focused 查询。它不是每个假设的必做步骤：
 
 ```python
-# 查询4: mechanism-focused
+# 可选的机制澄清查询
 search_papers(
     query="<input_signal> <mechanism 前50字符>",
     source="auto",
-    max_results=15,
+    max_results=10,
     year_from={{ recent_year_from }}
 )
 ```
@@ -487,13 +494,14 @@ search_papers(
 ## 重要规则与约束
 
 ### 1. 搜索规则
-- **必须**使用 `search_papers` 搜索近12个月的工作（year_from={{ recent_year_from }}）
-- 每个假设至少执行2-3次不同角度的搜索
+- 先使用本地可核验语料，再以每个检索簇一个聚焦 `search_papers` 查询补充近12个月工作（year_from={{ recent_year_from }}）
+- 首次成功但留有明确关键缺口时，每个检索簇最多追加一个更窄查询；不得为了数量而重复搜索
+- 一旦外部检索返回网络/超时/限流或本轮 circuit-open 结果，停止本轮后续相近查询，记录未完成的外部覆盖边界
 - 不编造论文信息，所有论文必须来自真实搜索结果
-- 如果搜索失败，在报告中说明，但不阻塞流程
+- 外部检索失败不阻塞流程，但不允许把“可用本地语料未发现碰撞”写成完整的近期文献核验
 
 ### 2. 判定规则
-- 新颖性等级判定必须基于搜索结果和对比分析
+- 新颖性等级判定必须基于可核验的本地或真实外部搜索结果及对比分析；外部检索不可用时，结论必须带明示覆盖边界
 - 不要过于乐观（避免漏掉撞车风险）
 - 不要过于悲观：无相近 baseline 是高新颖/高风险信号，不是降级理由
 - Level 0 判定必须有明确的High Overlap证据
