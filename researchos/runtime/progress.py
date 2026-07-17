@@ -453,6 +453,7 @@ class CliProgressEmitter:
         agent: str,
         step: int,
         elapsed_seconds: int,
+        phase_elapsed_seconds: int | None = None,
         activity: str | None = None,
         next_artifact: str | None = None,
         artifact_completed: int | None = None,
@@ -474,6 +475,7 @@ class CliProgressEmitter:
                 run_id=run_id,
                 step=step,
                 elapsed_seconds=elapsed_seconds,
+                phase_elapsed_seconds=phase_elapsed_seconds,
                 activity=activity,
                 next_artifact=next_artifact,
                 artifact_completed=artifact_completed,
@@ -485,7 +487,10 @@ class CliProgressEmitter:
         if task_id == "T4":
             pulses = ("◐", "◓", "◑", "◒")
             pulse = pulses[(elapsed_seconds // 12) % len(pulses)]
-            self.emit(f"{stage_display_name(task_id)}：{pulse} 已等待 {elapsed_seconds}s，正在{activity or '整理研究构思与依据'}。")
+            self.emit(
+                f"{stage_display_name(task_id)}：{pulse} 本次模型调用已等待 {elapsed_seconds}s，"
+                f"正在{activity or '整理研究构思与依据'}。"
+            )
             return
         self.emit(f"[{stage_display_name(task_id)}] 正在等待模型返回；本次调用已持续 {elapsed_seconds}s。")
 

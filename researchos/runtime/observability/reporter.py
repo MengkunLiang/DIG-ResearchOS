@@ -580,6 +580,7 @@ class StageReporter:
         artifact_total: int | None,
         current_deliverable: str | None = None,
         following_phase: str | None = None,
+        phase_elapsed_seconds: int | None = None,
     ) -> None:
         """Render one compact, replaceable public model-wait heartbeat.
 
@@ -607,6 +608,7 @@ class StageReporter:
             payload={
                 "step": step,
                 "elapsed_seconds": elapsed_seconds,
+                "phase_elapsed_seconds": phase_elapsed_seconds,
                 "status": status,
                 "activity": public_activity,
                 "next_artifact": next_artifact or "未提供",
@@ -634,7 +636,7 @@ class StageReporter:
         required_parts = [f"[{stage_display_name(task_id)}] {pulse}", status, display_activity]
         optional_parts: list[str] = []
         if elapsed_seconds is not None:
-            required_parts.insert(2, f"已等待 {elapsed_seconds}s")
+            required_parts.insert(2, f"本次调用已等待 {elapsed_seconds}s")
         if artifact_progress:
             optional_parts.append(artifact_progress)
         deliverable = current_deliverable or next_artifact
@@ -703,6 +705,7 @@ class StageReporter:
         artifact_total: int | None,
         current_deliverable: str | None = None,
         following_phase: str | None = None,
+        phase_elapsed_seconds: int | None = None,
     ) -> None:
         """Compatibility entry point for the richer T4 public milestone."""
 
@@ -711,6 +714,7 @@ class StageReporter:
             run_id=run_id,
             step=step,
             elapsed_seconds=elapsed_seconds,
+            phase_elapsed_seconds=phase_elapsed_seconds,
             activity=activity,
             next_artifact=next_artifact,
             artifact_completed=artifact_completed,

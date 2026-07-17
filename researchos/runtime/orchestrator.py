@@ -2410,10 +2410,11 @@ class AgentRunner:
         ):
             self._refresh_t4_gate1_progress(ctx, active_path=None, announce=False)
         heartbeat = self._t4_heartbeat_context(ctx)
-        # Initialize the logical stage timer before issuing the first provider
-        # request.  The initial submission remains instantaneous in the UI;
-        # later heartbeats report accumulated phase duration, including retries
-        # made by T4.5, T5, and T8.
+        # Keep a phase-level timer for trace/debug observability, but never use
+        # it as the normal UI wait counter. One T4 phase can contain several
+        # distinct model calls, such as generating Children and then scoring
+        # their union. Showing the accumulated phase total beside a fresh
+        # scoring call falsely makes that call look stalled.
         self._heartbeat_phase_elapsed_seconds(ctx, heartbeat)
         self.progress.llm_request_started(task_id=ctx.task_id, step=step, **heartbeat)
         task = asyncio.create_task(self.llm.chat(**kwargs))
@@ -2433,12 +2434,15 @@ class AgentRunner:
                     self._refresh_t4_gate1_progress(ctx, active_path=None, announce=False)
                 heartbeat = self._t4_heartbeat_context(ctx)
                 phase_elapsed = self._heartbeat_phase_elapsed_seconds(ctx, heartbeat)
-                elapsed = phase_elapsed if phase_elapsed is not None else request_elapsed
                 self.progress.llm_waiting(
                     task_id=ctx.task_id,
                     agent=self.agent.spec.name,
                     step=step,
-                    elapsed_seconds=elapsed,
+                    # The researcher-facing line means this exact provider
+                    # request. It resets at every model call, including a
+                    # new call after a tool result or a completed Child.
+                    elapsed_seconds=request_elapsed,
+                    phase_elapsed_seconds=phase_elapsed,
                     **heartbeat,
                 )
                 self._record_skill_progress(
@@ -2446,7 +2450,14 @@ class AgentRunner:
                     step=step,
                     step_limit=progress_step_limit,
                     phase="awaiting_llm",
-                    detail=f"模型调用仍在等待，已持续 {elapsed}s。",
+                    detail=(
+                        f"本次模型调用仍在等待，已持续 {request_elapsed}s。"
+                        + (
+                            f"当前可见阶段累计 {phase_elapsed}s。"
+                            if phase_elapsed is not None
+                            else ""
+                        )
+                    ),
                 )
                 # The first heartbeat remains at 12s. T4 uses a 30-second
                 # cadence because concurrent route calls can be active; all
