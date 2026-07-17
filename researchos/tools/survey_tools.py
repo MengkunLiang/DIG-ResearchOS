@@ -12,6 +12,7 @@ import math
 import hashlib
 import re
 import textwrap
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -2685,6 +2686,9 @@ class ExpandSurveyCorpusTool(Tool):
             completed_query_keys=completed_query_keys,
             status="searching",
             phase="targeted_retrieval",
+            retrieved_record_count=len(retrieved),
+            search_log_path=f"{params.supplement_dir}/search_log.jsonl",
+            partial_records_path=f"{params.supplement_dir}/papers_retrieved.partial.jsonl",
         )
         search_tool = MultiSourceSearchTool()
         for index, item in enumerate(query_plan, start=1):
@@ -2741,6 +2745,11 @@ class ExpandSurveyCorpusTool(Tool):
                 completed_query_keys=completed_query_keys,
                 status="searching",
                 phase="targeted_retrieval",
+                last_completed_query_key=query_key,
+                last_completed_query_index=index,
+                retrieved_record_count=len(retrieved),
+                search_log_path=f"{params.supplement_dir}/search_log.jsonl",
+                partial_records_path=f"{params.supplement_dir}/papers_retrieved.partial.jsonl",
             )
         deduplicated = _deduplicate_survey_supplement_records(retrieved)[:target_record_count]
         _write_survey_expansion_checkpoint(
@@ -2750,6 +2759,9 @@ class ExpandSurveyCorpusTool(Tool):
             completed_query_keys=completed_query_keys,
             status="materializing",
             phase="pdf_acquisition_and_note_materialization",
+            retrieved_record_count=len(deduplicated),
+            search_log_path=f"{params.supplement_dir}/search_log.jsonl",
+            partial_records_path=f"{params.supplement_dir}/papers_retrieved.partial.jsonl",
         )
         # Supplement candidates belong to the same availability contract as
         # retained T2 candidates.  Try their open PDFs now, but keep their
@@ -2841,6 +2853,9 @@ class ExpandSurveyCorpusTool(Tool):
             status="completed",
             phase="completed",
             output_path=params.output_path,
+            retrieved_record_count=len(deduplicated),
+            search_log_path=f"{params.supplement_dir}/search_log.jsonl",
+            partial_records_path=f"{params.supplement_dir}/papers_retrieved.partial.jsonl",
         )
         return ToolResult(ok=True, content=payload["summary"], data=payload)
 
@@ -3123,6 +3138,11 @@ def _write_survey_expansion_checkpoint(
     status: str,
     phase: str,
     output_path: str = "",
+    last_completed_query_key: str = "",
+    last_completed_query_index: int | None = None,
+    retrieved_record_count: int = 0,
+    search_log_path: str = "",
+    partial_records_path: str = "",
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -3134,6 +3154,12 @@ def _write_survey_expansion_checkpoint(
         "completed_query_count": len(completed_query_keys),
         "completed_query_keys": sorted(completed_query_keys),
         "output_path": output_path,
+        "last_completed_query_key": last_completed_query_key,
+        "last_completed_query_index": last_completed_query_index,
+        "retrieved_record_count": max(0, int(retrieved_record_count)),
+        "search_log_path": search_log_path,
+        "partial_records_path": partial_records_path,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -3145,7 +3171,7 @@ def _positive_int(value: object) -> int | None:
         result = int(str(value).strip())
     except (TypeError, ValueError):
         return None
-    return result if 4 <= result <= 60 else None
+    return result if result > 0 else None
 
 
 def _read_json(path: Path) -> dict[str, Any]:

@@ -123,7 +123,7 @@ T2_AUTO_PERSIST_SEARCH_TOOLS = frozenset(
         "fetch_outgoing_citations",
     }
 )
-TOOL_FAILURE_CACHE_NAMES = frozenset({"fetch_paper_pdf"})
+TOOL_FAILURE_CACHE_NAMES = frozenset({"fetch_paper_pdf", "expand_corpus_for_survey"})
 TOOL_CONTEXT_CONTENT_LIMITS = {
     # PDF 文本工具是 T3 上下文膨胀的主要来源。工具自身也有上限，这里再加
     # runtime 兜底，防止未来工具改动或异常 PDF 解析再次把长文本塞进模型。
@@ -1407,6 +1407,7 @@ class AgentRunner:
                 pause_requested = False
                 pause_reason: str | None = None
                 pause_tool_name: str | None = None
+                pause_tool_data: dict[str, object] = {}
                 for tool_call, tool_msg in zip(assistant_msg.tool_calls, tool_msgs):
                     messages.append(tool_msg)
                     trace.write_message(tool_msg)
@@ -1493,6 +1494,8 @@ class AgentRunner:
                         pause_requested = True
                         pause_reason = tool_msg.content or "需要用户输入，但当前输入不可用。"
                         pause_tool_name = tool_call.name
+                        raw_pause_data = tool_msg.metadata.get("data")
+                        pause_tool_data = dict(raw_pause_data) if isinstance(raw_pause_data, dict) else {}
                 for note in post_tool_runtime_notes:
                     messages.append(note)
                     trace.write_message(note)
@@ -1500,11 +1503,29 @@ class AgentRunner:
                 if pause_requested:
                     stop_reason = AgentResult.STOP_INTERRUPTED
                     error_msg = pause_reason
+                    recovery_kind = "human_input" if pause_tool_name == "ask_human" else "environment"
+                    recovery_details: dict[str, object] = {"tool_name": pause_tool_name or "unknown"}
+                    if pause_tool_name == "expand_corpus_for_survey":
+                        recovery_kind = "survey_retrieval"
+                        # This is a checkpointed multi-query operation. Keep
+                        # progress on the recovery boundary so resume can
+                        # continue it without making the model retry blindly.
+                        for key in (
+                            "checkpoint_path",
+                            "checkpoint_available",
+                            "status",
+                            "phase",
+                            "completed_query_count",
+                            "query_count",
+                            "retrieved_record_count",
+                        ):
+                            if key in pause_tool_data:
+                                recovery_details[key] = pause_tool_data[key]
                     self._mark_runtime_recovery(
                         ctx,
-                        kind=("human_input" if pause_tool_name == "ask_human" else "environment"),
+                        kind=recovery_kind,
                         error=error_msg,
-                        details={"tool_name": pause_tool_name or "unknown"},
+                        details=recovery_details,
                     )
                     self.progress.emit(f"[Runtime] 当前任务暂停：{pause_reason}", important=True)
                     break
@@ -3781,6 +3802,25 @@ class AgentRunner:
             operation = ctx.extra.get("t4_operation_request")
             operation_action = str(operation.get("action") or "") if isinstance(operation, dict) else ""
             directive = operation.get("directive") if isinstance(operation, dict) and isinstance(operation.get("directive"), dict) else {}
+            # Reconcile the narrow legacy gap between a completed survival
+            # snapshot and the Final Card checkpoint before deciding whether
+            # T4 must run an Evolution round.  This is deterministic: it
+            # proves the active Population, Portfolio, candidate dossiers and
+            # independent scores agree, then writes only the missing receipt.
+            # It never creates a Candidate or changes a score.
+            cards_before_recovery, _cards_before_recovery_error = validate_t4_portfolio_final_cards(ctx.workspace_dir)
+            if not cards_before_recovery:
+                reconciled_checkpoint, reconciliation_error = store.ensure_final_card_checkpoint_for_completed_population(
+                    operation=operation if isinstance(operation, dict) else None,
+                )
+                if reconciled_checkpoint is not None:
+                    ctx.extra["t4_final_card_checkpoint_reconciled"] = True
+                    self.progress.emit(
+                        "T4 · 已识别已完成的 Population；正在从保存的 Portfolio 补齐决策卡，不会重新演化候选。",
+                        important=True,
+                    )
+                elif reconciliation_error:
+                    ctx.extra["t4_final_card_checkpoint_reconciliation_error"] = reconciliation_error
             # A recoverable Card Compiler failure can happen after a human
             # operation has already produced a new Population. The durable
             # checkpoint is written before the first card call and binds that
@@ -4024,10 +4064,15 @@ class AgentRunner:
             card_errors: list[dict[str, object]] = []
             if not cards_ready:
                 try:
-                    max_card_attempts = int(self.retry_policy.get("t4_final_card_compiler_attempts", 3))
+                    max_card_attempts = int(self.retry_policy.get("t4_final_card_compiler_attempts", 4))
                 except (TypeError, ValueError):
-                    max_card_attempts = 3
-                max_card_attempts = max(1, min(max_card_attempts, 5))
+                    max_card_attempts = 4
+                # A Card compiler repair is bounded separately from Candidate
+                # Evolution. The default gives complex card decks six typed
+                # repair attempts. Twelve remains an explicit safety ceiling
+                # so a malformed response cannot become an invisible retry
+                # loop. This quota never re-runs evolution.
+                max_card_attempts = max(1, min(max_card_attempts, 12))
                 for attempt in range(1, max_card_attempts + 1):
                     try:
                         final_cards = await final_card_compiler.compile(
@@ -4519,6 +4564,22 @@ class AgentRunner:
         """Use the normal provider recovery policy for one typed T4 role call."""
 
         retry_batches, cooldown, long_cooldown = self._llm_provider_recovery_policy()
+        native_t4_recovery = bool(
+            self._is_t4_ideation_agent(ctx)
+            and ctx.extra.get("t4_evolution_active")
+            and not self._t4_gate1_user_selection_exists(ctx)
+        )
+        if native_t4_recovery:
+            # Native T4 must not open an in-memory provider menu while its
+            # state machine still says RUNNING. That menu has no durable Gate
+            # receipt and can leave a shell waiting indefinitely after a
+            # provider disconnect. Keep a small, visible automatic window,
+            # then return through the normal recoverable T4 boundary.
+            try:
+                t4_retry_batches = int(self.retry_policy.get("t4_provider_retry_batches", 2))
+            except (TypeError, ValueError):
+                t4_retry_batches = 2
+            retry_batches = max(1, min(t4_retry_batches, 5))
         failed_batches = 0
         while True:
             budget.tick_step()
@@ -4547,6 +4608,30 @@ class AgentRunner:
                 if not self._is_recoverable_provider_error(exc):
                     raise RecoverableRuntimePause(self._public_provider_error_message(exc)) from exc
                 failed_batches += 1
+                if native_t4_recovery and failed_batches >= retry_batches:
+                    phase_key = str(ctx.extra.get("t4_heartbeat_phase_key") or "t4_role")
+                    safe_phase = re.sub(r"[^a-zA-Z0-9_.-]+", "_", phase_key).strip("_") or "t4_role"
+                    try:
+                        T4ArtifactStore(ctx.workspace_dir).write_json(
+                            f"ideation/evolution/diagnostics/provider_recovery_{safe_phase}.json",
+                            {
+                                "schema_version": "1.0.0",
+                                "semantics": "t4_provider_recovery_diagnostic",
+                                "phase": phase_key,
+                                "automatic_retry_batches": retry_batches,
+                                "failed_batches": failed_batches,
+                                "error_category": "recoverable_provider_unavailable",
+                                "error_summary": self._public_provider_error_message(exc),
+                                "next_action": "resume_t4_from_durable_checkpoint",
+                                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                            },
+                        )
+                    except (OSError, ValueError):
+                        pass
+                    raise RecoverableRuntimePause(
+                        "T4 模型服务连续不可用；已保存当前阶段的检查点和诊断。"
+                        "本次不会在内部输入窗口无限等待；请在恢复页查看诊断后 resume。"
+                    ) from exc
                 action, delay = await self._choose_llm_provider_recovery(
                     ctx=ctx,
                     budget=budget,
@@ -6026,13 +6111,20 @@ class AgentRunner:
                 if budget is not None and tc.name == "ask_human":
                     budget.exclude_wall_time(time.time() - tool_execute_started)
         except asyncio.TimeoutError:
+            timeout_data, timeout_content, timeout_error = self._resumable_tool_timeout_details(
+                ctx=ctx,
+                tool_name=tc.name,
+                arguments=model_dump(parsed),
+                timeout_seconds=tool_timeout,
+            )
             tool_msg = Message.tool(
                 tool_call_id=tc.id,
                 name=tc.name,
-                content=f"Tool timed out after {tool_timeout}s",
+                content=timeout_content,
                 is_error=True,
                 step=step,
                 duration_ms=int((time.time() - started) * 1000),
+                metadata={"data": timeout_data, "error": timeout_error},
             )
             self._remember_tool_failure(failure_cache_key, tool_msg, tool_failure_cache)
             if run_logger is not None:
@@ -6041,8 +6133,8 @@ class AgentRunner:
                     model_dump(parsed),
                     ok=False,
                     content=tool_msg.content,
-                    data={},
-                    error="timeout",
+                    data=timeout_data,
+                    error=timeout_error,
                     duration_ms=tool_msg.duration_ms,
                     metadata=tool_msg.metadata,
                     step=step,
@@ -6431,14 +6523,19 @@ class AgentRunner:
     def _is_recoverable_tool_pause(tool_name: str, tool_msg: Message) -> bool:
         """Return true for tool failures that should pause instead of burning retries."""
 
-        if tool_name not in {"ask_human", "docker_exec", "latex_compile"}:
-            return False
         if not tool_msg.metadata.get("is_error"):
             return False
         error = tool_msg.metadata.get("error")
         data = tool_msg.metadata.get("data")
         if isinstance(data, dict) and not error:
             error = data.get("error")
+        # The survey supplement persists each completed query. A timeout can
+        # therefore represent useful work, and must become one durable
+        # checkpointed pause instead of another LLM tool-call retry.
+        if tool_name == "expand_corpus_for_survey":
+            return error == "timeout_resumable"
+        if tool_name not in {"ask_human", "docker_exec", "latex_compile"}:
+            return False
         if error == "human_input_unavailable":
             return True
         content = tool_msg.content or ""
@@ -6467,7 +6564,65 @@ class AgentRunner:
                 return (tool_name, f"paper_id:{paper_id}")
             if save_path:
                 return (tool_name, f"save_path:{save_path}")
+        if tool_name == "expand_corpus_for_survey":
+            # A timed-out supplement retrieval persists after each completed
+            # query. Repeating the same request in the same model turn cannot
+            # make useful progress and obscures the resume instruction.
+            return (tool_name, json.dumps(arguments, ensure_ascii=False, sort_keys=True, default=str))
         return None
+
+    @staticmethod
+    def _resumable_tool_timeout_details(
+        *,
+        ctx: ExecutionContext,
+        tool_name: str,
+        arguments: dict[str, object],
+        timeout_seconds: float,
+    ) -> tuple[dict[str, object], str, str]:
+        """Expose a durable checkpoint when a resumable tool exceeds its cap."""
+
+        default_content = f"Tool timed out after {timeout_seconds:g}s"
+        if tool_name != "expand_corpus_for_survey":
+            return {}, default_content, "timeout"
+        checkpoint_rel = str(
+            arguments.get("checkpoint_path") or "literature/survey_supplement/expansion_checkpoint.json"
+        ).strip().lstrip("./")
+        if not checkpoint_rel:
+            return {}, default_content, "timeout"
+        try:
+            checkpoint_path = (ctx.workspace_dir / checkpoint_rel).resolve()
+            workspace = ctx.workspace_dir.resolve()
+            checkpoint_path.relative_to(workspace)
+            payload = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return (
+                {"resumable": True, "checkpoint_path": checkpoint_rel, "checkpoint_available": False},
+                default_content
+                + ". Targeted survey retrieval is resumable; rerun the same action after checking its workspace checkpoint.",
+                "timeout_resumable",
+            )
+        if not isinstance(payload, dict):
+            payload = {}
+        completed = payload.get("completed_query_count")
+        total = payload.get("query_count")
+        phase = str(payload.get("phase") or "unknown")
+        status = str(payload.get("status") or "interrupted")
+        data: dict[str, object] = {
+            "resumable": True,
+            "checkpoint_path": checkpoint_rel,
+            "checkpoint_available": True,
+            "status": status,
+            "phase": phase,
+            "completed_query_count": completed,
+            "query_count": total,
+            "retrieved_record_count": payload.get("retrieved_record_count"),
+        }
+        progress = f"{completed}/{total}" if completed is not None and total is not None else "an unknown number of"
+        content = (
+            f"Targeted survey retrieval reached its {timeout_seconds:g}s operation budget after completing {progress} queries "
+            f"(phase={phase}). Its checkpoint is saved at {checkpoint_rel}; resume will reuse completed queries and continue from the incomplete one."
+        )
+        return data, content, "timeout_resumable"
 
     def _timeout_for_tool(self, tool_name: str, tool: Tool) -> float:
         """Return the runtime timeout cap for a tool.
@@ -6488,6 +6643,15 @@ class AgentRunner:
                 or self.global_timeout.get("max_compile")
                 or self.global_timeout.get("docker_operation")
                 or self.global_timeout.get("max_tool_call")
+                or tool.timeout_seconds
+            )
+        if tool_name == "expand_corpus_for_survey":
+            # A survey supplement is a resumable multi-query retrieval plus
+            # PDF/note materialization workflow.  It must not inherit a
+            # generic small-tool cap such as 60 seconds, which is shorter
+            # than one child multi-source search may legitimately require.
+            return float(
+                self.global_timeout.get("survey_supplement_retrieval")
                 or tool.timeout_seconds
             )
         return float(self.global_timeout.get("max_tool_call") or tool.timeout_seconds)

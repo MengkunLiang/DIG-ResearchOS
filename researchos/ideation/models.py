@@ -1367,6 +1367,13 @@ _CROSSOVER_AUXILIARY_FIELDS = (
     "reviewer_notes",
     "analysis",
     "notes",
+    "rationale",
+    "reason",
+    "summary",
+    "detail",
+    "description",
+    "assessment",
+    "value",
 )
 
 
@@ -1389,6 +1396,8 @@ def _normalize_crossover_review_payload(value: Any) -> Any:
     if not isinstance(value, dict):
         return value
     normalized = dict(value)
+    decision = normalize_crossover_decision(normalized.get("decision"))
+    normalized["decision"] = decision
     for field in (
         "problem_compatibility",
         "bottleneck_complementarity",
@@ -1403,6 +1412,37 @@ def _normalize_crossover_review_payload(value: Any) -> Any:
                 normalized[field] = " ".join(text.split())
                 break
 
+    # A former no-child compatibility projection stored one shared rationale
+    # instead of repeating it in the three explanatory fields that the native
+    # record now requires.  These verdicts cannot create an offspring, so
+    # reusing the exact preserved rationale is a lossless presentation/schema
+    # migration rather than a scientific inference.  An approved crossover
+    # remains strict: it must state each of the three judgments explicitly
+    # before it can authorize a new Candidate.
+    if decision in {"parallel", "rejected", "uncertain"}:
+        shared_explanation = ""
+        for key in _CROSSOVER_EXPLANATION_KEYS:
+            candidate = normalized.get(key)
+            if isinstance(candidate, str) and " ".join(candidate.split()):
+                shared_explanation = " ".join(candidate.split())
+                break
+        if not shared_explanation:
+            conflicts = normalized.get("conflicts")
+            if isinstance(conflicts, list):
+                for candidate in conflicts:
+                    text = " ".join(str(candidate or "").split())
+                    if text:
+                        shared_explanation = text
+                        break
+        if shared_explanation:
+            for field in (
+                "problem_compatibility",
+                "bottleneck_complementarity",
+                "mechanism_coherence",
+            ):
+                if not isinstance(normalized.get(field), str) or not " ".join(str(normalized.get(field) or "").split()):
+                    normalized[field] = shared_explanation
+
     complexity = normalized.get("complexity_risk")
     if isinstance(complexity, dict):
         for key in ("level", "risk", "complexity", "value", "assessment"):
@@ -1410,6 +1450,51 @@ def _normalize_crossover_review_payload(value: Any) -> Any:
             if isinstance(label, str) and label.strip():
                 normalized["complexity_risk"] = label
                 break
+
+    # ``complexity_risk`` is a compact scheduling label, while providers
+    # occasionally place their full reviewer explanation in that slot.  The
+    # explanation is still useful evidence for a researcher, but it must not
+    # make a completed Evolution plan unreadable after a restart.  Preserve
+    # the exact model-authored wording in ``conflicts`` and choose the
+    # conservative label ``high``.  This repair can never make a crossover
+    # easier to approve or remove a stated risk.
+    complexity = normalized.get("complexity_risk")
+    if isinstance(complexity, str):
+        compact = " ".join(complexity.strip().casefold().split())
+        known_labels = {
+            "low",
+            "medium",
+            "moderate",
+            "high",
+            "低",
+            "中",
+            "中等",
+            "高",
+            "低风险",
+            "中风险",
+            "高风险",
+            "低复杂度",
+            "中等复杂度",
+            "高复杂度",
+        }
+        if compact.startswith(("low", "低")):
+            normalized["complexity_risk"] = "low"
+        elif compact.startswith(("medium", "moderate", "中")):
+            normalized["complexity_risk"] = "medium"
+        elif compact.startswith(("high", "高")):
+            normalized["complexity_risk"] = "high"
+        elif compact and compact not in known_labels:
+            note = " ".join(complexity.split())
+            conflicts = normalized.get("conflicts")
+            if isinstance(conflicts, list):
+                normalized_conflicts = [str(item) for item in conflicts if str(item).strip()]
+            else:
+                normalized_conflicts = []
+            preserved_note = f"Reviewer complexity note: {note}"
+            if preserved_note not in normalized_conflicts:
+                normalized_conflicts.append(preserved_note)
+            normalized["conflicts"] = normalized_conflicts
+            normalized["complexity_risk"] = "high"
 
     for field in _CROSSOVER_AUXILIARY_FIELDS:
         normalized.pop(field, None)

@@ -26,6 +26,15 @@ budget_escalation:
   token_increase_ratio: 0.5
   wall_seconds_increase_ratio: 0.5
 
+# T4 uses two distinct recovery windows.  Candidate/Population evolution is
+# never repeated merely because a Card explanation fails.  The Card compiler
+# may make several typed semantic repairs, while provider outages pause after
+# a durable retry window instead of waiting on an in-memory prompt. Card
+# retries never re-run Candidate/Population evolution.
+retry_policy:
+  t4_final_card_compiler_attempts: 6
+  t4_provider_retry_batches: 3
+
 agents:
   hello:
     tools:

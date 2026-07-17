@@ -2575,7 +2575,12 @@ class StateMachine:
         return state
 
     @staticmethod
-    def _t4_recovery_presentation(error: str, *, has_final_card_checkpoint: bool) -> dict[str, str]:
+    def _t4_recovery_presentation(
+        error: str,
+        *,
+        has_final_card_checkpoint: bool,
+        recovery_stage: str = "",
+    ) -> dict[str, str]:
         """Describe the failed T4 boundary without exposing a provider traceback.
 
         T4 uses one recovery gate for several recoverable boundaries.  A
@@ -2588,6 +2593,43 @@ class StateMachine:
         """
 
         normalized = " ".join(str(error or "").casefold().split())
+        if recovery_stage == "evolution_resume":
+            return {
+                "kind": "evolution_resume",
+                "title": "T4 演化进度恢复",
+                "description": (
+                    "初始 Candidate、已完成评分、路线和已完成 Child 均已保存。"
+                    "尚未形成可比较的最终 Portfolio，因此恢复会只续跑缺失的演化步骤并复用已有检查点。"
+                ),
+                "error_summary": (
+                    "当前阻塞点位于最终 Portfolio 写入之前；这不是卡片文案问题，也不会重新生成已保存的候选。"
+                ),
+                "retry_label": "继续剩余演化步骤",
+                "retry_description": "复用已保存的路线、兼容性评审、Child 和评分检查点，只执行尚未完成的步骤。",
+            }
+        if recovery_stage == "source_data_missing":
+            return {
+                "kind": "source_data_missing",
+                "title": "T4 原生产物需要修复",
+                "description": (
+                    "恢复检查发现最终 Portfolio 的原生输入不一致或缺失。系统不会让 LLM 猜测、补写或覆盖 Candidate。"
+                ),
+                "error_summary": "需要先恢复已记录的原生 Population、评分或 Portfolio 输入，之后才可以编译决策卡。",
+                "retry_label": "重新检查原生 T4 产物",
+                "retry_description": "只重新执行确定性一致性检查，不会调用模型或创建新的 Candidate。",
+            }
+        if recovery_stage == "final_card":
+            return {
+                "kind": "final_card",
+                "title": "T4 决策卡恢复",
+                "description": (
+                    "当前 Population、评分、谱系和 Portfolio 已经完整保存。"
+                    "恢复只会编译缺失的研究者可读 Candidate Card，并随后生成 Gate1 决策页。"
+                ),
+                "error_summary": "最终 Candidate Card 尚未完整生成；不会重新生成候选、评分或演化路线。",
+                "retry_label": "继续决策卡恢复",
+                "retry_description": "从已保存 Portfolio 恢复 Card 编译与 Gate1 投影，不重跑 Candidate Evolution。",
+            }
         compatibility_tokens = (
             "crossovercompatibilitydecision",
             "crossover compatibility",
@@ -2644,22 +2686,48 @@ class StateMachine:
         card_error = ""
         repair_checkpoint: dict[str, Any] | None = None
         repair_checkpoint_error = ""
+        compatibility_migration: dict[str, Any] | None = None
+        recovery_stage = ""
         if workspace_dir is not None:
             cards_ready, raw_card_error = validate_t4_portfolio_final_cards(workspace_dir)
             card_error = str(raw_card_error or "")
             operation = state.task_context.get("t4_operation_request")
             try:
-                repair_checkpoint, raw_checkpoint_error = T4ArtifactStore(
-                    workspace_dir
-                ).current_final_card_repair_checkpoint(
+                store = T4ArtifactStore(workspace_dir)
+                compatibility_migration = store.migrate_crossover_compatibility_records()
+                if not cards_ready:
+                    # Older runs can complete survival and write Portfolio
+                    # before the durable pre-card receipt introduced later.
+                    # Reconstruct only that receipt after proving the native
+                    # Population, dossiers and independent scores agree.
+                    store.ensure_final_card_checkpoint_for_completed_population(
+                        operation=operation if isinstance(operation, dict) else None,
+                    )
+                repair_checkpoint, raw_checkpoint_error = store.current_final_card_repair_checkpoint(
                     operation=operation if isinstance(operation, dict) else None,
                 )
                 repair_checkpoint_error = str(raw_checkpoint_error or "")
             except (OSError, ValueError) as exc:
                 repair_checkpoint_error = str(exc)
+            portfolio_path = workspace_dir / "ideation" / "portfolio.json"
+            if repair_checkpoint is not None:
+                recovery_stage = "final_card"
+            elif portfolio_path.is_file():
+                # A Portfolio without cards is still a Card-only recovery
+                # only if its checkpoint can be recreated on the retry.  Keep
+                # the source error visible rather than calling an LLM here.
+                recovery_stage = "source_data_missing"
+            else:
+                try:
+                    internal = T4ArtifactStore(workspace_dir).read_state()
+                    phase_marker = workspace_dir / "ideation" / "evolution" / "phases" / f"{internal.generation}_survival.json"
+                    recovery_stage = "source_data_missing" if phase_marker.is_file() else "evolution_resume"
+                except (OSError, ValueError):
+                    recovery_stage = "evolution_resume"
         recovery = self._t4_recovery_presentation(
             error,
             has_final_card_checkpoint=repair_checkpoint is not None,
+            recovery_stage=recovery_stage,
         )
         options = [
             {
@@ -2703,6 +2771,16 @@ class StateMachine:
                     else None
                 ),
                 "final_card_repair_checkpoint_error": repair_checkpoint_error[:1000],
+                "compatibility_record_migration": (
+                    {
+                        "status": compatibility_migration.get("status"),
+                        "migrated_decision_count": compatibility_migration.get("migrated_decision_count"),
+                        "unresolved_count": len(compatibility_migration.get("unresolved") or []),
+                        "receipt": "ideation/evolution/migrations/crossover_compatibility_v2.json",
+                    }
+                    if isinstance(compatibility_migration, dict)
+                    else None
+                ),
             },
             options=options,
         )
@@ -3015,6 +3093,7 @@ class StateMachine:
                 "runtime",
                 "environment",
                 "human_input",
+                "survey_retrieval",
             }:
                 payload = dict(raw)
                 payload["kind"] = kind
@@ -3144,6 +3223,7 @@ class StateMachine:
         recovery_kind = str(payload.get("kind") or "runtime").strip()
         details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
         is_literature_coverage = recovery_kind == "literature_coverage"
+        is_survey_retrieval = recovery_kind == "survey_retrieval"
         payload.update(
             {
                 "schema_version": "1.0.0",
@@ -3178,6 +3258,34 @@ class StateMachine:
                     "id": "exit",
                     "label": "结束本次运行",
                     "description": "本次命令停止，不删除任何 artifact；之后 resume 仍会先展示这项阅读覆盖决策。",
+                },
+            ]
+        elif is_survey_retrieval:
+            checkpoint_path = str(details.get("checkpoint_path") or "literature/survey_supplement/expansion_checkpoint.json")
+            completed = details.get("completed_query_count")
+            total = details.get("query_count")
+            progress = f"{completed}/{total}" if completed is not None and total is not None else "部分"
+            title = "综述定向补检已暂停"
+            description = (
+                "定向补检在完成一部分来源查询后达到本次操作预算，当前检索记录和阅读笔记检查点均已写入工作区。"
+                f"已完成查询：{progress}。恢复会读取 `{checkpoint_path}`，只继续未完成的查询，"
+                "不会重新检索已完成条目，也不会在没有真实文献输入时继续生成综述。"
+            )
+            options = [
+                {
+                    "id": "retry_targeted_repair",
+                    "label": "继续定向补检",
+                    "description": "从持久化检查点继续剩余查询，并复用已保存的检索记录、PDF 获取结果和笔记。",
+                },
+                {
+                    "id": "inspect_then_pause",
+                    "label": "检查后暂停",
+                    "description": "保留检查点、来源状态和已生成笔记；下次 resume 仍从该检查点继续。",
+                },
+                {
+                    "id": "exit",
+                    "label": "结束本次运行",
+                    "description": "不删除任何补检记录或笔记；之后 resume 时仍会先展示这项补检恢复决策。",
                 },
             ]
         else:
@@ -3840,6 +3948,7 @@ class StateMachine:
         if state.pending_gate.gate_id == "t4_recovery_gate":
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "pause")
             if option_id == "retry_t4":
+                recovery_kind = str(state.pending_gate.presentation.get("_recovery_kind") or "targeted_recovery")
                 # Carry a concise copy into ExecutionContext for observability,
                 # but let the runtime revalidate the durable artifact before it
                 # skips any scientific operation.  The original operation is
@@ -3871,6 +3980,10 @@ class StateMachine:
                 state.status = "RUNNING"
                 state.paused_at = None
                 state.last_error = None
+                state.task_context["t4_recovery_request"] = {
+                    "kind": recovery_kind,
+                    "requested_at": _now_iso(),
+                }
                 return state
             if option_id == "open_gate1" and workspace_dir is not None and self._t4_gate1_ready_without_selection(workspace_dir):
                 state.pending_gate = None

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import quote_plus
@@ -30,6 +31,23 @@ from .abstract_utils import clean_abstract
 from .base import Tool, ToolResult
 from .openalex_api import _researcher_email as _openalex_researcher_email
 from .openalex_api import _work_to_paper as _openalex_work_to_paper
+
+
+def _retry_after_seconds(response: "httpx.Response") -> float:
+    """Return a bounded source cooldown without sleeping the whole search.
+
+    A multi-query survey retrieval can still obtain useful Crossref or arXiv
+    results while OpenAlex is rate limited. The value is therefore a local
+    skip window, not a blocking wait.
+    """
+
+    raw = response.headers.get("retry-after")
+    if raw:
+        try:
+            return max(15.0, min(float(raw), 300.0))
+        except ValueError:
+            pass
+    return 60.0
 
 
 def _extract_crossref_references(item: dict[str, Any], limit: int = 80) -> list[dict[str, str]]:
@@ -103,6 +121,11 @@ class MultiSourceSearchTool(Tool):
             email: 用于Crossref polite pool的邮箱（可选但推荐）
         """
         self.email = email or os.environ.get("RESEARCHER_EMAIL", "researcher@example.com")
+        # One survey supplement holds a single search-tool instance across
+        # related queries. Retain a provider cooldown so repeated queries do
+        # not repeatedly spend request time on a source that already returned
+        # HTTP 429; remaining sources continue normally.
+        self._source_cooldown_until: dict[str, float] = {}
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         params = MultiSourceSearchParams(**kwargs)
@@ -131,6 +154,13 @@ class MultiSourceSearchTool(Tool):
 
         # 按优先级尝试各个数据源
         for idx, source in enumerate(params.sources):
+            cooldown_remaining = self._source_cooldown_until.get(source, 0.0) - time.monotonic()
+            if cooldown_remaining > 0:
+                source_stats[source] = {
+                    "status": "skipped_cooldown",
+                    "retry_after_seconds": round(cooldown_remaining, 1),
+                }
+                continue
             try:
                 if source == "crossref":
                     papers = await self._search_crossref(params.query, params.max_results)
@@ -161,7 +191,17 @@ class MultiSourceSearchTool(Tool):
                 await asyncio.sleep(2)
 
             except Exception as e:
-                source_stats[source] = f"failed: {str(e)[:50]}"
+                status_code = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
+                if status_code == 429:
+                    retry_after = _retry_after_seconds(e.response)
+                    self._source_cooldown_until[source] = time.monotonic() + retry_after
+                    source_stats[source] = {
+                        "status": "rate_limited",
+                        "http_status": 429,
+                        "retry_after_seconds": retry_after,
+                    }
+                else:
+                    source_stats[source] = f"failed: {str(e)[:50]}"
                 continue
 
         # 去重（基于DOI和标题）

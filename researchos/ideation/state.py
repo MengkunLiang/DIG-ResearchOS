@@ -21,7 +21,17 @@ from pydantic import BaseModel
 from ..pydantic_compat import model_dump, model_validate
 from ..runtime.artifact_fingerprints import build_input_fingerprints
 from ..runtime.bridge_catalog import cross_domain_catalogs_are_plan_only
-from .models import CandidateDossier, EvolutionPhase, PopulationSnapshot, RoundArtifact, T4InternalState, T4RunConfig
+from .models import (
+    CandidateDossier,
+    CrossoverCompatibilityDecision,
+    EvolutionPhase,
+    PopulationSnapshot,
+    PortfolioSelection,
+    RoundArtifact,
+    ScoreReport,
+    T4InternalState,
+    T4RunConfig,
+)
 
 
 T4_STATE_REL_PATH = "ideation/evolution/state.json"
@@ -608,6 +618,194 @@ class T4ArtifactStore:
             if payload.get("operation_identity") != expected_operation:
                 return None, "Final Card repair checkpoint belongs to a different T4 operation"
         return payload, None
+
+    def migrate_crossover_compatibility_records(self) -> dict[str, Any]:
+        """Normalize resumable crossover records and leave an audit receipt.
+
+        Older providers sometimes wrote a full complexity explanation into the
+        enum-sized ``complexity_risk`` field.  The model-level normalizer keeps
+        that explanation as a conflict note and uses a conservative high-risk
+        label, but a completed workspace should not have to rely on every
+        future consumer remembering to serialize that normalization.  This
+        migration rewrites only successfully parsed compatibility decisions,
+        never touches plans, Parents, Children, or scientific prose outside
+        the original decision record.
+        """
+
+        plans_dir = self.path("ideation/evolution/plans")
+        receipt_rel = "ideation/evolution/migrations/crossover_compatibility_v2.json"
+        receipt: dict[str, Any] = {
+            "schema_version": "1.0.0",
+            "semantics": "t4_crossover_compatibility_migration",
+            "migration": "crossover_compatibility_v2",
+            "scanned_plan_paths": [],
+            "migrated_plan_paths": [],
+            "migrated_decision_count": 0,
+            "unresolved": [],
+            "performed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if not plans_dir.is_dir():
+            receipt["status"] = "not_applicable"
+            receipt["reason"] = "no_evolution_plan_directory"
+            self.write_json(receipt_rel, receipt)
+            return receipt
+
+        for path in sorted(plans_dir.glob("round_*.json")):
+            relative = path.relative_to(self.workspace_dir).as_posix()
+            receipt["scanned_plan_paths"].append(relative)
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                receipt["unresolved"].append({"path": relative, "reason": f"unreadable:{type(exc).__name__}"})
+                continue
+            if not isinstance(payload, dict) or payload.get("semantics") != "t4_evolution_plan_batch":
+                continue
+            raw_decisions = payload.get("crossover_decisions")
+            if not isinstance(raw_decisions, list):
+                receipt["unresolved"].append({"path": relative, "reason": "crossover_decisions_missing_or_not_list"})
+                continue
+            normalized_decisions: list[dict[str, Any]] = []
+            changed = False
+            for index, raw in enumerate(raw_decisions, start=1):
+                if not isinstance(raw, dict):
+                    receipt["unresolved"].append({"path": relative, "decision_index": index, "reason": "decision_not_object"})
+                    normalized_decisions.append(raw)
+                    continue
+                try:
+                    normalized = model_dump(model_validate(CrossoverCompatibilityDecision, raw), mode="json")
+                except (TypeError, ValueError) as exc:
+                    receipt["unresolved"].append(
+                        {
+                            "path": relative,
+                            "decision_index": index,
+                            "pair_id": str(raw.get("pair_id") or ""),
+                            "reason": "unresolved_schema:" + " ".join(str(exc).split())[:500],
+                        }
+                    )
+                    normalized_decisions.append(raw)
+                    continue
+                normalized_decisions.append(normalized)
+                if normalized != raw:
+                    changed = True
+                    receipt["migrated_decision_count"] += 1
+            if changed:
+                payload["crossover_decisions"] = normalized_decisions
+                self.write_json(relative, payload)
+                receipt["migrated_plan_paths"].append(relative)
+
+        receipt["status"] = "migrated" if receipt["migrated_plan_paths"] else "already_current"
+        if receipt["unresolved"]:
+            receipt["status"] = "partial" if receipt["migrated_plan_paths"] else "manual_review_required"
+        self.write_json(receipt_rel, receipt)
+        return receipt
+
+    def ensure_final_card_checkpoint_for_completed_population(
+        self,
+        *,
+        operation: Mapping[str, Any] | None = None,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Recover the pre-card boundary for a legacy completed Population.
+
+        Native T4 writes a Final Card checkpoint immediately after Population
+        survival.  Runs created before that ordering existed can contain a
+        valid active Population and Portfolio but no checkpoint when a process
+        dies between survival selection and card compilation.  Re-running T4
+        in that state used to initiate another Evolution round.  This method
+        proves the persisted source set is internally coherent, creates only
+        the missing receipt, and records an auditable reconciliation.  It
+        never regenerates candidates, scores, routes, or scientific text.
+        """
+
+        existing, _existing_error = self.current_final_card_repair_checkpoint(
+            operation=operation,
+            pending_only=False,
+        )
+        if existing is not None:
+            # This reconciliation is invoked only after Final Card readiness
+            # has failed. A previously completed checkpoint can therefore be
+            # retained as audit history but must become actionable again if a
+            # card file was removed or found invalid after the former
+            # projection completed.
+            if str(existing.get("status") or "") == "completed":
+                self.update_final_card_repair_checkpoint(
+                    status="llm_repair_required",
+                    reason="final_card_readiness_failed_after_prior_completion",
+                    projection_completed=False,
+                )
+                existing, existing_error = self.current_final_card_repair_checkpoint(
+                    operation=operation,
+                )
+                return existing, existing_error
+            return existing, None
+        try:
+            state = self.read_state()
+            valid, state_error = self.validate_state_inputs(state)
+            if not valid:
+                return None, state_error or "active T4 input fingerprint is not current"
+            population = self.read_population(state.current_population_id)
+            if population.population_id != state.current_population_id:
+                return None, "active Population identifier does not match T4 state"
+            portfolio = self.read_model("ideation/portfolio.json", PortfolioSelection)
+            if portfolio.population_id != population.population_id:
+                return None, "T4 Portfolio belongs to a different active Population"
+            portfolio_ids = [
+                candidate_id
+                for candidate_id in [portfolio.lead_id, *portfolio.alternative_ids, *portfolio.high_upside_ids]
+                if candidate_id
+            ]
+            if not portfolio_ids:
+                return None, "T4 Portfolio has no visible Candidate"
+            if len(portfolio_ids) != len(set(portfolio_ids)):
+                return None, "T4 Portfolio contains duplicate Candidate IDs"
+            unknown = sorted(set(portfolio_ids) - set(population.active_candidate_ids))
+            if unknown:
+                return None, "T4 Portfolio references Candidates outside the active Population: " + ", ".join(unknown)
+            for candidate_id in portfolio_ids:
+                matches = sorted(self.path("ideation/candidates").glob(f"{candidate_id}.v*.json"))
+                if not matches:
+                    return None, f"T4 Portfolio Candidate Dossier is missing: {candidate_id}"
+                self.read_model(matches[-1].relative_to(self.workspace_dir), CandidateDossier)
+            score_population_id = "P0" if population.generation == 0 else f"U{population.generation}"
+            score_path = self.path(f"ideation/scoring/{score_population_id}.json")
+            score_payload = json.loads(score_path.read_text(encoding="utf-8"))
+            raw_scores = score_payload.get("scores") if isinstance(score_payload, dict) else None
+            if not isinstance(raw_scores, list):
+                return None, f"T4 score artifact has no scores list: ideation/scoring/{score_population_id}.json"
+            score_ids = {
+                model_validate(ScoreReport, raw).candidate_id
+                for raw in raw_scores
+                if isinstance(raw, dict)
+            }
+            missing_scores = [candidate_id for candidate_id in population.active_candidate_ids if candidate_id not in score_ids]
+            if missing_scores:
+                return None, "active Population is missing independent scores: " + ", ".join(missing_scores)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            return None, "cannot prove legacy final-card source boundary: " + " ".join(str(exc).split())[:800]
+
+        self.write_final_card_repair_checkpoint(
+            population=population,
+            operation=operation,
+            status="pending_llm_card_compilation",
+            reason="legacy_completed_population_missing_final_card_checkpoint",
+        )
+        checkpoint, checkpoint_error = self.current_final_card_repair_checkpoint(
+            operation=operation,
+        )
+        if checkpoint is None:
+            return None, checkpoint_error or "failed to read reconciled Final Card checkpoint"
+        receipt = {
+            "schema_version": "1.0.0",
+            "semantics": "t4_final_card_checkpoint_reconciliation",
+            "population_id": population.population_id,
+            "population_generation": population.generation,
+            "portfolio_candidate_ids": portfolio_ids,
+            "checkpoint_path": T4_FINAL_CARD_REPAIR_STATE_REL_PATH,
+            "action": "created_missing_checkpoint_only",
+            "reason": "legacy_completed_population_missing_final_card_checkpoint",
+            "performed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.write_json("ideation/evolution/migrations/final_card_checkpoint_reconciliation.json", receipt)
+        return checkpoint, None
 
     def initialize_state(self, *, config: T4RunConfig, population: PopulationSnapshot) -> T4InternalState:
         current_input_fingerprints = build_t4_input_fingerprints(self.workspace_dir)
