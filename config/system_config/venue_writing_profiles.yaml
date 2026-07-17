@@ -79,13 +79,13 @@ profiles:
       - Limitations and Boundary Conditions
       - Reviewer Questions
     section_word_budgets:
-      abstract: [200, 300]
-      introduction: [1100, 1800]
-      related_work: [900, 1500]
-      methodology: [1200, 2200]
-      experiments: [1000, 1800]
-      analysis: [900, 1600]
-      conclusion: [450, 850]
+      abstract: [180, 280]
+      introduction: [1000, 1650]
+      related_work: [800, 1350]
+      methodology: [1100, 2000]
+      experiments: [900, 1650]
+      analysis: [800, 1450]
+      conclusion: [400, 750]
 
   neurips_concise:
     aliases: [neurips, nips]
@@ -118,13 +118,13 @@ profiles:
       - Failure Modes and Limitations
       - Reviewer Questions
     section_word_budgets:
-      abstract: [150, 250]
-      introduction: [650, 1050]
-      related_work: [550, 950]
-      methodology: [1300, 2300]
-      experiments: [1250, 2200]
-      analysis: [700, 1300]
-      conclusion: [300, 550]
+      abstract: [140, 230]
+      introduction: [600, 950]
+      related_work: [500, 850]
+      methodology: [1200, 2100]
+      experiments: [1150, 2000]
+      analysis: [650, 1200]
+      conclusion: [280, 500]
 
   icml_concise:
     aliases: [icml]
@@ -157,13 +157,13 @@ profiles:
       - Failure Modes and Limitations
       - Reviewer Questions
     section_word_budgets:
-      abstract: [150, 250]
-      introduction: [650, 1050]
-      related_work: [500, 900]
-      methodology: [1350, 2350]
-      experiments: [1250, 2200]
-      analysis: [750, 1350]
-      conclusion: [300, 550]
+      abstract: [140, 230]
+      introduction: [600, 950]
+      related_work: [450, 800]
+      methodology: [1200, 2150]
+      experiments: [1150, 2000]
+      analysis: [700, 1200]
+      conclusion: [280, 500]
 
   iclr_concise:
     aliases: [iclr]
@@ -195,13 +195,13 @@ profiles:
       - Failure Modes and Limitations
       - Reviewer Questions
     section_word_budgets:
-      abstract: [150, 250]
-      introduction: [650, 1050]
-      related_work: [500, 900]
-      methodology: [1300, 2300]
-      experiments: [1200, 2150]
-      analysis: [800, 1400]
-      conclusion: [300, 550]
+      abstract: [140, 230]
+      introduction: [600, 950]
+      related_work: [450, 800]
+      methodology: [1200, 2100]
+      experiments: [1100, 1950]
+      analysis: [700, 1250]
+      conclusion: [280, 500]
 
   kdd_technical:
     aliases: [kdd, sigkdd]
@@ -233,13 +233,13 @@ profiles:
       - Failure Modes and Limitations
       - Reviewer Questions
     section_word_budgets:
-      abstract: [150, 250]
-      introduction: [700, 1150]
-      related_work: [550, 1000]
-      methodology: [1250, 2200]
-      experiments: [1350, 2300]
-      analysis: [650, 1200]
-      conclusion: [300, 550]
+      abstract: [140, 230]
+      introduction: [650, 1050]
+      related_work: [500, 900]
+      methodology: [1150, 2000]
+      experiments: [1200, 2100]
+      analysis: [600, 1100]
+      conclusion: [280, 500]
 
   ccf_generic_concise:
     aliases: [ccf, conference, ai, machine learning, sigir, aaai, ijcai]
@@ -272,13 +272,13 @@ profiles:
       - Failure Modes and Limitations
       - Reviewer Questions
     section_word_budgets:
-      abstract: [150, 250]
-      introduction: [650, 1050]
-      related_work: [500, 950]
-      methodology: [1250, 2250]
-      experiments: [1200, 2200]
-      analysis: [700, 1300]
-      conclusion: [300, 550]
+      abstract: [140, 230]
+      introduction: [600, 950]
+      related_work: [450, 850]
+      methodology: [1150, 2050]
+      experiments: [1100, 2000]
+      analysis: [650, 1200]
+      conclusion: [280, 500]
 
   basic_en_research:
     aliases: [basic_en, normal, general, english]
@@ -309,13 +309,13 @@ profiles:
       - Limitations and Boundary Conditions
       - Reviewer Questions
     section_word_budgets:
-      abstract: [150, 275]
-      introduction: [800, 1400]
-      related_work: [650, 1200]
-      methodology: [1000, 2000]
-      experiments: [1000, 2000]
-      analysis: [650, 1300]
-      conclusion: [350, 650]
+      abstract: [140, 250]
+      introduction: [700, 1250]
+      related_work: [600, 1050]
+      methodology: [900, 1800]
+      experiments: [900, 1800]
+      analysis: [600, 1150]
+      conclusion: [300, 600]
 
   basic_zh_research:
     aliases: [basic_zh, chinese, zh, 中文, 管理世界, 管理科学学报, 系统工程理论与实践, cssci, cscd]

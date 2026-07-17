@@ -386,14 +386,14 @@ _LATIN_WORD_RE = re.compile(r"\b[A-Za-z][A-Za-z\-]{2,}\b")
 # Content must scale with actual corpus breadth and evidence; padding to reach
 # a number is never acceptable.
 _SURVEY_MIN_PLAIN_CHARS = {
-    "abstract": {"en": 180, "zh": 500},
-    "introduction": {"en": 1200, "zh": 2200},
-    "background": {"en": 1200, "zh": 2100},
-    "taxonomy": {"en": 1700, "zh": 2800},
-    "comparison": {"en": 2300, "zh": 3900},
-    "challenges": {"en": 1200, "zh": 2100},
-    "future": {"en": 1500, "zh": 2600},
-    "conclusion": {"en": 650, "zh": 1200},
+    "abstract": {"en": 160, "zh": 450},
+    "introduction": {"en": 1100, "zh": 2000},
+    "background": {"en": 1100, "zh": 1900},
+    "taxonomy": {"en": 1550, "zh": 2550},
+    "comparison": {"en": 2100, "zh": 3500},
+    "challenges": {"en": 1100, "zh": 1900},
+    "future": {"en": 1350, "zh": 2350},
+    "conclusion": {"en": 600, "zh": 1100},
 }
 
 _SURVEY_SECTION_QUALITY_PATTERNS = {

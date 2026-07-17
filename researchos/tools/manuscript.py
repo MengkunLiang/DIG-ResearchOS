@@ -3887,9 +3887,9 @@ def audit_writing_craft(
         passed = lower <= word_count <= upper
         target = f"{lower}-{upper} (internal profile target)"
     elif venue_style == "is":
-        passed, target = 200 <= word_count <= 300, "200-300"
+        passed, target = 180 <= word_count <= 280, "180-280"
     else:
-        passed, target = 150 <= word_count <= 300, "150-300"
+        passed, target = 140 <= word_count <= 260, "140-260"
     add("abstract_wordcount", "WARN", passed or word_count == 0, f"abstract words={word_count}; target={target} for style={venue_style}")
 
     section_word_counts = {
