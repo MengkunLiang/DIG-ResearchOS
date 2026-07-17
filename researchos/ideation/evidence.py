@@ -33,6 +33,7 @@ _NOTE_ROOTS: tuple[tuple[str, DomainRole], ...] = (
     ("literature/shallow_read_notes", DomainRole.CORE),
     ("literature/bridge_notes", DomainRole.BRIDGE),
 )
+_CANONICAL_NOTE_PREFIXES = tuple(path + "/" for path, _role in _NOTE_ROOTS)
 _HEADING_RE = re.compile(r"^#{1,6}\s+(?P<title>.+?)\s*$", re.MULTILINE)
 
 
@@ -263,21 +264,56 @@ def _extract_sections(text: str) -> list[tuple[str, str, str]]:
 
 
 def _index_summary(atoms: list[EvidenceAtom]) -> dict[str, Any]:
+    """Summarize source material separately from note-section evidence.
+
+    An EvidenceAtom is a paragraph/heading-level unit, not a paper. One
+    reading note commonly yields several atoms and an unmaterialized
+    cross-domain catalog record yields one bounded atom. Keep both levels in
+    the summary so researcher-facing UI never presents atom totals as a paper
+    or note count.
+    """
+
     by_level = Counter(item.reading_level.value for item in atoms)
     by_domain = Counter(item.domain_role.value for item in atoms)
     by_section = Counter(item.section_key for item in atoms)
+    note_atoms = [item for item in atoms if _is_canonical_note_source(item.source_path)]
+    catalog_atoms = [item for item in atoms if not _is_canonical_note_source(item.source_path)]
+    paper_ids = {str(item.paper_id).strip() for item in atoms if str(item.paper_id).strip()}
+    note_paper_ids = {str(item.paper_id).strip() for item in note_atoms if str(item.paper_id).strip()}
+    catalog_paper_ids = {str(item.paper_id).strip() for item in catalog_atoms if str(item.paper_id).strip()}
+    note_paths = {str(item.source_path).strip() for item in note_atoms if str(item.source_path).strip()}
     upgrades = [
         item.atom_id
         for item in atoms
         if item.reading_level in {ReadingLevel.ABSTRACT_ONLY, ReadingLevel.METADATA_ONLY}
     ]
+    upgrade_paper_ids = {
+        str(item.paper_id).strip()
+        for item in atoms
+        if item.reading_level in {ReadingLevel.ABSTRACT_ONLY, ReadingLevel.METADATA_ONLY}
+        and str(item.paper_id).strip()
+    }
     return {
         "schema_version": "1.0.0",
         "semantics": "t4_evidence_index_summary",
+        # ``atom_count`` remains the internal/LLM contract for backwards
+        # compatibility. The explicit counts below are for researcher-facing
+        # material coverage and must not be conflated with it.
         "atom_count": len(atoms),
+        "unique_paper_count": len(paper_ids),
+        "note_card_count": len(note_paths),
+        "note_paper_count": len(note_paper_ids),
+        "catalog_record_count": len(catalog_atoms),
+        "catalog_unique_paper_count": len(catalog_paper_ids),
+        "reading_upgrade_paper_count": len(upgrade_paper_ids),
         "counts_by_reading_level": dict(sorted(by_level.items())),
         "counts_by_domain_role": dict(sorted(by_domain.items())),
         "counts_by_section": dict(sorted(by_section.items())),
         "reading_upgrade_candidates": upgrades,
         "permission_policy": "config/system_config/idea_evidence_permissions.yaml",
     }
+
+
+def _is_canonical_note_source(source_path: object) -> bool:
+    normalized = str(source_path or "").replace("\\", "/").lstrip("./")
+    return normalized.startswith(_CANONICAL_NOTE_PREFIXES)

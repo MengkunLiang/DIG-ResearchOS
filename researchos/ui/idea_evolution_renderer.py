@@ -187,12 +187,22 @@ def _metric_rows(phase: EvolutionPhase, payload: dict[str, Any]) -> list[tuple[s
     if phase == EvolutionPhase.EVIDENCE_ROUTING:
         by_level = payload.get("counts_by_reading_level") if isinstance(payload.get("counts_by_reading_level"), dict) else {}
         by_domain = payload.get("counts_by_domain_role") if isinstance(payload.get("counts_by_domain_role"), dict) else {}
+        # Older workspaces may contain a valid atom-only summary created
+        # before material-level counts were added. Display an unknown marker
+        # rather than falsely claiming that they contain zero notes or papers.
+        note_count = _number(payload.get("note_card_count"))
+        note_paper_count = _number(payload.get("note_paper_count"))
+        catalog_count = _number(payload.get("catalog_record_count"))
+        catalog_paper_count = _number(payload.get("catalog_unique_paper_count"))
         return [
-            ("已索引的笔记片段", _number(payload.get("atom_count"))),
-            ("全文 / 部分全文依据", _number(sum(_safe_int(by_level.get(key)) for key in ("full_text", "partial_text")))),
-            ("摘要级线索", _number(_safe_int(by_level.get("abstract_only")))),
-            ("Bridge 依据", _number(_safe_int(by_domain.get("bridge")))),
-            ("建议补读", _number(len(payload.get("reading_upgrade_candidates") or []))),
+            ("可用论文材料", f"{_number(payload.get('unique_paper_count'))} 篇"),
+            ("论文阅读笔记", f"{note_count} 份 · 覆盖 {note_paper_count} 篇"),
+            ("未读成笔记的跨域记录", f"{catalog_count} 条 · 覆盖 {catalog_paper_count} 篇"),
+            ("可用证据片段", f"{_number(payload.get('atom_count'))} 条（按笔记段落切分）"),
+            ("全文 / 部分全文片段", _number(sum(_safe_int(by_level.get(key)) for key in ("full_text", "partial_text")))),
+            ("摘要级线索片段", _number(_safe_int(by_level.get("abstract_only")))),
+            ("Bridge 证据片段", _number(_safe_int(by_domain.get("bridge")))),
+            ("建议升级阅读的论文", f"{_number(payload.get('reading_upgrade_paper_count'))} 篇"),
         ]
     if phase == EvolutionPhase.OPPORTUNITY_MAP:
         return [("研究机会", _number(payload.get("opportunity_count")))]
