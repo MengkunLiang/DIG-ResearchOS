@@ -1161,7 +1161,7 @@ def _build_expected_outputs_schema() -> dict[str, Any]:
             "method_intent": "T5 draft intent only; never final method source.",
             "realized_method_package": "External executor's implemented method package after runs and diagnosis.",
             "framework_figure": "Framework figure candidate that final handoff validation must preserve before T8 use.",
-            "writer_handoff": "Structured method/experiment/figure handoff for T8.",
+            "executor_research_report": "Writer Handoff's source-bound method, experiment, result, Claim, limitation, and artifact report for T8.",
         },
     }
 
