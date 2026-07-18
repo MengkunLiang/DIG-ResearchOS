@@ -1649,6 +1649,16 @@ def summarize_reader_note_progress(data: dict[str, Any], *, progress: str | None
             pieces.append(f"发现：{finding}")
         if implication:
             pieces.append(f"含义：{implication}")
+    try:
+        from ..literature_resources import format_resource_discovery_notice
+
+        resource_notice = format_resource_discovery_notice(
+            data.get("resource_catalog") if isinstance(data.get("resource_catalog"), dict) else None
+        )
+    except Exception:  # A display helper must never invalidate a saved note.
+        resource_notice = ""
+    if resource_notice:
+        pieces.append(resource_notice)
     return "；".join(pieces)
 
 

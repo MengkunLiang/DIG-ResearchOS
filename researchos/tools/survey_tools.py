@@ -34,7 +34,7 @@ from ..runtime.literature_contract import (
 )
 from ..runtime.pdf_acquisition import acquire_retained_pdfs, attach_pdf_acquisition
 from ..literature_identity import record_note_id
-from ..literature_resources import refresh_resource_catalog
+from ..literature_resources import format_resource_discovery_notice, refresh_resource_catalog
 from .base import Tool, ToolResult
 from .bibtex import (
     bibtex_quality_issues,
@@ -2866,7 +2866,11 @@ class ExpandSurveyCorpusTool(Tool):
             search_log_path=f"{params.supplement_dir}/search_log.jsonl",
             partial_records_path=f"{params.supplement_dir}/papers_retrieved.partial.jsonl",
         )
-        return ToolResult(ok=True, content=payload["summary"], data=payload)
+        resource_notice = format_resource_discovery_notice(resource_catalog)
+        content = payload["summary"]
+        if resource_notice:
+            content += f"；补充阅读{resource_notice}。"
+        return ToolResult(ok=True, content=content, data=payload)
 
 
 def _materialize_survey_supplement_shallow_notes(

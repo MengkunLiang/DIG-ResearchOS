@@ -53,6 +53,7 @@ from .abstract_sweep import (
 from .t2_config import get_effective_reader_read_params, load_t2_finalize_config
 from .pdf_acquisition import acquire_retained_pdfs, attach_pdf_acquisition, repair_access_only_evidence_levels
 from .literature_contract import build_literature_manifest, iter_literature_note_cards
+from ..literature_resources import format_resource_discovery_notice
 from .t3_recovery import prepare_t3_resume_artifacts
 from .t3_notes_manifest import validate_t3_input_fingerprints
 from .bridge_catalog import iter_bridge_catalog_paths
@@ -3003,6 +3004,11 @@ class AgentRunner:
                         f"生成 {result['notes_generated']} 篇 abstract note",
                         important=True,
                     )
+                resource_notice = format_resource_discovery_notice(
+                    result.get("resource_catalog") if isinstance(result.get("resource_catalog"), dict) else None
+                )
+                if resource_notice:
+                    self.progress.emit(f"[Reader Agent] 本批摘要轻读{resource_notice}", important=True)
                 return self._apply_t3_abstract_sweep_outcome(
                     ctx=ctx,
                     stop_reason=stop_reason,
@@ -3118,6 +3124,11 @@ class AgentRunner:
                 )
             else:
                 self.progress.emit("[Reader Agent] Abstract sweep 无候选论文", important=True)
+            resource_notice = format_resource_discovery_notice(
+                result.get("resource_catalog") if isinstance(result.get("resource_catalog"), dict) else None
+            )
+            if resource_notice:
+                self.progress.emit(f"[Reader Agent] 本批摘要轻读{resource_notice}", important=True)
             return self._apply_t3_abstract_sweep_outcome(
                 ctx=ctx,
                 stop_reason=stop_reason,

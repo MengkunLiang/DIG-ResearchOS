@@ -433,20 +433,98 @@ def ingest_paper_resources(
     )
     if not note_path:
         incoming.extend(resource_records_from_paper_metadata(paper_record))
-    written = 0
+    # A resource may be present both in Reader-supplied structured fields and
+    # in the rendered note section. Count it once in progress output and keep
+    # the structured declaration when it carries the richer metadata.
+    incoming_by_id: dict[str, dict[str, Any]] = {}
     for item in incoming:
         resource_id = str(item["resource_id"])
-        records[resource_id] = _merge_record(records[resource_id], item) if resource_id in records else item
-        written += 1
+        if resource_id and resource_id not in incoming_by_id:
+            incoming_by_id[resource_id] = item
+
+    newly_discovered: list[dict[str, Any]] = []
+    existing_count = 0
+    for resource_id, item in incoming_by_id.items():
+        if resource_id in records:
+            records[resource_id] = _merge_record(records[resource_id], item)
+            existing_count += 1
+        else:
+            records[resource_id] = item
+            newly_discovered.append(item)
     summary = _write_catalog(workspace, records)
+    new_type_counts = Counter(
+        str((item.get("resource") or {}).get("resource_type") or "other")
+        for item in newly_discovered
+    )
     return {
         "catalog_path": RESOURCE_CATALOG_REL_PATH,
         "summary_path": RESOURCE_CATALOG_SUMMARY_REL_PATH,
         "paper_id": paper["paper_id"],
-        "resource_records_processed": written,
+        "resource_records_processed": len(incoming_by_id),
+        "resource_records_new": len(newly_discovered),
+        "resource_records_existing": existing_count,
+        "new_resource_types": dict(sorted(new_type_counts.items())),
+        "new_resource_leads": [_resource_lead_view(item) for item in newly_discovered[:5]],
         "catalog_record_count": summary["record_count"],
         "evidence_boundary": summary["evidence_boundary"],
     }
+
+
+def _resource_lead_view(item: dict[str, Any]) -> dict[str, str]:
+    """Return a compact discovery-only record for progress rendering."""
+
+    resource = item.get("resource") if isinstance(item.get("resource"), dict) else {}
+    return {
+        "resource_type": _clean_text(resource.get("resource_type"), limit=80) or "other",
+        "name": _clean_text(resource.get("name"), limit=160) or "unnamed resource",
+        "relationship": _clean_text(resource.get("relationship"), limit=80) or "unknown",
+        "url": _clean_text(resource.get("url"), limit=320),
+        "lifecycle_status": "discovered",
+    }
+
+
+def format_resource_discovery_notice(receipt: dict[str, Any] | None) -> str:
+    """Format a notice only when new resource leads were discovered.
+
+    It deliberately distinguishes a discovered link from acquisition, license
+    clearance, reproducibility, or empirical evidence.
+    """
+
+    if not isinstance(receipt, dict):
+        return ""
+    try:
+        new_count = int(receipt.get("resource_records_new") or receipt.get("new_resource_records") or 0)
+    except (TypeError, ValueError):
+        return ""
+    if new_count <= 0:
+        return ""
+    type_counts = receipt.get("new_resource_types") if isinstance(receipt.get("new_resource_types"), dict) else {}
+    labels = {
+        "code_repository": "代码仓库",
+        "project_page": "项目页",
+        "dataset": "数据集",
+        "benchmark": "benchmark",
+        "model_checkpoint": "模型权重",
+        "evaluation_code": "评估代码",
+        "supplementary_material": "补充材料",
+        "documentation": "文档",
+        "other": "其它资源",
+    }
+    type_text = "、".join(
+        f"{labels.get(str(kind), str(kind))} {int(count or 0)}"
+        for kind, count in sorted(type_counts.items())
+        if int(count or 0) > 0
+    )
+    leads = receipt.get("new_resource_leads") if isinstance(receipt.get("new_resource_leads"), list) else []
+    names = [
+        _clean_text(item.get("name"), limit=72)
+        for item in leads
+        if isinstance(item, dict) and _clean_text(item.get("name"), limit=72)
+    ]
+    detail = f"（{type_text}）" if type_text else ""
+    if names:
+        detail += "：" + "、".join(names[:2])
+    return f"发现并记录资源线索 {new_count} 项{detail}；仅为待核验线索，尚未下载或运行"
 
 
 def format_resource_section(reported_resources: Iterable[dict[str, Any]] = ()) -> str:
@@ -497,6 +575,7 @@ def refresh_resource_catalog(workspace: Path) -> dict[str, Any]:
 
     catalog_path = workspace / RESOURCE_CATALOG_REL_PATH
     records = _read_catalog(catalog_path)
+    previous_ids = set(records)
     note_roots = (
         workspace / "literature" / "deep_read_notes",
         workspace / "literature" / "bridge_notes",
@@ -549,6 +628,11 @@ def refresh_resource_catalog(workspace: Path) -> dict[str, Any]:
                 records[resource_id] = _merge_record(records[resource_id], item) if resource_id in records else item
             scanned_metadata += 1
     summary = _write_catalog(workspace, records)
+    new_records = [records[resource_id] for resource_id in sorted(set(records) - previous_ids)]
+    new_type_counts = Counter(
+        str((item.get("resource") or {}).get("resource_type") or "other")
+        for item in new_records
+    )
     return {
         "catalog_path": RESOURCE_CATALOG_REL_PATH,
         "summary_path": RESOURCE_CATALOG_SUMMARY_REL_PATH,
@@ -556,5 +640,8 @@ def refresh_resource_catalog(workspace: Path) -> dict[str, Any]:
         "scanned_metadata_record_count": scanned_metadata,
         "resource_record_count": summary["record_count"],
         "by_resource_type": summary["by_resource_type"],
+        "new_resource_records": len(new_records),
+        "new_resource_types": dict(sorted(new_type_counts.items())),
+        "new_resource_leads": [_resource_lead_view(item) for item in new_records[:5]],
         "evidence_boundary": summary["evidence_boundary"],
     }
