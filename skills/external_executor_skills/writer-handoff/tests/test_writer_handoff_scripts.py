@@ -149,7 +149,14 @@ def make_workspace() -> Path:
             {"kind": "figure", "path": "external_executor/figure/main_dataset-a_test_accuracy_p1.svg"},
             {"kind": "table", "path": "external_executor/table/main_comparison.csv"},
         ]},
-        "evidence_packaging": {"status": "ready", "result_tables": {"tables": [{"path": "external_executor/table/main_comparison.csv"}]}},
+        "evidence_packaging": {
+            "status": "ready",
+            "result_tables": {"tables": [{"path": "external_executor/table/main_comparison.csv"}]},
+            "result_figures": {"figures": [{
+                "path": "external_executor/figure/main_dataset-a_test_accuracy_p1.svg",
+                "source_table_ref": "external_executor/table/main_comparison.csv",
+            }]},
+        },
         "claim_boundary": {"must_not_claim": ["Universal superiority outside dataset-a."]},
         "verified_literature_additions": {"items": [{
             "title": "A Verified Method Paper", "authors": ["A. Author"], "year": 2024,
@@ -200,10 +207,13 @@ class WriterHandoffTests(unittest.TestCase):
         self.assertIn("0.81", report)
         self.assertIn("0.755", report)
         self.assertIn("external_executor/raw_results/main/ours.csv", report)
+        self.assertIn("external_executor/figure/main_dataset-a_test_accuracy_p1.svg", report)
         self.assertIn("10.1234/verified.2024.1", report)
         facts = json.loads((ext / "report/writer_handoff_facts.json").read_text(encoding="utf-8"))
         self.assertEqual(facts["coverage"]["experiment_count"], 1)
         self.assertEqual(facts["coverage"]["result_record_count"], 1)
+        self.assertEqual(facts["experiments"][0]["tables"], ["external_executor/table/main_comparison.csv"])
+        self.assertEqual(facts["experiments"][0]["figures"], ["external_executor/figure/main_dataset-a_test_accuracy_p1.svg"])
         validation = json.loads((ext / "report/writer_handoff_validation.json").read_text(encoding="utf-8"))
         self.assertEqual(validation["status"], "ready")
         for old in (
