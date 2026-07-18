@@ -76,7 +76,7 @@ def main() -> int:
     }
     output = resolve_in_workspace(
         workspace,
-        args.output or "external_executor/report/validation_report.json",
+        args.output or "external_executor/report/phase_B/validation_report.json",
     )
     assert_write_allowed(workspace, output)
     dump_json_atomic(output, report)

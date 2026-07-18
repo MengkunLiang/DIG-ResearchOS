@@ -26,7 +26,7 @@ from _common import (
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate method-refinement prerequisites and authorization.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/report/method_refinement_preflight.json")
+    parser.add_argument("--output", default="external_executor/report/phase_D/method_refinement_preflight.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)
@@ -121,17 +121,17 @@ def main() -> int:
 
     output_paths = [
         output,
-        ext / "report" / "method_intent_contract.json",
+        ext / "report" / "phase_D" / "method_intent_contract.json",
         ext / "method_implementation_spec.json",
         ext / "method_specs",
-        ext / "report" / "method_spec_fingerprint.json",
-        ext / "report" / "method_delta.json",
-        ext / "report" / "method_scope_assessment.json",
-        ext / "report" / "scope_change_request.json",
-        ext / "report" / "method_refinement_review.json",
-        ext / "report" / "method_implementation_brief.md",
-        ext / "report" / "method_refinement_report.json",
-        ext / "report" / "method_refinement_report_validation.json",
+        ext / "report" / "phase_D" / "method_spec_fingerprint.json",
+        ext / "report" / "phase_D" / "method_delta.json",
+        ext / "report" / "phase_D" / "method_scope_assessment.json",
+        ext / "report" / "phase_D" / "scope_change_request.json",
+        ext / "report" / "phase_D" / "method_refinement_review.json",
+        ext / "report" / "phase_D" / "method_implementation_brief.md",
+        ext / "report" / "phase_D" / "method_refinement_report.json",
+        ext / "report" / "phase_D" / "method_refinement_report_validation.json",
         ext / "result_pack.json",
     ]
     for path in output_paths:

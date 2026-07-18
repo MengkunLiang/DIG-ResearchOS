@@ -59,7 +59,7 @@ class ResourceSkillScriptTests(unittest.TestCase):
     def test_preflight_and_matrix(self) -> None:
         ws = self.make_workspace()
         run("preflight_resources.py", "--workspace", str(ws))
-        preflight = json.loads((ws / "external_executor/report/resource_preflight.json").read_text())
+        preflight = json.loads((ws / "external_executor/report/phase_B/resource_preflight.json").read_text())
         self.assertEqual(preflight["status"], "pass")
         self.assertEqual(preflight["policy_snapshot"]["effective_mode"], "local_only")
         self.assertFalse(preflight["policy_snapshot"]["effective_network_allowed"])
@@ -71,7 +71,7 @@ class ResourceSkillScriptTests(unittest.TestCase):
     def test_local_inventory(self) -> None:
         ws = self.make_workspace()
         run("inventory_local_resources.py", "--workspace", str(ws))
-        inventory = json.loads((ws / "external_executor/report/resource_local_inventory.json").read_text())
+        inventory = json.loads((ws / "external_executor/report/phase_B/resource_local_inventory.json").read_text())
         self.assertGreaterEqual(len(inventory["items"]), 1)
         self.assertTrue(any("LICENSE" in item["license_files"] for item in inventory["items"]))
 
@@ -81,7 +81,7 @@ class ResourceSkillScriptTests(unittest.TestCase):
         run("build_requirement_matrix.py", "--workspace", str(ws))
         run("inventory_local_resources.py", "--workspace", str(ws))
         run("initialize_resource_report.py", "--workspace", str(ws))
-        path = ws / "external_executor/report/resource_preparation_report.json"
+        path = ws / "external_executor/report/phase_B/resource_preparation_report.json"
         report = json.loads(path.read_text())
         report["notes"] = ["preserve-me"]
         path.write_text(json.dumps(report), encoding="utf-8")
@@ -138,8 +138,8 @@ class ResourceSkillScriptTests(unittest.TestCase):
             "reimplementations": {"status": "not_needed", "items": []},
             "resource_source_report": {
                 "status": "complete",
-                "json_path": "external_executor/report/resource_source_report.json",
-                "markdown_path": "external_executor/report/resource_source_report.md",
+                "json_path": "external_executor/report/phase_B/resource_source_report.json",
+                "markdown_path": "external_executor/report/phase_B/resource_source_report.md",
                 "source_roots": ["resources"],
                 "counts": {"byhand": 0, "Remote_acquisition": 0, "reproduction": 0},
                 "categories": {"byhand": [], "Remote_acquisition": [], "reproduction": []},
@@ -150,7 +150,7 @@ class ResourceSkillScriptTests(unittest.TestCase):
             "resource_readiness": {"status": "ready", "minimum_loop_feasible": True, "approved_requirement_ids": [], "constrained_requirement_ids": [], "blocking_requirement_ids": [], "claim_constraints": [], "blocking_issues": [], "next_action": "continue_to_experiment_design"},
             "artifact_refs": [], "notes": [],
         }
-        report_path = ws / "external_executor/report/resource_preparation_report.json"
+        report_path = ws / "external_executor/report/phase_B/resource_preparation_report.json"
         report_path.write_text(json.dumps(report), encoding="utf-8")
         run("compute_resource_readiness.py", "--workspace", str(ws), "--report", str(report_path), "--write-back")
         run("validate_resource_report.py", "--workspace", str(ws))
@@ -166,7 +166,7 @@ class ResourceSkillScriptTests(unittest.TestCase):
         (root / "external_executor" / "report").mkdir()
         (root / "external_executor/allowed_paths.txt").write_text(".\n", encoding="utf-8")
         (root / "bad.sh").write_text("#!/bin/sh\nrm -rf /\n", encoding="utf-8")
-        output = root / "external_executor" / "report" / "static_review.json"
+        output = root / "external_executor" / "report" / "phase_B" / "static_review.json"
         proc = run("static_review_repository.py", "--workspace", str(root), "--path", str(root), check=False)
         self.assertNotEqual(proc.returncode, 0)
         report = json.loads(output.read_text())

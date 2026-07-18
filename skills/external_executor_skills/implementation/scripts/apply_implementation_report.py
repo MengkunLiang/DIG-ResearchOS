@@ -10,7 +10,7 @@ from validate_implementation_report import validate_data
 def main() -> int:
     parser = argparse.ArgumentParser(description="Atomically apply only the implementation-owned result-pack section.")
     parser.add_argument("--workspace")
-    parser.add_argument("--report", default="external_executor/report/implementation_report.json")
+    parser.add_argument("--report", default="external_executor/report/phase_D/implementation_report.json")
     args = parser.parse_args()
 
     workspace = resolve_workspace(args.workspace)

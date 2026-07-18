@@ -111,6 +111,7 @@ def make_workspace() -> Path:
                 "run_id": "RUN-O", "experiment_id": "E-MAIN", "method_id": "GateModel", "method_role": "ours",
                 "run_type": "formal", "status": "completed", "dataset": "dataset-a", "split": "test", "seed": 1,
                 "metrics": {"accuracy": 0.82}, "protocol_fingerprint": "P1",
+                "environment": {"PATH": "/opt/Stable-editor/bin:/usr/local/bin:/usr/bin"},
                 "config_path": "external_executor/expr/ITER-01/config.json",
                 "raw_result_path": "external_executor/raw_results/main/ours.csv",
                 "raw_log_path": "external_executor/raw_results/main/ours.log",
@@ -209,12 +210,12 @@ class WriterHandoffTests(unittest.TestCase):
         self.assertIn("external_executor/raw_results/main/ours.csv", report)
         self.assertIn("external_executor/figure/main_dataset-a_test_accuracy_p1.svg", report)
         self.assertIn("10.1234/verified.2024.1", report)
-        facts = json.loads((ext / "report/writer_handoff_facts.json").read_text(encoding="utf-8"))
+        facts = json.loads((ext / "report/phase_F/writer_handoff_facts.json").read_text(encoding="utf-8"))
         self.assertEqual(facts["coverage"]["experiment_count"], 1)
         self.assertEqual(facts["coverage"]["result_record_count"], 1)
         self.assertEqual(facts["experiments"][0]["tables"], ["external_executor/table/main_comparison.csv"])
         self.assertEqual(facts["experiments"][0]["figures"], ["external_executor/figure/main_dataset-a_test_accuracy_p1.svg"])
-        validation = json.loads((ext / "report/writer_handoff_validation.json").read_text(encoding="utf-8"))
+        validation = json.loads((ext / "report/phase_F/writer_handoff_validation.json").read_text(encoding="utf-8"))
         self.assertEqual(validation["status"], "ready")
         for old in (
             "writer_handoff_inventory.json", "writer_handoff_claim_map.json", "writer_handoff_t7_index.json",
@@ -229,7 +230,7 @@ class WriterHandoffTests(unittest.TestCase):
         status_path.write_text(json.dumps(status), encoding="utf-8")
         completed = pipeline(self.ws)
         self.assertNotEqual(completed.returncode, 0)
-        validation = json.loads((self.ws / "external_executor/report/writer_handoff_validation.json").read_text())
+        validation = json.loads((self.ws / "external_executor/report/phase_F/writer_handoff_validation.json").read_text())
         self.assertTrue(any(item["code"] == "terminal_status_mismatch" for item in validation["errors"]))
 
     def test_matching_partial_outcome_produces_constrained_handoff(self) -> None:
@@ -244,7 +245,7 @@ class WriterHandoffTests(unittest.TestCase):
         result_path.write_text(json.dumps(result), encoding="utf-8")
         completed = pipeline(self.ws)
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-        validation = json.loads((ext / "report/writer_handoff_validation.json").read_text())
+        validation = json.loads((ext / "report/phase_F/writer_handoff_validation.json").read_text())
         self.assertEqual(validation["status"], "partial")
 
     def test_unfavorable_comparison_is_preserved_and_weakens_claim(self) -> None:
@@ -263,7 +264,7 @@ class WriterHandoffTests(unittest.TestCase):
 
         completed = pipeline(self.ws)
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-        facts = json.loads((ext / "report/writer_handoff_facts.json").read_text())
+        facts = json.loads((ext / "report/phase_F/writer_handoff_facts.json").read_text())
         self.assertEqual(facts["coverage"]["result_record_count"], 2)
         self.assertEqual(facts["claim_support"][0]["strength"], "Partially supported candidate")
         report = (ext / "executor_research_report.md").read_text(encoding="utf-8")
@@ -275,7 +276,7 @@ class WriterHandoffTests(unittest.TestCase):
         extra.write_text("<svg xmlns='http://www.w3.org/2000/svg'/>\n", encoding="utf-8")
         completed = pipeline(self.ws)
         self.assertNotEqual(completed.returncode, 0)
-        validation = json.loads((self.ws / "external_executor/report/writer_handoff_validation.json").read_text())
+        validation = json.loads((self.ws / "external_executor/report/phase_F/writer_handoff_validation.json").read_text())
         self.assertTrue(any(item["code"] == "final_asset_unregistered" for item in validation["errors"]))
 
     def test_snapshot_detects_core_mutation(self) -> None:
@@ -286,7 +287,7 @@ class WriterHandoffTests(unittest.TestCase):
         result_path.write_text(json.dumps(result), encoding="utf-8")
         completed = run("validate_writer_handoff.py", "--workspace", self.ws, check=False)
         self.assertNotEqual(completed.returncode, 0)
-        validation = json.loads((self.ws / "external_executor/report/writer_handoff_validation.json").read_text())
+        validation = json.loads((self.ws / "external_executor/report/phase_F/writer_handoff_validation.json").read_text())
         self.assertTrue(any(item["code"] == "core_file_changed_after_snapshot" for item in validation["errors"]))
 
     def test_promotional_authority_language_is_rejected(self) -> None:
@@ -295,7 +296,7 @@ class WriterHandoffTests(unittest.TestCase):
         report_path.write_text(report_path.read_text(encoding="utf-8") + "\nThe method proves that it is state-of-the-art.\n", encoding="utf-8")
         completed = run("validate_writer_handoff.py", "--workspace", self.ws, check=False)
         self.assertNotEqual(completed.returncode, 0)
-        validation = json.loads((self.ws / "external_executor/report/writer_handoff_validation.json").read_text())
+        validation = json.loads((self.ws / "external_executor/report/phase_F/writer_handoff_validation.json").read_text())
         self.assertTrue(any(item["code"] == "forbidden_authority_or_promotional_phrase" for item in validation["errors"]))
 
 

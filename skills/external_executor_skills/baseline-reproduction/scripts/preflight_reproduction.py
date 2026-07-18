@@ -22,7 +22,7 @@ def find_active_iteration(result: dict) -> dict | None:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Validate baseline reproduction prerequisites and authorization.")
     ap.add_argument("--workspace")
-    ap.add_argument("--output", default="external_executor/report/baseline_reproduction_preflight.json")
+    ap.add_argument("--output", default="external_executor/report/phase_D/baseline_reproduction_preflight.json")
     args = ap.parse_args()
     ws = resolve_workspace(args.workspace)
     ext = ws / "external_executor"
@@ -82,11 +82,11 @@ def main() -> int:
 
     write_targets = [
         output,
-        ext / "report" / "baseline_reproduction_plan.json",
-        ext / "report" / "baseline_reproduction_report.json",
+        ext / "report" / "phase_D" / "baseline_reproduction_plan.json",
+        ext / "report" / "phase_D" / "baseline_reproduction_report.json",
         ext / "expr" / "baselines",
         ext / "raw_results" / "baseline_reproduction",
-        ext / "report" / "baseline_reproduction",
+        ext / "report" / "phase_D" / "baseline_reproduction",
     ]
     for target in write_targets:
         try:

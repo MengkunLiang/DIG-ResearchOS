@@ -10,7 +10,7 @@ from validate_reproduction_report import validate
 def main() -> int:
     ap = argparse.ArgumentParser(description="Apply only baseline_reproduction to result_pack.json.")
     ap.add_argument("--workspace")
-    ap.add_argument("--report", default="external_executor/report/baseline_reproduction_report.json")
+    ap.add_argument("--report", default="external_executor/report/phase_D/baseline_reproduction_report.json")
     args = ap.parse_args()
     ws = resolve_workspace(args.workspace)
     report = load_json(resolve_in_workspace(ws, args.report))

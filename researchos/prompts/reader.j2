@@ -123,6 +123,7 @@
 2. `literature/comparison_table.csv`: 论文对比表（累积写入）
 3. `literature/related_work.bib`: BibTeX引用库（累积写入）
 4. `literature/notes_manifest.json`: runtime 自动刷新的 T3 完成度账本；你不要手写它
+5. `literature/resource_catalog.jsonl` 与 `literature/resource_catalog_summary.json`: 每篇论文关联的代码、数据集、benchmark、模型、项目页和补充材料的可追溯发现目录；由 `save_paper_note(resources=...)` 自动更新，不能手写为“已获取”或“可运行”。
 
 如果只能基于 abstract/metadata 写 note，除 FULL/PARTIAL note 的主体字段外，还必须包含两个轻字段，供 T3.5 看见跨域桥接价值：
 - `## A. Core Approach / Perspective`：这篇 abstract 呈现出的核心方法、机制视角或评价视角；无法确认时明确写 `LLM_REVIEW_REQUIRED`。
@@ -180,11 +181,12 @@
    - 如果不存在，尝试使用 `fetch_paper_pdf` 下载（传入原始ID，如 `arxiv:2301.12345`、`10.1234/xxxx`、`W1234567890`）
      - `fetch_paper_pdf` 优先支持 arXiv，同时也会尝试从 OpenAlex 的开放获取位置、DOI 跳转链接里寻找 PDF
      - 如果你传入的是 OpenAlex/canonical/noopenalex ID，工具会先回查 `deep_read_queue`、`papers_verified`、`papers_dedup` 和 `papers_raw` 中同一论文的 `pdf_url`、arXiv ID、DOI、OpenAlex OA location，再组成候选 URL；不需要你手抄整池 metadata
-     - 对于闭源或无开放获取副本的论文，下载仍可能失败
+   - 对于闭源或无开放获取副本的论文，下载仍可能失败
    - 如果都失败，基于abstract和metadata生成笔记，并在笔记中标注 **[ABSTRACT-ONLY]**
-7. 按照模板组织完整 markdown note，然后调用 `save_paper_note(queue_rank=<当前队列rank>, content=<完整note>)` 保存；不要自己选择 `{normalized_id}`。如果工具返回 `note_incomplete`，按返回的缺失字段修补同一篇 note 后再次调用 `save_paper_note`。
-8. 仅为这篇“新完成的论文”追加一行到 `literature/comparison_table.csv`
-9. 仅为这篇“新完成的论文”追加一条到 `literature/related_work.bib`
+7. **资源发现是每篇论文阅读的一部分**：检查正文末尾、脚注、附录、Data/Code Availability、实验设置、项目页和补充材料说明，记录论文关联的官方代码、复现仓库、数据集、benchmark、预训练模型、评估脚本、项目页和补充材料。仅摘要阅读时，只能记录 metadata/abstract 明示的链接或“未发现可解析链接”；不要从标题猜测资源。
+8. 按照模板组织完整 markdown note，然后调用 `save_paper_note(queue_rank=<当前队列rank>, content=<完整note>, resources=[...])` 保存；`resources` 中每项使用 `resource_type`（`code_repository`、`dataset`、`benchmark`、`model_checkpoint`、`project_page`、`supplementary_material`、`evaluation_code`、`documentation`、`other`）、`name`、`url`、`relationship`、`locator`、`revision`、`license_hint`、`access_hint`。未找到资源时传 `resources=[]`；工具会保留“未发现”的阅读边界。不得调用 clone、安装、执行或下载第三方仓库内容。
+9. 仅为这篇“新完成的论文”追加一行到 `literature/comparison_table.csv`
+10. 仅为这篇“新完成的论文”追加一条到 `literature/related_work.bib`
 
 ## paper_note.md 模板（19项checklist，CDR扩展）
 
@@ -288,6 +290,10 @@
 ## 16. Data View & Evaluation Mode
 - **Data view**: {数据范式、识别/效度策略、数据来源或任务设置}
 - **Evaluation mode**: {formative/summative、benchmark/statistical/deployment、naturalistic/artificial 等}
+
+## 21. Associated Research Resources
+- **Discovery status**: {逐项说明正文/附录是否明确提到代码、数据、benchmark、模型、项目页或补充材料；没有就写 `no resolvable resource link found in material read`}
+- **Resource boundary**: {这些是发现线索，尚未下载、许可核验、静态审查或证明与论文实现等价}
 - **Validity concern**: {数据或评估对结论的主要限制}
 
 ## 17. Contribution Type

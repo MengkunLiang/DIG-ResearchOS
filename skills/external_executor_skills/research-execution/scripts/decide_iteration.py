@@ -367,7 +367,7 @@ def main() -> int:
     plan_artifact_path = None
     if active_for_execution:
         active_id = str(active_for_execution.get("iteration_id") or active_for_execution.get("id"))
-        plan_artifact_path = ext / "report" / "iteration_plans" / f"{active_id}.json"
+        plan_artifact_path = ext / "report" / "phase_D" / "iteration_plans" / f"{active_id}.json"
         active_for_execution["plan_ref"] = plan_artifact_path.relative_to(root).as_posix()
 
     did = decision_id(iteration_id, str(diagnosis.get("diagnosis_id") or "unknown"), loop_outcome)

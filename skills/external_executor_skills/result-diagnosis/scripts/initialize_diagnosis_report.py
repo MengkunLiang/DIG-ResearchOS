@@ -72,8 +72,8 @@ def summarize_baseline_performance(snapshot: dict, stats: dict) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Initialize result diagnosis report from deterministic evidence.")
     parser.add_argument("--workspace")
-    parser.add_argument("--snapshot", default="external_executor/report/diagnosis_evidence_snapshot.json")
-    parser.add_argument("--statistics", default="external_executor/report/diagnosis_statistics.json")
+    parser.add_argument("--snapshot", default="external_executor/report/phase_E/diagnosis_evidence_snapshot.json")
+    parser.add_argument("--statistics", default="external_executor/report/phase_E/diagnosis_statistics.json")
     parser.add_argument("--output", default="external_executor/result_diagnosis_report.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)

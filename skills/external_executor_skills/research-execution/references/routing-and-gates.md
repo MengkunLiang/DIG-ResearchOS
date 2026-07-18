@@ -46,6 +46,8 @@ Use this reference when selecting a child skill, recording an iteration decision
 | Attribution ready or constrained stop-and-report | Evidence snapshot can be pinned | `evidence-packaging` |
 | Evidence package valid | Handoff fields resolvable | `writer-handoff` |
 | Terminal outcome recorded, report absent or handoff validation blocked | Final core inputs and assets frozen | `writer-handoff` |
+| Writer Handoff `ready|partial` and T8 not delegated | ResearchOS CLI is available from the workspace root | `launch-t8` with `python -m researchos.cli run-task T8 --workspace <workspace>` |
+| T8 receipt/state already exists | Prior delegation is durable | `stop`; do not launch T8 twice |
 
 ## Loop decision table
 
@@ -66,6 +68,7 @@ One iteration decision has one primary value. Store secondary actions separately
 
 - Count the initial implementation as iteration 1 and permit at most 10 total method implementation/debug iterations.
 - Send every terminal experiment outcome to `result-diagnosis`, including failures with no metrics.
+- On resume, an undiagnosed terminal run overrides a stale durable `next_action`; diagnose it before rerunning, repairing, or making an iteration decision.
 - A failed/incomplete our-method run creates a new copied implementation for bounded debug after diagnosis.
 - A completed run that does not beat every required baseline on every comparable surface creates a new copied method refinement. Falling behind a majority of baselines is always a required refinement, but beating a majority is not the completion target.
 - A later iteration must use the previous implementation `worktree/` as `base_source`; prior method versions remain unchanged.
@@ -95,3 +98,5 @@ The request must contain the proposed change, reason, affected claims, affected 
 - `failed`: execution encountered an unrecoverable failure and produced no reliable experiment result, though diagnostic artifacts remain.
 
 Always run Phase F as far as evidence permits. Missing work must be explicit, not omitted or invented.
+
+After Writer Handoff, `launch-t8` is the only normal continuation. The root invokes the command returned by `route_next_skill.py`; it does not edit ResearchOS `drafts/` itself. A `partial` handoff may continue so T8 can write within explicit evidence boundaries, while a blocked Writer Handoff validation must be repaired before launch.

@@ -206,7 +206,7 @@ def render(facts: dict[str, Any]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Render executor_research_report.md from source-bound facts.")
     parser.add_argument("--workspace")
-    parser.add_argument("--facts", default="external_executor/report/writer_handoff_facts.json")
+    parser.add_argument("--facts", default="external_executor/report/phase_F/writer_handoff_facts.json")
     parser.add_argument("--output")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)

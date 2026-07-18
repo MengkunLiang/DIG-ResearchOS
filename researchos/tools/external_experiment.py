@@ -27,6 +27,16 @@ from ..runtime.bridge_catalog import (
     resolve_catalog_canonical_note_path,
 )
 from ..runtime.literature_contract import build_literature_manifest, iter_literature_note_cards
+from ..literature_resources import refresh_resource_catalog
+from ..ideation.proposal import (
+    PROPOSAL_MANIFEST_REL_PATH,
+    PROPOSAL_REL_PATH,
+    PROPOSAL_SEMANTICS,
+    PROPOSAL_STATUS,
+    proposal_manifest_source_ref,
+    proposal_source_ref,
+    validate_t45_research_proposal,
+)
 from ..skills.project_specialization import specialize_project_skills
 from ..skills.project_specialization.policies import (
     default_executor_capabilities,
@@ -38,7 +48,7 @@ from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 
 EXECUTOR_SELECTION_PATH = "external_executor/report/executor_selection.json"
 EXECUTOR_CAPABILITIES_PATH = "external_executor/report/executor_capabilities.json"
-INPUT_FINGERPRINT_PATH = "external_executor/report/input_fingerprint.json"
+INPUT_FINGERPRINT_PATH = "external_executor/report/phase_A/input_fingerprint.json"
 RUN_MANIFEST_PATH = "external_executor/report/run_manifest.json"
 LEGACY_EXECUTOR_SELECTION_PATH = "external_executor/executor_selection.json"
 LEGACY_EXECUTOR_CAPABILITIES_PATH = "external_executor/executor_capabilities.json"
@@ -193,6 +203,22 @@ def _paper_card_evidence_index(workspace: Path) -> dict[str, Any]:
         records_per_bridge=2,
         abstract_excerpt_chars=320,
     )
+    resource_summary = _read_json(workspace / "literature" / "resource_catalog_summary.json")
+    resource_catalog_path = workspace / "literature" / "resource_catalog.jsonl"
+    resource_catalog = {
+        "catalog_path": "literature/resource_catalog.jsonl",
+        "summary_path": "literature/resource_catalog_summary.json",
+        "available": resource_catalog_path.is_file(),
+        "record_count": int(resource_summary.get("record_count") or 0),
+        "paper_count": int(resource_summary.get("paper_count") or 0),
+        "by_resource_type": resource_summary.get("by_resource_type")
+        if isinstance(resource_summary.get("by_resource_type"), dict)
+        else {},
+        "usage_boundary": (
+            "Discovery records guide feasibility, baseline/resource selection, and Phase B acquisition. "
+            "They do not prove a resource is executable, licensed, official, protocol-equivalent, or empirical evidence."
+        ),
+    }
     return {
         "version": "1.0",
         "semantics": "paper_card_evidence_index",
@@ -223,6 +249,7 @@ def _paper_card_evidence_index(workspace: Path) -> dict[str, Any]:
                 "They do not establish a mechanism, baseline equivalence, implementation detail, or experimental result."
             ),
         },
+        "resource_discovery_catalog": resource_catalog,
     }
 
 
@@ -382,6 +409,8 @@ PRE_T5_SOURCE_FILES = [
     "literature/comparison_table.csv",
     "ideation/hypotheses.md",
     "ideation/research_dossier.json",
+    "ideation/proposal/research_proposal.md",
+    "ideation/proposal/proposal_manifest.json",
     "ideation/exp_plan.yaml",
     "ideation/selected/selected_candidate.json",
     "ideation/kill_criteria.yaml",
@@ -393,6 +422,8 @@ PRE_T5_SOURCE_FILES = [
     "novelty/novelty_audit.md",
     "resources/baseline_candidates.jsonl",
     "literature/baseline_map.json",
+    "literature/resource_catalog.jsonl",
+    "literature/resource_catalog_summary.json",
     "literature/notes_manifest.json",
     "literature/deep_read_notes",
     "literature/bridge_notes",
@@ -547,9 +578,11 @@ def _research_reboost_inventory(workspace: Path) -> dict[str, Any]:
         "idea_scorecard": ["risk_analysis", "method_mechanism"],
         "risks": ["risk_analysis", "claim_boundary"],
         "research_dossier": ["research_goal", "method_mechanism", "claim_boundary", "risk_analysis"],
+        "research_proposal": ["research_goal", "method_mechanism", "experiment_protocol", "claim_boundary", "risk_analysis", "writer_contract"],
         "validation_map": ["experiment_protocol", "baseline_selection", "claim_boundary"],
         "contribution_hypothesis_map": ["method_mechanism", "claim_boundary", "writer_contract"],
         "novelty_audit": ["novelty_boundary", "baseline_selection", "claim_boundary"],
+        "resource": ["resource_hint", "baseline_selection", "risk_analysis"],
     }
     for entry in inventory.get("sources", []) or []:
         if not isinstance(entry, dict):
@@ -558,10 +591,18 @@ def _research_reboost_inventory(workspace: Path) -> dict[str, Any]:
         is_available = entry.get("availability") == "available"
         is_current_t45_context = str(entry.get("category") or "") in {
             "research_dossier",
+            "research_proposal",
             "validation_map",
             "contribution_hypothesis_map",
         }
-        entry["used"] = bool(is_available and (is_required or is_current_t45_context))
+        entry["used"] = bool(
+            is_available
+            and (
+                is_required
+                or is_current_t45_context
+                or str(entry.get("category") or "") == "resource"
+            )
+        )
         if entry["used"]:
             entry["used_for"] = used_for_by_category.get(str(entry.get("category")), [])
         elif is_required:
@@ -1441,7 +1482,67 @@ def _candidate_dossier_value(selected_candidate: dict[str, Any], *keys: str) -> 
     return ""
 
 
-def _research_context_source_refs(dossier: dict[str, Any]) -> list[dict[str, str]]:
+def _load_t45_proposal_context(
+    workspace: Path,
+    *,
+    dossier: dict[str, Any],
+    hypotheses: str,
+) -> dict[str, Any]:
+    """Load the formal Proposal as planning context with a legacy fallback."""
+
+    manifest = _read_json(workspace / PROPOSAL_MANIFEST_REL_PATH)
+    proposal_path = workspace / PROPOSAL_REL_PATH
+    audit_path = workspace / "ideation" / "novelty_audit.md"
+    proposal_valid, _proposal_error = validate_t45_research_proposal(workspace, audit_path)
+    if (
+        proposal_valid
+        and manifest.get("semantics") == PROPOSAL_SEMANTICS
+        and manifest.get("status") == PROPOSAL_STATUS
+        and manifest.get("proposal_path") == PROPOSAL_REL_PATH
+        and proposal_path.is_file()
+        and proposal_path.stat().st_size > 0
+    ):
+        executive = manifest.get("executive_summary")
+        if isinstance(executive, dict):
+            summary = _compact_text(str(executive.get("statement") or ""), limit=900)
+        else:
+            summary = ""
+        if not summary:
+            summary = _first_non_heading_line(_read_text(proposal_path, max_chars=4000))
+        return {
+            "path": PROPOSAL_REL_PATH,
+            "manifest_path": PROPOSAL_MANIFEST_REL_PATH,
+            "source_type": "formal_proposal",
+            "planning_status": PROPOSAL_STATUS,
+            "summary": summary or "Formal post-novelty proposal is available for execution planning.",
+            "t5_role": "planning_context_not_results",
+            "source_refs": [proposal_source_ref(), proposal_manifest_source_ref()],
+        }
+
+    fallback_path = "ideation/research_dossier.json" if dossier else "ideation/hypotheses.md"
+    fallback_summary = _dossier_statement(dossier, "central_thesis") or _first_non_heading_line(hypotheses)
+    return {
+        "path": fallback_path,
+        "manifest_path": "",
+        "source_type": "legacy_formalization_fallback",
+        "planning_status": "legacy_fallback",
+        "summary": fallback_summary or "No formal post-novelty proposal was available; use the retained formalization files.",
+        "t5_role": "planning_context_not_results",
+        "source_refs": [
+            _source_ref(
+                "SRC_RESEARCH_DOSSIER" if dossier else "SRC_HYPOTHESES",
+                fallback_path,
+                "Legacy formalization fallback preserves planning context without becoming empirical evidence.",
+                "reconciled",
+            )
+        ],
+    }
+
+
+def _research_context_source_refs(
+    dossier: dict[str, Any],
+    proposal_context: dict[str, Any],
+) -> list[dict[str, str]]:
     refs = [
         _source_ref("SRC_IDEA_SCORECARD", "selected Candidate dossier", "T4 selected direction preserves the research problem and decision context"),
         _source_ref("SRC_HYPOTHESES", "formal research dossier", "Formal hypotheses define the testable mechanism and scope", "reconciled"),
@@ -1456,6 +1557,8 @@ def _research_context_source_refs(dossier: dict[str, Any]) -> list[dict[str, str
                 "Post-novelty dossier preserves T4 significance, stakeholders, contributions, and evidence status",
             ),
         )
+    if proposal_context.get("source_type") == "formal_proposal":
+        refs[1:1] = [proposal_source_ref(), proposal_manifest_source_ref()]
     return refs
 
 
@@ -1465,6 +1568,7 @@ def _build_t45_research_context(
     selected_candidate: dict[str, Any],
     hypotheses: str,
     contribution_map: dict[str, Any],
+    proposal_context: dict[str, Any],
 ) -> dict[str, Any]:
     """Retain T4 decision context without promoting it to empirical evidence."""
 
@@ -1514,7 +1618,65 @@ def _build_t45_research_context(
         "stakeholders_or_processes": stakeholders,
         "contribution_intent": contributions,
         "evidence_status": evidence_status,
-        "source_refs": _research_context_source_refs(dossier),
+        "proposal_context": proposal_context,
+        "source_refs": _research_context_source_refs(dossier, proposal_context),
+    }
+
+
+def _build_resource_discovery_context(
+    workspace: Path,
+    source_manifest: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Expose literature resource discoveries to T5 without treating them as assets.
+
+    The catalog is intentionally optional for legacy workspaces. When present,
+    it tells Phase B where a baseline/data lead originated and preserves the
+    fact that access, licensing, revision pinning, and protocol equivalence are
+    still unresolved.
+    """
+
+    catalog_path = "literature/resource_catalog.jsonl"
+    summary_path = "literature/resource_catalog_summary.json"
+    summary = _read_json(workspace / summary_path)
+    if not (workspace / catalog_path).is_file() or not summary:
+        return None
+    entries_by_path = {
+        str(entry.get("path") or ""): entry
+        for entry in source_manifest
+        if isinstance(entry, dict)
+    }
+    catalog_entry = entries_by_path.get(catalog_path)
+    summary_entry = entries_by_path.get(summary_path)
+    if not catalog_entry or not summary_entry:
+        return None
+    source_refs = [
+        _source_ref(
+            str(catalog_entry.get("source_id") or "SRC_RESOURCE_CATALOG"),
+            catalog_path,
+            "Paper-associated resource discovery records for feasibility and Phase B acquisition planning.",
+        ),
+        _source_ref(
+            str(summary_entry.get("source_id") or "SRC_RESOURCE_CATALOG_SUMMARY"),
+            summary_path,
+            "Resource discovery counts and execution boundary.",
+        ),
+    ]
+    return {
+        "catalog_path": catalog_path,
+        "summary_path": summary_path,
+        "record_count": max(0, int(summary.get("record_count") or 0)),
+        "paper_count": max(0, int(summary.get("paper_count") or 0)),
+        "by_resource_type": {
+            str(key): max(0, int(value or 0))
+            for key, value in (summary.get("by_resource_type") or {}).items()
+            if isinstance(key, str)
+        },
+        "t5_role": "discovery_context_for_phase_b_not_execution_evidence",
+        "evidence_boundary": (
+            "The catalog records paper-associated resource leads. T5 must verify identity, license, "
+            "immutable version, security, and protocol compatibility before acquisition or use."
+        ),
+        "source_refs": source_refs,
     }
 
 
@@ -1604,6 +1766,44 @@ def _extract_datasets(exp_plan: dict[str, Any]) -> list[str]:
             value = exp.get(key)
             if isinstance(value, str) and value.strip() and value.strip().casefold() not in {"unknown", "tbd"}:
                 names.append(value.strip())
+        # Agent/human and controlled-simulation studies often have no named
+        # benchmark dataset. Their declared population and design still form a
+        # concrete execution setting. Preserve those explicit fields rather
+        # than inventing a dataset or declaring the protocol empty.
+        design = exp.get("design") if isinstance(exp.get("design"), dict) else {}
+        for key in ("dataset", "datasets", "benchmark", "evaluation", "evaluation_setting", "setting"):
+            value = design.get(key)
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        name = str(item.get("name") or item.get("dataset") or item.get("benchmark") or "").strip()
+                    else:
+                        name = str(item or "").strip()
+                    if name and name.casefold() not in {"unknown", "tbd"}:
+                        names.append(name)
+            elif isinstance(value, dict):
+                name = str(value.get("name") or value.get("dataset") or value.get("benchmark") or "").strip()
+                if name and name.casefold() not in {"unknown", "tbd"}:
+                    names.append(name)
+            elif isinstance(value, str) and value.strip() and value.strip().casefold() not in {"unknown", "tbd"}:
+                names.append(value.strip())
+
+        population = design.get("population") if isinstance(design.get("population"), dict) else {}
+        setting_parts: list[str] = []
+        design_type = str(design.get("type") or exp.get("design_type") or "").strip()
+        if design_type:
+            setting_parts.append(design_type)
+        agent_population = population.get("agent") if isinstance(population.get("agent"), dict) else {}
+        models = agent_population.get("models") if isinstance(agent_population.get("models"), list) else []
+        model_names = [str(model).strip() for model in models if str(model).strip()]
+        if model_names:
+            setting_parts.append("agent models=" + ", ".join(model_names))
+        human_population = population.get("human") if isinstance(population.get("human"), dict) else {}
+        platform = str(human_population.get("platform") or "").strip()
+        if platform:
+            setting_parts.append("human platform=" + platform)
+        if setting_parts:
+            names.append("declared experimental setting: " + "; ".join(setting_parts))
     return list(dict.fromkeys(item for item in names if item))
 
 
@@ -1795,6 +1995,7 @@ def _build_reboost_writer_contract() -> dict[str, Any]:
         "must_not_use_as_final_fact_source": [
             "method_intent",
             "research_context",
+            "research_proposal",
             "initial_framework_figure_sketch",
             "unaudited_raw_results",
             "diagnostic_hint",
@@ -1833,6 +2034,22 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
         dossier = {}
     selected_candidate = _read_json(workspace / "ideation" / "selected" / "selected_candidate.json")
     contribution_map = _read_yaml(workspace / "ideation" / "contribution_hypothesis_map.yaml")
+    proposal_context = _load_t45_proposal_context(
+        workspace,
+        dossier=dossier,
+        hypotheses=hypotheses,
+    )
+    if proposal_context["source_type"] != "formal_proposal":
+        for source in source_manifest:
+            if source.get("path") not in {PROPOSAL_REL_PATH, PROPOSAL_MANIFEST_REL_PATH}:
+                continue
+            if source.get("availability") == "available":
+                source["used"] = False
+                source["used_for"] = []
+                source["omission_reason"] = (
+                    "Proposal is present but does not satisfy the current post-novelty proposal contract; "
+                    "T5 uses the explicit legacy formalization fallback instead."
+                )
     synthesis = _read_text(workspace / "literature" / "synthesis.md", max_chars=16000)
     novelty = _read_text(workspace / "ideation" / "novelty_audit.md", max_chars=16000)
     risks, risk_source = _first_existing_text(
@@ -1847,7 +2064,9 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
         selected_candidate=selected_candidate,
         hypotheses=hypotheses,
         contribution_map=contribution_map,
+        proposal_context=proposal_context,
     )
+    resource_discovery_context = _build_resource_discovery_context(workspace, source_manifest)
     metrics = _extract_exp_plan_metrics(exp_plan)
     datasets = _extract_datasets(exp_plan)
     experiments = _experiments_from_plan(exp_plan)
@@ -2033,6 +2252,11 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 ],
             },
             "research_context": research_context,
+            **(
+                {"resource_discovery_context": resource_discovery_context}
+                if resource_discovery_context is not None
+                else {}
+            ),
             "study_scope": {
                 "target_setting": _compact_text(research_question, limit=500),
                 "tasks": [
@@ -2333,7 +2557,7 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
             ],
             "scope_change_policy": {
                 "silent_changes_forbidden": True,
-                "request_artifact": "external_executor/report/scope_change_request.json",
+                "request_artifact": "external_executor/report/phase_D/scope_change_request.json",
                 "major_change_action": "human_review",
                 "minor_change_action": "record_and_continue",
             },
@@ -2348,6 +2572,7 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 "project.yaml",
                 "ideation/novelty_audit.md",
                 "ideation/exp_plan.yaml",
+                "ideation/proposal/research_proposal.md",
                 "ideation/research_dossier.json",
                 "ideation/selected/selected_candidate.json",
                 "ideation/contribution_hypothesis_map.yaml",
@@ -2404,78 +2629,21 @@ def _allowed_path_rules_for_external_executor() -> list[str]:
         "rw  external_executor/expr/",
         "rw  external_executor/env/",
         "rw  external_executor/runs/",
+        "rw  external_executor/reviews/",
         "rw  external_executor/method_specs/",
         "rw  external_executor/evidence_package/",
-        "rw  external_executor/report/preflight_context.json",
-        "rw  external_executor/report/context_source_inventory.json",
-        "rw  external_executor/report/context_alignment_report.json",
-        "rw  external_executor/report/resource_preflight.json",
+        "rw  external_executor/report/phase_A/",
+        "rw  external_executor/report/phase_B/",
+        "rw  external_executor/report/phase_C/",
+        "rw  external_executor/report/phase_D/",
+        "rw  external_executor/report/phase_E/",
+        "rw  external_executor/report/phase_F/",
         "rw  external_executor/resource_requirement_matrix.json",
-        "rw  external_executor/report/resource_local_inventory.json",
-        "rw  external_executor/report/resource_search_records.json",
-        "rw  external_executor/report/resource_source_report.json",
-        "rw  external_executor/report/resource_source_report.md",
-        "rw  external_executor/report/resource_preparation_report.json",
-        "rw  external_executor/report/static_review.json",
-        "rw  external_executor/report/validation_report.json",
-        "rw  external_executor/report/baseline_reproduction_preflight.json",
-        "rw  external_executor/report/baseline_reproduction_plan.json",
-        "rw  external_executor/report/baseline_reproduction_report.json",
-        "rw  external_executor/report/baseline_reproduction/",
-        "rw  external_executor/report/claim_evidence_matrix.json",
-        "rw  external_executor/report/protocol_snapshot.json",
-        "rw  external_executor/report/protocol_fingerprint.json",
-        "rw  external_executor/report/protocol_change_impact.json",
         "rw  external_executor/experiment_plan.json",
-        "rw  external_executor/report/experiment_plan_validation.json",
-        "rw  external_executor/report/experiment_plan_dag_validation.json",
-        "rw  external_executor/report/experiment_design_preflight.json",
-        "rw  external_executor/report/experiment_design_report.json",
-        "rw  external_executor/report/experiment_design_report_validation.json",
-        "rw  external_executor/report/experiment_design_gate.json",
-        "rw  external_executor/report/method_intent_contract.json",
         "rw  external_executor/method_implementation_spec.json",
-        "rw  external_executor/report/method_implementation_spec_validation.json",
-        "rw  external_executor/report/method_implementation_brief.md",
-        "rw  external_executor/report/method_spec_fingerprint.json",
-        "rw  external_executor/report/method_delta.json",
-        "rw  external_executor/report/method_scope_assessment.json",
-        "rw  external_executor/report/scope_change_request.json",
-        "rw  external_executor/report/method_refinement_preflight.json",
-        "rw  external_executor/report/method_refinement_review.json",
-        "rw  external_executor/report/method_refinement_report.json",
-        "rw  external_executor/report/method_refinement_report_validation.json",
-        "rw  external_executor/report/implementation_preflight.json",
-        "rw  external_executor/report/implementation_change_contract.json",
-        "rw  external_executor/report/implementation_report.json",
-        "rw  external_executor/report/module_attribution_preflight.json",
-        "rw  external_executor/report/module_attribution_snapshot.json",
-        "rw  external_executor/report/module_attribution_facts.json",
         "rw  external_executor/module_attribution_report.json",
-        "rw  external_executor/report/module_attribution/",
-        "rw  external_executor/report/result_diagnosis_preflight.json",
-        "rw  external_executor/report/diagnosis_evidence_snapshot.json",
-        "rw  external_executor/report/diagnosis_statistics.json",
         "rw  external_executor/result_diagnosis_report.json",
         "rw  external_executor/result_diagnosis/",
-        "rw  external_executor/report/evidence_packaging_preflight.json",
-        "rw  external_executor/report/final_evidence_snapshot.json",
-        "rw  external_executor/report/final_evidence_snapshot_validation.json",
-        "rw  external_executor/report/framework_figure_spec.json",
-        "rw  external_executor/report/framework_figure.mmd",
-        "rw  external_executor/report/result_table_build_report.json",
-        "rw  external_executor/report/result_figure_build_report.json",
-        "rw  external_executor/report/figure_table_inventory.json",
-        "rw  external_executor/report/evidence_mapping.json",
-        "rw  external_executor/report/evidence_package_manifest.json",
-        "rw  external_executor/report/evidence_packaging_gate.json",
-        "rw  external_executor/report/evidence_packaging_report.json",
-        "rw  external_executor/report/evidence_packaging_report_validation.json",
-        "rw  external_executor/report/writer_handoff_preflight.json",
-        "rw  external_executor/report/writer_handoff_snapshot.json",
-        "rw  external_executor/report/writer_handoff_facts.json",
-        "rw  external_executor/report/writer_handoff_validation.json",
-        f"rw  {INPUT_FINGERPRINT_PATH}",
         "rw  external_executor/executor_research_report.md",
         "rw  external_executor/result_pack.json",
         "rw  external_executor/executor_status.json",
@@ -2603,7 +2771,9 @@ def patch_external_executor_files_with_selection(workspace: Path, selection: dic
             if isinstance(contract, dict):
                 rules = contract.setdefault("authority_rules", [])
                 if isinstance(rules, list):
-                    rules.append({"action": f"executor selected: {selected}", "authority": "allowed"})
+                    selection_rule = {"action": f"executor selected: {selected}", "authority": "allowed"}
+                    if selection_rule not in rules:
+                        rules.append(selection_rule)
                 _write_json(handoff_path, handoff)
         else:
             handoff["executor"] = selected
@@ -2916,7 +3086,9 @@ def _write_external_executor_guides(
         "## Read if present\n"
         "- resources/baseline_candidates.jsonl\n"
         "- literature/baseline_map.json\n"
+        "- literature/resource_catalog.jsonl and literature/resource_catalog_summary.json\n"
         "\n"
+        "The literature resource catalog contains discovery leads only; verify identity, license, revision, security, and protocol fit in Phase B. "
         "Missing optional resource or baseline map files are not blockers. Use the handoff, project context, and Phase B acquisition workflow.\n\n"
         "## Resource materials\n"
         "Phase B resource preparation uses `resources/` as the only resource material root. "
@@ -2946,7 +3118,7 @@ def _write_external_executor_guides(
         + "You are used as an external coding executor for ResearchOS via a Claude Code window.\n\n"
         "## Steps\n"
         "1. Read handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt.\n"
-        "2. Read optional baseline/resource maps only if they exist; missing maps are not blockers.\n"
+        "2. Read optional baseline/resource maps and literature/resource_catalog.jsonl only if they exist; the catalog is a discovery lead, not an approved resource.\n"
         "3. If mock_only=true, emit schema-valid mock artifacts with mock_only=true and dry_run=true.\n"
         "4. If real, keep Phase B resource materials under resources/; later build/run skills deploy runnable assets according to their own instructions.\n"
         f"5. Run required configs over seeds {seeds}.\n"
@@ -2988,7 +3160,7 @@ def _write_external_executor_guides(
         "| `executor_research_report.md` | T5 直接交给 T8 的核心外部执行研究报告。 |\n"
         "| `result_pack.json` | 外部执行器写回的支持性结果包，供 T8 需要时回查。 |\n"
         "| `executor_status.json` | 外部执行器状态、accepted/mock/dry-run 标记。 |\n"
-        "| `report/input_fingerprint.json` | research-execution 初始化/恢复时计算的控制输入指纹。 |\n"
+        "| `report/phase_A/input_fingerprint.json` | research-execution 初始化/恢复时计算的控制输入指纹。 |\n"
         "| `report/run_manifest.json` | 运行记录、raw/config/log 路径和 provenance。 |\n\n"
         "Generated by ResearchOS workspace initialization.\n"
     )
@@ -3730,9 +3902,10 @@ class AuditPaperClaimsParams(BaseModel):
 class CompileResearchReboostHandoffTool(Tool):
     name = "compile_research_reboost_handoff"
     description = (
-        "Publish and validate the handoff_pack compiled by the LLM while executing "
-        "skills/research-reboost. If no handoff_pack argument is supplied, fall back "
-        "to the deterministic recovery compiler. The tool writes the pretty-printed "
+        "Compile, publish, and validate the authoritative T4.5-to-T5 handoff. "
+        "When a legacy LLM candidate is supplied it is audited and repaired against "
+        "the workspace sources; without one, the deterministic compiler is the primary "
+        "path. The tool writes the pretty-printed "
         "external_executor/handoff_pack.json and the minimal T5 handoff control files. "
         "Project-specific executor Skills are published separately by "
         "T5-SPECIALIZE-EXECUTOR-SKILLS."
@@ -3747,6 +3920,19 @@ class CompileResearchReboostHandoffTool(Tool):
         params = CompileResearchReboostHandoffParams(**kwargs)
         try:
             ws = self.policy.workspace_dir
+            existing_selection, _selection_hash = _executor_selection_payload(ws)
+            selected_executor = str(existing_selection.get("selected_executor") or "")
+            preserve_existing_selection = selected_executor in {
+                "codex_cli",
+                "claude_code_window",
+                "manual",
+                "mock_dry_run",
+            }
+            # Refresh discovery records before hashing the Pre-T5 source
+            # manifest. Refreshing later would mutate the catalog after its
+            # SHA-256 was recorded and make an otherwise valid handoff fail
+            # its own integrity validation.
+            refresh_resource_catalog(ws)
             project = _read_yaml(ws / "project.yaml")
             exp_plan = _read_yaml(ws / "ideation" / "exp_plan.yaml")
             metrics = _extract_exp_plan_metrics(exp_plan)
@@ -3846,9 +4032,12 @@ class CompileResearchReboostHandoffTool(Tool):
             _write_external_executor_guides(
                 self.policy,
                 guide_handoff,
-                selection={"selected_executor": "UNSET"},
+                selection=existing_selection if preserve_existing_selection else {"selected_executor": "UNSET"},
                 include_legacy_control_files=False,
             )
+            if preserve_existing_selection:
+                patch_external_executor_files_with_selection(ws, existing_selection)
+            report["existing_executor_selection_preserved"] = preserve_existing_selection
             _write_json(self.policy.resolve_write(params.report_path), report)
         except ToolAccessDenied as exc:
             return ToolResult(ok=False, content=str(exc), error="access_denied")
@@ -4114,7 +4303,10 @@ class BuildExperimentHandoffPackTool(Tool):
             )
             _write_external_executor_guides(self.policy, handoff, selection=executor_selection)
             specialization_status = "deferred_to_T5-SPECIALIZE-EXECUTOR-SKILLS"
-            for directory in ("expr", "report", "figure", "table"):
+            for directory in (
+                "expr", "report", "report/phase_A", "report/phase_B", "report/phase_C",
+                "report/phase_D", "report/phase_E", "report/phase_F", "figure", "table",
+            ):
                 (self.policy.workspace_dir / "external_executor" / directory).mkdir(parents=True, exist_ok=True)
         except ToolAccessDenied as exc:
             return ToolResult(ok=False, content=str(exc), error="access_denied")

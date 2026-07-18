@@ -109,9 +109,9 @@ def experiment_base(exp_id: str, name: str, role: str, run_type: str, kind: str,
 def main() -> int:
     parser = argparse.ArgumentParser(description="Create a versioned, claim-bound experiment plan scaffold.")
     parser.add_argument("--workspace")
-    parser.add_argument("--claims", default="external_executor/report/claim_evidence_matrix.json")
-    parser.add_argument("--protocol", default="external_executor/report/protocol_snapshot.json")
-    parser.add_argument("--fingerprint", default="external_executor/report/protocol_fingerprint.json")
+    parser.add_argument("--claims", default="external_executor/report/phase_C/claim_evidence_matrix.json")
+    parser.add_argument("--protocol", default="external_executor/report/phase_C/protocol_snapshot.json")
+    parser.add_argument("--fingerprint", default="external_executor/report/phase_C/protocol_fingerprint.json")
     parser.add_argument("--output", default="external_executor/experiment_plan.json")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()

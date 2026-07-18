@@ -89,6 +89,8 @@ class CandidateViewModel:
     evolution_score: dict[str, Any]
     portfolio_role: str
     candidate_stage: str
+    evidence_readiness: str
+    evidence_references: tuple[dict[str, Any], ...]
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "CandidateViewModel":
@@ -102,6 +104,7 @@ class CandidateViewModel:
         contributions = tuple(item for item in value.get("contributions", []) if isinstance(item, dict))
         hypotheses = tuple(item for item in value.get("candidate_hypotheses", []) if isinstance(item, dict))
         score = value.get("evolution_score") if isinstance(value.get("evolution_score"), dict) else {}
+        evidence_references = tuple(item for item in value.get("evidence_references", []) if isinstance(item, dict))
         return cls(
             candidate_id=_clean(value.get("id")) or "?",
             lane=_clean(value.get("lane")) or "候选方向",
@@ -112,11 +115,13 @@ class CandidateViewModel:
             evolution_score=dict(score),
             portfolio_role=_clean(value.get("portfolio_role")),
             candidate_stage=_clean(value.get("candidate_stage") or value.get("maturity")),
+            evidence_readiness=_clean(value.get("evidence_readiness")),
+            evidence_references=evidence_references,
         )
 
     @property
     def border_style(self) -> str:
-        return "bright_cyan" if self.lane == "主方向" else "cyan"
+        return "bright_cyan" if self.lane in {"主方向", "主线"} else "cyan"
 
 
 class CandidateCardRenderer:
@@ -154,6 +159,23 @@ class CandidateCardRenderer:
             overview.add_row("影响对象", cls._text(_list_excerpt(stakeholders, max_items=2, max_chars=60)))
         overview.add_row("建议下一步", cls._text(_excerpt(final.get("recommendation"), max_chars=145, max_sentences=1)))
         components: list[Any] = [Text("研究摘要", style="bold cyan"), overview]
+
+        evidence = cls._detail_table(style="bold yellow", border_style="yellow", label_width=18)
+        if view.evidence_readiness:
+            evidence.add_row("当前证据状态", cls._text(view.evidence_readiness))
+        evidence_summary = _clean(final.get("evidence_status_summary"))
+        if evidence_summary:
+            evidence.add_row("证据边界", cls._text(_excerpt(evidence_summary, max_chars=190, max_sentences=2)))
+        if view.evidence_references:
+            references = "\n".join(
+                f"《{_clean(item.get('title'))}》\n{_clean(item.get('reading_label'))}；{_clean(item.get('evidence_label'))}"
+                for item in view.evidence_references[:2]
+                if _clean(item.get("title"))
+            )
+            if references:
+                evidence.add_row("关键材料", cls._text(references))
+        if evidence.row_count:
+            components.extend([Text("证据状态与优先核验", style="bold yellow"), evidence])
 
         if view.contributions:
             table = Table(expand=True, show_header=True, show_lines=True, box=box.SQUARE, header_style="bold green", border_style="green")
@@ -308,6 +330,36 @@ class CandidateCardRenderer:
                 impact.add_row(_clean(implication.get("implication_type")) or "研究意义", cls._text(statement))
         if impact.row_count:
             components.extend([Text("现实与研究影响", style="bold bright_cyan"), impact])
+
+        evidence = cls._detail_table(style="bold yellow", border_style="yellow", label_width=18)
+        if view.evidence_readiness:
+            evidence.add_row("当前证据状态", cls._text(view.evidence_readiness))
+        evidence_summary = _clean(final.get("evidence_status_summary"))
+        if evidence_summary:
+            evidence.add_row("证据边界", cls._text(evidence_summary))
+        if evidence.row_count:
+            components.extend([Text("证据状态", style="bold yellow"), evidence])
+
+        if view.evidence_references:
+            table = Table(expand=True, show_header=True, show_lines=True, box=box.SQUARE, header_style="bold yellow", border_style="yellow")
+            table.add_column("关键材料", ratio=2, overflow="fold")
+            table.add_column("阅读 / 证据状态", ratio=2, overflow="fold")
+            table.add_column("追溯编号", width=22, overflow="fold")
+            for reference in view.evidence_references:
+                title = _clean(reference.get("title"))
+                if not title:
+                    continue
+                state = "；".join(
+                    item for item in (_clean(reference.get("reading_label")), _clean(reference.get("evidence_label"))) if item
+                )
+                source = _clean(reference.get("source_path"))
+                table.add_row(
+                    cls._text(title + (f"\n{source}" if source else "")),
+                    cls._text(state),
+                    cls._text(reference.get("atom_id")),
+                )
+            if table.row_count:
+                components.extend([Text("关键证据材料", style="bold yellow"), table])
 
         risks = final.get("risks_and_boundaries") if isinstance(final.get("risks_and_boundaries"), list) else []
         risk = cls._detail_table(style="bold red", border_style="red", label_width=18)

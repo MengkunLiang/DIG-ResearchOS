@@ -172,8 +172,8 @@ def validate(report: dict[str, Any], workspace=None) -> tuple[list[str], list[st
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate the complete F1-F3 evidence package before narrow apply.")
     parser.add_argument("--workspace")
-    parser.add_argument("--report", default="external_executor/report/evidence_packaging_report.json")
-    parser.add_argument("--output", default="external_executor/report/evidence_packaging_report_validation.json")
+    parser.add_argument("--report", default="external_executor/report/phase_F/evidence_packaging_report.json")
+    parser.add_argument("--output", default="external_executor/report/phase_F/evidence_packaging_report_validation.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     report = load_json(resolve_in_workspace(ws, args.report))

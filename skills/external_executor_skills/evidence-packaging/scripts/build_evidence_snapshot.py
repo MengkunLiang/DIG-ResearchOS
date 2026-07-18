@@ -166,7 +166,7 @@ def selected_method_spec(ws: Path, selection: dict[str, Any]) -> tuple[dict[str,
 def main() -> int:
     parser = argparse.ArgumentParser(description="Pin the final evidence input set used by all Phase F1-F3 products.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/report/final_evidence_snapshot.json")
+    parser.add_argument("--output", default="external_executor/report/phase_F/final_evidence_snapshot.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)
@@ -175,7 +175,7 @@ def main() -> int:
     manifest = load_json(ext / "report" / "run_manifest.json")
     status = load_json(ext / "executor_status.json")
     handoff = load_json(ext / "handoff_pack.json")
-    preflight = load_json(ext / "report" / "evidence_packaging_preflight.json")
+    preflight = load_json(ext / "report" / "phase_F" / "evidence_packaging_preflight.json")
 
     sections = section_digest(result)
     selection = resolve_final_sources(result)

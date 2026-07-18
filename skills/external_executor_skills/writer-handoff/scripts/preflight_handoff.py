@@ -15,11 +15,11 @@ REQUIRED_JSON = {
 }
 CONTROL_FILES = ("AGENTS.md", "allowed_paths.txt", "handoff_pack.json", "expected_outputs_schema.json")
 OUTPUTS = (
-    "external_executor/report/writer_handoff_preflight.json",
-    "external_executor/report/writer_handoff_snapshot.json",
-    "external_executor/report/writer_handoff_facts.json",
+    "external_executor/report/phase_F/writer_handoff_preflight.json",
+    "external_executor/report/phase_F/writer_handoff_snapshot.json",
+    "external_executor/report/phase_F/writer_handoff_facts.json",
     "external_executor/executor_research_report.md",
-    "external_executor/report/writer_handoff_validation.json",
+    "external_executor/report/phase_F/writer_handoff_validation.json",
 )
 
 

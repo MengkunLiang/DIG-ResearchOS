@@ -53,7 +53,7 @@ def validate_command(item: dict[str, Any]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run one declared bounded implementation verification.")
     parser.add_argument("--workspace")
-    parser.add_argument("--contract", default="external_executor/report/implementation_change_contract.json")
+    parser.add_argument("--contract", default="external_executor/report/phase_D/implementation_change_contract.json")
     parser.add_argument("--verification-id", required=True)
     parser.add_argument("--phase", choices=["red", "green", "final"], required=True)
     parser.add_argument("--expect", choices=["failure", "success"], required=True)

@@ -9,8 +9,8 @@ from _common import canonical_json_hash, dump_json_atomic, load_json, resolve_in
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate snapshot self-consistency and current source immutability.")
     parser.add_argument("--workspace")
-    parser.add_argument("--snapshot", default="external_executor/report/final_evidence_snapshot.json")
-    parser.add_argument("--output", default="external_executor/report/final_evidence_snapshot_validation.json")
+    parser.add_argument("--snapshot", default="external_executor/report/phase_F/final_evidence_snapshot.json")
+    parser.add_argument("--output", default="external_executor/report/phase_F/final_evidence_snapshot_validation.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)

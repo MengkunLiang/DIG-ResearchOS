@@ -25,6 +25,12 @@ from ..literature_identity import (
     paper_note_match_keys,
     record_is_covered,
 )
+from ..literature_resources import (
+    ensure_resource_section,
+    format_resource_section,
+    refresh_resource_catalog,
+    resource_records_from_paper_metadata,
+)
 from ..tools.paper_utils import deduplicate_papers
 from ..tools.bibtex import dedupe_bibtex_entries, escape_bibtex_value, extract_bib_keys_from_text, stable_bib_key
 from .progress import format_cli_message
@@ -745,6 +751,8 @@ LLM_REVIEW_REQUIRED. Abstract closing snippet:
 - **Evidence type**: abstract_claim_hint
 - **Supporting artifact**: not verified (abstract only)
 
+{format_resource_section(resource_records_from_paper_metadata(paper))}
+
 ## Source
 - Read from: abstract / metadata only
 - No PDF extraction performed
@@ -1081,7 +1089,7 @@ def normalize_abstract_reader_note(note: str, paper: dict[str, Any]) -> str:
     if "LLM_REVIEW_REQUIRED" in text:
         text = text.replace("LLM_REVIEW_REQUIRED. ", "")
         text = text.replace("LLM_REVIEW_REQUIRED", "abstract-only review")
-    return text.strip() + "\n"
+    return ensure_resource_section(text, resource_records_from_paper_metadata(paper))
 
 
 def repair_existing_abstract_note(note: str, paper: dict[str, Any] | None = None) -> str:
@@ -1797,6 +1805,7 @@ def _finalize_sweep_result(
 
     manifest = _write_shallow_read_manifest(workspace, config, result, candidates)
     upgrade_queue = _write_reading_upgrade_queue(workspace, config)
+    resource_catalog = refresh_resource_catalog(workspace)
     result.update(
         {
             "manifest_path": _manifest_rel_path(config),
@@ -1807,6 +1816,7 @@ def _finalize_sweep_result(
             "blocking_reason": str(manifest.get("blocking_reason") or ""),
             "reading_upgrade_queue": upgrade_queue.get("path", ""),
             "reading_upgrade_candidate_count": int(upgrade_queue.get("candidate_count") or 0),
+            "resource_catalog": resource_catalog,
         }
     )
     return result

@@ -103,7 +103,7 @@ def make_workspace() -> Path:
 def build_pipeline(ws: Path) -> None:
     ext = ws / "external_executor"
     run("preflight_diagnosis.py", "--workspace", str(ws))
-    assert (ext / "report/result_diagnosis_preflight.json").is_file()
+    assert (ext / "report/phase_E/result_diagnosis_preflight.json").is_file()
     assert not (ext / "result_diagnosis_preflight.json").exists()
     run(
         "build_evidence_snapshot.py",
@@ -112,7 +112,7 @@ def build_pipeline(ws: Path) -> None:
         "--iteration-id",
         "iter-1",
     )
-    work = ext / "workdir/result_diagnosis/iter-1"
+    work = ext / "result_diagnosis/iter-1"
     work.mkdir(parents=True, exist_ok=True)
     obs = work / "metric_observations.json"
     aggs = work / "metric_aggregates.json"
@@ -121,7 +121,7 @@ def build_pipeline(ws: Path) -> None:
     run(
         "normalize_run_metrics.py",
         "--snapshot",
-        str(ext / "report/diagnosis_evidence_snapshot.json"),
+        str(ext / "report/phase_E/diagnosis_evidence_snapshot.json"),
         "--output",
         str(obs),
     )
@@ -138,7 +138,7 @@ def build_pipeline(ws: Path) -> None:
     run(
         "detect_anomalies.py",
         "--snapshot",
-        str(ext / "report/diagnosis_evidence_snapshot.json"),
+        str(ext / "report/phase_E/diagnosis_evidence_snapshot.json"),
         "--observations",
         str(obs),
         "--aggregates",
@@ -152,7 +152,7 @@ def build_pipeline(ws: Path) -> None:
     run(
         "build_diagnosis_facts.py",
         "--snapshot",
-        str(ext / "report/diagnosis_evidence_snapshot.json"),
+        str(ext / "report/phase_E/diagnosis_evidence_snapshot.json"),
         "--observations",
         str(obs),
         "--aggregates",
@@ -162,7 +162,7 @@ def build_pipeline(ws: Path) -> None:
         "--anomalies",
         str(anoms),
         "--output",
-        str(ext / "report/diagnosis_statistics.json"),
+        str(ext / "report/phase_E/diagnosis_statistics.json"),
     )
     run("initialize_diagnosis_report.py", "--workspace", str(ws))
 
@@ -185,13 +185,13 @@ class ResultDiagnosisTests(unittest.TestCase):
     def test_snapshot_statistics_and_anomaly_primitives(self) -> None:
         ws = self.base
         ext = ws / "external_executor"
-        snapshot = json.loads((ext / "report/diagnosis_evidence_snapshot.json").read_text())
+        snapshot = json.loads((ext / "report/phase_E/diagnosis_evidence_snapshot.json").read_text())
         self.assertFalse((ext / "diagnosis_evidence_snapshot.json").exists())
         self.assertEqual(len(snapshot["included_run_ids"]), 9)
-        work = ext / "workdir/result_diagnosis/iter-1"
+        work = ext / "result_diagnosis/iter-1"
         aggregates = json.loads((work / "metric_aggregates.json").read_text())
         comparisons = json.loads((work / "method_comparisons.json").read_text())
-        stats = json.loads((ext / "report/diagnosis_statistics.json").read_text())
+        stats = json.loads((ext / "report/phase_E/diagnosis_statistics.json").read_text())
         self.assertFalse((ext / "diagnosis_statistics.json").exists())
         self.assertEqual(len(aggregates["items"]), 3)
         self.assertEqual(len(comparisons["items"]), 2)
@@ -202,7 +202,7 @@ class ResultDiagnosisTests(unittest.TestCase):
 
         # Exercise the insufficient-repeat detector without rebuilding the whole pipeline.
         ws2 = self.clone()
-        work2 = ws2 / "external_executor/workdir/result_diagnosis/iter-1"
+        work2 = ws2 / "external_executor/result_diagnosis/iter-1"
         aggs2 = json.loads((work2 / "metric_aggregates.json").read_text())
         for item in aggs2["items"]:
             item["n"] = 1
@@ -214,7 +214,7 @@ class ResultDiagnosisTests(unittest.TestCase):
         run(
             "detect_anomalies.py",
             "--snapshot",
-            str(ws2 / "external_executor/report/diagnosis_evidence_snapshot.json"),
+            str(ws2 / "external_executor/report/phase_E/diagnosis_evidence_snapshot.json"),
             "--observations",
             str(work2 / "metric_observations.json"),
             "--aggregates",
@@ -238,7 +238,7 @@ class ResultDiagnosisTests(unittest.TestCase):
             run for run in result["experiment_runs"]["items"] if run["method_role"] == "ours"
         ]
         result["context_alignment"]["confirmed_execution_scope"]["required_baselines"] = [{"baseline_id": "base-a"}]
-        evidence = ext / "report" / "baseline_reproduction" / "base-a" / "attempt-1"
+        evidence = ext / "report" / "phase_D" / "baseline_reproduction" / "base-a" / "attempt-1"
         raw = ext / "raw_results" / "baseline_reproduction" / "base-a" / "attempt-1"
         evidence.mkdir(parents=True)
         raw.mkdir(parents=True)
@@ -251,7 +251,7 @@ class ResultDiagnosisTests(unittest.TestCase):
             "fairness_fingerprint": "fair-1",
             "deployment_dir": "external_executor/expr/baselines/base-a",
             "stdout_path": "external_executor/raw_results/baseline_reproduction/base-a/attempt-1/stdout.log",
-            "environment_path": "external_executor/report/baseline_reproduction/base-a/attempt-1/environment.json",
+            "environment_path": "external_executor/report/phase_D/baseline_reproduction/base-a/attempt-1/environment.json",
             "source_manifest_sha256": "source-a",
         }
         (evidence / "run_record.json").write_text(json.dumps(run_record), encoding="utf-8")
@@ -279,14 +279,14 @@ class ResultDiagnosisTests(unittest.TestCase):
                 "attempts": [{
                     "attempt_id": "BASE-RUN-1",
                     "run_id": "BASE-RUN-1",
-                    "run_record_ref": "external_executor/report/baseline_reproduction/base-a/attempt-1/run_record.json",
+                    "run_record_ref": "external_executor/report/phase_D/baseline_reproduction/base-a/attempt-1/run_record.json",
                 }],
                 "review": {"verdict": "pass", "approved_for": "formal_review_candidate"},
             }],
         }
         result_path.write_text(json.dumps(result), encoding="utf-8")
         run("build_evidence_snapshot.py", "--workspace", str(ws), "--iteration-id", "iter-1")
-        snapshot = json.loads((ext / "report/diagnosis_evidence_snapshot.json").read_text())
+        snapshot = json.loads((ext / "report/phase_E/diagnosis_evidence_snapshot.json").read_text())
         baseline = [item for item in snapshot["runs"] if item["method_role"] == "baseline"]
         self.assertEqual(len(baseline), 1)
         self.assertEqual(baseline[0]["method_id"], "base-a")

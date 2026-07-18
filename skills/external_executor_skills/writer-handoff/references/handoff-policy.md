@@ -8,9 +8,9 @@ Translate final external-executor state into one factual research report that Re
 
 The root owns execution routing, iteration decisions, budgets, manifest updates, and the terminal status decision. Before dispatching Writer Handoff, it records the same intended terminal outcome in `executor_status.json` and `result_pack.json`.
 
-Writer Handoff owns only `executor_research_report.md` and its preflight, snapshot, facts, and validation files under `external_executor/report/`. It validates but never changes final status, result data, the manifest, figures, tables, code, configs, runs, diagnoses, attribution, or evidence packages.
+Writer Handoff owns only `executor_research_report.md` and its preflight, snapshot, facts, and validation files under `external_executor/report/phase_F/`. It validates but never changes final status, result data, the manifest, figures, tables, code, configs, runs, diagnoses, attribution, or evidence packages.
 
-ResearchOS runtime owns independent post-return ingestion. T8 owns final Claim wording, evidence adjudication, narrative planning, and manuscript writing.
+ResearchOS runtime owns independent ingestion through the root-routed `run-task T8` command. The command may be launched from the same external-executor session, but the ResearchOS subprocess owns all derived `drafts/` artifacts. T8 owns final Claim wording, evidence adjudication, narrative planning, and manuscript writing.
 
 ## Source priority
 

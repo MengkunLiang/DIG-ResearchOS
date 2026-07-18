@@ -36,15 +36,15 @@ external_executor/figure/*.svg
 external_executor/figure/*.png
 external_executor/table/*.csv
 external_executor/table/*.tsv
-external_executor/report/evidence_packaging_*
-external_executor/report/final_evidence_snapshot*.json
-external_executor/report/framework_figure_spec.json
-external_executor/report/framework_figure.mmd
-external_executor/report/result_table_build_report.json
-external_executor/report/result_figure_build_report.json
-external_executor/report/figure_table_inventory.json
-external_executor/report/evidence_mapping.json
-external_executor/report/evidence_package_manifest.json
+external_executor/report/phase_F/evidence_packaging_*
+external_executor/report/phase_F/final_evidence_snapshot*.json
+external_executor/report/phase_F/framework_figure_spec.json
+external_executor/report/phase_F/framework_figure.mmd
+external_executor/report/phase_F/result_table_build_report.json
+external_executor/report/phase_F/result_figure_build_report.json
+external_executor/report/phase_F/figure_table_inventory.json
+external_executor/report/phase_F/evidence_mapping.json
+external_executor/report/phase_F/evidence_package_manifest.json
 result_pack.json#realized_method_package
 result_pack.json#framework_figure
 result_pack.json#figure_table_inventory
@@ -60,7 +60,7 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/preflight_evidence_packaging.py --workspace <workspace> \
-  --output external_executor/report/evidence_packaging_preflight.json
+  --output external_executor/report/phase_F/evidence_packaging_preflight.json
 ```
 
 Packaging is allowed after the root stops the loop, routes to Phase F, or records an honest terminal/stop state. Phase F must make the best possible package under `completed`, `partial`, `blocked`, or `failed`; those states do not authorize invented method facts, results, figures, paths, or evidence.
@@ -73,10 +73,10 @@ Read `references/snapshot-and-staleness-policy.md`, then run:
 
 ```bash
 python <skill-dir>/scripts/build_evidence_snapshot.py --workspace <workspace> \
-  --output external_executor/report/final_evidence_snapshot.json
+  --output external_executor/report/phase_F/final_evidence_snapshot.json
 
 python <skill-dir>/scripts/validate_evidence_snapshot.py --workspace <workspace> \
-  --snapshot external_executor/report/final_evidence_snapshot.json
+  --snapshot external_executor/report/phase_F/final_evidence_snapshot.json
 ```
 
 The snapshot must bind:
@@ -100,7 +100,7 @@ Read `references/realized-method-contract.md`, then run:
 
 ```bash
 python <skill-dir>/scripts/build_realized_method_package.py --workspace <workspace> \
-  --snapshot external_executor/report/final_evidence_snapshot.json \
+  --snapshot external_executor/report/phase_F/final_evidence_snapshot.json \
   --output external_executor/evidence_package/realized_method_package.json
 ```
 
@@ -181,7 +181,7 @@ python <skill-dir>/scripts/render_framework_figure.py --workspace <workspace> \
   --write-back
 ```
 
-The renderer writes the final SVG to `external_executor/figure/framework_figure.svg` and the editable Mermaid source to `external_executor/report/framework_figure.mmd`. The SVG must reflect the final code/module structure, attribution status, and claim boundary. Project-specific redesign is allowed only if the same node, edge, evidence, and `must_not_show` contract remains intact.
+The renderer writes the final SVG to `external_executor/figure/framework_figure.svg` and the editable Mermaid source to `external_executor/report/phase_F/framework_figure.mmd`. The SVG must reflect the final code/module structure, attribution status, and claim boundary. Project-specific redesign is allowed only if the same node, edge, evidence, and `must_not_show` contract remains intact.
 
 ## Generate result tables and figures
 
@@ -322,11 +322,11 @@ status=complete|partial|blocked|failed
 packaging_readiness=ready|partial|blocked
 snapshot_id=<id>
 snapshot_fingerprint=<sha256>
-report=external_executor/report/evidence_packaging_report.json
+report=external_executor/report/phase_F/evidence_packaging_report.json
 realized_method=external_executor/evidence_package/realized_method_package.json
 framework_figure=external_executor/figure/framework_figure.svg
-figure_table_inventory=external_executor/report/figure_table_inventory.json
-evidence_mapping=external_executor/report/evidence_mapping.json
+figure_table_inventory=external_executor/report/phase_F/figure_table_inventory.json
+evidence_mapping=external_executor/report/phase_F/evidence_mapping.json
 blocking_issues=<ids>
 constraints=<ids>
 recommended_next_action=continue_to_writer_handoff|continue_to_writer_handoff_with_constraints|repair_package_or_return_to_root

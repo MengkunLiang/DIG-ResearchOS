@@ -62,7 +62,7 @@ def main() -> int:
     destination = output_path(
         ws,
         args.output,
-        "external_executor/report/writer_handoff_snapshot.json",
+        "external_executor/report/phase_F/writer_handoff_snapshot.json",
     )
     dump_json_atomic(destination, snapshot)
     print(json.dumps({"handoff_id": snapshot["handoff_id"], "assets": len(assets)}))

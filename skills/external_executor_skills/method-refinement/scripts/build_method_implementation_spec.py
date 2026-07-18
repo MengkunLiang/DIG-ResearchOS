@@ -86,7 +86,7 @@ def normalize_module(comp: dict[str, Any], *, contribution_role: str, status: st
             {"failure_id": f"FAIL-{module_id}-invalid-interface", "symptom": "declared input/output contract is violated", "handling": "fail fast and preserve logs"}
         ],
         "evidence_links": [],
-        "source_refs": comp.get("source_refs") or ["external_executor/report/method_intent_contract.json"],
+        "source_refs": comp.get("source_refs") or ["external_executor/report/phase_D/method_intent_contract.json"],
     }
 
 
@@ -120,7 +120,7 @@ def previous_version(result: dict[str, Any], previous: dict[str, Any]) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build a versioned implementation specification from method intent and active plan.")
     parser.add_argument("--workspace")
-    parser.add_argument("--intent", default="external_executor/report/method_intent_contract.json")
+    parser.add_argument("--intent", default="external_executor/report/phase_D/method_intent_contract.json")
     parser.add_argument("--previous")
     parser.add_argument("--output", default="external_executor/method_implementation_spec.json")
     args = parser.parse_args()
@@ -129,7 +129,7 @@ def main() -> int:
     ext = ws / "external_executor"
     intent = load_json(resolve_in_workspace(ws, args.intent))
     result = load_json(ext / "result_pack.json")
-    preflight = load_json(ext / "report" / "method_refinement_preflight.json", default={})
+    preflight = load_json(ext / "report" / "phase_D" / "method_refinement_preflight.json", default={})
     plan = dictify(result.get("experiment_plan"))
     iteration = active_iteration_plan(result)
     previous: dict[str, Any] = {}
@@ -330,7 +330,7 @@ def main() -> int:
         },
         "evidence_traceability": traceability,
         "source_refs": [
-            "external_executor/report/method_intent_contract.json",
+            "external_executor/report/phase_D/method_intent_contract.json",
             "external_executor/result_pack.json#experiment_plan",
             "external_executor/result_pack.json#current_iteration_plan|iteration_plans",
         ],

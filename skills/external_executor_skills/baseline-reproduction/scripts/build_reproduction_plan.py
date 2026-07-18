@@ -29,8 +29,8 @@ def extract_protocol(plan: dict) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Build deterministic baseline reproduction plan scaffold.")
     ap.add_argument("--workspace")
-    ap.add_argument("--preflight", default="external_executor/report/baseline_reproduction_preflight.json")
-    ap.add_argument("--output", default="external_executor/report/baseline_reproduction_plan.json")
+    ap.add_argument("--preflight", default="external_executor/report/phase_D/baseline_reproduction_preflight.json")
+    ap.add_argument("--output", default="external_executor/report/phase_D/baseline_reproduction_plan.json")
     args = ap.parse_args()
     ws = resolve_workspace(args.workspace)
     output = resolve_in_workspace(ws, args.output)

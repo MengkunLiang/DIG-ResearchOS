@@ -36,7 +36,7 @@ def latest_decision(result: dict) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate Phase F1-F3 packaging prerequisites and boundaries.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/report/evidence_packaging_preflight.json")
+    parser.add_argument("--output", default="external_executor/report/phase_F/evidence_packaging_preflight.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)
@@ -115,22 +115,22 @@ def main() -> int:
 
     write_targets = [
         output,
-        ext / "report" / "final_evidence_snapshot.json",
+        ext / "report" / "phase_F" / "final_evidence_snapshot.json",
         ext / "evidence_package" / "realized_method_package.json",
-        ext / "report" / "framework_figure_spec.json",
+        ext / "report" / "phase_F" / "framework_figure_spec.json",
         ext / "figure" / "framework_figure.svg",
-        ext / "report" / "framework_figure.mmd",
+        ext / "report" / "phase_F" / "framework_figure.mmd",
         ext / "table" / "main_comparison.csv",
         ext / "table" / "ablation_results.csv",
         ext / "figure" / "main_result.svg",
-        ext / "report" / "result_table_build_report.json",
-        ext / "report" / "result_figure_build_report.json",
-        ext / "report" / "figure_table_inventory.json",
-        ext / "report" / "evidence_mapping.json",
-        ext / "report" / "evidence_package_manifest.json",
-        ext / "report" / "evidence_packaging_gate.json",
-        ext / "report" / "evidence_packaging_report.json",
-        ext / "report" / "evidence_packaging_report_validation.json",
+        ext / "report" / "phase_F" / "result_table_build_report.json",
+        ext / "report" / "phase_F" / "result_figure_build_report.json",
+        ext / "report" / "phase_F" / "figure_table_inventory.json",
+        ext / "report" / "phase_F" / "evidence_mapping.json",
+        ext / "report" / "phase_F" / "evidence_package_manifest.json",
+        ext / "report" / "phase_F" / "evidence_packaging_gate.json",
+        ext / "report" / "phase_F" / "evidence_packaging_report.json",
+        ext / "report" / "phase_F" / "evidence_packaging_report_validation.json",
     ]
     for path in write_targets:
         try:

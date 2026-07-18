@@ -71,11 +71,11 @@ Gate1 首先展示 1–3 个 Portfolio Candidates，但会保留 6–8 个 Activ
 
 ## T5 到 T8 外部证据路径
 
-ResearchOS 先准备执行器 handoff，然后运行 `T5-SPECIALIZE-EXECUTOR-SKILLS`：LLM 消费仓库级 `project-skill-specialization` Skill，调用确定性 wrapper，ResearchOS 再独立校验已发布的 context/report/13-Skill suite，之后才进入 executor 选择。外部执行必须把 T8 核心交接文件留在 `external_executor/executor_research_report.md`；`external_executor/` 下的其他文件继续保留，供 T8 按需读取作为追溯材料。Evidence Packaging 完成后，由 `writer-handoff` 子 Skill 形成该报告，并核验最终 status、result pack、manifest、figure 和 table；总控 Skill 只记录 child 结果，不再重复最终核验。模拟空运行仅验证协议链，不生成经验性 claim。
+ResearchOS 先准备执行器 handoff，然后运行 `T5-SPECIALIZE-EXECUTOR-SKILLS`：LLM 消费仓库级 `project-skill-specialization` Skill，调用确定性 wrapper，ResearchOS 再独立校验已发布的 context/report/13-Skill suite，之后才进入 executor 选择。外部执行必须把 T8 核心交接文件留在 `external_executor/executor_research_report.md`；其他文件作为追溯材料。Evidence Packaging 完成后，`writer-handoff` 形成并核验报告、最终 status、result pack、manifest、figure 和 table。总控随后在同一执行器会话中执行路由返回的 `run-task T8` 命令，由 ResearchOS 独立接收冻结 handoff、生成 T8 evidence/claim 索引并委托现有完整 T8 pipeline。模拟空运行仅验证协议链，不生成经验性 claim。
 
 ## T8-T9 撰写与提交
 
-T8 消费 `external_executor/executor_research_report.md`，在起草章节前构建资源索引和对齐矩阵。会议/期刊配置文件塑造叙事密度，但不是官方的页数限制或政策来源。T9 组装包，调用真正的编译，记录警告和错误，对源文件/PDF 进行指纹识别，并检查声明审计是否匹配当前版本。
+T8 以 `external_executor/executor_research_report.md` 为核心事实报告，并通过资源/evidence 索引消费已接收的 result pack、manifest、原始证据、realized method package、归因、figure 和 table；随后在起草章节前构建资源索引和对齐矩阵。会议/期刊配置文件塑造叙事密度，但不是官方的页数限制或政策来源。T9 组装包，调用真正的编译，记录警告和错误，对源文件/PDF 进行指纹识别，并检查声明审计是否匹配当前版本。
 
 ## 恢复规则
 

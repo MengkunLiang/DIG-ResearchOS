@@ -65,7 +65,7 @@ def validate(data: dict[str, Any]) -> tuple[list[str], list[str]]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Validate baseline reproduction report.")
     ap.add_argument("--workspace")
-    ap.add_argument("--report", default="external_executor/report/baseline_reproduction_report.json")
+    ap.add_argument("--report", default="external_executor/report/phase_D/baseline_reproduction_report.json")
     args = ap.parse_args()
     ws = resolve_workspace(args.workspace)
     data = load_json(resolve_in_workspace(ws, args.report))

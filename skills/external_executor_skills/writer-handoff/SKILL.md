@@ -37,10 +37,10 @@ Write only:
 
 ```text
 external_executor/executor_research_report.md
-external_executor/report/writer_handoff_preflight.json
-external_executor/report/writer_handoff_snapshot.json
-external_executor/report/writer_handoff_facts.json
-external_executor/report/writer_handoff_validation.json
+external_executor/report/phase_F/writer_handoff_preflight.json
+external_executor/report/phase_F/writer_handoff_snapshot.json
+external_executor/report/phase_F/writer_handoff_facts.json
+external_executor/report/phase_F/writer_handoff_validation.json
 ```
 
 Do not write `result_pack.writer_handoff`, a T7 ingest index, a parallel claim-map file, manuscript drafts, or new experiment artifacts. The report is derived from the already-final result pack; it must not mutate that source after snapshotting.
@@ -167,13 +167,13 @@ child_skill=writer-handoff
 status=complete|partial|blocked|failed
 handoff_readiness=ready|partial|blocked
 report=external_executor/executor_research_report.md
-validation=external_executor/report/writer_handoff_validation.json
+validation=external_executor/report/phase_F/writer_handoff_validation.json
 input_fingerprint=<sha256>
 blocking_issues=<ids>
 recommended_next_action=handoff_complete|handoff_complete_with_constraints|repair_writer_handoff
 ```
 
-The root records the child result and stops. It does not run a second final-output validator. ResearchOS runtime may still perform its independent ingestion gate after the external executor returns.
+The root records the child result and reruns its router. A `ready|partial` handoff produces the root action `launch-t8`; the root executes the returned `python -m researchos.cli run-task T8 --workspace <workspace>` command without requiring the user to leave the external executor. Writer Handoff does not invoke T8 itself and does not run a second final-output validator. The ResearchOS subprocess independently accepts and ingests the frozen handoff before writing.
 
 ## Resource map
 

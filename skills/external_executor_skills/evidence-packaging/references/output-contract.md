@@ -10,19 +10,19 @@ external_executor/table/all_results.csv
 external_executor/table/main_comparison.csv
 external_executor/table/ablation_results.csv
 external_executor/table/other_experiments.csv
-external_executor/report/evidence_packaging_preflight.json
-external_executor/report/final_evidence_snapshot.json
-external_executor/report/final_evidence_snapshot_validation.json
-external_executor/report/framework_figure_spec.json
-external_executor/report/framework_figure.mmd
-external_executor/report/result_table_build_report.json
-external_executor/report/result_figure_build_report.json
-external_executor/report/figure_table_inventory.json
-external_executor/report/evidence_mapping.json
-external_executor/report/evidence_package_manifest.json
-external_executor/report/evidence_packaging_gate.json
-external_executor/report/evidence_packaging_report.json
-external_executor/report/evidence_packaging_report_validation.json
+external_executor/report/phase_F/evidence_packaging_preflight.json
+external_executor/report/phase_F/final_evidence_snapshot.json
+external_executor/report/phase_F/final_evidence_snapshot_validation.json
+external_executor/report/phase_F/framework_figure_spec.json
+external_executor/report/phase_F/framework_figure.mmd
+external_executor/report/phase_F/result_table_build_report.json
+external_executor/report/phase_F/result_figure_build_report.json
+external_executor/report/phase_F/figure_table_inventory.json
+external_executor/report/phase_F/evidence_mapping.json
+external_executor/report/phase_F/evidence_package_manifest.json
+external_executor/report/phase_F/evidence_packaging_gate.json
+external_executor/report/phase_F/evidence_packaging_report.json
+external_executor/report/phase_F/evidence_packaging_report_validation.json
 ```
 
 Root owns registration in `run_manifest.json` and final executor state.
@@ -92,11 +92,11 @@ status=complete|partial|blocked|failed
 packaging_readiness=ready|partial|blocked
 snapshot_id=<id>
 snapshot_fingerprint=<sha256>
-report=external_executor/report/evidence_packaging_report.json
+report=external_executor/report/phase_F/evidence_packaging_report.json
 realized_method=external_executor/evidence_package/realized_method_package.json
 framework_figure=external_executor/figure/framework_figure.svg
-figure_table_inventory=external_executor/report/figure_table_inventory.json
-evidence_mapping=external_executor/report/evidence_mapping.json
+figure_table_inventory=external_executor/report/phase_F/figure_table_inventory.json
+evidence_mapping=external_executor/report/phase_F/evidence_mapping.json
 blocking_issues=<ids>
 constraints=<ids>
 recommended_next_action=continue_to_writer_handoff|continue_to_writer_handoff_with_constraints|repair_package_or_return_to_root

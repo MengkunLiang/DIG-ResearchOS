@@ -213,7 +213,7 @@ researchos run \
 
 This will copy `project.yaml`, `user_seeds/seed_papers.jsonl`, `user_seeds/pdfs/`, seed constraints/ideas/external resources, and `literature/bridge_domain_plan.json` according to the `T2` input contract, then initialize `state.yaml` with `current_task: T2`. Old T2 outputs such as `papers_raw.jsonl`, `papers_verified.jsonl`, `deep_read_queue.jsonl` will not be copied.
 
-The recommended debug entry for the new writing chain is `T8-STYLE-GATE`; if a valid `drafts/writing_style.json` already exists, you can also run `T8-RESOURCE` directly. `researchos run-task T8 --workspace ...` remains an alias for `T8-STYLE-GATE`, so it cannot bypass style confirmation. Actual downstream node names are not aliases: after their declared inputs validate, `researchos run-task T8-WRITE --workspace ...` is the targeted recovery entry for a missing or interrupted outline/storyline, and it does not return to the style Gate.
+The standard T5-to-T8 entry is `researchos run-task T8 --workspace ...`. It accepts and ingests the modern external handoff, then delegates the complete chain beginning at the mandatory writing-style Gate. For isolated debugging, use the concrete node `T8-STYLE-GATE`; if a valid `drafts/writing_style.json` already exists, `T8-RESOURCE` can also be run directly. Other concrete downstream node names retain single-task behavior: after their declared inputs validate, `researchos run-task T8-WRITE --workspace ...` is the targeted recovery entry for a missing or interrupted outline/storyline.
 
 ### 3.5 Key Differences
 
@@ -2866,13 +2866,14 @@ Interaction details: When the CLI runs interactively, pressing Enter directly in
 
 ## 6.12 Removed T7/T7.5 Nodes and Current T5-to-T8 Handoff
 
-T7 result ingestion, integrity audit, post-experiment novelty review, result-to-claim mapping, and the T7.5 PI decision node have been removed from the current main state machine. After Evidence Packaging, the final `writer-handoff` child Skill compiles the core research report and performs the final handoff validation; the root only dispatches it and records its result. The main chain is:
+T7 result ingestion, integrity audit, post-experiment novelty review, and the T7.5 PI decision node have been removed from the current main state machine. After Evidence Packaging, the final `writer-handoff` child Skill compiles the core research report and performs the external final handoff validation. The root records that result, routes `launch-t8`, and invokes the dedicated ResearchOS bridge command from the same external-executor session. The main chain is:
 
 ```text
 T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-EXECUTOR-GATE
  -> mock_dry_run: T5-DRY-RUN
  -> external: T5-EXTERNAL-WAIT
--> T8-STYLE-GATE -> T8-RESOURCE
+ -> root launch-t8: python -m researchos.cli run-task T8 --workspace <workspace>
+ -> T8-STYLE-GATE -> T8-RESOURCE
 ```
 
 An already persisted extension or legacy Workspace may still contain a completed `T7.5` node with `next_on_success: __parse_from_output__`. A legacy-only `t75_human_review_gate` remains available to present that saved decision. Resume does not reactivate the removed internal executor. Instead, the Runtime reads its saved `evaluation/evaluation_decision.md`: legacy `T5`/`T6`/`T7` recommendations map to the current external-experiment entry, while `T8`/`T8-WRITE` recommendations return through `T8-STYLE-GATE` and `T8-RESOURCE` unless a valid writing-style record is already present.
@@ -2883,9 +2884,11 @@ The only required T5-to-T8 evidence interface is:
 external_executor/executor_research_report.md
 ```
 
-Other files under `external_executor/`, including `result_pack.json`, `executor_status.json`, `report/run_manifest.json`, `raw_results/`, `configs/`, `logs/`, and `expr/`, remain available for T8 as traceable supporting context. They are not a replacement for the report. The current T5 gate defines this interface and validates its presence downstream, but it does not synthesize the report inside ResearchOS. A missing or empty report blocks `T8-RESOURCE` through the task contract/prerequisite check.
+Other files under `external_executor/`, including `result_pack.json`, `executor_status.json`, global `report/run_manifest.json`, `report/phase_F/writer_handoff_facts.json`, `raw_results/`, `evidence_package/`, `figure/`, `table/`, and `expr/`, remain traceable supporting context. External process files are grouped by ownership under `report/phase_A/` through `phase_F/`; the manifest is the only cross-phase external file kept at the report root. These files do not replace the report. `run-task T8` independently checks the modern schemas, terminal-status consistency, Writer Handoff fingerprints, core hashes, and manifest registration/checksums for every final figure/table. It then derives the ResearchOS-owned `drafts/t5_t8_handoff.json`, `drafts/experiment_evidence_pack.json`, and `drafts/result_to_claim.json` before entering or resuming `T8-STYLE-GATE`. A rejected handoff does not change `state.yaml`.
 
-The former T7 handoff checks are implemented by the final `writer-handoff` child Skill. After evidence packaging, it compiles `executor_research_report.md` from the frozen result pack and manifest, then validates executor status, result pack, run manifest, the report, and every final figure and table. The external-executor root records the child result and does not run a duplicate final validator. Neither component writes manuscript artifacts or approves paper claims.
+The external final checks are implemented by `writer-handoff`. After evidence packaging, it compiles `executor_research_report.md` from the frozen result pack and manifest, then validates executor status, result pack, run manifest, the report, and every final figure and table. The root does not rewrite those files or duplicate the child validator; it calls `run-task T8`, whose separate ResearchOS acceptance protects the stage boundary. External children never write manuscript artifacts. Only the ResearchOS T8 subprocess writes `drafts/` and decides final paper Claim wording.
+
+The external executor has 13 Skills: the `research-execution` root and the 12 child Skills it dispatches serially. Baseline deployments live under `external_executor/expr/baselines/<baseline-id>/<reproduction-id>/attempt-<N>/`; a later attempt copies the prior deployed source, configs, and patches so authorized debugging accumulates without mutating history. Each our-method implementation lives under `external_executor/expr/implementation/<iteration-id>/<implementation-id>/worktree/`; when diagnosis requires a change, a new iteration must copy the preceding worktree and leave the old version unchanged. Run-produced CSV, JSON, logs, checkpoints, and model outputs belong under `external_executor/raw_results/`. Every completed, failed, cancelled, or unusable run must pass through `result-diagnosis` before another run or repair decision. The optimization loop exits when the target is reached, the fixed ten-method-iteration limit is reached, the budget is exhausted, or an authority/security blocker stops work. Evidence Packaging derives the framework and result figures under `figure/` and the main-comparison, ablation, and other experiment tables under `table/` from frozen manifest-registered evidence; `writer-handoff` then builds and validates `executor_research_report.md`.
 
 ### Legacy command behavior
 

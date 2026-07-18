@@ -31,7 +31,7 @@ def main() -> int:
     args = ap.parse_args()
     output = Path(args.output).resolve()
     workspace = find_workspace(output)
-    if not is_within(output, workspace / "external_executor" / "report"):
+    if not is_within(output, workspace / "external_executor" / "report" / "phase_D"):
         raise SystemExit("Failure classifications must be written under external_executor/report")
     run = load_json(Path(args.run_record).resolve())
     text = "\n".join([Path(args.stdout).read_text(errors="replace") if Path(args.stdout).exists() else "", Path(args.stderr).read_text(errors="replace") if Path(args.stderr).exists() else ""])[-200000:]

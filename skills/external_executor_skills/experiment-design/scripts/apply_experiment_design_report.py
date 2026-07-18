@@ -9,8 +9,8 @@ from _common import assert_write_allowed, dump_json_atomic, load_json, resolve_i
 def main() -> int:
     parser = argparse.ArgumentParser(description="Atomically update only experiment-design-owned result-pack sections.")
     parser.add_argument("--workspace")
-    parser.add_argument("--report", default="external_executor/report/experiment_design_report.json")
-    parser.add_argument("--validation", default="external_executor/report/experiment_design_report_validation.json")
+    parser.add_argument("--report", default="external_executor/report/phase_C/experiment_design_report.json")
+    parser.add_argument("--validation", default="external_executor/report/phase_C/experiment_design_report_validation.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     ext = ws / "external_executor"

@@ -42,6 +42,8 @@ def main() -> int:
 
     root = workspace_root(args.workspace)
     external = resolve_in_workspace(root, "external_executor")
+    for phase in ("phase_A", "phase_B", "phase_C", "phase_D", "phase_E", "phase_F"):
+        (external / "report" / phase).mkdir(parents=True, exist_ok=True)
     expected_path = external / "expected_outputs_schema.json"
     if not expected_path.exists():
         print(f"missing expected schema: {expected_path}", file=sys.stderr)

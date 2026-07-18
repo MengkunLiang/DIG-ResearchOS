@@ -10,10 +10,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Review a method specification before implementation.")
     parser.add_argument("--workspace")
     parser.add_argument("--spec", default="external_executor/method_implementation_spec.json")
-    parser.add_argument("--delta", default="external_executor/report/method_delta.json")
-    parser.add_argument("--scope-assessment", default="external_executor/report/method_scope_assessment.json")
-    parser.add_argument("--spec-validation", default="external_executor/report/method_implementation_spec_validation.json")
-    parser.add_argument("--output", default="external_executor/report/method_refinement_review.json")
+    parser.add_argument("--delta", default="external_executor/report/phase_D/method_delta.json")
+    parser.add_argument("--scope-assessment", default="external_executor/report/phase_D/method_scope_assessment.json")
+    parser.add_argument("--spec-validation", default="external_executor/report/phase_D/method_implementation_spec_validation.json")
+    parser.add_argument("--output", default="external_executor/report/phase_D/method_refinement_review.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)
@@ -22,7 +22,7 @@ def main() -> int:
     delta = load_json(resolve_in_workspace(ws, args.delta))
     scope = load_json(resolve_in_workspace(ws, args.scope_assessment))
     validation = load_json(resolve_in_workspace(ws, args.spec_validation))
-    preflight = load_json(ext / "report" / "method_refinement_preflight.json", default={})
+    preflight = load_json(ext / "report" / "phase_D" / "method_refinement_preflight.json", default={})
 
     findings: list[dict] = []
     required_fixes: list[str] = []

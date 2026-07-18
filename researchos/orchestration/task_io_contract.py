@@ -34,6 +34,15 @@ LITERATURE_MANIFEST_INPUT: dict[str, str] = {
     "literature_manifest": "literature/literature_manifest.json",
 }
 
+# Paper-associated code/data/benchmark/model/project/supplement links are
+# reading-time discovery records. They are optional across the literature
+# pipeline because legacy workspaces predate the catalog, but current T3,
+# T3.6, T4, T4.5, and T5 consumers preserve the same source boundary.
+LITERATURE_RESOURCE_CATALOG_INPUTS: dict[str, str] = {
+    "resource_catalog": "literature/resource_catalog.jsonl",
+    "resource_catalog_summary": "literature/resource_catalog_summary.json",
+}
+
 EXTERNAL_EXECUTOR_T8_INPUTS: dict[str, str] = {
     "executor_research_report": "external_executor/executor_research_report.md",
     "external_executor_dir": "external_executor",
@@ -193,8 +202,14 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "related_work_bib": "literature/related_work.bib",
             "shallow_read_notes_dir": "literature/shallow_read_notes",
             "metadata_triage_report": "literature/metadata_triage.md",
+            **LITERATURE_RESOURCE_CATALOG_INPUTS,
         },
-        "optional_outputs": ["shallow_read_notes_dir", "metadata_triage_report"],
+        "optional_outputs": [
+            "shallow_read_notes_dir",
+            "metadata_triage_report",
+            "resource_catalog",
+            "resource_catalog_summary",
+        ],
         "required_inputs": ["project", "papers_dedup"],
         "schemas": {},
     },
@@ -203,6 +218,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "project": "project.yaml",
             "deep_read_notes_dir": "literature/deep_read_notes",
             "comparison_table": "literature/comparison_table.csv",
+            **LITERATURE_RESOURCE_CATALOG_INPUTS,
             "missing_areas": "literature/missing_areas.md",
             "domain_map": "literature/domain_map.json",
             "bridge_notes_dir": "literature/bridge_notes",
@@ -227,6 +243,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "domain_map": "literature/domain_map.json",
             "comparison_table": "literature/comparison_table.csv",
+            **LITERATURE_RESOURCE_CATALOG_INPUTS,
             **CROSS_DOMAIN_CATALOG_INPUTS,
             **LITERATURE_MANIFEST_INPUT,
             **OPTIONAL_SEED_SURVEY_INPUTS,
@@ -703,6 +720,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "project": "project.yaml",
             "synthesis": "literature/synthesis.md",
             "comparison_table": "literature/comparison_table.csv",
+            **LITERATURE_RESOURCE_CATALOG_INPUTS,
             "missing_areas": "literature/missing_areas.md",
             "domain_map": "literature/domain_map.json",
             "bridge_domain_plan": "literature/bridge_domain_plan.json",
@@ -790,6 +808,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "t45_search_targets": "ideation/selected/t45_search_targets.json",
             "synthesis": "literature/synthesis.md",
             "comparison_table": "literature/comparison_table.csv",
+            **LITERATURE_RESOURCE_CATALOG_INPUTS,
             "deep_read_notes_dir": "literature/deep_read_notes",
             "bridge_notes_dir": "literature/bridge_notes",
             **CROSS_DOMAIN_CATALOG_INPUTS,
@@ -807,6 +826,8 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "contribution_hypothesis_map": "ideation/contribution_hypothesis_map.yaml",
             "validation_map": "ideation/validation_map.yaml",
             "kill_criteria": "ideation/kill_criteria.yaml",
+            "research_proposal": "ideation/proposal/research_proposal.md",
+            "proposal_manifest": "ideation/proposal/proposal_manifest.json",
             "formalization_manifest": "ideation/post_novelty_formalization.json",
         },
         "optional_outputs": [
@@ -817,6 +838,8 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "contribution_hypothesis_map",
             "validation_map",
             "kill_criteria",
+            "research_proposal",
+            "proposal_manifest",
             "formalization_manifest",
         ],
         "required_inputs": ["project", "hypothesis_brief", "synthesis"],
@@ -842,6 +865,8 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "inputs": {
             "project": "project.yaml",
             "hypotheses": "ideation/hypotheses.md",
+            "research_proposal": "ideation/proposal/research_proposal.md",
+            "proposal_manifest": "ideation/proposal/proposal_manifest.json",
             "exp_plan": "ideation/exp_plan.yaml",
             "risks": "ideation/risks.md",
             "novelty_audit": "ideation/novelty_audit.md",
@@ -883,6 +908,8 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "project": "project.yaml",
             "hypotheses": "ideation/hypotheses.md",
             "research_dossier": "ideation/research_dossier.json",
+            "research_proposal": "ideation/proposal/research_proposal.md",
+            "proposal_manifest": "ideation/proposal/proposal_manifest.json",
             "exp_plan": "ideation/exp_plan.yaml",
             "selected_candidate": "ideation/selected/selected_candidate.json",
             "kill_criteria": "ideation/kill_criteria.yaml",
@@ -893,6 +920,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "domain_map": "literature/domain_map.json",
             "comparison_table": "literature/comparison_table.csv",
+            **LITERATURE_RESOURCE_CATALOG_INPUTS,
             "deep_read_notes_dir": "literature/deep_read_notes",
             "bridge_notes_dir": "literature/bridge_notes",
             **CROSS_DOMAIN_CATALOG_INPUTS,
@@ -1171,6 +1199,9 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "project": "project.yaml",
             "writing_style": "drafts/writing_style.json",
             **EXTERNAL_EXECUTOR_T8_INPUTS,
+            "t5_t8_handoff": "drafts/t5_t8_handoff.json",
+            "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
+            "result_to_claim": "drafts/result_to_claim.json",
             "synthesis": "literature/synthesis.md",
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "domain_map": "literature/domain_map.json",

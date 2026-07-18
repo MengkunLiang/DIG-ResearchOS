@@ -22,8 +22,23 @@ external_executor/executor_status.json
 external_executor/report/run_manifest.json
 external_executor/result_pack.json
 external_executor/executor_research_report.md
-external_executor/report/input_fingerprint.json
+external_executor/report/phase_A/input_fingerprint.json
 ```
+
+## Phase report layout
+
+Store every external Skill process, validation, and checkpoint file under its owning phase directory:
+
+```text
+external_executor/report/phase_A/  # context alignment and root input fingerprint
+external_executor/report/phase_B/  # resource and baseline preparation
+external_executor/report/phase_C/  # experiment design and protocol validation
+external_executor/report/phase_D/  # baseline reproduction, method iteration, implementation, review/run control
+external_executor/report/phase_E/  # result diagnosis and module attribution
+external_executor/report/phase_F/  # evidence packaging and Writer Handoff
+```
+
+Keep `external_executor/report/run_manifest.json` directly under `report/`. It is the one global cross-phase external-execution file. T5 reboost, Skill specialization, executor selection, and executor capability receipts are produced before external Phase A and retain their existing root-level report paths.
 
 ## Ownership
 
@@ -34,7 +49,7 @@ Read broadly and write narrowly:
 - Reviewers write review records; they do not rewrite Builder outputs.
 - Packaging skills read evidence and create packages; they do not alter raw results.
 - Writer Handoff owns the final research report and validates the frozen status/result/manifest/figure/table package.
-- T8 consumes `external_executor/executor_research_report.md` plus supporting `external_executor/` artifacts; the root does not duplicate Writer Handoff validation.
+- T8 consumes `external_executor/executor_research_report.md` plus supporting `external_executor/` artifacts. After Writer Handoff, the root runs the routed `run-task T8` command; ResearchOS performs its own acceptance/ingest pass without rewriting the external package.
 
 Never replace the entire result pack with a child-local view. Merge only the owned top-level section and preserve unknown fields for forward compatibility.
 
@@ -72,6 +87,8 @@ Staleness propagates through declared dependencies. Examples:
 - changed narrative summary only -> handoff package stale, evidence remains valid.
 
 Preserve stale and failed records with status; never delete them to make the active view look clean.
+
+The T5-to-T8 bridge writes `drafts/t5_t8_handoff.json`, `drafts/experiment_evidence_pack.json`, and `drafts/result_to_claim.json` as ResearchOS-owned derived artifacts. Their presence does not authorize an external child Skill to write elsewhere under `drafts/`.
 
 ## Resume algorithm
 

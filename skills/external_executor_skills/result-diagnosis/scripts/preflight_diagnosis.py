@@ -15,7 +15,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Validate result-diagnosis prerequisites.")
     parser.add_argument("--workspace")
     parser.add_argument("--iteration-id")
-    parser.add_argument("--output", default="external_executor/report/result_diagnosis_preflight.json")
+    parser.add_argument("--output", default="external_executor/report/phase_E/result_diagnosis_preflight.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)
@@ -79,8 +79,8 @@ def main() -> int:
 
     targets = [
         output,
-        ext/"report"/"diagnosis_evidence_snapshot.json",
-        ext/"report"/"diagnosis_statistics.json",
+        ext/"report"/"phase_E"/"diagnosis_evidence_snapshot.json",
+        ext/"report"/"phase_E"/"diagnosis_statistics.json",
         ext/"result_diagnosis_report.json",
         ext/"result_diagnosis",
     ]

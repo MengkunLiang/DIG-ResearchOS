@@ -9,8 +9,8 @@ from _common import canonical_json_hash, dump_json_atomic, load_json, resolve_in
 def main() -> int:
     parser = argparse.ArgumentParser(description="Calculate a deterministic protocol fingerprint and component hashes.")
     parser.add_argument("--workspace")
-    parser.add_argument("--protocol", default="external_executor/report/protocol_snapshot.json")
-    parser.add_argument("--output", default="external_executor/report/protocol_fingerprint.json")
+    parser.add_argument("--protocol", default="external_executor/report/phase_C/protocol_snapshot.json")
+    parser.add_argument("--output", default="external_executor/report/phase_C/protocol_fingerprint.json")
     parser.add_argument("--write-back", action="store_true")
     args = parser.parse_args()
 

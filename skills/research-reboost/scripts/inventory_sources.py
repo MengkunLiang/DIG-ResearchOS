@@ -82,6 +82,22 @@ CONTEXT_SOURCES = (
         "Contribution-to-hypothesis traceability and interpretation limits",
         3,
     ),
+    SourceSpec(
+        "SRC_RESEARCH_PROPOSAL",
+        "ideation/proposal/research_proposal.md",
+        "research_proposal",
+        "optional_backtrack",
+        "Post-novelty comprehensive proposal for planning context; never empirical evidence",
+        3,
+    ),
+    SourceSpec(
+        "SRC_PROPOSAL_MANIFEST",
+        "ideation/proposal/proposal_manifest.json",
+        "research_proposal",
+        "optional_backtrack",
+        "Proposal provenance, T5 transfer boundary, and section-to-source traceability",
+        3,
+    ),
 )
 
 OPTIONAL_PATHS = (
@@ -89,6 +105,16 @@ OPTIONAL_PATHS = (
     ("literature/bridge_notes", "bridge_paper_note", "Cross-domain paper evidence"),
     ("literature/cross_domain_catalogs", "cross_domain_catalog", "Cross-domain retrieval context; not direct claim evidence"),
     ("literature/shallow_read_notes", "abstract_note", "Abstract-only retrieval hints"),
+    (
+        "literature/resource_catalog.jsonl",
+        "resource",
+        "Paper-associated code, data, benchmark, model, project, and supplement discovery records; not execution-ready resources",
+    ),
+    (
+        "literature/resource_catalog_summary.json",
+        "resource",
+        "Summary of paper-associated resource discovery coverage and T5 acquisition boundary",
+    ),
     ("resources", "resource", "Existing local resources"),
     ("user_seeds/seed_external_resources.jsonl", "user_seed", "User-provided external resource hints"),
     ("user_seeds/bridge_domains.yaml", "user_seed", "User-provided bridge-domain hints"),

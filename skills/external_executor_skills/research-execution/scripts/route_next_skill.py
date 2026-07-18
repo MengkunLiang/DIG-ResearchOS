@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from typing import Any
 
 from _common import emit_report, load_json, resolve_in_workspace, section_status, workspace_root
@@ -15,7 +16,8 @@ CHILDREN = {
     "code-and-protocol-review", "experiment-run", "result-diagnosis",
     "module-attribution", "evidence-packaging", "writer-handoff",
 }
-ROOT_ACTIONS = {"root-iteration-decision", "human-review", "stop"}
+ROOT_ACTIONS = {"root-iteration-decision", "human-review", "launch-t8", "stop"}
+TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled", "unusable"}
 
 
 STEP_MAP = {
@@ -48,6 +50,22 @@ def records(result: dict[str, Any], key: str) -> list[dict[str, Any]]:
     return [item for item in raw if isinstance(item, dict)]
 
 
+def diagnosed_run_ids(diagnoses: list[dict[str, Any]]) -> set[str]:
+    covered: set[str] = set()
+    for diagnosis in diagnoses:
+        snapshot = diagnosis.get("evidence_snapshot")
+        if not isinstance(snapshot, dict):
+            snapshot = {}
+        for key in ("included_run_ids", "excluded_run_ids", "run_ids"):
+            values = snapshot.get(key)
+            if isinstance(values, list):
+                covered.update(str(value) for value in values if value)
+        values = diagnosis.get("run_ids")
+        if isinstance(values, list):
+            covered.update(str(value) for value in values if value)
+    return covered
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", required=True)
@@ -67,7 +85,7 @@ def main() -> int:
     executor_status = status.get("executor_status")
     evidence_packaged = result.get("evidence_packaging") not in (None, {}, [])
     handoff_report = resolve_in_workspace(root, "external_executor/executor_research_report.md")
-    validation_path = resolve_in_workspace(root, "external_executor/report/writer_handoff_validation.json")
+    validation_path = resolve_in_workspace(root, "external_executor/report/phase_F/writer_handoff_validation.json")
     validation = {}
     if validation_path.is_file():
         try:
@@ -75,10 +93,27 @@ def main() -> int:
         except Exception:
             validation = {}
     handoff_ready = handoff_report.is_file() and handoff_report.stat().st_size > 0 and validation.get("status") in {"ready", "partial"}
+    t8_receipt = resolve_in_workspace(root, "drafts/t5_t8_handoff.json")
+    state_path = resolve_in_workspace(root, "state.yaml")
+    state_text = state_path.read_text(encoding="utf-8", errors="replace") if state_path.is_file() else ""
+    t8_already_delegated = t8_receipt.is_file() and (
+        "current_task: T8" in state_text
+        or "current_task: T9" in state_text
+        or "t5_t8_handoff_receipt:" in state_text
+    )
     if executor_status in {"completed", "partial", "blocked", "failed"} and evidence_packaged and not handoff_ready:
         report.update(action="writer-handoff", child_skill="writer-handoff", reason="terminal core state requires Writer Handoff compilation and validation", requires_human=False)
-    elif executor_status in {"completed", "partial", "failed"}:
-        report.update(action="stop", reason=f"executor status is {executor_status} and Writer Handoff is complete", requires_human=False)
+    elif executor_status in {"completed", "partial", "blocked", "failed"} and handoff_ready:
+        if t8_already_delegated:
+            report.update(action="stop", reason="Writer Handoff is complete and control has already been delegated to ResearchOS T8", requires_human=False)
+        else:
+            report.update(
+                action="launch-t8",
+                reason=f"executor status is {executor_status}; Writer Handoff is complete and ready for ResearchOS T8 ingestion",
+                requires_human=False,
+                command=[sys.executable, "-m", "researchos.cli", "run-task", "T8", "--workspace", str(root)],
+                primary_input="external_executor/executor_research_report.md",
+            )
     elif executor_status == "blocked":
         report.update(action="human-review", reason="executor has active blocker", requires_human=True)
     else:
@@ -86,12 +121,28 @@ def main() -> int:
         iteration_id = str(status.get("iteration_id") or "")
         diagnoses = [item for item in records(result, "result_diagnoses") if str(item.get("iteration_id")) == iteration_id]
         decisions = [item for item in records(result, "iteration_decisions") if str(item.get("iteration_id")) == iteration_id]
+        iteration_runs = [item for item in records(result, "experiment_runs") if str(item.get("iteration_id")) == iteration_id]
+        covered_run_ids = diagnosed_run_ids(diagnoses)
+        undiagnosed_terminal_runs = [
+            item for item in iteration_runs
+            if (item.get("run_status") or item.get("status")) in TERMINAL_RUN_STATUSES
+            and item.get("run_id")
+            and str(item["run_id"]) not in covered_run_ids
+        ]
         latest_diagnosis = diagnoses[-1] if diagnoses else None
         diagnosis_decided = bool(latest_diagnosis and any(item.get("diagnosis_id") == latest_diagnosis.get("diagnosis_id") for item in decisions))
         attributions = [item for item in records(result, "module_attributions") if str(item.get("iteration_id")) == iteration_id]
         latest_attribution = attributions[-1] if attributions else None
         attribution_gate = latest_attribution.get("attribution_gate", {}) if isinstance(latest_attribution, dict) else {}
-        if latest_diagnosis and not diagnosis_decided:
+        if undiagnosed_terminal_runs:
+            report.update(
+                action="result-diagnosis",
+                child_skill="result-diagnosis",
+                reason="terminal experiment runs have not been covered by a diagnosis",
+                requires_human=False,
+                run_ids=[str(item["run_id"]) for item in undiagnosed_terminal_runs],
+            )
+        elif latest_diagnosis and not diagnosis_decided:
             report.update(action="root-iteration-decision", reason="latest diagnosis has no root iteration decision", requires_human=False)
         elif explicit == "module-attribution" and latest_attribution:
             gate_status = attribution_gate.get("status")

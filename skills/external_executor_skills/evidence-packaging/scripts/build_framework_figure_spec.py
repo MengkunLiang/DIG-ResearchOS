@@ -33,7 +33,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build an evidence-bound framework-figure specification from one realized-method package.")
     parser.add_argument("--workspace")
     parser.add_argument("--method", default="external_executor/evidence_package/realized_method_package.json")
-    parser.add_argument("--output", default="external_executor/report/framework_figure_spec.json")
+    parser.add_argument("--output", default="external_executor/report/phase_F/framework_figure_spec.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)

@@ -14,7 +14,7 @@ from _common import (
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate module attribution prerequisites.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/report/module_attribution_preflight.json")
+    parser.add_argument("--output", default="external_executor/report/phase_E/module_attribution_preflight.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     ext = ws / "external_executor"
@@ -93,10 +93,10 @@ def main() -> int:
         })
     targets = [
         output,
-        ext / "report" / "module_attribution_snapshot.json",
-        ext / "report" / "module_attribution_facts.json",
+        ext / "report" / "phase_E" / "module_attribution_snapshot.json",
+        ext / "report" / "phase_E" / "module_attribution_facts.json",
         ext / "module_attribution_report.json",
-        ext / "report" / "module_attribution",
+        ext / "report" / "phase_E" / "module_attribution",
     ]
     for target in targets:
         try:

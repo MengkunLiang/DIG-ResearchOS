@@ -1521,12 +1521,20 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
         "external_executor/result_pack.json",
         "external_executor/executor_status.json",
         "external_executor/report/run_manifest.json",
+        "external_executor/report/phase_F/writer_handoff_facts.json",
+        "external_executor/report/phase_F/writer_handoff_validation.json",
+        "external_executor/report/phase_F/evidence_mapping.json",
+        "external_executor/report/phase_F/evidence_package_manifest.json",
         "external_executor/raw_results",
         "external_executor/configs",
         "external_executor/logs",
         "external_executor/figure",
         "external_executor/table",
-        "external_executor/report/figure_table_inventory.json",
+        "external_executor/report/phase_F/figure_table_inventory.json",
+        "external_executor/evidence_package",
+        "external_executor/evidence_package/realized_method_package.json",
+        "external_executor/module_attribution_report.json",
+        "external_executor/result_diagnosis_report.json",
         "external_executor/expr",
         "experiments/results_summary.json",
         "experiments/integrity_audit.json",
@@ -1538,6 +1546,7 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
         "experiments/iteration_diversity_check.md",
         "drafts/experiment_evidence_pack.json",
         "drafts/result_to_claim.json",
+        "drafts/t5_t8_handoff.json",
         "drafts/paper_claim_audit.md",
         "drafts/paper_claim_audit.json",
         "drafts/cdr_claim_ledger.json",
@@ -1587,7 +1596,10 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
     result_metrics = _extract_result_metrics(workspace / "experiments" / "results_summary.json")
     result_metrics.extend(_extract_evidence_pack_metrics(workspace / "drafts" / "experiment_evidence_pack.json"))
     result_metrics = _dedupe_metric_records(result_metrics)
-    ablation_columns = _csv_columns(workspace / "experiments" / "ablations.csv")
+    ablation_path = workspace / "experiments" / "ablations.csv"
+    if not ablation_path.is_file():
+        ablation_path = workspace / "external_executor" / "table" / "ablation_results.csv"
+    ablation_columns = _csv_columns(ablation_path)
 
     return {
         "version": "1.0",
@@ -1912,7 +1924,10 @@ def build_section_plan(index: dict[str, Any], *, target_venue: str = "", paper_t
         "external_executor/executor_research_report.md" in artifact_paths
         or "experiments/results_summary.json" in artifact_paths
     )
-    has_ablations = "experiments/ablations.csv" in artifact_paths
+    has_ablations = (
+        "experiments/ablations.csv" in artifact_paths
+        or "external_executor/table/ablation_results.csv" in {item.get("path") for item in index.get("tables", [])}
+    )
     has_bib = "literature/related_work.bib" in artifact_paths
     sections = []
 
@@ -1997,6 +2012,11 @@ def build_section_plan(index: dict[str, Any], *, target_venue: str = "", paper_t
             "ideation/idea_scorecard.yaml",
             "ideation/novelty_audit.md",
             "ideation/_design_rationale_tuples",
+            "external_executor/executor_research_report.md",
+            "drafts/experiment_evidence_pack.json",
+            "external_executor/evidence_package/realized_method_package.json",
+            "external_executor/module_attribution_report.json",
+            "external_executor/figure",
             "external_executor/expr",
             "external_executor/configs",
         ],
@@ -2012,6 +2032,8 @@ def build_section_plan(index: dict[str, Any], *, target_venue: str = "", paper_t
             "external_executor/executor_research_report.md",
             "experiments/ablations.csv",
             "external_executor/raw_results",
+            "external_executor/table",
+            "external_executor/figure",
             "external_executor/configs",
             "experiments/seed_ensemble_summary.json",
             "ideation/exp_plan.yaml",
@@ -2031,6 +2053,10 @@ def build_section_plan(index: dict[str, Any], *, target_venue: str = "", paper_t
             "drafts/sections/experiments.tex",
             "external_executor/executor_research_report.md",
             "experiments/ablations.csv",
+            "external_executor/table",
+            "external_executor/figure",
+            "external_executor/module_attribution_report.json",
+            "external_executor/result_diagnosis_report.json",
             "experiments/iteration_log.md",
             "ideation/novelty_audit.md",
         ],
@@ -2148,6 +2174,10 @@ def build_evidence_and_figure_plans(
                 "ideation/idea_scorecard.yaml",
                 "external_executor/expr",
                 "external_executor/configs",
+                "external_executor/evidence_package/realized_method_package.json",
+                "external_executor/module_attribution_report.json",
+                "external_executor/figure",
+                "drafts/experiment_evidence_pack.json",
             ),
             "llm_task": "Explain the proposed mechanism and algorithmic procedure from hypotheses and exp_plan; tools do not infer the method.",
             "cdr_field": "design_rationale",
@@ -2163,6 +2193,8 @@ def build_evidence_and_figure_plans(
                 "experiments/iteration_log.md",
                 "external_executor/raw_results",
                 "external_executor/report/run_manifest.json",
+                "external_executor/table",
+                "external_executor/figure",
                 "drafts/experiment_evidence_pack.json",
                 "drafts/result_to_claim.json",
             ),
@@ -2178,6 +2210,10 @@ def build_evidence_and_figure_plans(
                 "experiments/ablations.csv",
                 "experiments/iteration_log.md",
                 "external_executor/executor_research_report.md",
+                "external_executor/table",
+                "external_executor/figure",
+                "external_executor/module_attribution_report.json",
+                "external_executor/result_diagnosis_report.json",
                 "ideation/novelty_audit.md",
                 "drafts/experiment_evidence_pack.json",
                 "drafts/result_to_claim.json",
@@ -2223,12 +2259,21 @@ def build_evidence_and_figure_plans(
         ],
     }
 
+    framework_figures = [item.get("path") for item in figures if "framework" in Path(str(item.get("path") or "")).name.lower()]
+    main_result_figures = [item.get("path") for item in figures if "main" in Path(str(item.get("path") or "")).name.lower()]
+    ablation_figures = [item.get("path") for item in figures if "ablation" in Path(str(item.get("path") or "")).name.lower()]
+    external_table_paths = [item.get("path") for item in tables if str(item.get("path") or "").startswith("external_executor/table/")]
     figure_slots = [
         {
             "figure_id": "fig:method_overview",
             "type": "schematic",
-            "status": "needs_llm_or_code_generation",
-            "source_artifacts": available("ideation/exp_plan.yaml", "ideation/hypotheses.md"),
+            "status": "available" if framework_figures else "needs_llm_or_code_generation",
+            "source_artifacts": framework_figures or available(
+                "external_executor/evidence_package/realized_method_package.json",
+                "external_executor/module_attribution_report.json",
+                "ideation/exp_plan.yaml",
+                "ideation/hypotheses.md",
+            ),
             "intended_section": "methodology",
             "message_slot": "method_mechanism",
             "notes": "A method schematic is useful when the proposed mechanism has multiple steps; generate only if it clarifies the method.",
@@ -2236,10 +2281,11 @@ def build_evidence_and_figure_plans(
         {
             "figure_id": "fig:main_results",
             "type": "result_plot",
-            "status": "available_or_generate_from_results",
-            "source_artifacts": available(
+            "status": "available" if main_result_figures else "available_or_generate_from_results",
+            "source_artifacts": main_result_figures or available(
                 "external_executor/executor_research_report.md",
                 "external_executor/raw_results",
+                "external_executor/table",
             ),
             "intended_section": "experiments",
             "message_slot": "experiments_main_result",
@@ -2248,8 +2294,8 @@ def build_evidence_and_figure_plans(
         {
             "figure_id": "fig:ablation",
             "type": "ablation_plot",
-            "status": "available_or_generate_from_csv",
-            "source_artifacts": available("experiments/ablations.csv"),
+            "status": "available" if ablation_figures else "available_or_generate_from_csv",
+            "source_artifacts": ablation_figures or available("experiments/ablations.csv", "external_executor/table"),
             "intended_section": "analysis",
             "message_slot": "analysis_mechanism_evidence",
             "notes": "Use ablation CSV to visualize which mechanism component drives the effect.",
@@ -2257,8 +2303,8 @@ def build_evidence_and_figure_plans(
         {
             "table_id": "tab:main_results",
             "type": "result_table",
-            "status": "generate_from_results",
-            "source_artifacts": available("external_executor/executor_research_report.md"),
+            "status": "available" if external_table_paths else "generate_from_results",
+            "source_artifacts": external_table_paths or available("external_executor/executor_research_report.md"),
             "intended_section": "experiments",
             "message_slot": "experiments_main_result",
             "notes": "Prefer a compact table when baselines, metrics, and seed statistics are clearer than a plot.",

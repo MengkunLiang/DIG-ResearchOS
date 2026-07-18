@@ -69,7 +69,7 @@ def hints(rel: str) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate structured implementation patch evidence.")
     parser.add_argument("--workspace")
-    parser.add_argument("--contract", default="external_executor/report/implementation_change_contract.json")
+    parser.add_argument("--contract", default="external_executor/report/phase_D/implementation_change_contract.json")
     args = parser.parse_args()
 
     workspace = resolve_workspace(args.workspace)

@@ -39,7 +39,13 @@ workspace/<project>/
 ├── ideation/                   T4 candidates, selection, hypotheses, audits
 ├── drafts/                     Survey/manuscript sections, claims, reviews
 ├── external_executor/          T5 handoff, executor outputs, and T8 handoff report
-│   ├── report/                 T5-REBOOST reports and diagnostics
+│   ├── report/                 T5 receipts, global run_manifest, and Phase A-F reports
+│   │   ├── phase_A/            Context alignment and input fingerprint
+│   │   ├── phase_B/            Resource and baseline preparation
+│   │   ├── phase_C/            Experiment design and protocol validation
+│   │   ├── phase_D/            Reproduction, implementation, review, and run control
+│   │   ├── phase_E/            Result diagnosis and module attribution
+│   │   └── phase_F/            Evidence packaging and Writer Handoff
 │   └── expr/                   Material/deployment area initialized empty
 ├── experiments/                Optional/legacy ingested run evidence and claim mappings
 ├── submission/                 Final bundle, compile report, fingerprints
@@ -55,6 +61,8 @@ workspace/<project>/
 | `external_executor/` | ResearchOS + selected external executor | Handoff files, executor outputs, and required T8 handoff report `executor_research_report.md` |
 | `experiments/` | Result ingestion and audit tools | Optional/legacy observed results, not model guesses |
 | `_runtime/` | Runtime only | Operational state; do not edit to change research conclusions |
+
+External Skill process files are grouped under `external_executor/report/phase_A/` through `phase_F/`. `external_executor/report/run_manifest.json` is the only cross-phase external-execution file kept directly under `report/`. Reboost, specialization, executor-selection, and capability receipts precede Phase A and retain their existing root-level report paths.
 
 ### T4 Ideation Artifacts
 

@@ -47,6 +47,12 @@ STANDARD_WORKSPACE_DIRS = [
     "novelty",
     "external_executor",
     "external_executor/report",
+    "external_executor/report/phase_A",
+    "external_executor/report/phase_B",
+    "external_executor/report/phase_C",
+    "external_executor/report/phase_D",
+    "external_executor/report/phase_E",
+    "external_executor/report/phase_F",
     "external_executor/expr",
     "external_executor/raw_results",
     "external_executor/configs",
@@ -772,6 +778,8 @@ def _describe_key_file(item: str) -> str:
         "deep_read_notes": "T3 精读生成的逐篇结构化笔记，可标记 FULL-TEXT 或 PARTIAL-TEXT。",
         "shallow_read_notes": "T3 abstract sweep 生成的粗读笔记，只能提供摘要与 metadata 级线索。",
         "metadata_triage.md": "T3 abstract sweep 对 metadata-only 候选的批量 triage；只作补资源/升级阅读线索。",
+        "resource_catalog.jsonl": "T3/T3.6 阅读时发现的论文关联代码、数据、benchmark、模型、项目页和补充材料线索；不是已获取或已核验资源。",
+        "resource_catalog_summary.json": "论文关联资源发现目录的覆盖统计、T4/T5 使用边界和下一步核验要求。",
         "synthesis.md": "T3.5 分阶段综合后的 idea fuel，不是直接投稿综述。",
         "related_work.bib": "T3/T8/T9 复用的 BibTeX 引用库。",
         "baseline_map.json": "文献与 baseline/resource 的结构化映射。",
@@ -796,7 +804,7 @@ def _describe_key_file(item: str) -> str:
         "AGENTS.md": "外部执行器给 Codex/agent 的工作约束。",
         "CLAUDE.md": "外部执行器给 Claude Code 的工作约束。",
         "skills": "T5 编译出的项目特化外部执行器 skill suite。",
-        "report": "T5-REBOOST/T5-EXECUTOR-GATE 的过程报告与回执，research-execution 控制文件，以及 Writer Handoff 的 preflight/snapshot/facts/validation 文件。",
+        "report": "T5 前置过程报告/回执、全局 run_manifest.json，以及按 phase_A 至 phase_F 分类的外部执行过程文件。",
         "expr": "用户手动放置 baseline model、dataset、权重和实验材料的位置。",
         "handoff_pack.json": "T5 编译的实验任务、协议、证据契约和 allowed paths。",
         "expected_outputs_schema.json": "外部执行器必须写回的 result pack/status/manifest schema。",
@@ -1003,14 +1011,34 @@ def _default_dir_guide(rel_dir: str, *, runtime_dir_name: str) -> dict[str, str]
         }
     if normalized == "external_executor/report":
         return {
-            "purpose": "ResearchOS T5 process reports, executor selection/capability receipts, and root external-executor run-control indexes.",
+            "purpose": "ResearchOS T5 pre-execution reports/receipts, the global external-executor run manifest, and Phase A-F report directories.",
             "produced_by": "T5-REBOOST-GATE, T5-SPECIALIZE-EXECUTOR-SKILLS, T5-EXECUTOR-GATE, research-execution, and T5-DRY-RUN.",
-            "consumed_by": "ResearchOS validation/resume and external executor Skill preflight where explicitly referenced.",
-            "key_files": "reboost_report.json, reboost_validation_report.json, skill_specialization_report.json, skill_specialization_execution.json, executor_selection.json, executor_capabilities.json, input_fingerprint.json, run_manifest.json.",
+            "consumed_by": "ResearchOS validation/T8 ingestion and external executor Skills through explicit phase paths.",
+            "key_files": "reboost/specialization/executor gate receipts, run_manifest.json, and phase_A/ through phase_F/.",
             "human_editable": "No; rerun T5-REBOOST or repair upstream sources instead. External manual executors should not hand-edit report/run_manifest.json except as part of the explicit research-execution protocol.",
             "agent_editable": "ResearchOS T5 publication/gate tools and external research-execution root-control scripts.",
             "do_not_put": "Executor prompts, raw results, code, datasets, or manuscript text.",
-            "validation": "Reports must point back to their source artifacts; executor_selection/capabilities are written by T5-EXECUTOR-GATE; run_manifest entries must point to existing artifacts and checksums.",
+            "validation": "External Skill reports must use their owning phase directory. run_manifest.json is the only cross-phase external file kept directly in report/.",
+        }
+    if normalized.startswith("external_executor/report/phase_"):
+        phase = normalized.rsplit("/", 1)[-1]
+        ownership = {
+            "phase_A": "context alignment and root input fingerprinting",
+            "phase_B": "resource and baseline preparation",
+            "phase_C": "experiment design and protocol validation",
+            "phase_D": "baseline reproduction, method refinement, implementation, review, and experiment execution control",
+            "phase_E": "result diagnosis and module attribution",
+            "phase_F": "evidence packaging and Writer Handoff",
+        }.get(phase, "the matching external-executor phase")
+        return {
+            "purpose": f"Process, validation, and checkpoint artifacts for {ownership}.",
+            "produced_by": f"External executor Skills assigned to {phase}.",
+            "consumed_by": "The owning phase, later phase Skills through explicit references, Writer Handoff, and ResearchOS T8 ingestion.",
+            "key_files": "Phase-owned preflight, snapshot, report, validation, and versioned analysis files.",
+            "human_editable": "No; rerun or repair the authoritative producing Skill.",
+            "agent_editable": f"Only external executor Skills assigned to {phase}, subject to allowed_paths.txt.",
+            "do_not_put": "run_manifest.json, pre-execution T5 receipts, raw experiment outputs, deployed code, datasets, or manuscript text.",
+            "validation": "Paths and references must remain workspace-relative and manifest-bound where required.",
         }
     if normalized == "external_executor/expr":
         return {
@@ -1391,6 +1419,12 @@ def render_workspace_tree(runtime_dir_name: str = "_runtime") -> str:
             "|-- novelty/",
             "|-- external_executor/",
             "|   |-- report/",
+            "|   |   |-- phase_A/",
+            "|   |   |-- phase_B/",
+            "|   |   |-- phase_C/",
+            "|   |   |-- phase_D/",
+            "|   |   |-- phase_E/",
+            "|   |   `-- phase_F/",
             "|   |-- expr/",
             "|   |-- workdir/",
             "|   |-- raw_results/",

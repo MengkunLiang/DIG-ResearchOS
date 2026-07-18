@@ -21,7 +21,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Fingerprint and snapshot a method implementation specification.")
     parser.add_argument("--workspace")
     parser.add_argument("--spec", default="external_executor/method_implementation_spec.json")
-    parser.add_argument("--output", default="external_executor/report/method_spec_fingerprint.json")
+    parser.add_argument("--output", default="external_executor/report/phase_D/method_spec_fingerprint.json")
     parser.add_argument("--snapshot-dir", default="external_executor/method_specs")
     parser.add_argument("--write-back", action="store_true")
     args = parser.parse_args()

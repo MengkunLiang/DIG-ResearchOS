@@ -193,6 +193,8 @@ states:
       comparison_table: literature/comparison_table.csv # 方法对比表
       related_work_bib: literature/related_work.bib     # 相关工作引用
     optional_outputs:
+      resource_catalog: literature/resource_catalog.jsonl # 阅读中发现的资源线索；无阅读材料时可为空
+      resource_catalog_summary: literature/resource_catalog_summary.json
       # shallow_read_notes_dir 由 orchestrator hook 自动生成，不列入 required outputs
       # metadata_triage_report 由 orchestrator hook 自动生成，仅作缺资源候选的补取/升级线索
       shallow_read_notes_dir: literature/shallow_read_notes
@@ -211,6 +213,8 @@ states:
       project: project.yaml                             # 输入：项目配置
       deep_read_notes_dir: literature/deep_read_notes           # 输入：论文笔记
       comparison_table: literature/comparison_table.csv # 输入：对比表
+      resource_catalog: literature/resource_catalog.jsonl # 可选：论文关联资源发现目录，仅用于可行性/基线资源核验
+      resource_catalog_summary: literature/resource_catalog_summary.json
       missing_areas: literature/missing_areas.md        # 输入：研究空白
       domain_map: literature/domain_map.json             # 输入：引用图领域地图
       bridge_notes_dir: literature/bridge_notes # 输入：跨领域全文/部分全文论文笔记
@@ -245,6 +249,8 @@ states:
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       comparison_table: literature/comparison_table.csv
+      resource_catalog: literature/resource_catalog.jsonl
+      resource_catalog_summary: literature/resource_catalog_summary.json
       bridge_domain_plan: literature/bridge_domain_plan.json
       bridge_catalog_index: literature/cross_domain_catalogs/index.json
       cross_domain_catalogs_dir: literature/cross_domain_catalogs
@@ -900,6 +906,8 @@ states:
       synthesis: literature/synthesis.md               # 文献综述
       literature_manifest: literature/literature_manifest.json # 跨任务统一文献清单
       comparison_table: literature/comparison_table.csv # 方法对比表
+      resource_catalog: literature/resource_catalog.jsonl # 论文与补充检索的代码、数据、benchmark、模型线索
+      resource_catalog_summary: literature/resource_catalog_summary.json # 资源发现覆盖与使用边界
       missing_areas: literature/missing_areas.md       # 研究空白
       domain_map: literature/domain_map.json            # 引用图领域地图与 novelty 近邻信号
       bridge_domain_plan: literature/bridge_domain_plan.json # T1 已确认的 bridge 召回/裁决计划（可为空计划）
@@ -977,6 +985,8 @@ states:
       synthesis: literature/synthesis.md                # 输入：文献综述
       literature_manifest: literature/literature_manifest.json # 跨任务统一文献清单
       comparison_table: literature/comparison_table.csv # 输入：对比表
+      resource_catalog: literature/resource_catalog.jsonl # 可行性、官方 baseline 与待核验资源线索
+      resource_catalog_summary: literature/resource_catalog_summary.json
       deep_read_notes_dir: literature/deep_read_notes           # 可选：section 级全文/部分全文证据卡
       bridge_notes_dir: literature/bridge_notes # 可选：跨域证据卡
       bridge_domain_plan: literature/bridge_domain_plan.json # Cross-domain 检索/裁决计划
@@ -995,6 +1005,8 @@ states:
       contribution_hypothesis_map: ideation/contribution_hypothesis_map.yaml
       validation_map: ideation/validation_map.yaml
       kill_criteria: ideation/kill_criteria.yaml
+      research_proposal: ideation/proposal/research_proposal.md # T4/T4.5 证据、假设、设计和风险整合的完整研究方案
+      proposal_manifest: ideation/proposal/proposal_manifest.json # Proposal 章节来源、T5 传递角色与 freshness 锚点
       formalization_manifest: ideation/post_novelty_formalization.json
     # 当前主链默认跳过 legacy T5 pilot 与 legacy T6 novelty-final，但必须尊重 T4.5 Final Gate Verdict。
     # pass* 进入 T5-REBOOST-GATE 外部实验协议链；return/drop/reject/collision 进入人工审阅 gate，
@@ -1024,30 +1036,28 @@ states:
     next_on_success: __parse_from_output__
     next_on_failure: failed
 
-  # T5-REBOOST-GATE 状态：ResearchOS 直接调用 LLM API 执行 skills/research-reboost
+  # T5-REBOOST-GATE 状态：先由确定性编译器基于 T4.5 正式产物发布交接；
+  # legacy LLM candidate 仅能作为受审计输入，不能成为交接完成的前置条件。
   # 用途：把研究目标、方法机制、baseline、claim/evidence 边界重排成外部执行器上下文，
   # 并编译外部执行器 handoff、AGENTS/CLAUDE 控制说明、schema 和 allowed paths。
   # 项目专属 Skill Suite 在下一节点独立生成，以便编译、发布和审阅各自可恢复。
   T5-REBOOST-GATE:
-    skill: research-reboost
+    agent: experimenter
     mode: reboost
     extra:
       user_request: |
-        请执行 T5-REBOOST：调用当前 LLM API，按系统 prompt 中已加载的
-        ./skills/research-reboost/SKILL.md、references/reboost-protocol.md 和
-        references/handoff_pack.schema.json 对 Pre-T5 材料做语义重编译。read_file
-        只用于当前 workspace 内的材料，不要读取仓库级 skills/...、references/... 或 scripts/...。
-        先读取必要的 workspace 源文件并自行编译完整 handoff_pack 对象，然后调用
-        compile_research_reboost_handoff(handoff_pack=...) 发布、校验并生成 executor 控制文件；
-        reboost 过程报告写入 external_executor/report/。
-        每个必要源文件最多读取一次；不要反复 list/read 同一批目录或大文件。若已读取必要源文件但
-        完整 JSON 对象会导致输出过长或模型超时，应立即调用 compile_research_reboost_handoff()
-        让发布工具执行确定性恢复编译，而不是继续补读材料。
-        不要执行实验、实现代码、选择执行器或写 result_pack。
+        请执行 T5-REBOOST：以 T4.5 已通过的正式产物为唯一权威来源，调用
+        compile_research_reboost_handoff() 编译、发布并独立校验 handoff。若存在
+        `ideation/proposal/research_proposal.md` 与 proposal manifest，必须作为 planning context 保留，
+        但不能当作实验结果。若存在 literature/resource_catalog，则只作为 Phase B 待核验线索，不能把
+        链接写成已下载、可运行、许可合格或实验结果。不要执行实验、实现代码、选择执行器或写 result_pack。
+        若编译器报告缺失材料或契约不一致，保留具体诊断并暂停；不得调用模型臆造 T4.5 证据、基线或执行约束。
     inputs:
       project: project.yaml
       hypotheses: ideation/hypotheses.md
       research_dossier: ideation/research_dossier.json
+      research_proposal: ideation/proposal/research_proposal.md
+      proposal_manifest: ideation/proposal/proposal_manifest.json
       exp_plan: ideation/exp_plan.yaml
       selected_candidate: ideation/selected/selected_candidate.json
       kill_criteria: ideation/kill_criteria.yaml
@@ -1058,6 +1068,8 @@ states:
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       comparison_table: literature/comparison_table.csv
+      resource_catalog: literature/resource_catalog.jsonl
+      resource_catalog_summary: literature/resource_catalog_summary.json
       deep_read_notes_dir: literature/deep_read_notes
       bridge_notes_dir: literature/bridge_notes
       shallow_read_notes_dir: literature/shallow_read_notes
@@ -1087,6 +1099,8 @@ states:
     inputs:
       project: project.yaml
       hypotheses: ideation/hypotheses.md
+      research_proposal: ideation/proposal/research_proposal.md
+      proposal_manifest: ideation/proposal/proposal_manifest.json
       exp_plan: ideation/exp_plan.yaml
       risks: ideation/risks.md
       novelty_audit: ideation/novelty_audit.md
@@ -1215,7 +1229,7 @@ states:
   # T5-EXTERNAL-WAIT 状态：等待外部执行器写回结果材料
   # 用途：不启动 LLM；runtime 检查 executor_research_report.md、result_pack.json 和 executor_status.json。
   # 外部执行阶段的 T8 核心交接材料为 external_executor/executor_research_report.md。
-  # 缺失执行状态时 PAUSED，外部执行完后 resume 自动进入 T8。
+  # 缺失执行状态时 PAUSED；现代外部 Skill 完成后由总控直接调用 run-task T8 接收材料并进入 T8。
   T5-EXTERNAL-WAIT:
     agent: experimenter
     mode: external_wait
@@ -1343,6 +1357,9 @@ states:
       project: project.yaml
       writing_style: drafts/writing_style.json
       executor_research_report: external_executor/executor_research_report.md
+      t5_t8_handoff: drafts/t5_t8_handoff.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      result_to_claim: drafts/result_to_claim.json
       external_executor_dir: external_executor
       synthesis: literature/synthesis.md
       literature_manifest: literature/literature_manifest.json

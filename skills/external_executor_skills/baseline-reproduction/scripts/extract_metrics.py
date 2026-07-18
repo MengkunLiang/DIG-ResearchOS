@@ -179,7 +179,7 @@ def main() -> int:
     workspace = find_workspace(output)
     if not is_within(attempt, workspace / "external_executor" / "expr"):
         raise SystemExit("Metric extraction attempt-dir must be under external_executor/expr")
-    if not is_within(output, workspace / "external_executor" / "report"):
+    if not is_within(output, workspace / "external_executor" / "report" / "phase_D"):
         raise SystemExit("Normalized metric reports must be written under external_executor/report")
     spec = load_json(Path(args.spec).expanduser().resolve())
     result_dir = None
@@ -190,7 +190,7 @@ def main() -> int:
         evidence_dir = resolve_in_workspace(workspace, str(spec["evidence_dir"]))
     if not result_dir or not is_within(result_dir, workspace / "external_executor" / "raw_results"):
         raise SystemExit("Raw metric CSV files must be written under external_executor/raw_results")
-    if evidence_dir and not is_within(evidence_dir, workspace / "external_executor" / "report"):
+    if evidence_dir and not is_within(evidence_dir, workspace / "external_executor" / "report" / "phase_D"):
         raise SystemExit("Metric evidence inputs must be under external_executor/report")
     items = []
     errors = []

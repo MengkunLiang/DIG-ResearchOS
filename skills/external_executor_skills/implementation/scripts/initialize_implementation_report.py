@@ -20,8 +20,8 @@ def load_optional(path: Path, default: Any) -> Any:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Initialize a complete implementation report envelope.")
     parser.add_argument("--workspace")
-    parser.add_argument("--contract", default="external_executor/report/implementation_change_contract.json")
-    parser.add_argument("--output", default="external_executor/report/implementation_report.json")
+    parser.add_argument("--contract", default="external_executor/report/phase_D/implementation_change_contract.json")
+    parser.add_argument("--output", default="external_executor/report/phase_D/implementation_report.json")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 

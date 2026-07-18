@@ -14,6 +14,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shlex
 import shutil
 import uuid
 from typing import Any
@@ -78,6 +79,12 @@ from ..ideation.final_card_readiness import validate_t4_portfolio_final_cards
 from ..ideation.models import CandidateDossier, IdeaDirective, PopulationSnapshot, RouteGenerationResult, ScoreReport
 from ..ideation.population import build_idea_families, select_portfolio
 from ..ideation.legacy_projection import project_gate1_population
+from ..ideation.evidence_display import (
+    humanize_evidence_ids,
+    load_evidence_display_catalog,
+    referenced_evidence,
+)
+from ..ideation.proposal import repair_t45_proposal_manifest, validate_t45_research_proposal
 from ..ideation.state import T4ArtifactStore, build_t4_input_fingerprints, run_config_fingerprint
 
 
@@ -792,6 +799,49 @@ def _t4_candidate_innovation(candidate: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _t4_gate_lane_label(*, portfolio_role: str, candidate: dict[str, Any]) -> str:
+    """Keep decision role separate from whether the evidence still needs work."""
+
+    role = portfolio_role.strip().lower()
+    if role == "lead":
+        return "主线"
+    if role == "alternative":
+        return "备选方向"
+    if role == "high_upside":
+        return "高上行方向"
+    if role == "parallel":
+        return "并行候选"
+    origin = str(candidate.get("idea_origin") or candidate.get("origin") or "").strip().lower()
+    if "bridge" in origin:
+        return "跨域候选"
+    if "supplement" in origin:
+        return "补充候选"
+    return "候选方向"
+
+
+def _t4_evidence_readiness_label(
+    candidate: dict[str, Any],
+    references: list[dict[str, str]],
+) -> str:
+    """Describe the actual evidence gap without changing the Candidate's role."""
+
+    support_count = len(candidate.get("supporting_papers") or []) if isinstance(candidate.get("supporting_papers"), list) else 0
+    basis_count = len(candidate.get("basis_sources") or []) if isinstance(candidate.get("basis_sources"), list) else 0
+    constrained = str(candidate.get("constraint_status") or "").strip().lower() == "not_supported_by_current_evidence"
+    if references:
+        reading_labels = {str(item.get("reading_label") or "") for item in references}
+        if reading_labels and reading_labels <= {"仅摘要线索", "仅元数据线索"}:
+            return "关键材料目前仅有摘要或元数据线索，需全文或定向章节核验后才能支撑核心机制。"
+        if constrained:
+            return "已定位相关材料，但尚未绑定为该 Candidate 的正式证据链；不能据此提升主张强度。"
+        return "已定位可读材料；仍需按其阅读范围核对具体主张。"
+    if support_count or basis_count:
+        return "已绑定候选材料；仍需核对每条材料对当前机制和预测的支持范围。"
+    if constrained:
+        return "当前没有绑定到 Candidate 的可追溯阅读依据；应先补充或绑定关键材料。"
+    return "当前没有列出专属证据材料；需在后续审计中确认依据范围。"
+
+
 _T4_GATE1_ENRICHABLE_CARD_FIELDS: tuple[tuple[str, str], ...] = (
     ("role_summary", "为何入选说明"),
     ("evidence_interpretation", "证据解读"),
@@ -937,6 +987,7 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
         raw_candidates = []
     if not isinstance(raw_candidates, list):
         raw_candidates = []
+    evidence_catalog = load_evidence_display_catalog(workspace_dir)
 
     portfolio_ids: list[str] = []
     try:
@@ -977,7 +1028,11 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
             continue
         if portfolio_id_set and candidate_id not in portfolio_id_set:
             continue
-        source_title = str(candidate.get("title") or "").strip()
+        display_candidate = humanize_evidence_ids(candidate, evidence_catalog)
+        if not isinstance(display_candidate, dict):
+            display_candidate = candidate
+        candidate_evidence_references = referenced_evidence(candidate, evidence_catalog)
+        source_title = str(display_candidate.get("title") or "").strip()
         final_translation = candidate.get("final_idea_card") if isinstance(candidate.get("final_idea_card"), dict) else {}
         # A visible Portfolio candidate must have a completed LLM Final Card.
         # Do not build a title, evidence interpretation, or recommendation from
@@ -985,35 +1040,38 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
         # gate owns that repair path.
         if not final_translation:
             continue
-        title = str(final_translation.get("short_title") or "").strip()
+        display_final_translation = humanize_evidence_ids(final_translation, evidence_catalog)
+        if not isinstance(display_final_translation, dict):
+            display_final_translation = final_translation
+        title = str(display_final_translation.get("short_title") or "").strip()
         if not title:
             continue
-        full_title = str(final_translation.get("plain_language_summary") or "").strip()
-        value = str(final_translation.get("core_thesis") or "").strip()
-        mechanism = str(final_translation.get("scientific_technical_core") or "").strip()
-        minimum = candidate.get("minimum_experiment") if isinstance(candidate.get("minimum_experiment"), dict) else {}
+        full_title = str(display_final_translation.get("plain_language_summary") or "").strip()
+        value = str(display_final_translation.get("core_thesis") or "").strip()
+        mechanism = str(display_final_translation.get("scientific_technical_core") or "").strip()
+        minimum = display_candidate.get("minimum_experiment") if isinstance(display_candidate.get("minimum_experiment"), dict) else {}
         metrics = minimum.get("metric") or minimum.get("metrics") or ""
         if isinstance(metrics, list):
             metrics = "、".join(str(item).strip() for item in metrics[:3] if str(item).strip())
         else:
             metrics = str(metrics).strip()
-        prediction = str(candidate.get("prediction_zh") or candidate.get("prediction") or "").strip()
-        counterfactual = str(candidate.get("counterfactual_zh") or candidate.get("counterfactual") or "").strip()
-        score = candidate.get("scores") if isinstance(candidate.get("scores"), dict) else {}
+        prediction = str(display_candidate.get("prediction_zh") or display_candidate.get("prediction") or "").strip()
+        counterfactual = str(display_candidate.get("counterfactual_zh") or display_candidate.get("counterfactual") or "").strip()
+        score = display_candidate.get("scores") if isinstance(display_candidate.get("scores"), dict) else {}
         score_rationale = (
-            candidate.get("score_rationale")
-            if isinstance(candidate.get("score_rationale"), dict)
+            display_candidate.get("score_rationale")
+            if isinstance(display_candidate.get("score_rationale"), dict)
             else {}
         )
-        evolution_score = candidate.get("evolution_score") if isinstance(candidate.get("evolution_score"), dict) else {}
-        support = candidate.get("supporting_papers") if isinstance(candidate.get("supporting_papers"), list) else []
-        basis_sources = candidate.get("basis_sources") if isinstance(candidate.get("basis_sources"), list) else []
+        evolution_score = display_candidate.get("evolution_score") if isinstance(display_candidate.get("evolution_score"), dict) else {}
+        support = display_candidate.get("supporting_papers") if isinstance(display_candidate.get("supporting_papers"), list) else []
+        basis_sources = display_candidate.get("basis_sources") if isinstance(display_candidate.get("basis_sources"), list) else []
         evidence_levels = {
             str(item.get("evidence_level") or "").upper()
             for item in support
             if isinstance(item, dict) and str(item.get("evidence_level") or "").strip()
         }
-        evidence = _t4_evidence_status_for_gate(candidate, final_translation, evidence_levels, basis_sources)
+        evidence = _t4_evidence_status_for_gate(candidate, display_final_translation, evidence_levels, basis_sources)
         pass2 = candidate.get("pass2_screening") if isinstance(candidate.get("pass2_screening"), dict) else {}
         selection_enabled, selection_blocker = validate_candidate_selection_ready(candidate)
         # The Final Idea Card is the LLM-authored decision narrative for the
@@ -1026,13 +1084,10 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
         generated_by = str(candidate.get("generated_by") or candidate.get("generation_stage") or "").strip()
         is_recovery_candidate = generated_by.startswith("deterministic_recovery") or "deterministic_t4_gate1_recovery" in generated_by
         presentation_status = "legacy_recovery_requires_llm_reanalysis" if is_recovery_candidate else "llm_final_card_completed"
-        lane = {
-            "mainline": "主方向",
-            "bridge": "跨领域候选方向",
-            "supplement": "消融补充",
-            "not_supported_by_current_evidence": "证据待补",
-            "presentation_degraded": "展示待补",
-        }.get(str(candidate.get("constraint_status") or "").lower(), "候选方向")
+        portfolio_role = (
+            "lead" if candidate_id == lead_id else "alternative" if candidate_id in alternative_ids else "high_upside" if candidate_id in high_upside_ids else "parallel"
+        )
+        lane = _t4_gate_lane_label(portfolio_role=portfolio_role, candidate=candidate)
         candidates.append(
             {
                 # D# is the stable researcher-facing handle for this Gate.
@@ -1040,23 +1095,21 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                 # and is resolved by the state machine before any operation.
                 "id": f"D{len(candidates) + 1}",
                 "internal_id": candidate_id,
-                "portfolio_role": (
-                    "lead" if candidate_id == lead_id else "alternative" if candidate_id in alternative_ids else "high_upside" if candidate_id in high_upside_ids else "parallel"
-                ),
+                "portfolio_role": portfolio_role,
                 "lane": lane,
                 "title": title,
                 "full_title": full_title,
                 "original_title": source_title if full_title != source_title else "",
-                "origin": str(candidate.get("idea_origin") or "").strip(),
-                "parent_ids": [str(value).strip() for value in candidate.get("parent_ids") or [] if str(value).strip()] if isinstance(candidate.get("parent_ids"), list) else [],
-                "mechanism_family": str(candidate.get("mechanism_family") or "").strip(),
-                "target_problem": str(candidate.get("target_problem") or "").strip(),
+                "origin": str(display_candidate.get("idea_origin") or "").strip(),
+                "parent_ids": [str(value).strip() for value in display_candidate.get("parent_ids") or [] if str(value).strip()] if isinstance(display_candidate.get("parent_ids"), list) else [],
+                "mechanism_family": str(display_candidate.get("mechanism_family") or "").strip(),
+                "target_problem": str(display_candidate.get("target_problem") or "").strip(),
                 "value": value,
                 "mechanism": mechanism,
-                "real_world_significance": str(final_translation.get("real_world_significance") or "").strip(),
+                "real_world_significance": str(display_final_translation.get("real_world_significance") or "").strip(),
                 "prediction": prediction,
                 "counterfactual": counterfactual,
-                "practical_implication": str(candidate.get("practical_implication_zh") or candidate.get("practical_implication") or "").strip(),
+                "practical_implication": str(display_candidate.get("practical_implication_zh") or display_candidate.get("practical_implication") or "").strip(),
                 "minimum_validation": {
                     "dataset": str(minimum.get("dataset") or "").strip(),
                     "baseline": str(minimum.get("baseline") or "").strip(),
@@ -1072,9 +1125,11 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                     else [],
                 },
                 "evidence": evidence,
-                "evidence_status_summary": str(final_translation.get("evidence_status_summary") or "").strip(),
+                "evidence_status_summary": str(display_final_translation.get("evidence_status_summary") or "").strip(),
+                "evidence_readiness": _t4_evidence_readiness_label(candidate, candidate_evidence_references),
+                "evidence_references": candidate_evidence_references,
                 "support_count": len(support),
-                "basis_summary": _t4_basis_summary_for_gate(candidate),
+                "basis_summary": _t4_basis_summary_for_gate(display_candidate),
                 "evidence_chain": [
                     {
                         "ref": str(item.get("ref") or item.get("source_file") or item.get("type") or "").strip(),
@@ -1118,16 +1173,16 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                     "dominant_bottleneck": str(evolution_score.get("dominant_bottleneck") or "").strip(),
                     "profile_fit": evolution_score.get("profile_fit") if isinstance(evolution_score.get("profile_fit"), dict) else {},
                 },
-                "final_idea_card": candidate.get("final_idea_card") if isinstance(candidate.get("final_idea_card"), dict) else {},
+                "final_idea_card": display_final_translation,
                 "maturity": str(candidate.get("maturity") or "").strip(),
                 "candidate_stage": str(candidate.get("candidate_stage") or candidate.get("maturity") or "").strip(),
                 "contribution_type": str(
-                    candidate.get("contribution_type")
+                    display_candidate.get("contribution_type")
                     or (
-                        candidate.get("contributions")[0].get("type")
-                        if isinstance(candidate.get("contributions"), list)
-                        and candidate.get("contributions")
-                        and isinstance(candidate.get("contributions")[0], dict)
+                        display_candidate.get("contributions")[0].get("type")
+                        if isinstance(display_candidate.get("contributions"), list)
+                        and display_candidate.get("contributions")
+                        and isinstance(display_candidate.get("contributions")[0], dict)
                         else ""
                     )
                 ).strip(),
@@ -1138,21 +1193,21 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                         "type": str(item.get("type") or "").strip(),
                         "what_changes_if_true": str(item.get("what_changes_if_true") or "").strip(),
                     }
-                    for item in candidate.get("contributions", [])
+                    for item in display_candidate.get("contributions", [])
                     if isinstance(item, dict)
                 ]
-                if isinstance(candidate.get("contributions"), list)
+                if isinstance(display_candidate.get("contributions"), list)
                 else [],
-                "lineage": candidate.get("lineage") if isinstance(candidate.get("lineage"), dict) else {},
-                "artifact_index": candidate.get("artifact_index") if isinstance(candidate.get("artifact_index"), dict) else {},
+                "lineage": display_candidate.get("lineage") if isinstance(display_candidate.get("lineage"), dict) else {},
+                "artifact_index": display_candidate.get("artifact_index") if isinstance(display_candidate.get("artifact_index"), dict) else {},
                 "cross_domain_sources": [
                     str(value).strip()
-                    for value in candidate.get("cross_domain_sources", [])
+                    for value in display_candidate.get("cross_domain_sources", [])
                     if str(value).strip()
                 ]
-                if isinstance(candidate.get("cross_domain_sources"), list)
+                if isinstance(display_candidate.get("cross_domain_sources"), list)
                 else [],
-                "cross_domain_relation": str(candidate.get("cross_domain_relation_detail") or candidate.get("cross_domain_relation") or "").strip(),
+                "cross_domain_relation": str(display_candidate.get("cross_domain_relation_detail") or display_candidate.get("cross_domain_relation") or "").strip(),
                 "projection_status": str(candidate.get("projection_status") or "complete").strip(),
                 "projection_diagnostics": [
                     str(value).strip()
@@ -1163,8 +1218,8 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                 else [],
                 "final_card_status": str(candidate.get("final_card_status") or "").strip(),
                 "final_card_diagnostic": str(candidate.get("final_card_diagnostic") or "").strip(),
-                "evidence_composition": candidate.get("evidence_composition") if isinstance(candidate.get("evidence_composition"), dict) else {},
-                "artifact_paths": [str(path).strip() for path in candidate.get("artifact_paths", []) if str(path).strip()] if isinstance(candidate.get("artifact_paths"), list) else [],
+                "evidence_composition": display_candidate.get("evidence_composition") if isinstance(display_candidate.get("evidence_composition"), dict) else {},
+                "artifact_paths": [str(path).strip() for path in display_candidate.get("artifact_paths", []) if str(path).strip()] if isinstance(display_candidate.get("artifact_paths"), list) else [],
                 "selection_recommendation": selection_recommendation,
                 # This is the same structural contract used after the second
                 # confirmation.  The Gate must never present a Candidate as
@@ -1178,12 +1233,12 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                     else ""
                 ).strip(),
                 "novelty_signal": str(pass2.get("novelty_signal") or candidate.get("novelty_signal") or "").strip(),
-                "warning": warning,
+                "warning": str(humanize_evidence_ids(warning, evidence_catalog) or "").strip(),
                 "presentation_status": presentation_status,
                 "enrichment_diagnostics": [],
                 "innovation": _t4_candidate_innovation(candidate),
-                "candidate_hypotheses": _t4_candidate_hypotheses(candidate, candidate_id),
-                "merge_opportunities": _t4_merge_opportunities(candidate),
+                "candidate_hypotheses": _t4_candidate_hypotheses(display_candidate, candidate_id),
+                "merge_opportunities": _t4_merge_opportunities(display_candidate),
                 "score_rationale": {str(key): str(reason).strip() for key, reason in score_rationale.items()},
             }
         )
@@ -2141,6 +2196,7 @@ def _validate_t45_post_novelty_formalization(workspace_dir: Path, audit_path: Pa
     """
 
     manifest_path = workspace_dir / "ideation" / "post_novelty_formalization.json"
+    repair_t45_proposal_manifest(workspace_dir, audit_path)
     required = {
         "hypotheses": workspace_dir / "ideation" / "hypotheses.md",
         "research_dossier": workspace_dir / "ideation" / "research_dossier.json",
@@ -2148,6 +2204,8 @@ def _validate_t45_post_novelty_formalization(workspace_dir: Path, audit_path: Pa
         "contribution_hypothesis_map": workspace_dir / "ideation" / "contribution_hypothesis_map.yaml",
         "validation_map": workspace_dir / "ideation" / "validation_map.yaml",
         "kill_criteria": workspace_dir / "ideation" / "kill_criteria.yaml",
+        "research_proposal": workspace_dir / "ideation" / "proposal" / "research_proposal.md",
+        "proposal_manifest": workspace_dir / "ideation" / "proposal" / "proposal_manifest.json",
     }
     if not manifest_path.exists() or manifest_path.stat().st_size <= 0:
         return False, "missing post-novelty formalization manifest"
@@ -2176,6 +2234,9 @@ def _validate_t45_post_novelty_formalization(workspace_dir: Path, audit_path: Pa
     dossier_ok, dossier_error = _validate_t45_research_dossier(workspace_dir, hypotheses_text)
     if not dossier_ok:
         return False, dossier_error
+    proposal_ok, proposal_error = validate_t45_research_proposal(workspace_dir, audit_path)
+    if not proposal_ok:
+        return False, proposal_error
     return True, None
 
 
@@ -2512,6 +2573,11 @@ class StateMachine:
             if self._t4_gate1_ready_without_selection(workspace_dir):
                 return True
             return self._t4_prerun_confirmation_required(workspace_dir)
+        if state.current_task == "T5-EXTERNAL-WAIT" and state.status == "PAUSED":
+            # Older workspaces persisted this wait as a generic runtime pause.
+            # Reopen it as the dedicated external-executor handoff panel before
+            # any agent or model can run again.
+            return True
         if state.status == "PAUSED" and self._runtime_recovery_payload_from_error(state.last_error) is not None:
             return True
         node = self.nodes[state.current_task]
@@ -2572,6 +2638,17 @@ class StateMachine:
                         workspace_dir,
                     )
                 return self._pause_for_t4_prerun_gate(state, workspace_dir)
+        if state.current_task == "T5-EXTERNAL-WAIT" and state.status == "PAUSED":
+            return self._pause_for_runtime_recovery_gate(
+                state,
+                error=state.last_error,
+                workspace_dir=workspace_dir,
+                recovery={
+                    "kind": "runtime",
+                    "error_summary": state.last_error or "WAITING_EXTERNAL: awaiting external executor handoff.",
+                    "details": {"source": "t5_external_wait_panel_upgrade"},
+                },
+            ) or state
         if state.status == "PAUSED":
             generic_recovery = self._pause_for_runtime_recovery_gate(
                 state,
@@ -3298,6 +3375,69 @@ class StateMachine:
                 listed.append(text)
         return listed[:30]
 
+    @staticmethod
+    def _t5_external_wait_launch_context(workspace_dir: Path | None) -> dict[str, Any]:
+        """Build a human-operable external-executor handoff, not a raw JSON dump."""
+
+        workspace = Path(workspace_dir).resolve() if workspace_dir is not None else None
+        selection_path = "external_executor/report/executor_selection.json"
+        selection: dict[str, Any] = {}
+        if workspace is not None:
+            path = workspace / selection_path
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                selection = loaded if isinstance(loaded, dict) else {}
+            except (OSError, ValueError, json.JSONDecodeError):
+                selection = {}
+
+        selected_executor = str(selection.get("selected_executor") or "unknown").strip()
+        root = str(workspace) if workspace is not None else "<workspace>"
+        prompt = str(selection.get("codex_user_input") or "").strip()
+        if selected_executor == "codex_cli" and not prompt:
+            prompt = "请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research-execution/SKILL.md。"
+
+        required_paths = [
+            "external_executor/executor_research_report.md",
+            "external_executor/result_pack.json",
+            "external_executor/executor_status.json",
+            "external_executor/report/run_manifest.json",
+        ]
+        artifacts = [
+            {
+                "path": rel_path,
+                "status": "已回传" if workspace is not None and (workspace / rel_path).is_file() else "待回传",
+            }
+            for rel_path in required_paths
+        ]
+        command_lines = [f"cd {shlex.quote(root)}", "codex"] if selected_executor == "codex_cli" else []
+        if selected_executor == "claude_code_window":
+            launch_summary = "在当前 workspace 根目录启动 Claude Code，并发送下方执行指令。"
+        elif selected_executor == "manual":
+            launch_summary = "将下方执行指令交给获授权的人工或其它外部执行器，并限制其在当前 workspace 内工作。"
+        elif selected_executor == "codex_cli":
+            launch_summary = "在一个单独终端的当前 workspace 根目录启动 Codex CLI。"
+        else:
+            launch_summary = "未读取到有效执行器选择记录；先检查 external_executor/report/executor_selection.json。"
+
+        return {
+            "selected_executor": selected_executor,
+            "selection_path": selection_path,
+            "workspace_root": root,
+            "launch_summary": launch_summary,
+            "command_lines": command_lines,
+            "executor_prompt": prompt,
+            "required_artifacts": artifacts,
+            "concurrency_boundary": (
+                "外部执行期间不要在另一个终端对同一 workspace 运行 researchos resume、run-task T5 或 run-task T8。"
+                "这些命令可能读取到外部执行器尚未原子写完的 result pack、状态或运行清单。"
+            ),
+            "completion_boundary": (
+                "外部执行根 Skill 在 Writer Handoff 校验通过后会执行其 route 返回的 T8 交接命令。"
+                "只有当该执行器明确报告未能启动 T8，且四项回传文件均已就绪时，才在外部执行器停止后运行 "
+                f"python -m researchos.cli resume --workspace {shlex.quote(root)}。"
+            ),
+        }
+
     def _pause_for_runtime_recovery_gate(
         self,
         state: StateYaml,
@@ -3341,6 +3481,7 @@ class StateMachine:
         details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
         is_literature_coverage = recovery_kind == "literature_coverage"
         is_survey_retrieval = recovery_kind == "survey_retrieval"
+        is_external_wait = state.current_task == "T5-EXTERNAL-WAIT"
         payload.update(
             {
                 "schema_version": "1.0.0",
@@ -3405,6 +3546,30 @@ class StateMachine:
                     "description": "不删除任何补检记录或笔记；之后 resume 时仍会先展示这项补检恢复决策。",
                 },
             ]
+        elif is_external_wait:
+            title = "外部执行器正在等待或运行"
+            description = (
+                "ResearchOS 已完成内部交接，当前不应继续调用模型或重跑 T5。"
+                "请按下方执行器说明在同一 workspace 中完成外部实验和 Writer Handoff；"
+                "系统只会在四项回传文件齐备且校验通过后进入 T8。"
+            )
+            options = [
+                {
+                    "id": "retry_targeted_repair",
+                    "label": "检查外部执行回传",
+                    "description": "只检查 executor report、result pack、status 和 run manifest；齐备且合法时进入 T8，不会重跑 T4.5 或 T5。",
+                },
+                {
+                    "id": "inspect_then_pause",
+                    "label": "暂不检查，保持等待",
+                    "description": "保留当前外部执行器选择和全部交接文件；下次 resume 仍展示启动说明与回传状态。",
+                },
+                {
+                    "id": "exit",
+                    "label": "结束本次 ResearchOS 会话",
+                    "description": "不删除外部执行器任务或任何 artifact；外部执行完成后可显式 resume 回到此处检查。",
+                },
+            ]
         else:
             title = "运行恢复需要决策"
             description = (
@@ -3443,6 +3608,11 @@ class StateMachine:
                 "error_summary": summary,
                 "existing_outputs": existing_outputs,
                 "resume_state_path": "_runtime/resume/" + state.current_task.lower().replace(".", "_") + "_resume_state.json",
+                **(
+                    {"external_executor_launch": self._t5_external_wait_launch_context(workspace_dir)}
+                    if is_external_wait
+                    else {}
+                ),
             },
             options=options,
         )

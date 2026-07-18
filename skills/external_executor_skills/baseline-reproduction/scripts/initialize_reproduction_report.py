@@ -25,8 +25,8 @@ def base_item(plan_item: dict) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Initialize or resume baseline reproduction report envelope.")
     ap.add_argument("--workspace")
-    ap.add_argument("--plan", default="external_executor/report/baseline_reproduction_plan.json")
-    ap.add_argument("--output", default="external_executor/report/baseline_reproduction_report.json")
+    ap.add_argument("--plan", default="external_executor/report/phase_D/baseline_reproduction_plan.json")
+    ap.add_argument("--output", default="external_executor/report/phase_D/baseline_reproduction_report.json")
     args = ap.parse_args()
     ws = resolve_workspace(args.workspace)
     plan_path = resolve_in_workspace(ws, args.plan)

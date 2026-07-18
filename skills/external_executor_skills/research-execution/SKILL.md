@@ -35,6 +35,8 @@ Write narrowly. This root skill owns:
 - iteration plans and iteration decisions in `external_executor/result_pack.json`;
 - budget accounting, blockers, human-review requests, and the intended terminal execution outcome.
 
+Keep external process/report files grouped by phase under `external_executor/report/phase_A/` through `phase_F/` as defined in `references/artifact-and-resume-policy.md`. `external_executor/report/run_manifest.json` is the only cross-phase external file kept directly in `report/`; pre-execution ResearchOS receipts such as executor selection remain at their existing root-level paths.
+
 Child skills own their domain sections and files. Read `<root-skill>/references/child-skill-contracts.md` before the first dispatch. Do not let one child invoke another child or overwrite a sibling's section.
 
 ## Initialize or resume
@@ -43,7 +45,7 @@ Run deterministic checks before choosing work:
 
 ```bash
 python <root-skill>/scripts/fingerprint_inputs.py --workspace <workspace> \
-  --output external_executor/report/input_fingerprint.json
+  --output external_executor/report/phase_A/input_fingerprint.json
 
 python <root-skill>/scripts/validate_executor_state.py --workspace <workspace> \
   --mode resume
@@ -105,7 +107,7 @@ Child sequence and conditional use:
 
 ## Control the build-review-run loop
 
-Before the first method build, create iteration `ITER-01` with `iteration_number=1`, `max_method_iterations=10`, the trigger, approved changes, affected experiments, reusable runs, runs to execute, budget before execution, and expected decision surface. Materialize the same plan at `external_executor/report/iteration_plans/ITER-01.json` and store that path as `plan_ref`; experiment run requests use it as `iteration_plan_ref`. Ten is a fixed total method implementation/debug-attempt limit, not a default that a child may raise.
+Before the first method build, create iteration `ITER-01` with `iteration_number=1`, `max_method_iterations=10`, the trigger, approved changes, affected experiments, reusable runs, runs to execute, budget before execution, and expected decision surface. Materialize the same plan at `external_executor/report/phase_D/iteration_plans/ITER-01.json` and store that path as `plan_ref`; experiment run requests use it as `iteration_plan_ref`. Ten is a fixed total method implementation/debug-attempt limit, not a default that a child may raise.
 
 Enforce this loop:
 
@@ -141,7 +143,7 @@ python <root-skill>/scripts/decide_iteration.py --workspace <workspace> \
   --diagnosis external_executor/result_diagnosis_report.json
 ```
 
-The helper records one root decision and the next durable route. It creates a new iteration only for a method modification/debug, materializes the plan under `external_executor/report/iteration_plans/`, binds its `base_source` to the immediately preceding implementation `worktree/`, carries all prior diagnosis lessons, and refuses an eleventh method iteration. For final ablations it verifies complete plan-declared variant sets, shared pair identity, exact module states, fingerprints, and seed/repeat coverage; a single completed ablation run is insufficient. Never edit an earlier method worktree in place.
+The helper records one root decision and the next durable route. It creates a new iteration only for a method modification/debug, materializes the plan under `external_executor/report/phase_D/iteration_plans/`, binds its `base_source` to the immediately preceding implementation `worktree/`, carries all prior diagnosis lessons, and refuses an eleventh method iteration. For final ablations it verifies complete plan-declared variant sets, shared pair identity, exact module states, fingerprints, and seed/repeat coverage; a single completed ablation run is insufficient. Never edit an earlier method worktree in place.
 
 Do not run formal experiments without `review_status=pass` and `approved_for=formal`. Baseline work and method smoke tests may proceed independently only when the plan and fairness constraints allow it; do not make a superiority claim before required comparisons are valid.
 
@@ -211,11 +213,12 @@ When iteration stops:
 1. Dispatch `evidence-packaging` against one pinned final evidence snapshot.
 2. Derive the intended terminal outcome from actual work and write the same `completed`, `partial`, `blocked`, or `failed` value to `executor_status.json` and `result_pack.json`. Register all evidence-packaging outputs before freezing the manifest.
 3. Dispatch `writer-handoff`. It creates `external_executor/executor_research_report.md` and validates the terminal status, result pack, run manifest, research report, and every final figure/table.
-4. Accept only `external_executor/report/writer_handoff_validation.json` with `status=ready|partial`. A blocked result routes back to `writer-handoff` repair or the authoritative producer identified by the validation error.
-5. Record the child checkpoint and stop. Do not run root-level result-pack, executor-state, or final-handoff validation after Writer Handoff, and do not rewrite the validated core files.
-6. Leave all outputs in `external_executor/` for downstream ResearchOS ingestion. Do not write manuscript artifacts yourself.
+4. Accept only `external_executor/report/phase_F/writer_handoff_validation.json` with `status=ready|partial`. A blocked result routes back to `writer-handoff` repair or the authoritative producer identified by the validation error.
+5. Record the child checkpoint, rerun `scripts/route_next_skill.py`, and require the root action `launch-t8`. Execute the returned command exactly once. The command performs an independent ResearchOS acceptance pass, creates T8 evidence inputs, safely enters or resumes the existing T8 state, and delegates writing to the normal ResearchOS pipeline runner.
+6. Do not exit the external executor merely to ask the user to run `resume`, and do not directly write `drafts/` or manuscript content. The `run-task T8` ResearchOS subprocess owns those writes and any T8 human Gates.
+7. If routing later returns `stop` because T8 was already delegated, do not invoke `run-task T8` again. Leave the external executor outputs frozen and let the active or resumable ResearchOS T8 state remain authoritative.
 
-The external handoff is a validated downstream input package, never “paper-approved.”
+The external handoff is a validated downstream input package, never “paper-approved.” `executor_research_report.md` is the primary T8 input; the validated result pack, manifest, facts, raw results, realized method package, figures, and tables remain supporting provenance.
 
 ## Evidence rules
 

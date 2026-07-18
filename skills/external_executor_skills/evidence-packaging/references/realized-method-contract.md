@@ -85,6 +85,8 @@ Every implemented/added/modified module contains:
 
 Code refs should identify a workspace-relative file and, when available, symbol/class/function. Config keys should identify the controlling key and config artifact. A README statement alone is insufficient when executable code/config exists.
 
+The final implementation root must resolve below `external_executor/expr/implementation/<iteration-id>/<implementation-id>/`. Every implemented module code ref must resolve inside that implementation's `worktree/`. A legacy `external_executor/workdir/` path or a code ref into an older implementation version is not a valid final-method source.
+
 ## Actual algorithm flow
 
 Record implemented order and data/control relationships, not aspirational prose. Each step should identify:
@@ -105,7 +107,7 @@ Keep specified and realized semantics distinct. A method-spec flow may be retain
 
 Select exactly one implementation through `implementations.active_implementation_id`. Match its `method_spec_fingerprint` to one `method_refinements` record and follow that record's immutable `snapshot_ref`. Select review, diagnosis, attribution, iteration decision, and experiment runs for the same implementation/iteration. Never merge historical implementation module mappings into the final package.
 
-All selected result-pack values and the parsed method-spec value must come from `external_executor/report/final_evidence_snapshot.json`. Live source files are checked for mutation, not reread as an alternative package input.
+All selected result-pack values and the parsed method-spec value must come from `external_executor/report/phase_F/final_evidence_snapshot.json`. Live source files are checked for mutation, not reread as an alternative package input.
 
 ## Delta from intent
 

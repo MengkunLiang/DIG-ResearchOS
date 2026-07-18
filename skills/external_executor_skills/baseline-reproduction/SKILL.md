@@ -29,11 +29,11 @@ Turn an approved baseline resource into auditable execution evidence. A runnable
 
 Write only:
 
-- `external_executor/report/baseline_reproduction_preflight.json`;
-- `external_executor/report/baseline_reproduction_plan.json`;
-- `external_executor/report/baseline_reproduction_report.json`;
+- `external_executor/report/phase_D/baseline_reproduction_preflight.json`;
+- `external_executor/report/phase_D/baseline_reproduction_plan.json`;
+- `external_executor/report/phase_D/baseline_reproduction_report.json`;
 - controlled baseline deployments, copied source, configs, and repair patches under `external_executor/expr/baselines/<baseline-id>/`;
-- environment records, run records, normalized metrics, failure classifications, evaluations, and other process reports under `external_executor/report/baseline_reproduction/`;
+- environment records, run records, normalized metrics, failure classifications, evaluations, and other process reports under `external_executor/report/phase_D/baseline_reproduction/`;
 - baseline stdout/stderr logs, baseline-produced output files, per-dataset/per-metric raw-result CSV files, and other original experiment outputs under `external_executor/raw_results/baseline_reproduction/`;
 - `result_pack.json#baseline_reproduction` through the narrow apply script.
 
@@ -58,7 +58,7 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/preflight_reproduction.py --workspace <workspace> \
-  --output external_executor/report/baseline_reproduction_preflight.json
+  --output external_executor/report/phase_D/baseline_reproduction_preflight.json
 ```
 
 Preflight must establish:
@@ -80,7 +80,7 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/build_reproduction_plan.py --workspace <workspace> \
-  --output external_executor/report/baseline_reproduction_plan.json
+  --output external_executor/report/phase_D/baseline_reproduction_plan.json
 ```
 
 Complete each plan item using `references/reproduction-plan-contract.md`. Before execution, every item must specify:
@@ -105,9 +105,11 @@ For each authorized item, create a controlled copy:
 
 ```bash
 python <skill-dir>/scripts/prepare_attempt.py --workspace <workspace> \
-  --plan external_executor/report/baseline_reproduction_plan.json \
+  --plan external_executor/report/phase_D/baseline_reproduction_plan.json \
   --reproduction-id <reproduction-id> --attempt <N>
 ```
+
+Attempt 1 copies the approved source from `resources/`. For attempt `N>1`, the preparer automatically copies the immediately preceding deployed attempt's `source/`, `configs/`, and `patches/` when it exists, so authorized compatibility/debug repairs are cumulative. Use `--from-attempt <M>` only when the root explicitly selects a different earlier attempt. The prior deployment and its run evidence remain immutable; continue editing only the new attempt.
 
 The deployment directory is:
 
@@ -118,7 +120,7 @@ external_executor/expr/baselines/<baseline-id>/<reproduction-id>/attempt-<N>/
 The paired evidence/report directory is:
 
 ```text
-external_executor/report/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/
+external_executor/report/phase_D/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/
 ```
 
 The paired raw-result directory is only for original outputs produced by running the baseline, including stdout/stderr logs and metric/result files:
@@ -127,7 +129,7 @@ The paired raw-result directory is only for original outputs produced by running
 external_executor/raw_results/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/
 ```
 
-The deployment directory contains the copied baseline source, plan fragment, patch/config directories, and attempt provenance with initial source/config manifest hashes. If execution fails because of implementation, environment, path, logging, or metric-extraction problems, debug and modify the deployed copy under `external_executor/expr/baselines/<baseline-id>/...` until the authorized baseline command can run or a bounded stop condition is reached. Never patch the Phase B source in `resources/` in place. Reject path-escaping symlinks.
+The deployment directory contains the copied baseline source, plan fragment, patch/config directories, and attempt provenance with initial source/config manifest hashes and, for a repaired attempt, its parent-attempt identity. If execution fails because of implementation, environment, path, logging, or metric-extraction problems, debug and modify the deployed copy under `external_executor/expr/baselines/<baseline-id>/...` until the authorized baseline command can run or a bounded stop condition is reached. After an attempt has produced an immutable run record, create a new inherited attempt before further repair or rerun. Never patch the Phase B source in `resources/` in place. Reject path-escaping symlinks.
 
 When modifying/debugging the deployed baseline, stay inside the baseline's original core idea, core modules, and core design. You may fix compatibility, paths, configuration plumbing, deterministic seed handling, logging, and metric extraction. You may not replace the algorithm, omit a required core module, substitute a different model or objective, use extra data/pretraining/tuning budget, change the locked dataset/split/metric, or otherwise cross the baseline's conceptual boundary merely to make the command succeed. Record material edits and risks in the report.
 
@@ -149,7 +151,7 @@ Read `references/environment-and-execution-safety.md`, then run:
 
 ```bash
 python <skill-dir>/scripts/run_reproduction.py --workspace <workspace> \
-  --plan external_executor/report/baseline_reproduction_plan.json \
+  --plan external_executor/report/phase_D/baseline_reproduction_plan.json \
   --reproduction-id <reproduction-id> --attempt <N>
 ```
 
@@ -278,22 +280,22 @@ Initialize or resume the report envelope:
 
 ```bash
 python <skill-dir>/scripts/initialize_reproduction_report.py --workspace <workspace> \
-  --plan external_executor/report/baseline_reproduction_plan.json \
-  --output external_executor/report/baseline_reproduction_report.json
+  --plan external_executor/report/phase_D/baseline_reproduction_plan.json \
+  --output external_executor/report/phase_D/baseline_reproduction_report.json
 ```
 
 Populate attempts, evaluations, reviews, repairs, risks, and Artifact references. Preserve prior attempts and stale history. Then run:
 
 ```bash
 python <skill-dir>/scripts/compute_reproduction_gate.py \
-  --report <workspace>/external_executor/report/baseline_reproduction_report.json \
+  --report <workspace>/external_executor/report/phase_D/baseline_reproduction_report.json \
   --write-back
 
 python <skill-dir>/scripts/validate_reproduction_report.py --workspace <workspace> \
-  --report external_executor/report/baseline_reproduction_report.json
+  --report external_executor/report/phase_D/baseline_reproduction_report.json
 
 python <skill-dir>/scripts/apply_reproduction_report.py --workspace <workspace> \
-  --report external_executor/report/baseline_reproduction_report.json
+  --report external_executor/report/phase_D/baseline_reproduction_report.json
 ```
 
 The apply script updates only `result_pack.json#baseline_reproduction`.
@@ -312,8 +314,8 @@ Return:
 child_skill=baseline-reproduction
 status=complete|partial|blocked|failed
 reproduction_gate=pass|partial|blocked
-report=external_executor/report/baseline_reproduction_report.json
-plan=external_executor/report/baseline_reproduction_plan.json
+report=external_executor/report/phase_D/baseline_reproduction_report.json
+plan=external_executor/report/phase_D/baseline_reproduction_plan.json
 reproduced_baseline_ids=<ids>
 conditional_baseline_ids=<ids>
 blocking_baseline_ids=<ids>

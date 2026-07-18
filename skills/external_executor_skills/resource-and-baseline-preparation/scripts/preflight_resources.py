@@ -87,7 +87,7 @@ def default_resource_acquisition_policy() -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate Phase B resource preparation prerequisites.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/report/resource_preflight.json")
+    parser.add_argument("--output", default="external_executor/report/phase_B/resource_preflight.json")
     args = parser.parse_args()
 
     workspace = resolve_workspace(args.workspace)
@@ -186,11 +186,11 @@ def main() -> int:
     write_targets = [
         output,
         ext / "resource_requirement_matrix.json",
-        ext / "report" / "resource_local_inventory.json",
-        ext / "report" / "resource_search_records.json",
-        ext / "report" / "resource_source_report.json",
-        ext / "report" / "resource_source_report.md",
-        ext / "report" / "resource_preparation_report.json",
+        ext / "report" / "phase_B" / "resource_local_inventory.json",
+        ext / "report" / "phase_B" / "resource_search_records.json",
+        ext / "report" / "phase_B" / "resource_source_report.json",
+        ext / "report" / "phase_B" / "resource_source_report.md",
+        ext / "report" / "phase_B" / "resource_preparation_report.json",
         workspace / "resources",
     ]
     for target in write_targets:

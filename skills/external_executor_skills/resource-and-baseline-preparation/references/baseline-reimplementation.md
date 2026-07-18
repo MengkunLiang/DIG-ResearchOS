@@ -33,7 +33,7 @@ resources/reproduction/<baseline>/
   tests/
 ```
 
-Static review and validation reports are written under `external_executor/report/`.
+Static review and validation reports are written under `external_executor/report/phase_B/`.
 
 ## Specification content
 

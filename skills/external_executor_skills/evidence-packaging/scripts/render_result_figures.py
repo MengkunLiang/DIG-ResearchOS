@@ -68,9 +68,9 @@ def render_group(rows: list[dict[str, str]], path: Path, *, kind: str, title: st
 def main() -> int:
     parser = argparse.ArgumentParser(description="Render deterministic SVG result figures from generated aggregate tables.")
     parser.add_argument("--workspace")
-    parser.add_argument("--tables-report", default="external_executor/report/result_table_build_report.json")
+    parser.add_argument("--tables-report", default="external_executor/report/phase_F/result_table_build_report.json")
     parser.add_argument("--figure-dir", default="external_executor/figure")
-    parser.add_argument("--output", default="external_executor/report/result_figure_build_report.json")
+    parser.add_argument("--output", default="external_executor/report/phase_F/result_figure_build_report.json")
     args = parser.parse_args()
 
     workspace = resolve_workspace(args.workspace)

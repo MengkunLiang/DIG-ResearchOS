@@ -26,7 +26,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--path", action="append", dest="paths")
-    parser.add_argument("--output", default="external_executor/report/input_fingerprint.json")
+    parser.add_argument("--output", default="external_executor/report/phase_A/input_fingerprint.json")
     parser.add_argument("--allow-missing", action="store_true")
     args = parser.parse_args()
 

@@ -13,7 +13,7 @@ realized_method_package
 
 The initial framework sketch in `method_intent` is only a comparison input. It must not override the realized method.
 
-The final rendered asset is `external_executor/figure/framework_figure.svg`. The machine-readable spec and editable Mermaid source are process artifacts under `external_executor/report/`.
+The final rendered asset is `external_executor/figure/framework_figure.svg`. The machine-readable spec and editable Mermaid source are process artifacts under `external_executor/report/phase_F/`.
 
 ## Required fields
 

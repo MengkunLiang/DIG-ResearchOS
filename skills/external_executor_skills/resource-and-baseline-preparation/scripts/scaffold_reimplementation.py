@@ -25,7 +25,7 @@ def main() -> int:
     args = parser.parse_args()
 
     workspace = resolve_workspace(args.workspace)
-    preflight = load_json(workspace / "external_executor" / "report" / "resource_preflight.json")
+    preflight = load_json(workspace / "external_executor" / "report" / "phase_B" / "resource_preflight.json")
     policy = preflight.get("policy_snapshot", {})
     if policy.get("effective_mode") != "github_and_reimplementation" or not policy.get("effective_reimplementation_allowed"):
         raise SystemExit("Policy does not authorize baseline reimplementation")

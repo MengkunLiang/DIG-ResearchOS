@@ -125,6 +125,15 @@ def classify_tool_outcome(*, ok: bool, data: dict[str, Any] | None, error: str |
         return ToolOutcome("DONE", "green", False)
     if disposition == "skipped" or payload.get("optional_input") is True:
         return ToolOutcome("SKIPPED", "yellow", False)
+    if disposition in {"auto_repair", "repairing"} and payload.get("repairable", True):
+        return ToolOutcome("AUTO_REPAIR", "cyan", False)
+    if disposition in {"auto_fallback", "fallback"} and payload.get("fallback_available", True):
+        return ToolOutcome("AUTO_FALLBACK", "cyan", False)
+    # These two error codes are emitted after the Agent has received a
+    # precise repair contract for the same turn. Older tools do not always
+    # carry the newer display metadata, so retain a narrow compatibility path.
+    if failure_class in {"note_incomplete", "schema_validation_failed"}:
+        return ToolOutcome("AUTO_REPAIR", "cyan", False)
     if failure_class in {"rate_limited", "network_unavailable", "timeout", "http_5xx", "transient_http"} and payload.get("fallback_available", True):
         return ToolOutcome("DEGRADED", "yellow", False)
     return ToolOutcome("FAILED", "bright_red", True)
@@ -623,9 +632,20 @@ class CliProgressEmitter:
             return
         if self._active_task_id in self._structured_runs and self._active_task_id != "T4" and ok and not self.verbose:
             return
+        # These outcomes have an established local repair, fallback, or
+        # optional-input path. Keep their full diagnostics for the Agent and
+        # trace, but do not interrupt ordinary researcher-facing progress.
+        if outcome.status in {"SKIPPED", "AUTO_REPAIR", "AUTO_FALLBACK", "DEGRADED"} and not self.verbose:
+            return
         if self.quiet and not important:
             return
-        status = "完成" if ok else {"SKIPPED": "跳过", "DEGRADED": "降级继续", "FAILED": "失败"}[outcome.status]
+        status = "完成" if ok else {
+            "SKIPPED": "跳过",
+            "AUTO_REPAIR": "正在自动修补",
+            "AUTO_FALLBACK": "已自动降级",
+            "DEGRADED": "降级继续",
+            "FAILED": "失败",
+        }[outcome.status]
         if self._active_task_id == "T4":
             if tool_name == "log_t4_ideation_progress" and ok:
                 event = (data or {}).get("event") if isinstance(data, dict) else None
@@ -1072,6 +1092,8 @@ def describe_output_artifact(path: str, *, task_id: str = "") -> str:
         "ideation/_gate1_selection_brief.md": "候选选择、合并与风险提示的决策简报。",
         "ideation/selected_idea_brief.md": "你的选择，以及 T4 后续收敛方向的可读记录。",
         "ideation/hypotheses.md": "可证伪研究假设、边界条件与预期方向。",
+        "ideation/proposal/research_proposal.md": "T4.5 通过后形成的完整研究方案，整合问题、机制、设计、贡献、风险和研究谱系。",
+        "ideation/proposal/proposal_manifest.json": "Proposal 的章节来源、审计状态和传递给 T5 的 planning-only 边界。",
         "ideation/experiment_plan.md": "实验设计、对照、指标、风险和停止条件。",
         "ideation/novelty_audit.md": "与相邻工作的差异、撞车风险和 claim 降级建议。",
         "drafts/paper.tex": "整篇论文 TeX 草稿，后续审稿和提交的主输入。",
@@ -1141,7 +1163,7 @@ def describe_task_artifacts(task_id: str) -> str:
         "T4": "候选研究方向、排序依据、实验计划、风险清单和候选比较材料",
         "T4-GATE1": "供你选择的候选方向卡片、候选摘要和最终选择记录",
         "T4.5": "新颖性审计、相似工作风险、机制设计核验和主张收敛建议",
-        "T5-REBOOST-GATE": "LLM 对 Pre-T5 材料做 context re-boost 并生成 handoff 上下文",
+        "T5-REBOOST-GATE": "从 T4.5 正式材料确定性编译并校验 handoff 上下文",
         "T5-HANDOFF": "外部实验 handoff pack、执行协议和交接提示",
         "T5-SPECIALIZE-EXECUTOR-SKILLS": "项目专属 executor Skill Suite、项目上下文和校验报告",
         "T5-EXPR-MATERIAL-GATE": "外部实验材料放置确认与 expr 目录快照",
@@ -1317,6 +1339,36 @@ def summarize_tool_result(
             if str(data.get("failure_class") or error or "") == "rate_limited":
                 return f"{source} 暂时触发速率限制{attempt_text}；其他可用来源继续。", _extract_output_path(tool_name, data)
             return f"{source} 暂时不可用{attempt_text}；其他可用来源继续，后续可恢复重试。", _extract_output_path(tool_name, data)
+        if outcome.status == "AUTO_FALLBACK":
+            path = _extract_output_path(tool_name, data)
+            if tool_name == "fetch_paper_pdf":
+                candidates = data.get("candidates_tried")
+                candidate_count = len(candidates) if isinstance(candidates, list) else 0
+                errors = data.get("candidate_errors")
+                last_error = ""
+                if isinstance(errors, list) and errors and isinstance(errors[-1], dict):
+                    last_error = str(errors[-1].get("error") or "").replace("_", " ")
+                attempt_text = f"已尝试 {candidate_count} 个候选 URL" if candidate_count else "已完成可用来源尝试"
+                reason_text = f"，最后原因：{last_error}" if last_error else ""
+                return f"PDF 未获取（{attempt_text}{reason_text}）；已自动转为摘要级阅读，不计为全文阅读。", path
+            return "当前材料已自动降级为较低证据等级并继续。", path
+        if outcome.status == "AUTO_REPAIR":
+            path = _extract_output_path(tool_name, data)
+            if tool_name == "save_paper_note":
+                progress = str(data.get("progress") or "").strip()
+                summary = summarize_reader_note_progress(data, progress=progress)
+                detail = _compact_text(data.get("validation_error") or content or "待补齐结构字段", 180)
+                return f"{summary}；正在自动补齐：{detail}", path
+            if tool_name == "write_structured_file":
+                schema_name = str(data.get("schema_name") or "unknown")
+                diagnostics = data.get("schema_errors")
+                first = diagnostics[0] if isinstance(diagnostics, list) and diagnostics else {}
+                if isinstance(first, dict):
+                    detail = f"{first.get('path') or '$'}: {first.get('message') or 'schema 不匹配'}"
+                else:
+                    detail = _compact_text(content or "待补齐 schema 字段", 180)
+                return f"结构化文件正在自动补齐（{schema_name}）：{detail}", path
+            return "正在自动修补当前产物。", path
         if tool_name == "save_paper_note" and data:
             progress = str(data.get("progress") or "").strip()
             summary = summarize_reader_note_progress(data, progress=progress)
@@ -1896,7 +1948,9 @@ def _format_t3_progress(value: Any) -> str:
         return ""
     target = re.match(r"^(?P<done>\d+)\s*/\s*(?P<total>\d+)\s+target notes complete$", text)
     if target:
-        return f"精读 {target.group('done')}/{target.group('total')} 篇"
+        # A complete T3 note can accurately be ABSTRACT-ONLY, so this is not a
+        # full-text deep-reading count.
+        return f"目标阅读笔记 {target.group('done')}/{target.group('total')} 篇已完成"
     queue = re.match(r"^(?P<done>\d+)\s*/\s*(?P<total>\d+)\s+queue notes complete$", text)
     if queue:
         return f"队列 {queue.group('done')}/{queue.group('total')} 篇"

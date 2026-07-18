@@ -486,6 +486,7 @@ def _humanize_presentation_key(key: str) -> str:
         "artifacts_present": "已保存文件",
         "runtime_recovery": "恢复摘要",
         "resume_state_path": "恢复状态",
+        "external_executor_launch": "外部执行启动与回传",
     }
     if key in labels:
         return labels[key]
@@ -624,6 +625,47 @@ def _format_runtime_recovery_field(key: str, value: Any) -> str | None:
         if provider:
             lines.append(f"Provider：{provider}")
     return "\n".join(lines)
+
+
+def _format_external_executor_launch(value: Any) -> str:
+    """Render the T5 external wait handoff as operational instructions."""
+
+    if not isinstance(value, dict):
+        return "未读取到外部执行器交接信息；请检查 external_executor/report/executor_selection.json。"
+    selected = str(value.get("selected_executor") or "unknown")
+    root = str(value.get("workspace_root") or "<workspace>")
+    lines = [
+        f"当前执行器：{selected}",
+        f"选择记录：{value.get('selection_path') or 'external_executor/report/executor_selection.json'}",
+        f"workspace 根目录：{root}",
+        "",
+        str(value.get("launch_summary") or ""),
+    ]
+    commands = value.get("command_lines")
+    if isinstance(commands, list) and commands:
+        lines.extend(["", "在外部终端执行：", "```bash"])
+        lines.extend(str(command) for command in commands if str(command).strip())
+        lines.append("```")
+    prompt = str(value.get("executor_prompt") or "").strip()
+    if prompt:
+        lines.extend(["", "向执行器输入：", "```text", prompt, "```"])
+    artifacts = value.get("required_artifacts")
+    if isinstance(artifacts, list):
+        lines.extend(["", "T8 前必须回传："])
+        for artifact in artifacts:
+            if not isinstance(artifact, dict):
+                continue
+            path = str(artifact.get("path") or "")
+            status = str(artifact.get("status") or "待检查")
+            if path:
+                lines.append(f"- {status}：`{path}`")
+    concurrency = str(value.get("concurrency_boundary") or "").strip()
+    if concurrency:
+        lines.extend(["", "并发边界：", concurrency])
+    completion = str(value.get("completion_boundary") or "").strip()
+    if completion:
+        lines.extend(["", "完成后：", completion])
+    return "\n".join(line for line in lines if line is not None)
 
 
 class HumanInputUnavailable(RuntimeError):
@@ -1982,6 +2024,8 @@ class CLIHumanInterface(HumanInterface):
             if rendered is not None:
                 return rendered
         if gate_id == "runtime_recovery_gate":
+            if key == "external_executor_launch":
+                return _format_external_executor_launch(value)
             rendered = _format_runtime_recovery_field(key, value)
             if rendered is not None:
                 return rendered

@@ -48,7 +48,7 @@ def evidence_dir_for(ws: Path, attempt_dir: Path, fragment: dict) -> Path:
     if value:
         return resolve_in_workspace(ws, str(value))
     rel = attempt_dir.relative_to(ws / "external_executor" / "expr" / "baselines")
-    return (ws / "external_executor" / "report" / "baseline_reproduction" / rel).resolve(strict=False)
+    return (ws / "external_executor" / "report" / "phase_D" / "baseline_reproduction" / rel).resolve(strict=False)
 
 
 def stage_output(ws: Path, source: Path, target_root: Path, rel: str) -> dict:
@@ -70,7 +70,7 @@ def stage_output(ws: Path, source: Path, target_root: Path, rel: str) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Run one authorized baseline reproduction command.")
     ap.add_argument("--workspace")
-    ap.add_argument("--plan", default="external_executor/report/baseline_reproduction_plan.json")
+    ap.add_argument("--plan", default="external_executor/report/phase_D/baseline_reproduction_plan.json")
     ap.add_argument("--reproduction-id", required=True)
     ap.add_argument("--attempt", type=int, required=True)
     ap.add_argument("--allow-executable", action="append", default=[])
@@ -93,7 +93,7 @@ def main() -> int:
     evidence_dir = evidence_dir_for(ws, attempt_dir, fragment)
     if not is_within(result_dir, ws / "external_executor" / "raw_results"):
         raise SystemExit(f"Result directory must be under external_executor/raw_results: {result_dir}")
-    if not is_within(evidence_dir, ws / "external_executor" / "report"):
+    if not is_within(evidence_dir, ws / "external_executor" / "report" / "phase_D"):
         raise SystemExit(f"Evidence directory must be under external_executor/report: {evidence_dir}")
     assert_write_allowed(ws, result_dir)
     assert_write_allowed(ws, evidence_dir)

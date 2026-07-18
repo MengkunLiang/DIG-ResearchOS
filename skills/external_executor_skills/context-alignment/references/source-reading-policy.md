@@ -35,6 +35,7 @@ Read only for a targeted gap:
 - `literature/deep_read_notes/`: a specific full-text mechanism claim needs verification;
 - `literature/shallow_read_notes/`: only when noting weak abstract-level support;
 - `resources/`: a supplied, acquired, or reimplemented resource changes capability or baseline interpretation;
+- `literature/resource_catalog.jsonl` and `literature/resource_catalog_summary.json`: paper-associated code, dataset, benchmark, model, project, and supplement discovery leads. They guide Phase B verification and acquisition planning only; they do not establish executability, licensing, baseline equivalence, or empirical evidence;
 - `user_seeds/seed_external_resources.jsonl`: resource hint provenance;
 - `user_seeds/bridge_domains.yaml`: bridge-domain search prior only.
 - `ideation/hypothesis_brief.yaml` and `ideation/selected/t45_search_targets.json`: Pre-Novelty lineage and search-scope context only. They may explain how the selected Candidate reached T4.5, but they cannot replace formal hypotheses, the experiment plan, or the novelty audit.

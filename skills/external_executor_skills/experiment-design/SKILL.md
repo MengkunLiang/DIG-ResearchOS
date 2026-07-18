@@ -29,14 +29,14 @@ Design the evidence package before implementation and execution. Start from clai
 
 Write only:
 
-- `external_executor/report/experiment_design_preflight.json`;
-- `external_executor/report/claim_evidence_matrix.json`;
-- `external_executor/report/protocol_snapshot.json`;
-- `external_executor/report/protocol_fingerprint.json`;
-- `external_executor/report/protocol_change_impact.json` when comparing versions;
+- `external_executor/report/phase_C/experiment_design_preflight.json`;
+- `external_executor/report/phase_C/claim_evidence_matrix.json`;
+- `external_executor/report/phase_C/protocol_snapshot.json`;
+- `external_executor/report/phase_C/protocol_fingerprint.json`;
+- `external_executor/report/phase_C/protocol_change_impact.json` when comparing versions;
 - `external_executor/experiment_plan.json`;
 - deterministic validation and gate reports owned by this skill;
-- `external_executor/report/experiment_design_report.json`;
+- `external_executor/report/phase_C/experiment_design_report.json`;
 - `result_pack.json#claim_evidence_matrix` and `result_pack.json#experiment_plan` through the narrow apply script.
 
 Do not change executor status, run manifest, iteration decisions, resources, baseline reproduction, implementation, run, diagnosis, attribution, or packaging sections. Return control to `research-execution` after applying the report.
@@ -47,7 +47,7 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/preflight_experiment_design.py --workspace <workspace> \
-  --output external_executor/report/experiment_design_preflight.json
+  --output external_executor/report/phase_C/experiment_design_preflight.json
 ```
 
 The preflight confirms:
@@ -68,7 +68,7 @@ Read `references/claim-evidence-design.md`, then run:
 
 ```bash
 python <skill-dir>/scripts/build_claim_evidence_matrix.py --workspace <workspace> \
-  --output external_executor/report/claim_evidence_matrix.json
+  --output external_executor/report/phase_C/claim_evidence_matrix.json
 ```
 
 For each claim, establish:
@@ -97,7 +97,7 @@ Build the protocol snapshot:
 
 ```bash
 python <skill-dir>/scripts/build_protocol_snapshot.py --workspace <workspace> \
-  --output external_executor/report/protocol_snapshot.json
+  --output external_executor/report/phase_C/protocol_snapshot.json
 ```
 
 Complete any unresolved fields using authorized project evidence, not domain guesses. The protocol must cover:
@@ -116,8 +116,8 @@ Calculate and write the fingerprint:
 
 ```bash
 python <skill-dir>/scripts/fingerprint_protocol.py --workspace <workspace> \
-  --protocol external_executor/report/protocol_snapshot.json \
-  --output external_executor/report/protocol_fingerprint.json --write-back
+  --protocol external_executor/report/phase_C/protocol_snapshot.json \
+  --output external_executor/report/phase_C/protocol_fingerprint.json --write-back
 ```
 
 Do not approve a formal plan while protocol fields required for fairness or interpretation remain unresolved.
@@ -126,9 +126,9 @@ When revising an existing protocol, compare versions:
 
 ```bash
 python <skill-dir>/scripts/compare_protocol_versions.py --workspace <workspace> \
-  --old <old-protocol.json> --new external_executor/report/protocol_snapshot.json \
+  --old <old-protocol.json> --new external_executor/report/phase_C/protocol_snapshot.json \
   --plan external_executor/experiment_plan.json \
-  --output external_executor/report/protocol_change_impact.json
+  --output external_executor/report/phase_C/protocol_change_impact.json
 ```
 
 Dataset, split, preprocessing, primary metric, direction, aggregation, baseline/config, seed policy, evaluation, statistics, or tuning-policy changes are material. Generate a new version and return invalidation guidance to the root; do not silently mix results across material protocol versions.
@@ -139,9 +139,9 @@ Read `references/experiment-plan-contract.md`, `references/budget-and-dag-policy
 
 ```bash
 python <skill-dir>/scripts/build_experiment_plan.py --workspace <workspace> \
-  --claims external_executor/report/claim_evidence_matrix.json \
-  --protocol external_executor/report/protocol_snapshot.json \
-  --fingerprint external_executor/report/protocol_fingerprint.json \
+  --claims external_executor/report/phase_C/claim_evidence_matrix.json \
+  --protocol external_executor/report/phase_C/protocol_snapshot.json \
+  --fingerprint external_executor/report/phase_C/protocol_fingerprint.json \
   --output external_executor/experiment_plan.json
 ```
 
@@ -194,7 +194,7 @@ Validate the DAG:
 ```bash
 python <skill-dir>/scripts/validate_plan_dag.py --workspace <workspace> \
   --plan external_executor/experiment_plan.json \
-  --output external_executor/report/experiment_plan_dag_validation.json
+  --output external_executor/report/phase_C/experiment_plan_dag_validation.json
 ```
 
 Validate the plan contract:
@@ -202,7 +202,7 @@ Validate the plan contract:
 ```bash
 python <skill-dir>/scripts/validate_experiment_plan.py --workspace <workspace> \
   --plan external_executor/experiment_plan.json \
-  --output external_executor/report/experiment_plan_validation.json
+  --output external_executor/report/phase_C/experiment_plan_validation.json
 ```
 
 Review against `references/plan-review-checklist.md`. The review must reject:
@@ -225,9 +225,9 @@ Run:
 ```bash
 python <skill-dir>/scripts/compute_design_gate.py --workspace <workspace> \
   --plan external_executor/experiment_plan.json \
-  --plan-validation external_executor/report/experiment_plan_validation.json \
-  --dag-validation external_executor/report/experiment_plan_dag_validation.json \
-  --output external_executor/report/experiment_design_gate.json --write-back
+  --plan-validation external_executor/report/phase_C/experiment_plan_validation.json \
+  --dag-validation external_executor/report/phase_C/experiment_plan_dag_validation.json \
+  --output external_executor/report/phase_C/experiment_design_gate.json --write-back
 ```
 
 Gate outcomes:
@@ -244,13 +244,13 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/assemble_experiment_design_report.py --workspace <workspace> \
-  --output external_executor/report/experiment_design_report.json
+  --output external_executor/report/phase_C/experiment_design_report.json
 
 python <skill-dir>/scripts/validate_experiment_design_report.py --workspace <workspace> \
-  --report external_executor/report/experiment_design_report.json
+  --report external_executor/report/phase_C/experiment_design_report.json
 
 python <skill-dir>/scripts/apply_experiment_design_report.py --workspace <workspace> \
-  --report external_executor/report/experiment_design_report.json
+  --report external_executor/report/phase_C/experiment_design_report.json
 ```
 
 The apply script updates only:

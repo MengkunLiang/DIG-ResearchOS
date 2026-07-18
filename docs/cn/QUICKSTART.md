@@ -89,7 +89,7 @@ python -m researchos.cli workspace-status --workspace-root ./workspace
 | `run` | 运行完整流水线；可选择从其他项目复用已验证的前提条件 | `run --workspace <dir>`; `run --workspace <new> --from <source> --start-task T4` |
 | `run_smoke` | 运行一个真实工具的冒烟工作流 | `run_smoke --workspace <dir>` |
 | `resume` | 继续已暂停的项目 | `resume --workspace <dir>`; 使用 `--from-task <task>` 进行同一工作区的有目的重新进入 |
-| `run-task` | 诊断或执行单个任务而不推进主流水线；可用 `--from` 先复制该任务的前置材料 | `run-task T4 --workspace <dir>`; `run-task T4 --workspace <new> --from <source>` |
+| `run-task` | 通常诊断或执行单个任务而不推进主流水线；公共名 `T8` 是特例，会接收外部 handoff 并运行完整 T8 链 | `run-task T4 --workspace <dir>`；`run-task T8 --workspace <dir>` |
 | `status` / `workspace-status` | 检查单个项目或工作区根目录；`status --detail` 打印原始状态 | `status --workspace <dir>`; `workspace-status --workspace-root ./workspace` |
 | `configure-llm` / `selftest` | 配置并检查所有阶段共用的 provider/model connection | `configure-llm`; `selftest` |
 | `doctor` | 检查本地/Docker/TeX 依赖 | `doctor --workspace <dir>` |
@@ -168,7 +168,13 @@ python -m researchos.cli run-task T5-EXECUTOR-GATE \
   --workspace <workspace>
 ```
 
-真实 Codex/Claude/manual executor 完成后，T5 会直接恢复到 T8。T5 到 T8 的必需接口是 `external_executor/executor_research_report.md`；`external_executor/` 下其他文件继续作为可追溯上下文供 Writer 按需读取。外部执行器最后一个 `writer-handoff` 子 Skill 负责形成并核验该报告；ResearchOS 的 T5 runtime gate 只对返回接口做独立检查，不自行生成报告。
+真实 Codex/Claude/manual executor 完成后，`research-execution` 总控会路由到 `launch-t8`，并在同一执行器会话中直接运行：
+
+```bash
+python -m researchos.cli run-task T8 --workspace <workspace>
+```
+
+因此不需要退出执行器后再手工运行 `resume`。该命令独立核验现代 Writer Handoff，以 `external_executor/executor_research_report.md` 作为 T8 核心研究事实输入，并确定性生成 `drafts/t5_t8_handoff.json`、`drafts/experiment_evidence_pack.json` 和 `drafts/result_to_claim.json`，随后安全进入或恢复完整 T8 状态机。`result_pack.json`、`report/run_manifest.json`、`raw_results/`、`evidence_package/`、`figure/`、`table/` 和 `expr/` 仍作为可追溯副输入，不能替代核心报告。`run-task T8-RESOURCE` 等具体节点名仍保持隔离的单任务调试语义。
 
 对于由旧版本创建、且已在 `T5-EXTERNAL-WAIT` 状态下暂停但没有 `external_executor/skills/` 的工作区，可用离线确定性命令在不调用模型的情况下修复或校验同一套件：
 

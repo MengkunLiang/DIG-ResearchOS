@@ -338,7 +338,7 @@ def known_spec_config_keys(method_spec: dict[str, Any]) -> set[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build one final-version realized method package from a pinned snapshot.")
     parser.add_argument("--workspace")
-    parser.add_argument("--snapshot", default="external_executor/report/final_evidence_snapshot.json")
+    parser.add_argument("--snapshot", default="external_executor/report/phase_F/final_evidence_snapshot.json")
     parser.add_argument("--output", default="external_executor/evidence_package/realized_method_package.json")
     args = parser.parse_args()
 
@@ -405,6 +405,12 @@ def main() -> int:
     root = implementation_worktree(workspace, implementation)
     if root is None or not root.is_dir():
         source_errors.append("active_implementation_root_missing")
+    else:
+        implementation_anchor = workspace / "external_executor" / "expr" / "implementation"
+        try:
+            root.resolve().relative_to(implementation_anchor.resolve())
+        except ValueError:
+            source_errors.append("active_implementation_root_outside_expr_implementation")
     if not implementation.get("final_worktree_fingerprint"):
         source_errors.append("final_worktree_fingerprint_missing")
     review_status = review.get("review_status") if isinstance(review, dict) else None
@@ -422,6 +428,11 @@ def main() -> int:
             path = resolve_in_workspace(workspace, ref.split("#", 1)[0])
             if not path.exists():
                 source_errors.append(f"module_code_ref_missing:{module['module_id']}:{ref}")
+            elif root is not None:
+                try:
+                    path.resolve().relative_to(root.resolve())
+                except ValueError:
+                    source_errors.append(f"module_code_ref_outside_active_worktree:{module['module_id']}:{ref}")
         unknown_keys = sorted(set(module.get("config_keys", [])) - known_config) if known_config else []
         if unknown_keys:
             source_errors.append(f"module_config_keys_not_in_spec:{module['module_id']}:{','.join(unknown_keys)}")
@@ -485,7 +496,13 @@ def main() -> int:
         if not module.get("config_keys"):
             unresolved_fields.append(f"modules.{module['module_id']}.config_keys")
 
-    if not implemented_modules or not final_name or not implementation:
+    incoherent_source = any(
+        error in {"active_implementation_root_missing", "active_implementation_root_outside_expr_implementation"}
+        or error.startswith("module_code_ref_missing:")
+        or error.startswith("module_code_ref_outside_active_worktree:")
+        for error in source_errors
+    )
+    if not implemented_modules or not final_name or not implementation or incoherent_source:
         status = "unavailable"
     elif unresolved_fields or source_errors:
         status = "partial"
@@ -596,7 +613,7 @@ def main() -> int:
             "change_log": deepcopy(method_spec.get("change_log", [])),
         },
         "source_validation": {
-            "status": "pass" if not source_errors else "partial",
+            "status": "pass" if not source_errors else "blocked" if incoherent_source else "partial",
             "errors": sorted(set(source_errors)),
             "warnings": sorted(set(source_warnings)),
             "active_implementation_only": True,

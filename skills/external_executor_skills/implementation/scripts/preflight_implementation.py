@@ -28,7 +28,7 @@ def section_status(value: Any) -> str | None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate implementation prerequisites and authority.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/report/implementation_preflight.json")
+    parser.add_argument("--output", default="external_executor/report/phase_D/implementation_preflight.json")
     args = parser.parse_args()
 
     workspace = resolve_workspace(args.workspace)
@@ -135,8 +135,8 @@ def main() -> int:
 
     write_targets = [
         output,
-        ext / "report" / "implementation_change_contract.json",
-        ext / "report" / "implementation_report.json",
+        ext / "report" / "phase_D" / "implementation_change_contract.json",
+        ext / "report" / "phase_D" / "implementation_report.json",
         ext / "expr" / "implementation",
         ext / "result_pack.json",
     ]

@@ -129,7 +129,7 @@ def make_workspace() -> Path:
                     "candidate_id": "BASE-A",
                     "baseline_id": "BASE-A",
                     "name": "Baseline A",
-                    "path": "external_executor/workdir/resources/baseline-a",
+                    "path": "resources/baseline-a",
                     "approved_for": ["baseline_reproduction", "formal_comparison"],
                 }
             ],
@@ -145,7 +145,7 @@ def make_workspace() -> Path:
                     "dataset": {"name": "Data", "version": "1.0", "split": "official", "preprocessing": "official preprocessing"},
                     "metrics": {"primary": {"name": "accuracy", "direction": "higher_is_better", "aggregation": "mean_over_seeds"}},
                     "randomness": {"seeds": [1, 2, 3], "repeats": 1},
-                    "evaluation": {"entry_point": "external_executor/workdir/evaluate.py"},
+                    "evaluation": {"entry_point": "external_executor/expr/evaluation/evaluate.py"},
                     "tuning": {"fairness_rule": "same tuning opportunity"},
                 }
             },
@@ -207,10 +207,10 @@ class MethodRefinementScriptTests(unittest.TestCase):
     def test_initial_refinement_passes_and_applies_narrowly(self) -> None:
         ws = self.clone_workspace()
         finish_review(ws, expect_pass=True)
-        review = json.loads((ws / "external_executor/report/method_refinement_review.json").read_text())
+        review = json.loads((ws / "external_executor/report/phase_D/method_refinement_review.json").read_text())
         self.assertEqual(review["review_status"], "pass", review)
         self.assertEqual(review["approved_for"], "implementation")
-        report = json.loads((ws / "external_executor/report/method_refinement_report.json").read_text())
+        report = json.loads((ws / "external_executor/report/phase_D/method_refinement_report.json").read_text())
         self.assertEqual(report["refinement_status"], "ready")
         run("apply_method_refinement_report.py", "--workspace", str(ws))
         result = json.loads((ws / "external_executor/result_pack.json").read_text())
@@ -229,13 +229,13 @@ class MethodRefinementScriptTests(unittest.TestCase):
         spec_path.write_text(json.dumps(spec), encoding="utf-8")
         run("fingerprint_method_spec.py", "--workspace", str(ws), "--write-back")
         finish_review(ws, expect_pass=False)
-        scope = json.loads((ws / "external_executor/report/method_scope_assessment.json").read_text())
-        review = json.loads((ws / "external_executor/report/method_refinement_review.json").read_text())
+        scope = json.loads((ws / "external_executor/report/phase_D/method_scope_assessment.json").read_text())
+        review = json.loads((ws / "external_executor/report/phase_D/method_refinement_review.json").read_text())
         self.assertEqual(scope["drift_level"], "major")
         self.assertTrue(scope["requires_human_review"])
         self.assertEqual(review["review_status"], "blocked")
         self.assertEqual(review["approved_for"], "none")
-        request = json.loads((ws / "external_executor/report/scope_change_request.json").read_text())
+        request = json.loads((ws / "external_executor/report/phase_D/scope_change_request.json").read_text())
         self.assertTrue(request["implementation_must_pause"])
         run("apply_method_refinement_report.py", "--workspace", str(ws))
         result = json.loads((ws / "external_executor/result_pack.json").read_text())
@@ -244,7 +244,7 @@ class MethodRefinementScriptTests(unittest.TestCase):
 
     def test_minor_engineering_refinement_creates_version_two(self) -> None:
         ws = self.clone_workspace()
-        first = json.loads((ws / "external_executor/report/method_spec_fingerprint.json").read_text())
+        first = json.loads((ws / "external_executor/report/phase_D/method_spec_fingerprint.json").read_text())
         previous = first["snapshot_ref"]
         run(
             "build_method_implementation_spec.py",
@@ -269,14 +269,14 @@ class MethodRefinementScriptTests(unittest.TestCase):
         run("assess_scope_change.py", "--workspace", str(ws))
         run("validate_method_implementation_spec.py", "--workspace", str(ws))
         run("review_method_refinement.py", "--workspace", str(ws))
-        delta = json.loads((ws / "external_executor/report/method_delta.json").read_text())
+        delta = json.loads((ws / "external_executor/report/phase_D/method_delta.json").read_text())
         current = json.loads(spec_path.read_text())
-        review = json.loads((ws / "external_executor/report/method_refinement_review.json").read_text())
+        review = json.loads((ws / "external_executor/report/phase_D/method_refinement_review.json").read_text())
         self.assertEqual(current["spec_version"], 2)
         self.assertEqual(delta["delta_level"], "minor")
         self.assertFalse(delta["requires_human_review"])
         self.assertEqual(review["review_status"], "pass", review)
-        second = json.loads((ws / "external_executor/report/method_spec_fingerprint.json").read_text())
+        second = json.loads((ws / "external_executor/report/phase_D/method_spec_fingerprint.json").read_text())
         self.assertNotEqual(first["fingerprint"], second["fingerprint"])
         self.assertNotEqual(first["snapshot_ref"], second["snapshot_ref"])
 
@@ -292,7 +292,7 @@ class MethodRefinementScriptTests(unittest.TestCase):
         run("assess_scope_change.py", "--workspace", str(ws))
         run("validate_method_implementation_spec.py", "--workspace", str(ws), check=False)
         run("review_method_refinement.py", "--workspace", str(ws), check=False)
-        review = json.loads((ws / "external_executor/report/method_refinement_review.json").read_text())
+        review = json.loads((ws / "external_executor/report/phase_D/method_refinement_review.json").read_text())
         self.assertEqual(review["review_status"], "blocked")
         self.assertIn("protocol_fingerprint_mismatch", review["blocking_issues"])
 

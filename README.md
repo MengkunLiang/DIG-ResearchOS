@@ -124,6 +124,7 @@ To pause a live command, press `Ctrl+C` once. ResearchOS persists the workspace 
 | Debug only T4 in a fresh workspace copied from another project | `python -m researchos.cli run-task T4 --workspace ./workspace/t4-debug --from ./workspace/project-a` |
 | Run T5 research reboost only | `python -m researchos.cli run-task T5-REBOOST --workspace ./workspace/project-a` |
 | Run the T5 executor-selection gate after T5 specialization | `python -m researchos.cli run-task T5-EXECUTOR-GATE --workspace <workspace>` |
+| Accept the completed external T5 handoff and run the full T8 chain | `python -m researchos.cli run-task T8 --workspace <workspace>` |
 | Run one task without advancing the full pipeline | `python -m researchos.cli run-task T3.6-SEC-INTRO --workspace ./workspace/project-a` |
 | Validate one task's artifacts | `python -m researchos.cli validate --task T3.6-SEC-INTRO --workspace ./workspace/project-a` |
 | Regenerate the deterministic Survey audit without an LLM | `python -m researchos.cli audit-survey --workspace ./workspace/project-a` |
@@ -167,7 +168,8 @@ The table below is intentionally complete and is checked against the live CLI pa
 | `run` | Run the complete state-machine pipeline; supports `--from` and `--start-task` for a new target workspace. | [Quick Start](docs/en/QUICKSTART.md) |
 | `run_smoke` | Run a reduced but real pipeline integration profile. | `researchos run_smoke --help` |
 | `resume` | Continue a paused workspace, or safely re-enter its `--from-task` after prerequisite validation. | [Quick Start](docs/en/QUICKSTART.md) |
-| `run-task` | Diagnose or execute one state-machine task without advancing the full pipeline. | [Quick Start](docs/en/QUICKSTART.md) |
+| `run-t8` | Compatibility alias for `run-task T8`; independently accepts the modern T5 Writer Handoff and runs the complete T8 chain. | [Quick Start](docs/en/QUICKSTART.md) |
+| `run-task` | Diagnose one state-machine task; public `T8` is the explicit full-chain handoff entry. | [Quick Start](docs/en/QUICKSTART.md) |
 | `status` | Show a compact workspace state and next action; `--detail` prints raw state. | [Logging](docs/en/logging.md) |
 | `workspace-status` | Scan a workspace root; distinguish active, stopped, stale, paused, and orphan workspaces. Add `--verbose` for error detail. | [Quick Start](docs/en/QUICKSTART.md) |
 | `configure-llm` | Save and test the provider, URL, key, model, and same-model retry policy used by every stage. | [Configuration](docs/en/config.md) |

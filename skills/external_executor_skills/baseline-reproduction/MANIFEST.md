@@ -13,7 +13,7 @@
 | `scripts/_common.py` | Stdlib-only workspace, path, hash, environment, and JSON helpers. |
 | `scripts/preflight_reproduction.py` | Verify prerequisites and active root authorization. |
 | `scripts/build_reproduction_plan.py` | Build a deterministic plan scaffold from approved candidates and locked protocol. |
-| `scripts/prepare_attempt.py` | Copy one candidate into an isolated immutable attempt workspace. |
+| `scripts/prepare_attempt.py` | Copy attempt 1 from approved resources or inherit a later attempt from prior deployed repairs, preserving parent provenance. |
 | `scripts/capture_environment.py` | Capture non-secret runtime, packages, hardware, and source identity. |
 | `scripts/run_reproduction.py` | Execute one authorized argv command with limits and durable run records. |
 | `scripts/extract_metrics.py` | Normalize declared JSON/JSONL/CSV/regex metrics. |

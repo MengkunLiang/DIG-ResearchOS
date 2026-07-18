@@ -16,6 +16,7 @@ from typing import Any
 
 from ..pydantic_compat import model_dump
 from .models import CandidateMaturity, BridgeCoverageEntry, CandidateDossier, FinalIdeaCardTranslation, PopulationSnapshot, ScoreReport
+from .evidence_display import humanize_evidence_ids, load_evidence_display_catalog, referenced_evidence
 from .selected_compilation import validate_candidate_selection_ready
 from .state import T4ArtifactStore
 
@@ -722,16 +723,20 @@ def _write_family_summary(store: T4ArtifactStore, candidates: list[dict[str, Any
         "This view keeps every active candidate visible for comparison. Family labels, titles, and evidence summaries below were authored with the candidate; this file only groups the retained population.",
         "",
     ]
+    catalog = load_evidence_display_catalog(store.workspace_dir)
     for candidate in candidates:
+        display_candidate = humanize_evidence_ids(candidate, catalog)
+        if not isinstance(display_candidate, dict):
+            display_candidate = candidate
         lines.extend(
             [
-                f"## {candidate['id']} · {candidate['mechanism_family']}",
-                candidate["display_title"],
+                f"## {display_candidate['id']} · {display_candidate['mechanism_family']}",
+                display_candidate["display_title"],
                 "",
-                candidate["basis_summary"],
+                display_candidate["basis_summary"],
                 "",
-                f"- Origin: {candidate['idea_origin']}",
-                f"- Evidence status: {candidate['minimum_experiment'].get('evidence_status', 'unknown')}",
+                f"- Origin: {display_candidate['idea_origin']}",
+                f"- Evidence status: {display_candidate['minimum_experiment'].get('evidence_status', 'unknown')}",
                 "",
             ]
         )
@@ -779,58 +784,73 @@ def _write_gate_cards(store: T4ArtifactStore, candidates: list[dict[str, Any]]) 
         store.path("ideation/_gate1_candidate_cards.md").write_text("\n".join(lines), encoding="utf-8")
         return
 
+    catalog = load_evidence_display_catalog(store.workspace_dir)
     for candidate, final_card in completed:
+        display_candidate = humanize_evidence_ids(candidate, catalog)
+        display_final_card = humanize_evidence_ids(final_card, catalog)
+        if not isinstance(display_candidate, dict):
+            display_candidate = candidate
+        if not isinstance(display_final_card, dict):
+            display_final_card = final_card
+        evidence_references = referenced_evidence(candidate, catalog)
         lines.extend(
             [
-                f"## {candidate['id']} · {final_card.get('short_title', '')}",
+                f"## {display_candidate['id']} · {display_final_card.get('short_title', '')}",
                 "",
                 "### 一句话命题",
-                str(final_card.get("plain_language_summary") or ""),
+                str(display_final_card.get("plain_language_summary") or ""),
                 "",
                 "### 核心命题",
-                str(final_card.get("core_thesis") or ""),
+                str(display_final_card.get("core_thesis") or ""),
                 "",
                 "### 为什么值得研究",
-                str(final_card.get("why_it_matters") or ""),
+                str(display_final_card.get("why_it_matters") or ""),
                 "",
                 "### 当前问题与科学核心",
-                str(final_card.get("current_failure") or ""),
+                str(display_final_card.get("current_failure") or ""),
                 "",
-                str(final_card.get("scientific_technical_core") or ""),
+                str(display_final_card.get("scientific_technical_core") or ""),
                 "",
                 "### 代表性场景",
-                str(final_card.get("representative_scenario") or ""),
+                str(display_final_card.get("representative_scenario") or ""),
                 "",
                 "### 现实意义",
-                str(final_card.get("real_world_significance") or ""),
+                str(display_final_card.get("real_world_significance") or ""),
                 "",
                 "### 创新",
-                f"- 创新性质：{final_card.get('innovation_type', '')}",
-                f"- 相对变化：{final_card.get('innovation_delta', '')}",
-                f"- 非惯例理由：{final_card.get('non_routine_explanation', '')}",
+                f"- 创新性质：{display_final_card.get('innovation_type', '')}",
+                f"- 相对变化：{display_final_card.get('innovation_delta', '')}",
+                f"- 非惯例理由：{display_final_card.get('non_routine_explanation', '')}",
                 "",
                 "### 关系与建议",
-                f"- 与 Portfolio 的关系：{final_card.get('relationship_to_portfolio', '')}",
-                f"- 组合建议：{final_card.get('composition_guidance', '')}",
-                f"- 选择建议：{final_card.get('recommendation', '')}",
-                f"- 瓶颈解释：{final_card.get('bottleneck_explanation', '')}",
+                f"- 与 Portfolio 的关系：{display_final_card.get('relationship_to_portfolio', '')}",
+                f"- 组合建议：{display_final_card.get('composition_guidance', '')}",
+                f"- 选择建议：{display_final_card.get('recommendation', '')}",
+                f"- 瓶颈解释：{display_final_card.get('bottleneck_explanation', '')}",
                 "",
                 "### Evidence Status",
-                str(final_card.get("evidence_status_summary") or ""),
+                str(display_final_card.get("evidence_status_summary") or ""),
                 "",
                 "### 风险与边界",
-                *[f"- {item}" for item in final_card.get("risks_and_boundaries", [])],
+                *[f"- {item}" for item in display_final_card.get("risks_and_boundaries", [])],
                 "",
                 "### 当前不能主张",
-                *[f"- {item}" for item in final_card.get("claims_not_to_make", [])],
+                *[f"- {item}" for item in display_final_card.get("claims_not_to_make", [])],
                 "",
                 "### Candidate hypotheses",
             ]
         )
-        for hypothesis in candidate.get("candidate_hypotheses", []):
+        for hypothesis in display_candidate.get("candidate_hypotheses", []):
             if isinstance(hypothesis, dict):
                 lines.append(f"- **{hypothesis.get('id', '')}:** {hypothesis.get('statement', '')}")
-        evolution_score = candidate.get("evolution_score") if isinstance(candidate.get("evolution_score"), dict) else {}
+        if evidence_references:
+            lines.extend(["", "### 关键证据材料"])
+            for reference in evidence_references:
+                lines.append(
+                    f"- 《{reference['title']}》：{reference['reading_label']}，{reference['evidence_label']}；"
+                    f"追溯编号 `{reference['atom_id']}`，来源 `{reference['source_path']}`"
+                )
+        evolution_score = display_candidate.get("evolution_score") if isinstance(display_candidate.get("evolution_score"), dict) else {}
         dimensions = evolution_score.get("dimensions") if isinstance(evolution_score.get("dimensions"), dict) else {}
         if dimensions:
             lines.extend(["", "### 独立科研评分"])
@@ -914,12 +934,16 @@ def _write_gate_brief(store: T4ArtifactStore, candidates: list[dict[str, Any]], 
     for origin, count in sorted(origin_counts.items()):
         lines.append(f"- {origin}: {count}")
     lines.extend(["", "## Novelty-Utility layout", "Use the score rationale and each Candidate's stated risk to compare higher-upside alternatives with candidates that have a clearer validation path. These are decision aids, not novelty conclusions.", "", "## Candidates"])
+    catalog = load_evidence_display_catalog(store.workspace_dir)
     for candidate in candidates:
         final_card = _validated_final_card_payload(candidate.get("final_idea_card"))
         if not final_card:
             continue
+        display_final_card = humanize_evidence_ids(final_card, catalog)
+        if not isinstance(display_final_card, dict):
+            display_final_card = final_card
         lines.append(
-            f"- **{candidate['id']}**: {final_card.get('short_title', '')} - {final_card.get('recommendation', '')}"
+            f"- **{candidate['id']}**: {display_final_card.get('short_title', '')} - {display_final_card.get('recommendation', '')}"
         )
     lines.extend(
         [

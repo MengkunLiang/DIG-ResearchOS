@@ -86,7 +86,7 @@ Do not use `Ctrl+Z` to end a project. It only suspends the shell job: the proces
 | `run` | Run the full pipeline; optionally reuse verified prerequisites from another project | `run --workspace <dir>`; `run --workspace <new> --from <source> --start-task T4` |
 | `run_smoke` | Run a real-tool smoke workflow | `run_smoke --workspace <dir>` |
 | `resume` | Continue a paused project | `resume --workspace <dir>`; use `--from-task <task>` for deliberate same-workspace reentry |
-| `run-task` | Diagnose or execute one task without advancing the main pipeline; `--from` first copies that task's declared inputs | `run-task T4 --workspace <dir>`; `run-task T4 --workspace <new> --from <source>` |
+| `run-task` | Diagnose or execute one task without advancing the main pipeline; public `T8` is the deliberate exception that accepts the external handoff and runs the complete T8 chain | `run-task T4 --workspace <dir>`; `run-task T8 --workspace <dir>` |
 | `status` / `workspace-status` | Inspect one project or a workspace root; `status --detail` prints raw state | `status --workspace <dir>`; `workspace-status --workspace-root ./workspace` |
 | `configure-llm` / `selftest` | Configure and check the provider/model connection shared by every stage | `configure-llm`; `selftest` |
 | `doctor` | Check local/Docker/TeX dependencies | `doctor --workspace <dir>` |
@@ -165,7 +165,13 @@ python -m researchos.cli run-task T5-EXECUTOR-GATE \
   --workspace <workspace>
 ```
 
-After a real Codex/Claude/manual executor finishes, T5 resumes directly into T8. The required T5-to-T8 interface is `external_executor/executor_research_report.md`; other files under `external_executor/` remain available as optional traceable context for the Writer. The external executor's final `writer-handoff` child Skill synthesizes and validates the report. The ResearchOS T5 runtime gate independently checks the returned interface but does not synthesize it.
+After a real Codex/Claude/manual executor finishes, the `research-execution` root routes `launch-t8` and runs the following command in the same executor session. There is no need to exit the executor and manually run `resume`:
+
+```bash
+python -m researchos.cli run-task T8 --workspace <workspace>
+```
+
+The command independently validates the modern Writer Handoff, treats `external_executor/executor_research_report.md` as the primary T8 research-fact input, and derives `drafts/t5_t8_handoff.json`, `drafts/experiment_evidence_pack.json`, and `drafts/result_to_claim.json`. It then safely enters or resumes the complete T8 state-machine chain. `result_pack.json`, `report/run_manifest.json`, `raw_results/`, `evidence_package/`, `figure/`, `table/`, and `expr/` remain traceable supporting inputs rather than replacements for the report. Concrete node names such as `run-task T8-RESOURCE` retain their isolated single-task behavior.
 
 For a workspace created by an older release that is already paused in `T5-EXTERNAL-WAIT` without `external_executor/skills/`, the offline deterministic command can repair or validate the suite without calling a model:
 

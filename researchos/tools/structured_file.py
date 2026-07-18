@@ -209,6 +209,11 @@ def _schema_failure_data(
         "path": path,
         "schema_name": schema_name,
         "schema_errors": diagnostics,
+        # The active Agent receives these diagnostics and is instructed to
+        # correct the same artifact before it can continue.
+        "display_disposition": "auto_repair",
+        "repair_scope": "structured_artifact_schema",
+        "repairable": True,
         "repair_hint": (
             "逐项修复列出的字段后再调用 write_structured_file；"
             "不要为了绕过 schema 删除候选或改写其他已通过字段。"

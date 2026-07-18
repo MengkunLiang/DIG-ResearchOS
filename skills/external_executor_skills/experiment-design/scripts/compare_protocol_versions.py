@@ -36,7 +36,7 @@ def main() -> int:
     parser.add_argument("--old", required=True)
     parser.add_argument("--new", required=True)
     parser.add_argument("--plan")
-    parser.add_argument("--output", default="external_executor/report/protocol_change_impact.json")
+    parser.add_argument("--output", default="external_executor/report/phase_C/protocol_change_impact.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     old = load_json(resolve_in_workspace(ws, args.old))

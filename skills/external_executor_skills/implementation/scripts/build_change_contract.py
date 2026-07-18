@@ -119,13 +119,13 @@ def normalize_verification(item: Any, index: int) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compile an approved implementation delta into a deterministic contract.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/report/implementation_change_contract.json")
+    parser.add_argument("--output", default="external_executor/report/phase_D/implementation_change_contract.json")
     args = parser.parse_args()
 
     workspace = resolve_workspace(args.workspace)
     output = resolve_in_workspace(workspace, args.output)
     result = load_json(workspace / "external_executor" / "result_pack.json")
-    preflight_path = workspace / "external_executor" / "report" / "implementation_preflight.json"
+    preflight_path = workspace / "external_executor" / "report" / "phase_D" / "implementation_preflight.json"
     preflight = load_json(preflight_path) if preflight_path.exists() else {}
     if preflight.get("status") == "blocked":
         raise SystemExit("Implementation preflight is blocked")

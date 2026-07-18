@@ -200,6 +200,12 @@ class FetchPaperPdfTool(Tool):
                             "path": params.save_path,
                             "candidates_tried": pdf_candidates,
                             "candidate_errors": candidate_errors,
+                            # Reader will preserve the retrieval receipt and
+                            # produce an ABSTRACT-ONLY note. This is an
+                            # evidence downgrade, not a run-stopping failure.
+                            "display_disposition": "auto_fallback",
+                            "fallback_available": True,
+                            "fallback_action": "abstract_only_note",
                         },
                     )
 
@@ -229,6 +235,13 @@ class FetchPaperPdfTool(Tool):
                     ok=False,
                     content=f"Failed to download PDF: {exc}",
                     error="download_failed",
+                    data={
+                        "paper_id": params.paper_id,
+                        "path": params.save_path,
+                        "display_disposition": "auto_fallback",
+                        "fallback_available": True,
+                        "fallback_action": "abstract_only_note",
+                    },
                 )
             raise ToolRuntimeError(self.name, exc) from exc
 

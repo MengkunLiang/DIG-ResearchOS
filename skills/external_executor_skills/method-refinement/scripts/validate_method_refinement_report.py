@@ -9,8 +9,8 @@ from _common import dump_json_atomic, load_json, nonempty, resolve_in_workspace,
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate report, review, drift, and approval consistency.")
     parser.add_argument("--workspace")
-    parser.add_argument("--report", default="external_executor/report/method_refinement_report.json")
-    parser.add_argument("--output", default="external_executor/report/method_refinement_report_validation.json")
+    parser.add_argument("--report", default="external_executor/report/phase_D/method_refinement_report.json")
+    parser.add_argument("--output", default="external_executor/report/phase_D/method_refinement_report_validation.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     report = load_json(resolve_in_workspace(ws, args.report))

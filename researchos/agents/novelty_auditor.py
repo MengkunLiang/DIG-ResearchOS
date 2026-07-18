@@ -33,6 +33,7 @@ from ..runtime.artifact_fingerprints import write_t45_fingerprint_report
 from ..runtime.bridge_catalog import load_bridge_catalog_summaries
 from ..runtime.prompts import render_prompt
 from ..literature_identity import is_paper_note_file
+from ..ideation.proposal import repair_t45_proposal_manifest, validate_t45_research_proposal
 from ._common import (
     prepend_resume_prefix,
     load_project,
@@ -84,6 +85,9 @@ class NoveltyAuditorAgent(Agent):
         brief, brief_text, anchors = _load_pre_novelty_brief(ws)
         synthesis = read_text_file(ws / "literature" / "synthesis.md", default="")
         comparison_table = read_text_file(ws / "literature" / "comparison_table.csv", default="")
+        resource_catalog_summary = read_text_file(
+            ws / "literature" / "resource_catalog_summary.json", default=""
+        )
         paper_card_inventory = _paper_card_inventory(ws)
         bridge_catalogs = load_bridge_catalog_summaries(
             ws,
@@ -98,6 +102,7 @@ class NoveltyAuditorAgent(Agent):
             hypotheses_preview=brief_text[:5000],
             synthesis_preview=synthesis[:3000],
             comparison_table_preview=comparison_table[:1000],
+            resource_catalog_summary_preview=resource_catalog_summary[:2200],
             paper_card_inventory=paper_card_inventory,
             bridge_catalog_preview=bridge_catalogs,
             hypothesis_count=len(anchors),
@@ -122,13 +127,16 @@ class NoveltyAuditorAgent(Agent):
             "当机制、设计理由、最近工作或基线依据需要核验时，先枚举目录，再按需打开 deep_read_notes、bridge_notes 或 shallow_read_notes 中对应论文的精确 section；不要把目录传给 read_file。"
             "先读取 literature/cross_domain_catalogs/index.json，再按 index 指向的 bridge_context.json / paper_catalog.json 作为跨域检索与比较范围的辅助上下文；catalog-only 记录可提示待搜索的相邻概念、边界或 baseline，不能单独确认机制碰撞或新颖性结论；"
             "摘要阅读笔记只能补充近期覆盖、趋势或反例线索，核心机制和设计依据仍须由全文/部分全文笔记确认。"
+            "若存在 literature/resource_catalog.jsonl 与 resource_catalog_summary.json，读取它们以识别官方代码、数据、benchmark、模型和补充材料的可行性线索；"
+            "资源目录只能影响 baseline/资源需求、可行性风险和后续核验计划，不能被当作机制、实验效果或实现等价的证据。"
             "对每个假设进行新颖性审计；先使用本地可核验材料，再按共享机制或问题框架组织少量近期检索，判断新颖性等级。"
             "外部检索出现超时、网络不可用、限流或本轮停止检索提示时，不得改写关键词重试，必须在审计中记录外部覆盖边界。"
             "先产出 ideation/novelty_audit.md；如果发现 High/Medium Overlap，"
             "还必须产出 ideation/collision_cases.md 归档潜在撞车案例。"
             "只有在 audit 明确给出可通过的 Final Gate Verdict 后，才能基于 Pre-Novelty brief 和 selected_candidate.json 编译正式 "
-            "ideation/hypotheses.md、research_dossier.json、exp_plan.yaml、contribution_hypothesis_map.yaml、validation_map.yaml、kill_criteria.yaml "
-            "和 post_novelty_formalization.json。若 verdict 要求 reframe/drop/review，不得生成或更新这些正式执行产物。"
+            "ideation/hypotheses.md、research_dossier.json、exp_plan.yaml、contribution_hypothesis_map.yaml、validation_map.yaml、kill_criteria.yaml、"
+            "proposal/research_proposal.md、proposal/proposal_manifest.json 和 post_novelty_formalization.json。"
+            "若 verdict 要求 reframe/drop/review，不得生成或更新这些正式执行产物。"
             ),
         )
 
@@ -348,6 +356,7 @@ def _t45_verdict_is_pass(text: str) -> bool:
 
 def _validate_post_novelty_formalization(workspace: Path, audit_path: Path) -> tuple[bool, str | None]:
     manifest_path = workspace / "ideation" / "post_novelty_formalization.json"
+    repair_t45_proposal_manifest(workspace, audit_path)
     required = {
         "hypotheses": workspace / "ideation" / "hypotheses.md",
         "research_dossier": workspace / "ideation" / "research_dossier.json",
@@ -355,6 +364,8 @@ def _validate_post_novelty_formalization(workspace: Path, audit_path: Path) -> t
         "contribution_hypothesis_map": workspace / "ideation" / "contribution_hypothesis_map.yaml",
         "validation_map": workspace / "ideation" / "validation_map.yaml",
         "kill_criteria": workspace / "ideation" / "kill_criteria.yaml",
+        "research_proposal": workspace / "ideation" / "proposal" / "research_proposal.md",
+        "proposal_manifest": workspace / "ideation" / "proposal" / "proposal_manifest.json",
     }
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -377,6 +388,9 @@ def _validate_post_novelty_formalization(workspace: Path, audit_path: Path) -> t
     dossier_ok, dossier_error = _validate_t45_research_dossier(workspace, hypotheses_text)
     if not dossier_ok:
         return False, dossier_error
+    proposal_ok, proposal_error = validate_t45_research_proposal(workspace, audit_path)
+    if not proposal_ok:
+        return False, proposal_error
     return True, None
 
 

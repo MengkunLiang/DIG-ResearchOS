@@ -12,7 +12,7 @@ The runner is a recorder and limiter, not a full security sandbox. Prefer a proj
 - A shell, package manager, build tool, notebook runner, container engine, remote scheduler, or downloader requires exact authorization in the current plan.
 - Do not execute repository hooks, lifecycle scripts, or hidden bootstrap code.
 - Working directory must resolve inside the deployment directory under `external_executor/expr/`.
-- Run records, environment captures, normalized metric reports, and diagnostics must be written to the paired evidence directory under `external_executor/report/baseline_reproduction/`. Stdout/stderr logs and original outputs produced by the baseline command must be written under `external_executor/raw_results/baseline_reproduction/`.
+- Run records, environment captures, normalized metric reports, and diagnostics must be written to the paired evidence directory under `external_executor/report/phase_D/baseline_reproduction/`. Stdout/stderr logs and original outputs produced by the baseline command must be written under `external_executor/raw_results/baseline_reproduction/`.
 
 ## Environment variables and secrets
 

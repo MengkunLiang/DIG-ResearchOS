@@ -61,7 +61,7 @@ def main() -> int:
     output = Path(args.path).expanduser().resolve()
     source = Path(args.source).expanduser().resolve() if args.source else None
     workspace = find_workspace(output)
-    if not is_within(output, workspace / "external_executor" / "report"):
+    if not is_within(output, workspace / "external_executor" / "report" / "phase_D"):
         raise SystemExit("Environment records must be written under external_executor/report")
     if source and not is_within(source, workspace / "external_executor" / "expr"):
         raise SystemExit("Environment source must be a deployment under external_executor/expr")

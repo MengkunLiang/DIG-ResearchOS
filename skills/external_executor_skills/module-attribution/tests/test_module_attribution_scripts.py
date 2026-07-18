@@ -96,17 +96,17 @@ def build_pipeline(ws: Path) -> None:
     ext = ws / "external_executor"
     run("preflight_attribution.py", "--workspace", str(ws))
     run("build_attribution_snapshot.py", "--workspace", str(ws), "--iteration-id", "iter-1")
-    work = ext / "report/module_attribution/iter-1"
+    work = ext / "report/phase_E/module_attribution/iter-1"
     work.mkdir(parents=True, exist_ok=True)
     registry = work / "module_registry.json"
     obs = work / "intervention_observations.json"
     effects = work / "ablation_effects.json"
     interactions = work / "interaction_and_confounds.json"
-    run("inventory_modules.py", "--snapshot", str(ext / "report/module_attribution_snapshot.json"), "--output", str(registry))
-    run("normalize_attribution_evidence.py", "--snapshot", str(ext / "report/module_attribution_snapshot.json"), "--module-registry", str(registry), "--output", str(obs))
+    run("inventory_modules.py", "--snapshot", str(ext / "report/phase_E/module_attribution_snapshot.json"), "--output", str(registry))
+    run("normalize_attribution_evidence.py", "--snapshot", str(ext / "report/phase_E/module_attribution_snapshot.json"), "--module-registry", str(registry), "--output", str(obs))
     run("compute_ablation_effects.py", "--observations", str(obs), "--output", str(effects))
     run("analyze_interactions.py", "--observations", str(obs), "--ablation-effects", str(effects), "--output", str(interactions))
-    run("build_attribution_facts.py", "--snapshot", str(ext / "report/module_attribution_snapshot.json"), "--module-registry", str(registry), "--ablation-effects", str(effects), "--interaction-analysis", str(interactions), "--output", str(ext / "report/module_attribution_facts.json"))
+    run("build_attribution_facts.py", "--snapshot", str(ext / "report/phase_E/module_attribution_snapshot.json"), "--module-registry", str(registry), "--ablation-effects", str(effects), "--interaction-analysis", str(interactions), "--output", str(ext / "report/phase_E/module_attribution_facts.json"))
     run("initialize_attribution_report.py", "--workspace", str(ws))
 
 
@@ -128,23 +128,23 @@ class ModuleAttributionTests(unittest.TestCase):
 
     def test_effects_and_interaction(self) -> None:
         ext = self.base / "external_executor"
-        work = ext / "report/module_attribution/iter-1"
+        work = ext / "report/phase_E/module_attribution/iter-1"
         effects = json.loads((work / "ablation_effects.json").read_text())
         by_module = {x["module_id"]: x for x in effects["items"]}
         self.assertGreater(by_module["M1"]["mean_effect"], by_module["M2"]["mean_effect"])
         self.assertEqual(by_module["M1"]["paired_n"], 3)
         interaction = json.loads((work / "interaction_and_confounds.json").read_text())
         self.assertEqual(len(interaction["interaction_effects"]["items"]), 1)
-        facts = json.loads((ext / "report/module_attribution_facts.json").read_text())
+        facts = json.loads((ext / "report/phase_E/module_attribution_facts.json").read_text())
         facts_by_module = {x["module_id"]: x for x in facts["module_facts"]["items"]}
         self.assertEqual(facts_by_module["M1"]["empirical_status"], "beneficial")
-        snapshot = json.loads((ext / "report/module_attribution_snapshot.json").read_text())
+        snapshot = json.loads((ext / "report/phase_E/module_attribution_snapshot.json").read_text())
         self.assertEqual(snapshot["implementation_id"], "IMPL-1")
         self.assertEqual(snapshot["runs"][0]["dataset"], "Data")
         self.assertEqual(snapshot["runs"][0]["dataset_version"], "v1")
         self.assertNotIn("src/old.py", {path for module in snapshot["modules"] for path in module.get("code_paths", [])})
-        self.assertTrue((ext / "report/module_attribution_preflight.json").is_file())
-        self.assertTrue((ext / "report/module_attribution_facts.json").is_file())
+        self.assertTrue((ext / "report/phase_E/module_attribution_preflight.json").is_file())
+        self.assertTrue((ext / "report/phase_E/module_attribution_facts.json").is_file())
         self.assertTrue((ext / "module_attribution_report.json").is_file())
         self.assertTrue((ext / "result_pack.json").is_file())
         self.assertFalse((ext / "module_attribution_preflight.json").exists())
@@ -157,7 +157,7 @@ class ModuleAttributionTests(unittest.TestCase):
         ext = ws / "external_executor"
         report_path = ext / "module_attribution_report.json"
         report = json.loads(report_path.read_text())
-        facts = json.loads((ext / "report/module_attribution_facts.json").read_text())
+        facts = json.loads((ext / "report/phase_E/module_attribution_facts.json").read_text())
         module_items = []
         for fact in facts["module_facts"]["items"]:
             refs = fact["effect_ids"] or fact["evidence_refs"]

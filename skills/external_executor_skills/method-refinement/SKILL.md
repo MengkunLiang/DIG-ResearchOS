@@ -31,17 +31,17 @@ Turn the approved research intent into a precise implementation contract before 
 
 Write only:
 
-- `external_executor/report/method_refinement_preflight.json`;
-- `external_executor/report/method_intent_contract.json`;
+- `external_executor/report/phase_D/method_refinement_preflight.json`;
+- `external_executor/report/phase_D/method_intent_contract.json`;
 - `external_executor/method_implementation_spec.json`;
 - versioned snapshots under `external_executor/method_specs/`;
-- `external_executor/report/method_spec_fingerprint.json`;
-- `external_executor/report/method_delta.json`;
-- `external_executor/report/method_scope_assessment.json`;
-- `external_executor/report/scope_change_request.json` when major scope drift is detected;
-- `external_executor/report/method_refinement_review.json`;
-- `external_executor/report/method_implementation_brief.md`;
-- `external_executor/report/method_refinement_report.json` and its validation;
+- `external_executor/report/phase_D/method_spec_fingerprint.json`;
+- `external_executor/report/phase_D/method_delta.json`;
+- `external_executor/report/phase_D/method_scope_assessment.json`;
+- `external_executor/report/phase_D/scope_change_request.json` when major scope drift is detected;
+- `external_executor/report/phase_D/method_refinement_review.json`;
+- `external_executor/report/phase_D/method_implementation_brief.md`;
+- `external_executor/report/phase_D/method_refinement_report.json` and its validation;
 - `result_pack.json#method_refinements` and this skill's entries in `result_pack.json#scope_change_requests` through the narrow apply script.
 
 Do not change executor status, run manifest, iteration plans or decisions, experiment plan, baseline reproduction, implementation records, code-review records, runs, diagnosis, attribution, or evidence packaging. Return control to `research-execution` after applying the report.
@@ -52,7 +52,7 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/preflight_method_refinement.py --workspace <workspace> \
-  --output external_executor/report/method_refinement_preflight.json
+  --output external_executor/report/phase_D/method_refinement_preflight.json
 ```
 
 The preflight confirms:
@@ -73,7 +73,7 @@ Read `references/method-intent-contract.md`, then run:
 
 ```bash
 python <skill-dir>/scripts/normalize_method_intent.py --workspace <workspace> \
-  --output external_executor/report/method_intent_contract.json
+  --output external_executor/report/phase_D/method_intent_contract.json
 ```
 
 The normalized contract must separate:
@@ -96,7 +96,7 @@ Read `references/implementation-spec-contract.md` and `references/evidence-trace
 
 ```bash
 python <skill-dir>/scripts/build_method_implementation_spec.py --workspace <workspace> \
-  --intent external_executor/report/method_intent_contract.json \
+  --intent external_executor/report/phase_D/method_intent_contract.json \
   --output external_executor/method_implementation_spec.json
 ```
 
@@ -123,7 +123,7 @@ Write a deterministic fingerprint and versioned snapshot:
 ```bash
 python <skill-dir>/scripts/fingerprint_method_spec.py --workspace <workspace> \
   --spec external_executor/method_implementation_spec.json \
-  --output external_executor/report/method_spec_fingerprint.json --write-back
+  --output external_executor/report/phase_D/method_spec_fingerprint.json --write-back
 ```
 
 ## Compute the delta before implementation
@@ -136,19 +136,19 @@ When the root plan contains `iteration_history_summary`, read every entry before
 
 ```bash
 python <skill-dir>/scripts/compare_method_specs.py --workspace <workspace> \
-  --intent external_executor/report/method_intent_contract.json \
+  --intent external_executor/report/phase_D/method_intent_contract.json \
   --current external_executor/method_implementation_spec.json \
-  --output external_executor/report/method_delta.json
+  --output external_executor/report/phase_D/method_delta.json
 ```
 
 When a previous specification exists, pass it explicitly:
 
 ```bash
 python <skill-dir>/scripts/compare_method_specs.py --workspace <workspace> \
-  --intent external_executor/report/method_intent_contract.json \
+  --intent external_executor/report/phase_D/method_intent_contract.json \
   --previous <previous-method-spec.json> \
   --current external_executor/method_implementation_spec.json \
-  --output external_executor/report/method_delta.json
+  --output external_executor/report/phase_D/method_delta.json
 ```
 
 Every change must be classified as one of:
@@ -166,10 +166,10 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/assess_scope_change.py --workspace <workspace> \
-  --intent external_executor/report/method_intent_contract.json \
+  --intent external_executor/report/phase_D/method_intent_contract.json \
   --spec external_executor/method_implementation_spec.json \
-  --delta external_executor/report/method_delta.json \
-  --output external_executor/report/method_scope_assessment.json
+  --delta external_executor/report/phase_D/method_delta.json \
+  --output external_executor/report/phase_D/method_scope_assessment.json
 ```
 
 A major scope change includes, at minimum:
@@ -191,7 +191,7 @@ Validate the contract:
 ```bash
 python <skill-dir>/scripts/validate_method_implementation_spec.py --workspace <workspace> \
   --spec external_executor/method_implementation_spec.json \
-  --output external_executor/report/method_implementation_spec_validation.json
+  --output external_executor/report/phase_D/method_implementation_spec_validation.json
 ```
 
 Then read `references/method-review-checklist.md` and run:
@@ -199,10 +199,10 @@ Then read `references/method-review-checklist.md` and run:
 ```bash
 python <skill-dir>/scripts/review_method_refinement.py --workspace <workspace> \
   --spec external_executor/method_implementation_spec.json \
-  --delta external_executor/report/method_delta.json \
-  --scope-assessment external_executor/report/method_scope_assessment.json \
-  --spec-validation external_executor/report/method_implementation_spec_validation.json \
-  --output external_executor/report/method_refinement_review.json
+  --delta external_executor/report/phase_D/method_delta.json \
+  --scope-assessment external_executor/report/phase_D/method_scope_assessment.json \
+  --spec-validation external_executor/report/phase_D/method_implementation_spec_validation.json \
+  --output external_executor/report/phase_D/method_refinement_review.json
 ```
 
 The review checks:
@@ -232,8 +232,8 @@ After a passing or constrained specification review, run:
 ```bash
 python <skill-dir>/scripts/render_implementation_brief.py --workspace <workspace> \
   --spec external_executor/method_implementation_spec.json \
-  --review external_executor/report/method_refinement_review.json \
-  --output external_executor/report/method_implementation_brief.md
+  --review external_executor/report/phase_D/method_refinement_review.json \
+  --output external_executor/report/phase_D/method_implementation_brief.md
 ```
 
 The brief is a navigation artifact for `implementation`; the JSON specification remains the source of truth.
@@ -244,13 +244,13 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/assemble_method_refinement_report.py --workspace <workspace> \
-  --output external_executor/report/method_refinement_report.json
+  --output external_executor/report/phase_D/method_refinement_report.json
 
 python <skill-dir>/scripts/validate_method_refinement_report.py --workspace <workspace> \
-  --report external_executor/report/method_refinement_report.json
+  --report external_executor/report/phase_D/method_refinement_report.json
 
 python <skill-dir>/scripts/apply_method_refinement_report.py --workspace <workspace> \
-  --report external_executor/report/method_refinement_report.json
+  --report external_executor/report/phase_D/method_refinement_report.json
 ```
 
 The apply script appends or replaces only the matching refinement record and scope request owned by this skill. It must preserve every sibling-owned result-pack section.

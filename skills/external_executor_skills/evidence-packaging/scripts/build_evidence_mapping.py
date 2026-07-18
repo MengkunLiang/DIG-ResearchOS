@@ -39,11 +39,11 @@ def snapshot_result(snapshot: dict[str, Any]) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build bidirectional method/code/config/result/visual/claim mappings.")
     parser.add_argument("--workspace")
-    parser.add_argument("--snapshot", default="external_executor/report/final_evidence_snapshot.json")
+    parser.add_argument("--snapshot", default="external_executor/report/phase_F/final_evidence_snapshot.json")
     parser.add_argument("--method", default="external_executor/evidence_package/realized_method_package.json")
-    parser.add_argument("--framework", default="external_executor/report/framework_figure_spec.json")
-    parser.add_argument("--inventory", default="external_executor/report/figure_table_inventory.json")
-    parser.add_argument("--output", default="external_executor/report/evidence_mapping.json")
+    parser.add_argument("--framework", default="external_executor/report/phase_F/framework_figure_spec.json")
+    parser.add_argument("--inventory", default="external_executor/report/phase_F/figure_table_inventory.json")
+    parser.add_argument("--output", default="external_executor/report/phase_F/evidence_mapping.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)

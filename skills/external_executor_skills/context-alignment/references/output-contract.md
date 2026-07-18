@@ -1,6 +1,6 @@
 # Context Alignment Output Contract
 
-Use this structure for `external_executor/report/context_alignment_report.json` and `result_pack.json#context_alignment`.
+Use this structure for `external_executor/report/phase_A/context_alignment_report.json` and `result_pack.json#context_alignment`.
 
 ## Contents
 

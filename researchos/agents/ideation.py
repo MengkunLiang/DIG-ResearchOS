@@ -18,6 +18,7 @@ import yaml
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.bridge_catalog import load_bridge_catalog_summaries
+from ..literature_resources import refresh_resource_catalog
 from ..runtime.prompts import render_prompt
 from ..schemas.validator import validate_record
 from ..tools.ideation_analysis import analyze_ideation_coverage
@@ -564,6 +565,10 @@ def prepare_t4_context_pack(workspace_dir: Path) -> dict[str, object]:
     workspace_dir = Path(workspace_dir)
     ideation_dir = workspace_dir / "ideation"
     ideation_dir.mkdir(parents=True, exist_ok=True)
+    # Backfill older workspaces before compacting T4 context. This only scans
+    # existing notes/metadata and writes discovery records; it never fetches
+    # or executes third-party resources.
+    refresh_resource_catalog(workspace_dir)
     workbench_path = workspace_dir / "literature" / "synthesis_workbench.json"
     workbench = _read_json_file(workbench_path)
     raw_cards = _collect_workbench_note_cards(workbench)
@@ -595,6 +600,7 @@ def prepare_t4_context_pack(workspace_dir: Path) -> dict[str, object]:
 
     bridge_plan = _read_json_file(workspace_dir / "literature" / "bridge_domain_plan.json")
     domain_map = _read_json_file(workspace_dir / "literature" / "domain_map.json")
+    resource_catalog_summary = _read_json_file(workspace_dir / "literature" / "resource_catalog_summary.json")
     bridge_catalogs = load_bridge_catalog_summaries(
         workspace_dir,
         records_per_bridge=2,
@@ -620,6 +626,8 @@ def prepare_t4_context_pack(workspace_dir: Path) -> dict[str, object]:
                 "literature/domain_map.json",
                 "literature/bridge_domain_plan.json",
                 "literature/cross_domain_catalogs/index.json",
+                "literature/resource_catalog.jsonl",
+                "literature/resource_catalog_summary.json",
                 "ideation/survey_insights.json",
             )
         ],
@@ -692,6 +700,20 @@ def prepare_t4_context_pack(workspace_dir: Path) -> dict[str, object]:
             fields=("question", "rationale", "related_papers", "evidence_level"),
         ),
         "comparison_table": _comparison_table_summary(workspace_dir / "literature" / "comparison_table.csv"),
+        "resource_discovery_context": {
+            "catalog_path": "literature/resource_catalog.jsonl",
+            "summary_path": "literature/resource_catalog_summary.json",
+            "available": bool(resource_catalog_summary),
+            "record_count": int(resource_catalog_summary.get("record_count") or 0),
+            "paper_count": int(resource_catalog_summary.get("paper_count") or 0),
+            "by_resource_type": resource_catalog_summary.get("by_resource_type")
+            if isinstance(resource_catalog_summary.get("by_resource_type"), dict)
+            else {},
+            "usage_boundary": (
+                "Use resource discoveries to assess feasibility, identify official baselines, and name verification needs. "
+                "A link is not evidence that a mechanism works, a baseline is equivalent, or a resource can be executed."
+            ),
+        },
         "bridge_domain_plan": {
             "source": bridge_plan.get("source"),
             "bridge_domains": bridge_plan.get("bridge_domains", []),

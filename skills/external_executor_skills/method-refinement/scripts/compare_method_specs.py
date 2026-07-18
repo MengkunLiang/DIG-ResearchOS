@@ -63,10 +63,10 @@ def list_set(value: Any) -> set[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compare intent/current or previous/current method specifications.")
     parser.add_argument("--workspace")
-    parser.add_argument("--intent", default="external_executor/report/method_intent_contract.json")
+    parser.add_argument("--intent", default="external_executor/report/phase_D/method_intent_contract.json")
     parser.add_argument("--previous")
     parser.add_argument("--current", default="external_executor/method_implementation_spec.json")
-    parser.add_argument("--output", default="external_executor/report/method_delta.json")
+    parser.add_argument("--output", default="external_executor/report/phase_D/method_delta.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)

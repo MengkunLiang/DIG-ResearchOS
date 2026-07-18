@@ -100,7 +100,7 @@ def candidate_summary(workspace: Path, path: Path, root_label: str, max_files: i
 def main() -> int:
     parser = argparse.ArgumentParser(description="Inventory local resource candidates without executing content.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/report/resource_local_inventory.json")
+    parser.add_argument("--output", default="external_executor/report/phase_B/resource_local_inventory.json")
     parser.add_argument("--root", action="append", help="Override/add workspace-relative root; repeatable")
     parser.add_argument("--max-files-per-candidate", type=int, default=20000)
     parser.add_argument("--max-hash-bytes", type=int, default=128 * 1024 * 1024)

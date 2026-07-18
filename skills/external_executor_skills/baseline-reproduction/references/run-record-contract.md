@@ -47,7 +47,7 @@ Every substantive baseline execution produces one immutable run record.
 
 - immutable source identity or package checksum;
 - exact command vector and working directory;
-- deployment directory under `external_executor/expr/baselines/`, result directory for raw baseline outputs/logs under `external_executor/raw_results/`, and evidence directory under `external_executor/report/baseline_reproduction/`;
+- deployment directory under `external_executor/expr/baselines/`, result directory for raw baseline outputs/logs under `external_executor/raw_results/`, and evidence directory under `external_executor/report/phase_D/baseline_reproduction/`;
 - config file hashes and parameter snapshot;
 - dataset identity, version, split, preprocessing, and checksum where available;
 - seed/repeat policy and actual values;

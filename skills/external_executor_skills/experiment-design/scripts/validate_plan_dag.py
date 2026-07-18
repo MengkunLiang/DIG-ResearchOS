@@ -75,7 +75,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Validate experiment dependencies and parallel groups.")
     parser.add_argument("--workspace")
     parser.add_argument("--plan", default="external_executor/experiment_plan.json")
-    parser.add_argument("--output", default="external_executor/report/experiment_plan_dag_validation.json")
+    parser.add_argument("--output", default="external_executor/report/phase_C/experiment_plan_dag_validation.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     report = validate(load_json(resolve_in_workspace(ws, args.plan)))

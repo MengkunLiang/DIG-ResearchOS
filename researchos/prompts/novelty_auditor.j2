@@ -24,6 +24,13 @@
 {{ comparison_table_preview }}
 {% endif %}
 
+{% if resource_catalog_summary_preview %}
+### 论文关联资源发现目录
+{{ resource_catalog_summary_preview }}
+
+资源目录只记录阅读时发现的代码、数据、benchmark、模型、项目页和补充材料线索。它可用于评估可行性、识别官方 baseline 和明确后续获取需求，但不能证明资源可运行、许可合格、与论文实现等价，或支持任何机制/效果主张。
+{% endif %}
+
 ### 可定向核验的论文卡
 {{ paper_card_inventory }}
 
@@ -70,6 +77,7 @@
 - `ideation/selected/t45_search_targets.json` - 本轮 novelty/collision 检索目标
 - `literature/synthesis.md` - 完整的文献综述
 - `literature/comparison_table.csv` - 已有方法对比表（如果存在）
+- `literature/resource_catalog.jsonl` 与 `literature/resource_catalog_summary.json` - 论文阅读与补充检索中发现的资源线索。仅在需要判断 baseline、数据、benchmark、实现可得性或执行风险时读取；将其写为待核验的资源需求，而不是学术证据。
 - 先读 `literature/cross_domain_catalogs/index.json`，再按 index 指向的具体 `bridge_context.json` 与 `paper_catalog.json` 读取 Cross-domain catalog。catalog 用来扩展搜索与差异化问题，不是阅读笔记或 citation anchor。
 - 对 `literature/deep_read_notes/`、`literature/bridge_notes/`、`literature/shallow_read_notes/`，先枚举具体 `.md` paper card，再只读取与候选最近工作、机制或基线相关的精确论文阅读笔记 section。摘要阅读笔记可扩展覆盖和反例线索，但不能单独确认核心机制或基线细节；不要盲读全部笔记。
 
@@ -458,6 +466,8 @@ search_papers(
 - `ideation/validation_map.yaml`：每条 H 的判别测试、对照、证据边界与 Required Baselines；
 - `ideation/kill_criteria.yaml`：每条 H 的失败信号和停止条件；
 - `ideation/exp_plan.yaml`：完整 Experiment Plan，只使用可追溯的项目约束；未知数据、预算、baseline 或指标必须标记为 `unknown` / `proposed_not_verified`；
+- `ideation/proposal/research_proposal.md`：完整研究 Proposal。它面向研究者和后续 T5，不以现有假设或实验计划的摘要代替，而是将 T4 的选择理由、T4.5 审计、正式假设、实验方案、贡献、现实含义、可行性、风险和研究谱系组织成一份连贯方案；
+- `ideation/proposal/proposal_manifest.json`：Proposal 的结构化来源和 T5 handoff 边界。它必须明确 Proposal 只是 `planning_context_not_results`，不能把预期结果写成已获得的实证证据；
 - `ideation/post_novelty_formalization.json`：
 
 ```json
@@ -470,7 +480,9 @@ search_papers(
     "exp_plan": "ideation/exp_plan.yaml",
     "contribution_hypothesis_map": "ideation/contribution_hypothesis_map.yaml",
     "validation_map": "ideation/validation_map.yaml",
-    "kill_criteria": "ideation/kill_criteria.yaml"
+    "kill_criteria": "ideation/kill_criteria.yaml",
+    "research_proposal": "ideation/proposal/research_proposal.md",
+    "proposal_manifest": "ideation/proposal/proposal_manifest.json"
   }
 }
 ```
@@ -519,6 +531,64 @@ search_papers(
 ```
 
 所有空缺必须保留为空数组、`unknown` 或 `proposed_not_verified`，不能以看似常识的文本补齐。`source_paths` 必须指向本次工作区中的实际文件。
+
+#### `ideation/proposal/` 完整研究 Proposal
+
+先创建 `ideation/proposal/`，再写入 `research_proposal.md` 和 `proposal_manifest.json`。Proposal 必须在本次 `novelty_audit.md` 的通过 verdict 之后生成，并且以当前工作区中的 T4/T4.5 正式产物为来源。它是研究计划与执行上下文，不是实验结果、投稿论文或营销文案。
+
+`research_proposal.md` 需要是一份充分而紧凑的研究方案。通常应提供约 6,000 至 10,000 个中文字符的实质内容，但由研究问题复杂度决定，不能为了满足篇幅重复论点。全文使用自然连贯的学术中文，避免破折号、口号式短句、机械并列和空泛套话。正文可使用八个一级部分，必要时仅在研究设计部分使用少量二级标题：
+
+Proposal 的事实锚点是当前 workspace 中已核验的 T4/T4.5 artifact。你可以运用专业知识解释理论概念、识别逻辑和可行的研究设计，但专业知识不能替代可追溯来源，也不能补造文献、数据、市场规模、实验发现或已实现的商业效果。若项目材料不能支持一个具体事实，应保留为 `unknown`、`proposed_not_verified` 或以条件式说明其需要在后续研究中验证。
+
+1. `摘要`：概括问题、中心机制、正式假设、审计 verdict、研究设计和当前未验证状态。
+2. `研究背景、意义与文献定位`：从 T4 选择理由、T3.5 综合和 T4.5 相似工作审计出发，解释已有研究的限制、本研究定位及仍未解决的问题。
+3. `理论机制、研究问题与正式假设`：定义术语，展开因果机制，给出 H1 及必要的后续假设、可观察预测、竞争解释和边界条件。不得把 T4.5 前后的 proposal 假设写成已证实事实。
+4. `研究设计与识别策略`：把 `exp_plan.yaml` 的研究对象、treatment、比较条件、数据或模拟环境、识别逻辑、实验阶段和分析方法连贯解释出来。未知项必须保留为 `unknown` 或 `proposed_not_verified`。
+5. `验证、基线与评估计划`：说明 required baselines、对照、指标、ablation、稳健性或反证检验，以及每项验证将支持或削弱何种解释。
+6. `研究贡献及现实、管理与商业含义`：分别说明理论、方法和实证贡献，清楚区分当前依据与若假设得到支持后可能产生的现实影响。不要编造市场规模、收入、成本节约、部署效果或受益主体。
+7. `可行性、资源、伦理、风险与实施路线`：结合 `literature/resource_catalog.jsonl` 中的论文关联资源线索，说明已知资源、未知资源、数据或伦理限制、里程碑、交付物、kill criteria 和替代路径。明确哪些只是 `discovered`、尚未下载或核验的线索，哪些仍须 T5 Phase B 固定版本、许可和安全审查。风险出现时应指出如何改变研究解释或下一步，而不是只列风险名词。
+8. `证据边界、新颖性约束与研究谱系`：汇总 T4 选择指纹、T4.5 verdict、不得主张的内容、来源文件和 Proposal 的更新条件。
+
+至少在 Proposal 中保留正式 `H1` 标题。可以使用表格呈现实验阶段、baseline 或里程碑，但不要将整份 Proposal 变成零散表格或把同一内容在多个文件重复粘贴。`hypotheses.md`、`research_dossier.json`、`validation_map.yaml`、`kill_criteria.yaml` 与 `exp_plan.yaml` 仍是相应细节的规范来源；Proposal 只整合、解释并链接它们。
+
+`proposal_manifest.json` 必须是合法 JSON，使用下面的结构并填写所有实际路径：
+
+```json
+{
+  "semantics": "t45_research_proposal",
+  "schema_version": "1.0.0",
+  "status": "formalized_after_novelty_pass",
+  "proposal_path": "ideation/proposal/research_proposal.md",
+  "candidate_id": "<selected Candidate ID>",
+  "selection_fingerprint": "<selection fingerprint>",
+  "novelty_audit_verdict": "<Final Gate Verdict>",
+  "executive_summary": {
+    "statement": "<Proposal 的中心问题和计划摘要>",
+    "evidence_status": "source_supported|proposed_not_verified|unknown",
+    "source_paths": ["ideation/hypotheses.md", "ideation/novelty_audit.md"]
+  },
+  "section_source_map": {
+    "summary": ["..."],
+    "motivation_and_positioning": ["..."],
+    "mechanism_and_hypotheses": ["..."],
+    "research_design": ["..."],
+    "validation_and_baselines": ["..."],
+    "contributions_and_implications": ["..."],
+    "feasibility_risks_and_milestones": ["..."],
+    "boundaries_and_traceability": ["..."]
+  },
+  "traceability": {
+    "source_artifacts": ["ideation/selected/selected_candidate.json", "ideation/hypotheses.md", "ideation/research_dossier.json", "ideation/exp_plan.yaml", "ideation/novelty_audit.md", "ideation/validation_map.yaml", "ideation/kill_criteria.yaml"]
+  },
+  "t5_handoff": {
+    "role": "planning_context_not_results",
+    "must_include": true,
+    "preserve": ["required baselines", "claim boundaries", "kill criteria", "unknown fields"]
+  }
+}
+```
+
+`section_source_map` 的每个列表都必须非空，其中每个路径均须真实存在并同时列在 `traceability.source_artifacts`。`traceability.source_artifacts` 至少必须保留 `selected_candidate.json`、`hypotheses.md`、`research_dossier.json`、`exp_plan.yaml`、`novelty_audit.md`、`validation_map.yaml` 和 `kill_criteria.yaml`，使 Proposal 同时继承 T4 决策和 T4.5 正式化信息。T5 必须接收 Proposal 与 Manifest，但只能把它们作为 planning context；它们不能作为最终实证 claim、结果或写作事实的来源。
 
 #### 文件写入工具契约
 

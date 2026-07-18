@@ -10,7 +10,7 @@ The Skill may:
 
 - copy an approved baseline candidate into a controlled deployment directory under `external_executor/expr/`;
 - configure and execute the baseline command authorized by the current iteration plan;
-- capture normalized metrics, environment, hardware, resource/version identity, run records, and process reports under `external_executor/report/baseline_reproduction/`;
+- capture normalized metrics, environment, hardware, resource/version identity, run records, and process reports under `external_executor/report/phase_D/baseline_reproduction/`;
 - capture stdout/stderr logs, baseline-produced outputs, per-dataset/per-metric raw metric CSV files, and other original experiment outputs under `external_executor/raw_results/baseline_reproduction/`;
 - perform bounded compatibility, adapter, configuration, seed, logging, and metric-extraction repairs;
 - compare reproduced outputs with a predeclared reference or sanity rule;
@@ -39,7 +39,7 @@ planned
   -> accepted | needs_fix | blocked | stale
 ```
 
-Before review, repairs are made directly to the deployed baseline copy under `external_executor/expr/baselines/<baseline-id>/...` and must remain inside the original baseline's core idea, modules, and design. Every attempt remains immutable after review. A repair creates a new attempt or explicit patch record when the prior attempt has already been reviewed. Corrected output does not erase the failed path.
+Before review, repairs are made directly to the deployed baseline copy under `external_executor/expr/baselines/<baseline-id>/...` and must remain inside the original baseline's core idea, modules, and design. Once an attempt has a run record, its code and evidence are historical state. A repair creates a new attempt by copying the prior deployed source, or an explicitly selected earlier attempt, so fixes accumulate without mutating history. Corrected output does not erase the failed path.
 
 ## Fingerprint invalidation
 

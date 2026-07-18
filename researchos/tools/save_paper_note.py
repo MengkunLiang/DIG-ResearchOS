@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from ..paper_notes import compact_paper_note_view
 from ..runtime.errors import ToolAccessDenied, ToolRuntimeError
 from ..literature_citations import refresh_literature_citation_maps
+from ..literature_resources import ensure_resource_section, ingest_paper_resources
 from ..runtime.t3_notes_manifest import (
     build_t3_notes_manifest,
     find_queue_record_by_rank,
@@ -38,6 +39,15 @@ class SavePaperNoteParams(BaseModel):
         default=False,
         description="By default, do not overwrite an existing structurally complete note.",
     )
+    resources: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Paper-associated resources discovered during reading. Each item may include "
+            "resource_type, name, url, relationship, locator, revision, license_hint, "
+            "and access_hint. Entries are discovery records only; this tool never downloads "
+            "or executes them."
+        ),
+    )
 
 
 class SavePaperNoteTool(Tool):
@@ -45,7 +55,8 @@ class SavePaperNoteTool(Tool):
     description = (
         "按 queue_rank 保存 T3 paper note。工具从 deep_read_queue/pending queue 解析论文，"
         "自动生成 deep_read_notes 文件名、即时校验结构、刷新 literature/notes_manifest.json；"
-        "Reader 不需要手写 normalized_id 或十六进制 ID。"
+        "并将阅读时发现的代码、数据、benchmark、模型、项目页和补充材料写入 "
+        "literature/resource_catalog.jsonl。Reader 不需要手写 normalized_id 或十六进制 ID。"
     )
     parameters_schema = SavePaperNoteParams
     timeout_seconds = 20.0
@@ -88,6 +99,15 @@ class SavePaperNoteTool(Tool):
         if abs_path.exists() and not params.allow_overwrite_complete:
             existing_complete, existing_err = _validate_note(abs_path)
             if existing_complete:
+                note_content = _safe_read_text(abs_path)
+                resource_receipt = ingest_paper_resources(
+                    self.policy.workspace_dir,
+                    paper_record=record,
+                    note_path=rel_path,
+                    reading_status=_extract_note_status(note_content),
+                    note_content=note_content,
+                    reported_resources=params.resources,
+                )
                 manifest = _build_manifest_for_source_queue(self.policy.workspace_dir, source_queue)
                 citation_maps = refresh_literature_citation_maps(self.policy.workspace_dir, write=True)
                 progress = _progress_summary(manifest)
@@ -119,19 +139,29 @@ class SavePaperNoteTool(Tool):
                         "paper_note_index_path": "literature/paper_note_index.json",
                         "citation_map_path": "literature/citation_map.json",
                         "mapped_bib_count": (citation_maps.get("citation_map") or {}).get("mapped_bib_count", 0),
+                        "resource_catalog": resource_receipt,
                         "compact_note_view": _compact_note_view(abs_path, self.policy.workspace_dir),
                     },
                 )
 
         try:
+            normalized_content = ensure_resource_section(params.content, params.resources)
             abs_path.parent.mkdir(parents=True, exist_ok=True)
-            abs_path.write_text(params.content, encoding="utf-8")
+            abs_path.write_text(normalized_content, encoding="utf-8")
         except OSError as exc:
             raise ToolRuntimeError("save_paper_note", exc) from exc
 
         ok, err = _validate_note(abs_path, require_current_schema=is_new_note)
         manifest = _build_manifest_for_source_queue(self.policy.workspace_dir, source_queue)
         citation_maps = refresh_literature_citation_maps(self.policy.workspace_dir, write=True)
+        resource_receipt = ingest_paper_resources(
+            self.policy.workspace_dir,
+            paper_record=record,
+            note_path=rel_path,
+            reading_status=_extract_note_status(normalized_content),
+            note_content=normalized_content,
+            reported_resources=params.resources,
+        )
         entry = _find_manifest_entry(manifest, rel_path, params.queue_rank)
         progress = _progress_summary(manifest)
         data = {
@@ -146,7 +176,7 @@ class SavePaperNoteTool(Tool):
             "paper_year": _record_year(record),
             "paper_venue": _record_venue(record),
             "target_bucket": str(record.get("target_bucket") or entry.get("target_bucket") or ""),
-            "note_status": _extract_note_status(params.content),
+            "note_status": _extract_note_status(normalized_content),
             "status": "complete" if ok else "incomplete",
             "validation_error": err or "",
             "manifest_path": "literature/notes_manifest.json",
@@ -155,8 +185,19 @@ class SavePaperNoteTool(Tool):
             "paper_note_index_path": "literature/paper_note_index.json",
             "citation_map_path": "literature/citation_map.json",
             "mapped_bib_count": (citation_maps.get("citation_map") or {}).get("mapped_bib_count", 0),
+            "resource_catalog": resource_receipt,
         }
         if not ok:
+            # The Reader receives ``ok=False`` so it must repair the same note
+            # before continuing. This is a normal within-turn correction, not
+            # a researcher-facing runtime failure.
+            data.update(
+                {
+                    "display_disposition": "auto_repair",
+                    "repair_scope": "paper_note_structure",
+                    "repairable": True,
+                }
+            )
             return ToolResult(
                 ok=False,
                 content=(

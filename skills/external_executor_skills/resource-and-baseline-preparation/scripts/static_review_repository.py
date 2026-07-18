@@ -56,7 +56,7 @@ def main() -> int:
     root = Path(args.path).expanduser().resolve()
     output = resolve_in_workspace(
         workspace,
-        args.output or "external_executor/report/static_review.json",
+        args.output or "external_executor/report/phase_B/static_review.json",
     )
     if not is_within(root, workspace):
         raise SystemExit(f"Repository path is outside workspace: {root}")

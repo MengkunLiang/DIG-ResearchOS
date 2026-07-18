@@ -7,10 +7,10 @@
 ## Process and validation files
 
 ```text
-external_executor/report/writer_handoff_preflight.json
-external_executor/report/writer_handoff_snapshot.json
-external_executor/report/writer_handoff_facts.json
-external_executor/report/writer_handoff_validation.json
+external_executor/report/phase_F/writer_handoff_preflight.json
+external_executor/report/phase_F/writer_handoff_snapshot.json
+external_executor/report/phase_F/writer_handoff_facts.json
+external_executor/report/phase_F/writer_handoff_validation.json
 ```
 
 `writer_handoff_snapshot.v2` stores complete core documents, core file hashes, final figure/table hashes, `handoff_id`, and `input_fingerprint`.

@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import math
+import re
 import sys
 from pathlib import Path
 from typing import Any, Iterable
@@ -33,6 +34,9 @@ from _common import (
 SUCCESS = {"complete", "completed", "pass", "passed", "success", "succeeded", "ready"}
 FAILED = {"failed", "blocked", "cancelled"}
 INVALID = {"invalid", "unusable", "stale", "superseded"}
+WORKSPACE_PREFIXES = (
+    "external_executor/", "resources/", "literature/", "ideation/", "novelty/", "user_seeds/",
+)
 
 
 def unique(values: Iterable[Any]) -> list[str]:
@@ -94,19 +98,35 @@ def aggregate_experiment_status(runs: list[dict[str, Any]]) -> str:
 
 
 def record_paths(record: Any) -> list[str]:
-    values = [path for _, path in keyed_paths(record)]
+    values = [canonical_workspace_path(path) for _, path in keyed_paths(record) if canonical_workspace_path(path)]
     for item in walk_dicts(record):
         if isinstance(item.get("path"), str):
-            values.append(item["path"])
+            canonical = canonical_workspace_path(item["path"])
+            if canonical:
+                values.append(canonical)
     return unique(values)
+
+
+def canonical_workspace_path(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    path = value.strip().replace("\\", "/")
+    if not path or Path(path).is_absolute():
+        return None
+    if path.startswith(WORKSPACE_PREFIXES):
+        return path
+    if re.match(r"^[a-z0-9-]+/scripts/", path, flags=re.IGNORECASE):
+        return f"external_executor/skills/{path}"
+    return None
 
 
 def path_kind(path: str, key: str = "") -> str:
     lowered = f"{key} {path}".lower()
+    tokens = set(re.findall(r"[a-z0-9]+", lowered))
     suffix = Path(path).suffix.lower()
-    if "figure" in lowered or suffix in {".svg", ".png", ".pdf", ".eps"}:
+    if "figure" in tokens or "/figure/" in lowered or suffix in {".svg", ".png", ".pdf", ".eps"}:
         return "figure"
-    if "table" in lowered or suffix in {".csv", ".tsv", ".parquet"} and "/table/" in lowered:
+    if "table" in tokens or "/table/" in lowered or suffix in {".csv", ".tsv", ".parquet"} and "/table/" in lowered:
         return "table"
     if "log" in lowered or suffix in {".log", ".out", ".err"}:
         return "log"
@@ -124,11 +144,14 @@ def path_kind(path: str, key: str = "") -> str:
 def paths_by_kind(record: Any) -> dict[str, list[str]]:
     output: dict[str, list[str]] = {}
     for key, path in keyed_paths(record):
-        output.setdefault(path_kind(path, key), []).append(path)
+        canonical = canonical_workspace_path(path)
+        if canonical:
+            output.setdefault(path_kind(canonical, key), []).append(canonical)
     for item in walk_dicts(record):
         if isinstance(item.get("path"), str):
-            path = item["path"]
-            output.setdefault(path_kind(path), []).append(path)
+            canonical = canonical_workspace_path(item["path"])
+            if canonical:
+                output.setdefault(path_kind(canonical), []).append(canonical)
     return {key: unique(value) for key, value in output.items()}
 
 
@@ -431,8 +454,9 @@ def result_records(ws: Path, snapshot: dict[str, Any], experiments: list[dict[st
     figures = [item for item in snapshot.get("assets", []) if item.get("kind") == "figure"]
     experiment_ids = {item["experiment_id"] for item in experiments}
     processing_scripts = unique(
-        path for key, path in keyed_paths(result.get("evidence_packaging", {}))
-        if "script" in key or "script" in path.lower()
+        canonical_workspace_path(path)
+        for key, path in keyed_paths(result.get("evidence_packaging", {}))
+        if ("script" in key or "script" in path.lower()) and canonical_workspace_path(path)
     )
     runs = section_records(result.get("experiment_runs"))
 
@@ -730,7 +754,7 @@ def artifact_index(ws: Path, snapshot: dict[str, Any], result: dict[str, Any]) -
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build source-bound facts for executor_research_report.md.")
     parser.add_argument("--workspace")
-    parser.add_argument("--snapshot", default="external_executor/report/writer_handoff_snapshot.json")
+    parser.add_argument("--snapshot", default="external_executor/report/phase_F/writer_handoff_snapshot.json")
     parser.add_argument("--output")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
@@ -769,7 +793,7 @@ def main() -> int:
         "created_at": utc_now(),
     }
     facts["facts_fingerprint"] = canonical_hash({key: value for key, value in facts.items() if key not in {"created_at", "facts_fingerprint"}})
-    destination = output_path(ws, args.output, "external_executor/report/writer_handoff_facts.json")
+    destination = output_path(ws, args.output, "external_executor/report/phase_F/writer_handoff_facts.json")
     dump_json_atomic(destination, facts)
     print(json.dumps(facts["coverage"], ensure_ascii=False))
     return 0

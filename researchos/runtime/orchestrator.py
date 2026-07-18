@@ -823,7 +823,7 @@ class AgentRunner:
 
             t5_reboost_pre_finalized = False
             if not deterministic_pre_finalized:
-                t5_reboost_pre_finalized = await self._maybe_finalize_t5_reboost_before_llm(ctx)
+                t5_reboost_pre_finalized = await self._maybe_finalize_t5_reboost_before_llm(ctx, policy)
                 if t5_reboost_pre_finalized:
                     deterministic_pre_finalized = True
 
@@ -2701,24 +2701,84 @@ class AgentRunner:
         except Exception as exc:
             return False, str(exc)
 
-    async def _maybe_finalize_t5_reboost_before_llm(self, ctx: ExecutionContext) -> bool:
-        """Reuse a complete T5 reboost handoff instead of spending another LLM call."""
+    async def _maybe_finalize_t5_reboost_before_llm(
+        self,
+        ctx: ExecutionContext,
+        policy: WorkspaceAccessPolicy,
+    ) -> bool:
+        """Compile the T4.5 to T5 handoff before an LLM can touch its contract.
+
+        T5 is a source-preserving protocol compilation step.  Its authoritative
+        inputs are the formal artifacts produced after the T4.5 verdict, and
+        the compiler already has the complete schema, provenance, and claim
+        boundary rules needed to create the handoff.  Asking an LLM to first
+        reproduce the same large JSON object made this transition depend on
+        model availability and frequently led to repeated partial repairs.
+
+        A valid existing pack is reused.  Otherwise the deterministic compiler
+        is the primary path.  A real upstream-source deficiency becomes one
+        actionable recovery pause instead of an LLM retry loop; a model cannot
+        safely invent the missing T4.5 evidence or execution constraints.
+        """
 
         if ctx.task_id != "T5-REBOOST-GATE":
             return False
         ok, err = self._t5_reboost_artifacts_valid(ctx)
-        if not ok:
-            self.log.info("t5_reboost_prefinalize_skipped", reason=err)
-            return False
+        if ok:
+            self.progress.emit(
+                "[Research Reboost] 检测到已有有效 handoff 与 executor 控制文件，跳过重复编译。",
+                important=True,
+            )
+            self._record_runtime_completion(
+                ctx,
+                "t5_reboost_resume_prefinalize",
+                {"outputs": [str(path.relative_to(ctx.workspace_dir)) for path in ctx.outputs_expected.values() if path.exists()]},
+                action_type="t5_reboost_prefinalize",
+            )
+            return True
+
+        self.log.info("t5_reboost_existing_handoff_invalid", reason=err)
         self.progress.emit(
-            "[Research Reboost] 检测到已有有效 handoff 与 executor 控制文件，跳过重复 LLM 调用。",
+            "[Research Reboost] 正在从已通过的 T4.5 产物编译并校验执行交接，不调用模型重写 handoff。",
             important=True,
         )
+        result = await CompileResearchReboostHandoffTool(policy).execute()
+        if not result.ok:
+            detail = " ".join(str(result.content or result.error or "unknown compiler failure").split())[:1200]
+            ctx.extra["t5_reboost_compile_failure"] = {
+                "error": str(result.error or "research_reboost_compiler_failed"),
+                "detail": detail,
+                "validation_report": "external_executor/report/reboost_validation_report.json",
+                "handoff_report": "external_executor/report/reboost_report.json",
+            }
+            self.log.warning("t5_reboost_primary_compile_failed", error=result.error, detail=detail)
+            raise RecoverableRuntimePause(
+                "T5 无法从当前 T4.5 产物编译可执行交接，未调用模型进行无依据修补。"
+                f"具体原因：{detail}。"
+                "请查看 external_executor/report/reboost_validation_report.json 和 "
+                "external_executor/report/reboost_report.json 中列出的缺失源文件或契约字段；"
+                "补齐或修复对应上游材料后 resume，系统只会重新编译交接。"
+            )
+
+        ok, err = self._t5_reboost_artifacts_valid(ctx)
+        if not ok:
+            self.log.warning("t5_reboost_primary_compile_postcheck_failed", error=err)
+            raise RecoverableRuntimePause(
+                "T5 已完成确定性编译，但独立文件校验仍未通过。"
+                f"具体原因：{str(err or 'unknown validation error')[:1200]}。"
+                "请查看 external_executor/report/reboost_validation_report.json；"
+                "现有 T4.5 产物未被修改，resume 只会重新校验和编译。"
+            )
+
         self._record_runtime_completion(
             ctx,
-            "t5_reboost_resume_prefinalize",
+            "t5_reboost_deterministic_compile",
             {"outputs": [str(path.relative_to(ctx.workspace_dir)) for path in ctx.outputs_expected.values() if path.exists()]},
-            action_type="t5_reboost_prefinalize",
+            action_type="t5_reboost_deterministic_compile",
+        )
+        self.progress.emit(
+            "[Research Reboost] 已从 T4.5 正式材料生成并校验 handoff，进入项目专属执行 Skill 发布。",
+            important=True,
         )
         return True
 
@@ -5205,6 +5265,8 @@ class AgentRunner:
                 "ideation/contribution_hypothesis_map.yaml",
                 "ideation/validation_map.yaml",
                 "ideation/kill_criteria.yaml",
+                "ideation/proposal/research_proposal.md",
+                "ideation/proposal/proposal_manifest.json",
                 "ideation/post_novelty_formalization.json",
             ):
                 path = ctx.workspace_dir / rel
@@ -7834,6 +7896,40 @@ class AgentRunner:
             "只修复该错误涉及的最小 artifact，保留其它已合格字段；修复后再次调用 finish_task。"
         )
         if ctx.task_id != "T4":
+            if ctx.task_id == "T4.5":
+                proposal_context = (
+                    "先读取 `ideation/novelty_audit.md`、`ideation/selected/selected_candidate.json`、"
+                    "`ideation/hypotheses.md`、`ideation/research_dossier.json`、`ideation/exp_plan.yaml`、"
+                    "`ideation/validation_map.yaml` 与 `ideation/kill_criteria.yaml`。"
+                    "Proposal 只能整合这些已落盘材料和经审计的专业解释；未知事实保持 `unknown` 或 "
+                    "`proposed_not_verified`，不得把计划、常识或预期结果写成实证事实。"
+                )
+                if any(marker in error for marker in ("research_proposal.md", "formal H1", "missing sections")):
+                    return (
+                        base
+                        + proposal_context
+                        + "只重写 `ideation/proposal/research_proposal.md` 中缺失或过短的部分。它必须具有八个一级部分、"
+                        "正式 `H1` 标题，以及不少于 6000 个字符的连贯研究方案；补足机制、研究设计、验证、贡献、条件性现实含义、"
+                        "资源伦理风险、实施路线和证据边界，但不要重复粘贴其他 artifact。"
+                    )
+                if any(marker in error for marker in ("proposal_manifest.json", "section source", "section_source_map", "T4/T4.5 sources")):
+                    return (
+                        base
+                        + proposal_context
+                        + "只修复 `ideation/proposal/proposal_manifest.json`。使用实际存在的路径，令每个 `section_source_map` 条目"
+                        "非空并列入 `traceability.source_artifacts`，保留 selected Candidate、formal hypotheses、dossier、"
+                        "experiment plan、novelty audit、validation map 和 kill criteria。保持 `t5_handoff.role` 为 "
+                        "`planning_context_not_results`，并保留 required baselines、claim boundaries、kill criteria 和 unknown fields。"
+                    )
+                if "post_novelty_formalization.json" in error:
+                    return (
+                        base
+                        + proposal_context
+                        + "只修复 `ideation/post_novelty_formalization.json` 的 artifacts 路径清单，保留已有正式产物。"
+                        "它必须列出 hypotheses、research_dossier、exp_plan、contribution_hypothesis_map、validation_map、"
+                        "kill_criteria、research_proposal 和 proposal_manifest，不能改写审计 verdict。"
+                    )
+                return base + proposal_context + "根据上述具体校验原因修复唯一受影响的 T4.5 artifact。"
             if ctx.task_id == "T3.6-ASSEMBLE":
                 return (
                     base

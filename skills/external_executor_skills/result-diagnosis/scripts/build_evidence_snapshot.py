@@ -183,7 +183,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Pin and classify one iteration's run evidence.")
     parser.add_argument("--workspace")
     parser.add_argument("--iteration-id")
-    parser.add_argument("--output", default="external_executor/report/diagnosis_evidence_snapshot.json")
+    parser.add_argument("--output", default="external_executor/report/phase_E/diagnosis_evidence_snapshot.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     ext = ws / "external_executor"

@@ -119,9 +119,9 @@ def render_markdown(report: dict[str, Any]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build a source report for products under resources/.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/report/resource_source_report.json")
-    parser.add_argument("--markdown-output", default="external_executor/report/resource_source_report.md")
-    parser.add_argument("--report", default="external_executor/report/resource_preparation_report.json")
+    parser.add_argument("--output", default="external_executor/report/phase_B/resource_source_report.json")
+    parser.add_argument("--markdown-output", default="external_executor/report/phase_B/resource_source_report.md")
+    parser.add_argument("--report", default="external_executor/report/phase_B/resource_preparation_report.json")
     parser.add_argument("--write-back", action="store_true")
     args = parser.parse_args()
 

@@ -10,9 +10,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Compute the Phase C readiness gate from deterministic validations.")
     parser.add_argument("--workspace")
     parser.add_argument("--plan", default="external_executor/experiment_plan.json")
-    parser.add_argument("--plan-validation", default="external_executor/report/experiment_plan_validation.json")
-    parser.add_argument("--dag-validation", default="external_executor/report/experiment_plan_dag_validation.json")
-    parser.add_argument("--output", default="external_executor/report/experiment_design_gate.json")
+    parser.add_argument("--plan-validation", default="external_executor/report/phase_C/experiment_plan_validation.json")
+    parser.add_argument("--dag-validation", default="external_executor/report/phase_C/experiment_plan_dag_validation.json")
+    parser.add_argument("--output", default="external_executor/report/phase_C/experiment_design_gate.json")
     parser.add_argument("--write-back", action="store_true")
     args = parser.parse_args()
 

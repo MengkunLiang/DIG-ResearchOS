@@ -17,9 +17,9 @@ Confirm that the external executor understands one safe, executable research sco
 2. Treat the directory containing this file as `<skill-dir>`.
 3. Read `<workspace>/external_executor/AGENTS.md` and `<workspace>/external_executor/allowed_paths.txt` before any write.
 4. Write only:
-   - `external_executor/report/preflight_context.json`;
-   - `external_executor/report/context_source_inventory.json`;
-   - `external_executor/report/context_alignment_report.json`;
+   - `external_executor/report/phase_A/preflight_context.json`;
+   - `external_executor/report/phase_A/context_source_inventory.json`;
+   - `external_executor/report/phase_A/context_alignment_report.json`;
    - `result_pack.json#context_alignment` through the narrow apply script.
 
 Do not change handoff, Pre-T5 source artifacts, executor status, manifest, budgets, or another result-pack section. Return control to `research-execution` after the report is applied.
@@ -41,10 +41,10 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/preflight_context.py --workspace <workspace> \
-  --output external_executor/report/preflight_context.json
+  --output external_executor/report/phase_A/preflight_context.json
 
 python <skill-dir>/scripts/inventory_sources.py --workspace <workspace> \
-  --output external_executor/report/context_source_inventory.json
+  --output external_executor/report/phase_A/context_source_inventory.json
 ```
 
 If `external_executor/report/executor_capabilities.json` is absent and capability provenance relies on the T5 executor selection fallback, rerun inventory with `--include external_executor/report/executor_selection.json` before citing that source in the alignment report.
@@ -133,7 +133,7 @@ Absence of optional capability detail may be a warning. If `external_executor/re
 
 ## Produce the alignment report
 
-Create `external_executor/report/context_alignment_report.json` using `references/output-contract.md`.
+Create `external_executor/report/phase_A/context_alignment_report.json` using `references/output-contract.md`.
 
 The confirmed execution scope must contain:
 
@@ -164,10 +164,10 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/validate_alignment_report.py --workspace <workspace> \
-  --report external_executor/report/context_alignment_report.json
+  --report external_executor/report/phase_A/context_alignment_report.json
 
 python <skill-dir>/scripts/apply_alignment_report.py --workspace <workspace> \
-  --report external_executor/report/context_alignment_report.json
+  --report external_executor/report/phase_A/context_alignment_report.json
 ```
 
 The apply script updates only `result_pack.json#context_alignment`. If validation fails, fix the report; do not bypass the validator or edit unrelated result-pack sections.
@@ -180,7 +180,7 @@ Return a compact child result containing:
 child_skill=context-alignment
 status=complete|partial|blocked|failed
 alignment_status=pass|mismatch|blocked
-report=external_executor/report/context_alignment_report.json
+report=external_executor/report/phase_A/context_alignment_report.json
 evidence_refs=<paths>
 blocking_issues=<ids>
 recommended_next_action=continue_to_phase_b|continue_with_constraints|human_review|stop_and_report

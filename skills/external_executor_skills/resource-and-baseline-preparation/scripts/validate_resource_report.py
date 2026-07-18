@@ -199,7 +199,7 @@ def validate_data(data: dict[str, Any]) -> tuple[list[str], list[str]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate Phase B report structure and gate consistency.")
     parser.add_argument("--workspace")
-    parser.add_argument("--report", default="external_executor/report/resource_preparation_report.json")
+    parser.add_argument("--report", default="external_executor/report/phase_B/resource_preparation_report.json")
     args = parser.parse_args()
     workspace = resolve_workspace(args.workspace)
     path = resolve_in_workspace(workspace, args.report)

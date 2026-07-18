@@ -11,7 +11,7 @@
   "implementation_id": "",
   "iteration_id": "",
   "input_fingerprint": "",
-  "contract_ref": "external_executor/report/implementation_change_contract.json",
+  "contract_ref": "external_executor/report/phase_D/implementation_change_contract.json",
   "implementation_root": "external_executor/expr/implementation/...",
   "base_source": {},
   "approved_changes": {"status": "complete|partial|blocked|stale", "items": []},
@@ -168,7 +168,7 @@ status=complete|partial|blocked|failed
 implementation_gate=ready_for_review|needs_fix|blocked
 implementation_id=<id>
 iteration_id=<id>
-report=external_executor/report/implementation_report.json
+report=external_executor/report/phase_D/implementation_report.json
 implementation_root=<path>
 patch_bundle=<path>
 module_mapping=<path>

@@ -27,15 +27,15 @@ Prepare the minimum experiment loop without confusing resource availability with
 
 Write only:
 
-- `external_executor/report/resource_preflight.json`;
+- `external_executor/report/phase_B/resource_preflight.json`;
 - `external_executor/resource_requirement_matrix.json`;
-- `external_executor/report/resource_local_inventory.json`;
-- `external_executor/report/resource_search_records.json`;
-- `external_executor/report/resource_source_report.json`;
-- `external_executor/report/resource_source_report.md`;
-- `external_executor/report/resource_preparation_report.json`;
-- `external_executor/report/static_review.json`;
-- `external_executor/report/validation_report.json`;
+- `external_executor/report/phase_B/resource_local_inventory.json`;
+- `external_executor/report/phase_B/resource_search_records.json`;
+- `external_executor/report/phase_B/resource_source_report.json`;
+- `external_executor/report/phase_B/resource_source_report.md`;
+- `external_executor/report/phase_B/resource_preparation_report.json`;
+- `external_executor/report/phase_B/static_review.json`;
+- `external_executor/report/phase_B/validation_report.json`;
 - authorized resource material, remote acquisitions, and baseline reimplementations under `resources/`;
 - the Phase B result-pack sections listed in `references/output-contract.md`, through the narrow apply script.
 
@@ -47,7 +47,7 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/preflight_resources.py --workspace <workspace> \
-  --output external_executor/report/resource_preflight.json
+  --output external_executor/report/phase_B/resource_preflight.json
 ```
 
 The preflight must confirm:
@@ -100,14 +100,17 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/inventory_local_resources.py --workspace <workspace> \
-  --output external_executor/report/resource_local_inventory.json
+  --output external_executor/report/phase_B/resource_local_inventory.json
 ```
 
 Inspect in this order:
 
 ```text
 resources/                        # by-hand local project resources
+literature/resource_catalog.jsonl # paper-associated discovery leads, if present
 ```
+
+The literature catalog is not a resource root and does not make its entries usable. Use it to trace candidate identity back to a paper, prioritize official sources, and identify stated code/data/benchmark/supplement links. Before accepting any candidate, still verify public accessibility, license, fixed revision, security, task/dataset/split/metric compatibility, and protocol equivalence under this Phase B contract.
 
 Use `references/resource-review-checklist.md` to map candidates to requirements. Inspect provenance, fixed version, license, README, configuration, entry points, dependency manifests, dataset split, preprocessing, metric implementation, benchmark protocol, checkpoints, symlinks, submodules, and minimum-loop coverage. Do not execute third-party setup, download, shell, notebook, training, or evaluation code during inventory.
 
@@ -126,7 +129,7 @@ Initialize the durable report envelope after preflight, matrix creation, and loc
 
 ```bash
 python <skill-dir>/scripts/initialize_resource_report.py --workspace <workspace> \
-  --output external_executor/report/resource_preparation_report.json
+  --output external_executor/report/phase_B/resource_preparation_report.json
 ```
 
 The initializer preserves already reviewed child-owned sections by default. Use `--force` only when the root has invalidated the entire Phase B checkpoint.
@@ -151,7 +154,7 @@ Search these platform groups first, then broaden only if they cannot satisfy the
 - Dataset: Hugging Face, OpenML, Kaggle, UCI, Zenodo, Dataverse, DataCite.
 - Benchmark: OpenML, Hugging Face Leaderboards, Codabench, EvalAI, HELM, and relevant domain-specific platforms such as OGB, MTEB, or OpenCompass.
 
-Record every public source class checked, selected candidate, rejection, and remaining uncertainty in `external_executor/report/resource_search_records.json`.
+Record every public source class checked, selected candidate, rejection, and remaining uncertainty in `external_executor/report/phase_B/resource_search_records.json`.
 
 Prefer, in order:
 
@@ -177,7 +180,7 @@ Immediately perform static review:
 ```bash
 python <skill-dir>/scripts/static_review_repository.py --workspace <workspace> \
   --path <workspace>/resources/Remote_acquisition/<candidate-id> \
-  --output external_executor/report/static_review.json
+  --output external_executor/report/phase_B/static_review.json
 ```
 
 Treat static review as risk discovery, not proof of safety. Never run a fetched install script merely because the scan passed.
@@ -218,7 +221,7 @@ Validate the package before considering it a candidate:
 ```bash
 python <skill-dir>/scripts/validate_reimplementation_package.py --workspace <workspace> \
   --path <reimplementation-package> --mode candidate \
-  --output external_executor/report/validation_report.json
+  --output external_executor/report/phase_B/validation_report.json
 ```
 
 If the central mechanism or protocol cannot be recovered, mark the baseline unavailable rather than inventing missing details.
@@ -254,11 +257,11 @@ A baseline may be marked executable, or approved for `baseline_reproduction` / `
 
 ## Compute the readiness gate
 
-Assemble `external_executor/report/resource_preparation_report.json` using `references/output-contract.md`, then run:
+Assemble `external_executor/report/phase_B/resource_preparation_report.json` using `references/output-contract.md`, then run:
 
 ```bash
 python <skill-dir>/scripts/compute_resource_readiness.py --workspace <workspace> \
-  --report <workspace>/external_executor/report/resource_preparation_report.json \
+  --report <workspace>/external_executor/report/phase_B/resource_preparation_report.json \
   --write-back
 ```
 
@@ -266,8 +269,8 @@ Before final validation, build the source report for resource products under `re
 
 ```bash
 python <skill-dir>/scripts/build_resource_source_report.py --workspace <workspace> \
-  --output external_executor/report/resource_source_report.json \
-  --markdown-output external_executor/report/resource_source_report.md \
+  --output external_executor/report/phase_B/resource_source_report.json \
+  --markdown-output external_executor/report/phase_B/resource_source_report.md \
   --write-back
 ```
 
@@ -287,10 +290,10 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/validate_resource_report.py --workspace <workspace> \
-  --report external_executor/report/resource_preparation_report.json
+  --report external_executor/report/phase_B/resource_preparation_report.json
 
 python <skill-dir>/scripts/apply_resource_report.py --workspace <workspace> \
-  --report external_executor/report/resource_preparation_report.json
+  --report external_executor/report/phase_B/resource_preparation_report.json
 ```
 
 The apply script updates only:
@@ -315,7 +318,7 @@ Return a compact child result:
 child_skill=resource-and-baseline-preparation
 status=complete|partial|blocked|failed
 resource_readiness=ready|partial|blocked
-report=external_executor/report/resource_preparation_report.json
+report=external_executor/report/phase_B/resource_preparation_report.json
 matrix=external_executor/resource_requirement_matrix.json
 approved_requirement_ids=<ids>
 constrained_requirement_ids=<ids>

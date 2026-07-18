@@ -12,7 +12,7 @@
   "iteration_id": "",
   "protocol_fingerprint": "",
   "fairness_fingerprint": "",
-  "plan_ref": "external_executor/report/baseline_reproduction_plan.json",
+  "plan_ref": "external_executor/report/phase_D/baseline_reproduction_plan.json",
   "items": [],
   "repair_attempts": [],
   "failure_classifications": [],
@@ -107,7 +107,7 @@ It does not modify `experiment_runs`; later general experiment execution owns th
 }
 ```
 
-Artifact refs with `evidence_level=raw_result` must point to original baseline-run outputs under `external_executor/raw_results/baseline_reproduction/`, such as stdout/stderr logs, baseline-produced result files, and per-dataset/per-metric raw metric CSV files. Metric extraction must leave one CSV of raw metric values per dataset and metric under `external_executor/raw_results/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/raw_metrics/<dataset>/<metric>.csv`, and the normalized `external_executor/report/baseline_reproduction/.../metrics.json` must reference those CSV files. Run records, environment captures, normalized JSON reports, failure classifications, and evaluations are process/report artifacts under `external_executor/report/baseline_reproduction/`, not raw results. Deployment/source references point under `external_executor/expr/baselines/`; approved input resources remain under `resources/`. `external_executor/workdir/` is not an approved input resource root.
+Artifact refs with `evidence_level=raw_result` must point to original baseline-run outputs under `external_executor/raw_results/baseline_reproduction/`, such as stdout/stderr logs, baseline-produced result files, and per-dataset/per-metric raw metric CSV files. Metric extraction must leave one CSV of raw metric values per dataset and metric under `external_executor/raw_results/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/raw_metrics/<dataset>/<metric>.csv`, and the normalized `external_executor/report/phase_D/baseline_reproduction/.../metrics.json` must reference those CSV files. Run records, environment captures, normalized JSON reports, failure classifications, and evaluations are process/report artifacts under `external_executor/report/phase_D/baseline_reproduction/`, not raw results. Deployment/source references point under `external_executor/expr/baselines/`; approved input resources remain under `resources/`. `external_executor/workdir/` is not an approved input resource root.
 
 ## Child return
 
@@ -115,8 +115,8 @@ Artifact refs with `evidence_level=raw_result` must point to original baseline-r
 child_skill=baseline-reproduction
 status=complete|partial|blocked|failed
 reproduction_gate=pass|partial|blocked
-report=external_executor/report/baseline_reproduction_report.json
-plan=external_executor/report/baseline_reproduction_plan.json
+report=external_executor/report/phase_D/baseline_reproduction_report.json
+plan=external_executor/report/phase_D/baseline_reproduction_plan.json
 reproduced_baseline_ids=<ids>
 conditional_baseline_ids=<ids>
 blocking_baseline_ids=<ids>

@@ -377,10 +377,10 @@ def clear_owned_tables(table_dir: Path) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Normalize raw experimental results and build traceable comparison tables.")
     parser.add_argument("--workspace")
-    parser.add_argument("--snapshot", default="external_executor/report/final_evidence_snapshot.json")
+    parser.add_argument("--snapshot", default="external_executor/report/phase_F/final_evidence_snapshot.json")
     parser.add_argument("--raw-dir", default="external_executor/raw_results")
     parser.add_argument("--table-dir", default="external_executor/table")
-    parser.add_argument("--output", default="external_executor/report/result_table_build_report.json")
+    parser.add_argument("--output", default="external_executor/report/phase_F/result_table_build_report.json")
     args = parser.parse_args()
 
     workspace = resolve_workspace(args.workspace)

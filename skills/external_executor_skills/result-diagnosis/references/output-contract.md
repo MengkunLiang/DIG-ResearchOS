@@ -3,9 +3,9 @@
 ## Child-owned artifacts
 
 ```text
-external_executor/report/result_diagnosis_preflight.json
-external_executor/report/diagnosis_evidence_snapshot.json
-external_executor/report/diagnosis_statistics.json
+external_executor/report/phase_E/result_diagnosis_preflight.json
+external_executor/report/phase_E/diagnosis_evidence_snapshot.json
+external_executor/report/phase_E/diagnosis_statistics.json
 external_executor/result_diagnosis_report.json
 external_executor/result_diagnosis/**
 ```

@@ -37,7 +37,7 @@ def main() -> int:
     args = ap.parse_args()
     output = Path(args.output).resolve()
     workspace = find_workspace(output)
-    if not is_within(output, workspace / "external_executor" / "report"):
+    if not is_within(output, workspace / "external_executor" / "report" / "phase_D"):
         raise SystemExit("Reproduction evaluations must be written under external_executor/report")
     plan = load_json(Path(args.plan_fragment).resolve())
     run = load_json(Path(args.run_record).resolve())

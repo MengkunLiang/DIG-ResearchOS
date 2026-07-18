@@ -29,9 +29,14 @@ def ignore(_dir: str, names: list[str]) -> set[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Prepare isolated baseline reproduction attempt.")
     ap.add_argument("--workspace")
-    ap.add_argument("--plan", default="external_executor/report/baseline_reproduction_plan.json")
+    ap.add_argument("--plan", default="external_executor/report/phase_D/baseline_reproduction_plan.json")
     ap.add_argument("--reproduction-id", required=True)
     ap.add_argument("--attempt", type=int, required=True)
+    ap.add_argument(
+        "--from-attempt",
+        type=int,
+        help="Copy this earlier deployed attempt instead of restarting from the approved resource source.",
+    )
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
     ws = resolve_workspace(args.workspace)
@@ -41,20 +46,35 @@ def main() -> int:
         raise SystemExit("Unknown reproduction ID")
     if item.get("status") not in {"planned", "incomplete"}:
         raise SystemExit(f"Plan item status is not preparable: {item.get('status')}")
-    source = resolve_in_workspace(ws, item.get("source", {}).get("path", ""))
-    if not source.exists():
-        raise SystemExit(f"Source missing: {source}")
-    if not is_approved_resource_path(ws, source):
+    original_source = resolve_in_workspace(ws, item.get("source", {}).get("path", ""))
+    if not original_source.exists():
+        raise SystemExit(f"Source missing: {original_source}")
+    if not is_approved_resource_path(ws, original_source):
         raise SystemExit(
             "Baseline source must come from an approved resource root "
             "(resources/): "
-            f"{source}"
+            f"{original_source}"
         )
-    reject_symlinks(source)
     baseline_slug = slugify(item.get("baseline_id") or item.get("baseline_name"))
-    dest = ws / "external_executor" / "expr" / "baselines" / baseline_slug / args.reproduction_id / f"attempt-{args.attempt}"
+    deployment_root = ws / "external_executor" / "expr" / "baselines" / baseline_slug / args.reproduction_id
+    inherited_attempt = args.from_attempt
+    if inherited_attempt is None and args.attempt > 1 and (deployment_root / f"attempt-{args.attempt - 1}").is_dir():
+        inherited_attempt = args.attempt - 1
+    if inherited_attempt is not None:
+        if inherited_attempt < 1 or inherited_attempt >= args.attempt:
+            raise SystemExit("--from-attempt must identify an earlier positive attempt number")
+        parent_dir = deployment_root / f"attempt-{inherited_attempt}"
+        parent_provenance = parent_dir / "attempt_provenance.json"
+        source = parent_dir / "source"
+        if not source.is_dir() or not parent_provenance.is_file():
+            raise SystemExit(f"Inherited attempt is incomplete: {parent_dir}")
+    else:
+        parent_dir = None
+        source = original_source
+    reject_symlinks(parent_dir if parent_dir else source)
+    dest = deployment_root / f"attempt-{args.attempt}"
     result_dir = ws / "external_executor" / "raw_results" / "baseline_reproduction" / baseline_slug / args.reproduction_id / f"attempt-{args.attempt}"
-    evidence_dir = ws / "external_executor" / "report" / "baseline_reproduction" / baseline_slug / args.reproduction_id / f"attempt-{args.attempt}"
+    evidence_dir = ws / "external_executor" / "report" / "phase_D" / "baseline_reproduction" / baseline_slug / args.reproduction_id / f"attempt-{args.attempt}"
     assert_write_allowed(ws, dest)
     assert_write_allowed(ws, result_dir)
     assert_write_allowed(ws, evidence_dir)
@@ -73,29 +93,46 @@ def main() -> int:
     else:
         (dest / "source").mkdir(parents=True)
         shutil.copy2(source, dest / "source" / source.name)
-    (dest / "patches").mkdir()
-    (dest / "configs").mkdir()
+    if parent_dir:
+        for name in ("patches", "configs"):
+            inherited = parent_dir / name
+            if inherited.is_dir():
+                shutil.copytree(inherited, dest / name, symlinks=False, ignore=ignore)
+            else:
+                (dest / name).mkdir()
+    else:
+        (dest / "patches").mkdir()
+        (dest / "configs").mkdir()
     (result_dir / "outputs").mkdir(parents=True)
     evidence_dir.mkdir(parents=True)
     config_records = []
-    for config_value in item.get("config", {}).get("paths", []):
-        config = resolve_in_workspace(ws, config_value)
-        if not config.exists() or not config.is_file():
-            config_records.append({"source": config_value, "status": "missing"})
-            continue
-        target = dest / "configs" / config.name
-        shutil.copy2(config, target)
-        config_records.append({"source": relpath(ws, config), "staged": target.relative_to(dest).as_posix(), "status": "copied"})
+    if parent_dir:
+        for config in sorted((parent_dir / "configs").rglob("*")):
+            if config.is_file():
+                target = dest / "configs" / config.relative_to(parent_dir / "configs")
+                config_records.append({"source": relpath(ws, config), "staged": target.relative_to(dest).as_posix(), "status": "inherited"})
+    else:
+        for config_value in item.get("config", {}).get("paths", []):
+            config = resolve_in_workspace(ws, config_value)
+            if not config.exists() or not config.is_file():
+                config_records.append({"source": config_value, "status": "missing"})
+                continue
+            target = dest / "configs" / config.name
+            shutil.copy2(config, target)
+            config_records.append({"source": relpath(ws, config), "staged": target.relative_to(dest).as_posix(), "status": "copied"})
     fragment = dict(item)
     fragment["attempt"] = args.attempt
     fragment["attempt_dir"] = relpath(ws, dest)
     fragment["deployment_dir"] = relpath(ws, dest)
     fragment["result_dir"] = relpath(ws, result_dir)
     fragment["evidence_dir"] = relpath(ws, evidence_dir)
+    fragment["prepared_from"] = relpath(ws, source)
+    fragment["parent_attempt"] = inherited_attempt
     fragment["prepared_at"] = utc_now()
     dump_json_atomic(dest / "plan_fragment.json", fragment)
     source_manifest = tree_manifest(dest / "source")
     config_manifest = tree_manifest(dest / "configs")
+    patch_manifest = tree_manifest(dest / "patches")
     provenance = {
         "schema_version": "baseline_attempt_preparation.v1",
         "prepared_at": utc_now(),
@@ -103,15 +140,21 @@ def main() -> int:
         "baseline_id": item.get("baseline_id"),
         "candidate_id": item.get("candidate_id"),
         "attempt": args.attempt,
-        "original_source_path": item.get("source", {}).get("path"),
+        "original_source_path": relpath(ws, original_source),
+        "prepared_from_path": relpath(ws, source),
+        "parent_attempt": inherited_attempt,
+        "parent_attempt_path": relpath(ws, parent_dir) if parent_dir else None,
         "attempt_path": relpath(ws, dest),
         "deployment_path": relpath(ws, dest),
         "result_path": relpath(ws, result_dir),
         "evidence_path": relpath(ws, evidence_dir),
         "source_manifest_sha256": source_manifest["manifest_sha256"],
         "config_manifest_sha256": config_manifest["manifest_sha256"],
+        "patch_manifest_sha256": patch_manifest["manifest_sha256"],
         "config_records": config_records,
         "original_mutated": False,
+        "prior_attempt_mutated": False,
+        "inherits_deployed_repairs": inherited_attempt is not None,
         "excluded_names": sorted(SKIP),
     }
     dump_json_atomic(dest / "attempt_provenance.json", provenance)

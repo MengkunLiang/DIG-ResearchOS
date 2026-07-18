@@ -34,6 +34,7 @@ from rich.text import Text
 from .agents.registry import AGENT_REGISTRY
 from .cli_runners import CompletePipelineRunner, SingleTaskRunner
 from .orchestration.task_aliases import resolve_public_stage_alias
+from .orchestration.t5_t8_bridge import accept_and_ingest_t5_handoff, prepare_t8_state
 from .orchestration.task_io_contract import get_task_io, task_import_paths, task_io_contract_source
 from .orchestration.state_machine import StateMachine
 from .pydantic_compat import model_dump
@@ -1641,6 +1642,67 @@ async def run_command(args: argparse.Namespace) -> int:
         return await runner.run(project_id=args.project_id, resume=getattr(args, "resume", False))
     finally:
         await prepared.aclose()
+
+
+async def run_t8_command(args: argparse.Namespace) -> int:
+    """Accept a modern T5 handoff and continue the existing workspace through T8."""
+
+    runtime_settings = load_runtime_settings(system_config_path("runtime.yaml"))
+    runtime_settings = _runtime_settings_for_args(runtime_settings, args)
+    workspace_dir = Path(args.workspace).resolve()
+    ensure_workspace_layout(workspace_dir, runtime_settings)
+    _configure_workspace_logging(args, workspace_dir, runtime_settings)
+    state_machine = StateMachine(
+        Path(args.state_machine).resolve(),
+        Path(args.gates).resolve() if args.gates else None,
+    )
+    definition_errors = state_machine.validate_definition()
+    if definition_errors:
+        _render_state_machine_definition_error(args, state_machine, definition_errors)
+        return 2
+
+    try:
+        receipt = accept_and_ingest_t5_handoff(
+            workspace_dir,
+            allow_partial=not bool(getattr(args, "require_ready", False)),
+        )
+    except Exception as exc:
+        print(f"T5-to-T8 handoff ingestion failed: {exc}", file=sys.stderr)
+        return 2
+    if not receipt.get("ok"):
+        print("T5-to-T8 handoff rejected:", file=sys.stderr)
+        for issue in receipt.get("errors", []) or []:
+            if isinstance(issue, dict):
+                print(
+                    f"- {issue.get('code')}: {issue.get('path')} - {issue.get('message')}",
+                    file=sys.stderr,
+                )
+        return 3
+
+    print(
+        "[T5→T8] 已接收 external_executor/executor_research_report.md，"
+        f"导入 {receipt.get('metric_count', 0)} 条指标和 "
+        f"{receipt.get('claim_mapping_count', 0)} 条初步 claim 映射。",
+        flush=True,
+    )
+    if bool(getattr(args, "validate_only", False)):
+        print("[T5→T8] 校验与结构化导入完成；--validate-only 未启动 T8。", flush=True)
+        return 0
+
+    state_result = prepare_t8_state(workspace_dir, receipt)
+    if not state_result.get("should_run"):
+        print(
+            f"[T5→T8] 无需重新启动：{state_result.get('action')} "
+            f"({state_result.get('current_task')}, {state_result.get('status')})",
+            flush=True,
+        )
+        return 0
+    print(
+        f"[T5→T8] 状态已准备为 {state_result.get('current_task')}；现在委托现有完整 pipeline runner。",
+        flush=True,
+    )
+    args.resume = True
+    return await run_command(args)
 
 
 async def run_smoke_command(args: argparse.Namespace) -> int:
@@ -3871,6 +3933,24 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser.add_argument("--startup-selftest", action="store_true")
     resume_parser.add_argument("--skip-startup-selftest", action="store_true")
 
+    run_t8_parser = subparsers.add_parser(
+        "run-t8",
+        help="接收现代 T5 外部执行 handoff，并在同一 workspace 中直接运行完整 T8",
+    )
+    _add_shared_cli_options(run_t8_parser, runtime_settings, use_defaults=False)
+    run_t8_parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="只校验并生成 T8 结构化输入，不改变 state.yaml 或启动 Writer",
+    )
+    run_t8_parser.add_argument(
+        "--require-ready",
+        action="store_true",
+        help="只接受 writer_handoff_validation.status=ready；默认也接受带明确约束的 partial",
+    )
+    run_t8_parser.add_argument("--startup-selftest", action="store_true")
+    run_t8_parser.add_argument("--skip-startup-selftest", action="store_true")
+
     run_task_parser = subparsers.add_parser("run-task", help="只运行一个 task")
     _add_shared_cli_options(run_task_parser, runtime_settings, use_defaults=False)
     run_task_parser.add_argument("task_id")
@@ -4025,6 +4105,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _run_task_requests_full_t8(args: argparse.Namespace) -> bool:
+    """Treat only the public `run-task T8` form as the complete T5-to-T8 bridge."""
+
+    return args.command == "run-task" and str(getattr(args, "task_id", "") or "").strip().upper() == "T8"
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI 主入口。"""
 
@@ -4058,7 +4144,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "resume":
         args.resume = True
         return _run_async_cli_command(args, run_command(args))
+    if args.command == "run-t8":
+        return _run_async_cli_command(args, run_t8_command(args))
     if args.command == "run-task":
+        if _run_task_requests_full_t8(args):
+            return _run_async_cli_command(args, run_t8_command(args))
         return _run_async_cli_command(args, run_task_command(args))
     if args.command == "run-skill":
         return _run_async_cli_command(args, run_skill_command(args))

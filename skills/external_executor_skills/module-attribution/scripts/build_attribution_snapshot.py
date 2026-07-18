@@ -155,7 +155,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Pin module attribution evidence snapshot.")
     parser.add_argument("--workspace")
     parser.add_argument("--iteration-id", required=True)
-    parser.add_argument("--output", default="external_executor/report/module_attribution_snapshot.json")
+    parser.add_argument("--output", default="external_executor/report/phase_E/module_attribution_snapshot.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     ext = ws / "external_executor"

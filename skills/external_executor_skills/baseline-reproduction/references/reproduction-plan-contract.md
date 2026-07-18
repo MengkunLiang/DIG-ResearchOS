@@ -136,7 +136,7 @@ external_executor/expr/baselines/<baseline-id>/<reproduction-id>/attempt-<N>/sou
 Run records, environment records, normalized metrics, failure classifications, evaluations, and other process reports must be written under the paired evidence directory:
 
 ```text
-external_executor/report/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/
+external_executor/report/phase_D/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/
 ```
 
 Baseline stdout/stderr logs, declared baseline-produced outputs, per-dataset/per-metric raw metric CSV files, and other original experiment outputs must be written under the paired raw-result directory:
@@ -150,3 +150,5 @@ Metric extraction writes normalized `metrics.json` in the evidence directory and
 ```text
 external_executor/raw_results/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/raw_metrics/<dataset>/<metric>.csv
 ```
+
+Attempt 1 is copied from the approved `resources/` source. A later attempt copies the immediately preceding deployed attempt's source, configs, and patches by default and records `parent_attempt`, `parent_attempt_path`, and `prepared_from_path` in provenance. This carries authorized debug repairs forward while keeping every earlier attempt immutable.

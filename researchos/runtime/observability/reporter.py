@@ -219,6 +219,19 @@ class StageReporter:
             }
         if not ok:
             disposition = _tool_disposition(ok=ok, data=payload, error=error)
+            if disposition in {"AUTO_REPAIR", "AUTO_FALLBACK"}:
+                self._event(
+                    "repair_in_progress" if disposition == "AUTO_REPAIR" else "fallback_applied",
+                    task_id=task_id,
+                    run_id=run_id,
+                    severity="info",
+                    payload={
+                        "tool": tool_name,
+                        "repair_scope": payload.get("repair_scope") if disposition == "AUTO_REPAIR" else payload.get("fallback_action"),
+                        "path": payload.get("path"),
+                    },
+                )
+                return False
             self._event(
                 "warning_emitted",
                 task_id=task_id,
@@ -326,21 +339,41 @@ class StageReporter:
         if self.verbosity != "detailed" and ok and tool_name in {"read_file", "list_files", "glob_files", "grep_search"}:
             return
         status = _tool_disposition(ok=ok, data=data, error=None)
+        if status in {"SKIPPED", "AUTO_REPAIR", "AUTO_FALLBACK", "DEGRADED"} and self.verbosity != "detailed":
+            return
         style = _tool_style(tool_name, ok=ok, disposition=status)
         text = _compact_cli_text(summary, 220)
         status_label = {
             "DONE": "已完成",
             "SKIPPED": "已跳过",
+            "AUTO_REPAIR": "正在自动修补",
+            "AUTO_FALLBACK": "已自动降级",
             "DEGRADED": "已降级继续",
             "FAILED": "未完成",
         }.get(status, status)
         segments = [
-            ("✓ " if status == "DONE" else "! ", f"bold {style}"),
+            (
+                "✓ "
+                if status == "DONE"
+                else ("· " if status == "SKIPPED" else ("◐ " if status in {"AUTO_REPAIR", "AUTO_FALLBACK", "DEGRADED"} else "! ")),
+                f"bold {style}",
+            ),
             (_tool_label(tool_name), "bold"),
             (f" · {status_label}", f"bold {style}"),
         ]
         if text:
-            segments.append((f" · {text}", "dim" if status == "DONE" else ("yellow" if status in {"SKIPPED", "DEGRADED"} else "red")))
+            segments.append(
+                (
+                    f" · {text}",
+                    "dim"
+                    if status == "DONE"
+                    else (
+                        "cyan"
+                        if status in {"AUTO_REPAIR", "AUTO_FALLBACK"}
+                        else ("yellow" if status in {"SKIPPED", "DEGRADED"} else "red")
+                    ),
+                )
+            )
         if output_path:
             segments.append((f" · 文件：{_compact_cli_text(output_path, 120)}", "dim"))
         self._render(Text.assemble(*segments))
@@ -454,9 +487,7 @@ class StageReporter:
             visible_insights = insights if self.detailed else insights[:1]
             for insight in visible_insights:
                 renderables.append(self._insight_panel(insight))
-        if task_id == "T2" and run and run.source_health and (
-            self.detailed or any(item.get("disposition") == "DEGRADED" for item in run.source_health.values())
-        ):
+        if task_id == "T2" and run and run.source_health and self.detailed:
             rows = []
             for item in sorted(run.source_health.values(), key=lambda row: str(row.get("source") or "")):
                 detail = str(item.get("disposition") or "unknown")
@@ -1120,6 +1151,12 @@ def _tool_disposition(*, ok: bool, data: dict[str, Any] | None, error: str | Non
         return "DONE"
     if payload.get("optional_input") is True or str(payload.get("display_disposition") or "").casefold() == "skipped":
         return "SKIPPED"
+    if str(payload.get("display_disposition") or "").casefold() in {"auto_repair", "repairing"} and payload.get("repairable", True):
+        return "AUTO_REPAIR"
+    if str(payload.get("display_disposition") or "").casefold() in {"auto_fallback", "fallback"} and payload.get("fallback_available", True):
+        return "AUTO_FALLBACK"
+    if failure in {"note_incomplete", "schema_validation_failed"}:
+        return "AUTO_REPAIR"
     if failure in {"rate_limited", "network_unavailable", "timeout", "http_5xx", "transient_http"} and payload.get("fallback_available", True):
         return "DEGRADED"
     return "FAILED"
@@ -1132,6 +1169,10 @@ def _tool_style(tool_name: str, ok: bool | None, disposition: str | None = None)
         return "green"
     if disposition in {"SKIPPED", "DEGRADED"}:
         return "yellow"
+    if disposition == "AUTO_REPAIR":
+        return "cyan"
+    if disposition == "AUTO_FALLBACK":
+        return "cyan"
     if ok is False:
         return "bright_red"
     normalized = str(tool_name or "").casefold()

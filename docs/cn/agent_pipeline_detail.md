@@ -213,7 +213,7 @@ researchos run \
 
 这会按 `T2` 输入契约复制 `project.yaml`、`user_seeds/seed_papers.jsonl`、`user_seeds/pdfs/`、seed 约束/想法/外部资源和 `literature/bridge_domain_plan.json`，然后初始化 `state.yaml` 为 `current_task: T2`。旧的 T2 输出如 `papers_raw.jsonl`、`papers_verified.jsonl`、`deep_read_queue.jsonl` 不会被复制。
 
-新写作链的推荐调试入口是 `T8-STYLE-GATE`；如果已经有合法 `drafts/writing_style.json`，也可以直接跑 `T8-RESOURCE`。`researchos run-task T8 --workspace ...` 仍会被视为 `T8-STYLE-GATE`，因此不能绕过风格确认。真实的下游节点名不再作为别名处理：当声明输入通过校验后，`researchos run-task T8-WRITE --workspace ...` 是缺失或中断的 outline/storyline 的定向恢复入口，不会再跳回风格 Gate。
+标准 T5 到 T8 入口是 `researchos run-task T8 --workspace ...`。它会接收并导入现代外部 handoff，然后从必需的写作风格 Gate 开始委托完整 T8 链。隔离调试时使用具体节点 `T8-STYLE-GATE`；如果已经有合法 `drafts/writing_style.json`，也可以直接运行 `T8-RESOURCE`。其他具体下游节点继续保持单任务语义，例如 `researchos run-task T8-WRITE --workspace ...` 只用于定向恢复缺失或中断的 outline/storyline。
 
 ### 3.5 两者到底差在哪
 
@@ -2868,12 +2868,13 @@ T6 不应该从零重跑一次 T4.5，这个逻辑现在已经明确分开了。
 
 ## 6.12 已移除的 T7/T7.5 节点与当前 T5 到 T8 交接
 
-T7 结果摄取、完整性审计、实验后 novelty 复核、result-to-claim mapping，以及 T7.5 PI 决策节点，已经从当前主状态机中移除。外部执行器在 Evidence Packaging 后通过最后一个 `writer-handoff` 子 Skill 形成核心研究报告并执行最终 handoff 核验；总控 Skill 只负责调度和记录结果。当前主链是：
+T7 结果摄取、完整性审计、实验后 novelty 复核以及 T7.5 PI 决策节点，已经从当前主状态机中移除。外部执行器在 Evidence Packaging 后通过最后一个 `writer-handoff` 子 Skill 形成核心研究报告并执行外部最终 handoff 核验；总控 Skill 记录结果后路由到 `launch-t8`，并在同一外部执行器会话中调用专用 ResearchOS 桥接命令。当前主链是：
 
 ```text
 T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-EXECUTOR-GATE
  -> mock_dry_run: T5-DRY-RUN
  -> external: T5-EXTERNAL-WAIT
+ -> root launch-t8: python -m researchos.cli run-task T8 --workspace <workspace>
  -> T8-STYLE-GATE -> T8-RESOURCE
 ```
 
@@ -2885,9 +2886,11 @@ T5 到 T8 唯一必需的证据接口是：
 external_executor/executor_research_report.md
 ```
 
-`external_executor/` 下的其他文件，包括 `result_pack.json`、`executor_status.json`、`report/run_manifest.json`、`raw_results/`、`configs/`、`logs/` 和 `expr/`，仍作为可追溯上下文供 T8 按需读取，但不能替代核心报告。当前 T5 gate 只定义这个接口并通过下游前置检查验证其存在，不在 ResearchOS 内部合成该报告。报告缺失或为空时，`T8-RESOURCE` 会被 task contract / prerequisite check 阻塞。
+`external_executor/` 下的其他文件，包括 `result_pack.json`、`executor_status.json`、全局 `report/run_manifest.json`、`report/phase_F/writer_handoff_facts.json`、`raw_results/`、`evidence_package/`、`figure/`、`table/` 和 `expr/`，仍作为可追溯副输入。外部过程文件按所有权放入 `report/phase_A/` 至 `phase_F/`；manifest 是唯一保留在 report 根目录的跨 Phase 外部文件。这些副输入不能替代核心报告。`run-task T8` 会独立检查现代 schema、终态一致性、Writer Handoff 指纹、核心文件 hash，以及全部最终 figure/table 的 manifest 登记与 checksum；随后生成 ResearchOS 所有的 `drafts/t5_t8_handoff.json`、`drafts/experiment_evidence_pack.json` 和 `drafts/result_to_claim.json`，再进入或恢复 `T8-STYLE-GATE`。handoff 被拒绝时不会修改 `state.yaml`。
 
-原 T7 的 handoff 检查由最后一个 `writer-handoff` 子 Skill 实现。Evidence Packaging 完成后，该子 Skill 根据冻结的 result pack 和 manifest 形成 `executor_research_report.md`，并核验 executor status、result pack、run manifest、报告正文以及全部最终 figure/table。外部执行器总控 Skill 只记录 child 结果，不再运行重复的最终验证器；二者都不写 manuscript artifact，也不批准论文 Claim。
+外部最终检查由最后一个 `writer-handoff` 子 Skill 实现。Evidence Packaging 完成后，该子 Skill 根据冻结的 result pack 和 manifest 形成 `executor_research_report.md`，并核验 executor status、result pack、run manifest、报告正文以及全部最终 figure/table。总控不会重写这些文件或重复 child validator，而是调用 `run-task T8`，由 ResearchOS 在阶段边界执行独立接收。外部子 Skill 不写 manuscript artifact；只有 ResearchOS T8 子进程写入 `drafts/` 并完成最终论文 Claim 判定。
+
+外部执行器的 13 个 Skill 包括 `research-execution` 总控及其串行分派的 12 个子 Skill。Baseline 的部署版本位于 `external_executor/expr/baselines/<baseline-id>/<reproduction-id>/attempt-<N>/`；后续 attempt 复制上一部署版本的 source、configs 和 patches，从而继承合规 debug，同时保留旧 attempt。Our method 的每次实现位于 `external_executor/expr/implementation/<iteration-id>/<implementation-id>/worktree/`，诊断要求修改时，新 iteration 必须复制上一 worktree，旧版本不得原地修改。运行产生的 CSV、JSON、日志、checkpoint 或模型输出统一保存在 `external_executor/raw_results/`。每个 completed、failed、cancelled 或 unusable run 都必须先进入 `result-diagnosis`；目标达成、固定 10 次 method iteration 上限、预算耗尽或授权/安全阻塞会终止优化循环。Evidence Packaging 从冻结且登记在 manifest 的原始证据生成 `figure/` 下的框架图和结果图，以及 `table/` 下的主比较、消融和其他实验表；最终 `writer-handoff` 再生成并核验 `executor_research_report.md`。
 
 ### Legacy 命令行为
 

@@ -3,19 +3,19 @@
 ## Standalone artifacts
 
 ```text
-external_executor/report/method_refinement_preflight.json
-external_executor/report/method_intent_contract.json
+external_executor/report/phase_D/method_refinement_preflight.json
+external_executor/report/phase_D/method_intent_contract.json
 external_executor/method_implementation_spec.json
 external_executor/method_specs/method-spec-vNNN-<fingerprint>.json
-external_executor/report/method_spec_fingerprint.json
-external_executor/report/method_delta.json
-external_executor/report/method_scope_assessment.json
-external_executor/report/scope_change_request.json        # only when major scope drift is detected
-external_executor/report/method_implementation_spec_validation.json
-external_executor/report/method_refinement_review.json
-external_executor/report/method_implementation_brief.md
-external_executor/report/method_refinement_report.json
-external_executor/report/method_refinement_report_validation.json
+external_executor/report/phase_D/method_spec_fingerprint.json
+external_executor/report/phase_D/method_delta.json
+external_executor/report/phase_D/method_scope_assessment.json
+external_executor/report/phase_D/scope_change_request.json        # only when major scope drift is detected
+external_executor/report/phase_D/method_implementation_spec_validation.json
+external_executor/report/phase_D/method_refinement_review.json
+external_executor/report/phase_D/method_implementation_brief.md
+external_executor/report/phase_D/method_refinement_report.json
+external_executor/report/phase_D/method_refinement_report_validation.json
 ```
 
 ## Narrow result-pack ownership

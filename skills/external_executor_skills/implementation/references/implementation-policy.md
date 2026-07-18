@@ -24,9 +24,9 @@ A missing prerequisite is not an invitation to infer one.
 The skill owns one versioned implementation package and these child artifacts:
 
 ```text
-external_executor/report/implementation_preflight.json
-external_executor/report/implementation_change_contract.json
-external_executor/report/implementation_report.json
+external_executor/report/phase_D/implementation_preflight.json
+external_executor/report/phase_D/implementation_change_contract.json
+external_executor/report/phase_D/implementation_report.json
 external_executor/expr/implementation/**
 result_pack.implementations
 ```

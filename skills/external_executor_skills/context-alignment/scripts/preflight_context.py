@@ -141,7 +141,7 @@ def add(report: dict[str, Any], level: str, code: str, message: str, path: str |
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", required=True)
-    parser.add_argument("--output", default="external_executor/report/preflight_context.json")
+    parser.add_argument("--output", default="external_executor/report/phase_A/preflight_context.json")
     args = parser.parse_args()
 
     root = workspace_root(args.workspace)

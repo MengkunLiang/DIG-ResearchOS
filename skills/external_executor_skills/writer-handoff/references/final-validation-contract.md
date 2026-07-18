@@ -26,4 +26,4 @@ Recursively inspect `external_executor/figure/`. Every final file is nonempty, u
 
 Apply the same rules recursively to `external_executor/table/`. Final tables are authoritative numeric presentation sources, not substitutes for linked raw results.
 
-The final validation report itself remains under `external_executor/report/`. Do not move this responsibility back to the root skill or satisfy it by checking file existence alone.
+The final validation report itself remains under `external_executor/report/phase_F/`. Do not move this responsibility back to the root skill or satisfy it by checking file existence alone.

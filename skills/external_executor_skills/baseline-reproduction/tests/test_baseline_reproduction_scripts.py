@@ -126,7 +126,7 @@ class BaselineReproductionTests(unittest.TestCase):
         run("build_reproduction_plan.py", "--workspace", str(ws))
         run("initialize_reproduction_report.py", "--workspace", str(ws))
 
-        plan = json.loads((ws / "external_executor/report/baseline_reproduction_plan.json").read_text())
+        plan = json.loads((ws / "external_executor/report/phase_D/baseline_reproduction_plan.json").read_text())
         reproduction_id = plan["items"][0]["reproduction_id"]
         run(
             "prepare_attempt.py",
@@ -217,7 +217,7 @@ class BaselineReproductionTests(unittest.TestCase):
         self.assertEqual(evaluation["technical_outcome"], "reproduced_within_tolerance")
         self.assertEqual(evaluation["comparability_status"], "formal_review_candidate")
 
-        report_path = ws / "external_executor/report/baseline_reproduction_report.json"
+        report_path = ws / "external_executor/report/phase_D/baseline_reproduction_report.json"
         report = json.loads(report_path.read_text())
         run_record = json.loads((evidence_dir / "run_record.json").read_text())
         item = report["items"][0]
@@ -264,7 +264,7 @@ class BaselineReproductionTests(unittest.TestCase):
     def test_failure_classifier(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="fail-class-test-"))
         (root / "project.yaml").write_text("project_id: fail\n", encoding="utf-8")
-        report = root / "external_executor" / "report" / "baseline_reproduction" / "case"
+        report = root / "external_executor" / "report" / "phase_D" / "baseline_reproduction" / "case"
         report.mkdir(parents=True)
         (report / "run.json").write_text(
             json.dumps(
@@ -302,6 +302,36 @@ class BaselineReproductionTests(unittest.TestCase):
         module = load_prepare_module()
         with self.assertRaises(ValueError):
             module.reject_symlinks(root)
+
+    def test_next_attempt_inherits_deployed_debug_repairs(self) -> None:
+        ws = self.make_workspace()
+        run("preflight_reproduction.py", "--workspace", str(ws))
+        run("build_reproduction_plan.py", "--workspace", str(ws))
+        plan = json.loads((ws / "external_executor/report/phase_D/baseline_reproduction_plan.json").read_text())
+        reproduction_id = plan["items"][0]["reproduction_id"]
+
+        run(
+            "prepare_attempt.py", "--workspace", str(ws),
+            "--reproduction-id", reproduction_id, "--attempt", "1",
+        )
+        attempt_1 = next((ws / "external_executor/expr/baselines").glob(f"*/{reproduction_id}/attempt-1"))
+        repaired = attempt_1 / "source/train.py"
+        repaired.write_text(repaired.read_text(encoding="utf-8") + "# compatibility repair\n", encoding="utf-8")
+        (attempt_1 / "configs/runtime.json").write_text('{"device": "cpu"}\n', encoding="utf-8")
+        (attempt_1 / "patches/compatibility.patch").write_text("compatibility repair\n", encoding="utf-8")
+
+        run(
+            "prepare_attempt.py", "--workspace", str(ws),
+            "--reproduction-id", reproduction_id, "--attempt", "2",
+        )
+        attempt_2 = attempt_1.parent / "attempt-2"
+        self.assertIn("# compatibility repair", (attempt_2 / "source/train.py").read_text(encoding="utf-8"))
+        self.assertEqual((attempt_2 / "configs/runtime.json").read_text(encoding="utf-8"), '{"device": "cpu"}\n')
+        self.assertEqual((attempt_2 / "patches/compatibility.patch").read_text(encoding="utf-8"), "compatibility repair\n")
+        provenance = json.loads((attempt_2 / "attempt_provenance.json").read_text())
+        self.assertEqual(provenance["parent_attempt"], 1)
+        self.assertTrue(provenance["inherits_deployed_repairs"])
+        self.assertEqual(provenance["prepared_from_path"], str((attempt_1 / "source").relative_to(ws)))
 
 
 if __name__ == "__main__":

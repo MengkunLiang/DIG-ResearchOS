@@ -223,6 +223,7 @@
             "risks",
             "novelty_audit",
             "research_dossier",
+            "research_proposal",
             "validation_map",
             "contribution_hypothesis_map",
             "paper_note",
@@ -555,6 +556,9 @@
         "research_context": {
           "$ref": "#/$defs/research_context"
         },
+        "resource_discovery_context": {
+          "$ref": "#/$defs/resource_discovery_context"
+        },
         "study_scope": {
           "$ref": "#/$defs/study_scope"
         },
@@ -613,6 +617,7 @@
         "stakeholders_or_processes",
         "contribution_intent",
         "evidence_status",
+        "proposal_context",
         "source_refs"
       ],
       "properties": {
@@ -637,9 +642,50 @@
         "evidence_status": {
           "enum": ["source_supported", "proposed_not_verified", "unknown"]
         },
+        "proposal_context": {
+          "$ref": "#/$defs/proposal_context"
+        },
         "source_refs": {
           "$ref": "#/$defs/source_refs"
         }
+      }
+    },
+    "proposal_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "manifest_path", "source_type", "planning_status", "summary", "t5_role", "source_refs"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relative_path"},
+        "manifest_path": {"type": "string"},
+        "source_type": {"enum": ["formal_proposal", "legacy_formalization_fallback"]},
+        "planning_status": {"enum": ["formalized_after_novelty_pass", "legacy_fallback"]},
+        "summary": {"$ref": "#/$defs/non_empty_string"},
+        "t5_role": {"const": "planning_context_not_results"},
+        "source_refs": {"$ref": "#/$defs/source_refs"}
+      }
+    },
+    "resource_discovery_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "catalog_path",
+        "summary_path",
+        "record_count",
+        "paper_count",
+        "by_resource_type",
+        "t5_role",
+        "evidence_boundary",
+        "source_refs"
+      ],
+      "properties": {
+        "catalog_path": {"$ref": "#/$defs/relative_path"},
+        "summary_path": {"$ref": "#/$defs/relative_path"},
+        "record_count": {"type": "integer", "minimum": 0},
+        "paper_count": {"type": "integer", "minimum": 0},
+        "by_resource_type": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "t5_role": {"const": "discovery_context_for_phase_b_not_execution_evidence"},
+        "evidence_boundary": {"$ref": "#/$defs/non_empty_string"},
+        "source_refs": {"$ref": "#/$defs/source_refs"}
       }
     },
     "method_module": {
@@ -1389,7 +1435,7 @@
           "type": "array",
           "minItems": 1,
           "items": {
-            "enum": ["method_intent", "research_context", "initial_framework_figure_sketch", "unaudited_raw_results", "diagnostic_hint", "unsupported_claim"]
+            "enum": ["method_intent", "research_context", "research_proposal", "initial_framework_figure_sketch", "unaudited_raw_results", "diagnostic_hint", "unsupported_claim"]
           },
           "uniqueItems": true
         }

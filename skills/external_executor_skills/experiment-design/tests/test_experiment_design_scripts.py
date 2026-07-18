@@ -77,7 +77,7 @@ def make_workspace() -> Path:
             "metric_direction": "higher_is_better",
             "aggregation": "mean_over_seeds",
             "seed_policy": {"seeds": [1, 2, 3], "seed_count": 3, "repeats": 1},
-            "evaluation_script": "external_executor/workdir/eval.py",
+            "evaluation_script": "external_executor/expr/evaluation/eval.py",
             "statistics": {"uncertainty_strategy": "standard_deviation"},
             "hyperparameter_search_policy": "fixed_published_config",
             "hyperparameter_fairness_rule": "same tuning opportunity",
@@ -95,12 +95,12 @@ def make_workspace() -> Path:
             "candidate_id": "BASE-A",
             "baseline_id": "BASE-A",
             "name": "Baseline A",
-            "path": "external_executor/workdir/resources/baseline-a",
+            "path": "resources/baseline-a",
             "required": True,
             "approximation_level": "none",
         }]},
         "dataset_inventory": {"status": "complete", "items": [{
-            "dataset_id": "DATA-1", "path": "external_executor/workdir/resources/data"
+            "dataset_id": "DATA-1", "path": "resources/data"
         }]},
         "material_gaps": {"status": "complete", "items": []},
         "resource_risks": {"status": "complete", "items": []},
@@ -136,13 +136,13 @@ class ExperimentDesignScriptTests(unittest.TestCase):
 
     def test_end_to_end_plan_gate_and_narrow_apply(self) -> None:
         ws = self.clone_workspace()
-        preflight = json.loads((ws / "external_executor/report/experiment_design_preflight.json").read_text())
+        preflight = json.loads((ws / "external_executor/report/phase_C/experiment_design_preflight.json").read_text())
         self.assertEqual(preflight["status"], "pass")
-        claims = json.loads((ws / "external_executor/report/claim_evidence_matrix.json").read_text())
+        claims = json.loads((ws / "external_executor/report/phase_C/claim_evidence_matrix.json").read_text())
         self.assertEqual(claims["required_claim_ids"], ["CLM-main"])
-        fp1 = json.loads((ws / "external_executor/report/protocol_fingerprint.json").read_text())["fingerprint"]
+        fp1 = json.loads((ws / "external_executor/report/phase_C/protocol_fingerprint.json").read_text())["fingerprint"]
         run("fingerprint_protocol.py", "--workspace", str(ws), "--write-back")
-        fp2 = json.loads((ws / "external_executor/report/protocol_fingerprint.json").read_text())["fingerprint"]
+        fp2 = json.loads((ws / "external_executor/report/phase_C/protocol_fingerprint.json").read_text())["fingerprint"]
         self.assertEqual(fp1, fp2)
 
         plan_path = ws / "external_executor/experiment_plan.json"
@@ -164,10 +164,10 @@ class ExperimentDesignScriptTests(unittest.TestCase):
         plan_path.write_text(json.dumps(plan), encoding="utf-8")
         run("validate_plan_dag.py", "--workspace", str(ws))
         run("validate_experiment_plan.py", "--workspace", str(ws))
-        validation = json.loads((ws / "external_executor/report/experiment_plan_validation.json").read_text())
+        validation = json.loads((ws / "external_executor/report/phase_C/experiment_plan_validation.json").read_text())
         self.assertEqual(validation["status"], "pass", validation)
         run("compute_design_gate.py", "--workspace", str(ws), "--write-back")
-        gate = json.loads((ws / "external_executor/report/experiment_design_gate.json").read_text())
+        gate = json.loads((ws / "external_executor/report/phase_C/experiment_design_gate.json").read_text())
         self.assertEqual(gate["status"], "ready", gate)
         run("assemble_experiment_design_report.py", "--workspace", str(ws))
         run("validate_experiment_design_report.py", "--workspace", str(ws))
@@ -191,15 +191,15 @@ class ExperimentDesignScriptTests(unittest.TestCase):
         path.write_text(json.dumps(plan), encoding="utf-8")
         proc = run("validate_plan_dag.py", "--workspace", str(ws), check=False)
         self.assertNotEqual(proc.returncode, 0)
-        dag = json.loads((ws / "external_executor/report/experiment_plan_dag_validation.json").read_text())
+        dag = json.loads((ws / "external_executor/report/phase_C/experiment_plan_dag_validation.json").read_text())
         self.assertEqual(dag["status"], "blocked")
         self.assertTrue(any(x.startswith("cycle_detected") for x in dag["errors"]))
 
     def test_material_protocol_change_is_detected(self) -> None:
         ws = self.clone_workspace()
-        old_path = ws / "external_executor/report/protocol_old.json"
-        new_path = ws / "external_executor/report/protocol_new.json"
-        old = json.loads((ws / "external_executor/report/protocol_snapshot.json").read_text())
+        old_path = ws / "external_executor/report/phase_C/protocol_old.json"
+        new_path = ws / "external_executor/report/phase_C/protocol_new.json"
+        old = json.loads((ws / "external_executor/report/phase_C/protocol_snapshot.json").read_text())
         new = json.loads(json.dumps(old))
         new["protocol_version"] = old["protocol_version"] + 1
         new["protocol"]["dataset"]["split"] = "new_split"
@@ -208,11 +208,11 @@ class ExperimentDesignScriptTests(unittest.TestCase):
         run(
             "compare_protocol_versions.py",
             "--workspace", str(ws),
-            "--old", "external_executor/report/protocol_old.json",
-            "--new", "external_executor/report/protocol_new.json",
+            "--old", "external_executor/report/phase_C/protocol_old.json",
+            "--new", "external_executor/report/phase_C/protocol_new.json",
             "--plan", "external_executor/experiment_plan.json",
         )
-        impact = json.loads((ws / "external_executor/report/protocol_change_impact.json").read_text())
+        impact = json.loads((ws / "external_executor/report/phase_C/protocol_change_impact.json").read_text())
         self.assertTrue(impact["material_change"])
         self.assertEqual(impact["required_action"], "version_and_mark_affected_results_stale")
 

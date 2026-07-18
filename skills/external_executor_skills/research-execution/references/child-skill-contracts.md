@@ -17,7 +17,7 @@ Read this before dispatching a child. Child skills return control to `research-e
 | `result-diagnosis` | New terminal runs, including failed/unusable attempts, plus reviewed baseline reproductions | Per-iteration diagnosis, baseline performance summary, method-change assessment | Findings cite evidence/confidence and give a concrete repair/refinement surface when needed |
 | `module-attribution` | Diagnosis and controlled evidence | Per-iteration attribution | Attribution basis is explicit |
 | `evidence-packaging` | Pinned final snapshot | Realized method, framework, figure/table inventory | Package maps to code and evidence |
-| `writer-handoff` | Terminal status/result pack, frozen manifest, valid evidence package, final figures/tables | `executor_research_report.md`, fact snapshot, complete handoff validation | Four core files and all final figures/tables are coherent and ready for ResearchOS/T8 |
+| `writer-handoff` | Terminal status/result pack, frozen manifest, valid evidence package, final figures/tables | `executor_research_report.md`, fact snapshot, complete handoff validation | Four core files and all final figures/tables are coherent; control returns to the root for `launch-t8` |
 
 ## Dispatch envelope
 

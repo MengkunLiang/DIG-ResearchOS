@@ -34,6 +34,7 @@ from ..runtime.literature_contract import (
 )
 from ..runtime.pdf_acquisition import acquire_retained_pdfs, attach_pdf_acquisition
 from ..literature_identity import record_note_id
+from ..literature_resources import refresh_resource_catalog
 from .base import Tool, ToolResult
 from .bibtex import (
     bibtex_quality_issues,
@@ -2776,6 +2777,7 @@ class ExpandSurveyCorpusTool(Tool):
             self.policy.workspace_dir,
             deduplicated,
         )
+        resource_catalog = refresh_resource_catalog(self.policy.workspace_dir)
         section_map = _survey_supplement_section_map(
             query_plan,
             deduplicated,
@@ -2821,6 +2823,13 @@ class ExpandSurveyCorpusTool(Tool):
                     "These are canonical abstract-level reading notes available to downstream tasks. "
                     "They support coverage, taxonomy, history, trends and explicitly abstract-level descriptions; "
                     "a full/partial note is still required for substantive mechanism, result or causal claims."
+                ),
+            },
+            "resource_catalog": {
+                **resource_catalog,
+                "usage_boundary": (
+                    "The catalog preserves resource discovery leads from supplemental papers. "
+                    "It does not verify executability, license, baseline equivalence, or empirical results."
                 ),
             },
             "pdf_acquisition": {

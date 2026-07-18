@@ -41,11 +41,11 @@ class ImplementationSkillTests(unittest.TestCase):
         ext = root / "external_executor"
         ext.mkdir()
         (ext / "AGENTS.md").write_text("Implementation tests.\n", encoding="utf-8")
-        (ext / "allowed_paths.txt").write_text("external_executor/\n", encoding="utf-8")
+        (ext / "allowed_paths.txt").write_text("external_executor/\nresources/\n", encoding="utf-8")
         (ext / "handoff_pack.json").write_text(json.dumps({"schema_version": "external_executor_handoff.v1"}), encoding="utf-8")
         (ext / "expected_outputs_schema.json").write_text(json.dumps({"schema_version": "external_executor_result.v1"}), encoding="utf-8")
 
-        source = ext / "workdir" / "base_source"
+        source = root / "resources" / "method_template"
         (source / "src").mkdir(parents=True)
         (source / "tests").mkdir()
         (source / "src" / "__init__.py").write_text("", encoding="utf-8")
@@ -78,13 +78,13 @@ class ImplementationSkillTests(unittest.TestCase):
                 "status": "approved",
                 "implementation_required": True,
                 "planned_changes": ["Implement transform vertical slice"],
-                "base_source": "external_executor/workdir/base_source",
+                "base_source": "resources/method_template",
             },
             "implementation_spec": {
                 "implementation_spec_id": "SPEC-001",
                 "iteration_id": "ITER-001",
                 "status": "ready",
-                "base_source": "external_executor/workdir/base_source",
+                "base_source": "resources/method_template",
                 "source_kind": "ours",
                 "approved_changes": [{
                     "change_id": "CHG-transform",
@@ -129,10 +129,10 @@ class ImplementationSkillTests(unittest.TestCase):
 
     def prepare(self, ws: Path) -> tuple[dict, Path]:
         run("preflight_implementation.py", "--workspace", str(ws))
-        self.assertTrue((ws / "external_executor/report/implementation_preflight.json").is_file())
+        self.assertTrue((ws / "external_executor/report/phase_D/implementation_preflight.json").is_file())
         self.assertFalse((ws / "external_executor/implementation_preflight.json").exists())
         run("build_change_contract.py", "--workspace", str(ws))
-        contract = json.loads((ws / "external_executor/report/implementation_change_contract.json").read_text())
+        contract = json.loads((ws / "external_executor/report/phase_D/implementation_change_contract.json").read_text())
         self.assertFalse((ws / "external_executor/implementation_change_contract.json").exists())
         self.assertEqual(contract["status"], "ready")
         run("prepare_worktree.py", "--workspace", str(ws))
@@ -145,7 +145,7 @@ class ImplementationSkillTests(unittest.TestCase):
         self.assertTrue((impl_root / "before/src/model.py").exists())
         self.assertEqual((impl_root / "before/src/model.py").stat().st_mode & 0o222, 0)
         self.assertEqual(
-            (ws / "external_executor/workdir/base_source/src/model.py").read_text(),
+            (ws / "resources/method_template/src/model.py").read_text(),
             "def transform(value: int) -> int:\n    return value\n",
         )
 
@@ -203,7 +203,7 @@ class ImplementationSkillTests(unittest.TestCase):
         )
         run("initialize_implementation_report.py", "--workspace", str(ws))
 
-        report_path = ws / "external_executor/report/implementation_report.json"
+        report_path = ws / "external_executor/report/phase_D/implementation_report.json"
         self.assertFalse((ws / "external_executor/implementation_report.json").exists())
         report = json.loads(report_path.read_text())
         report["implemented_changes"]["status"] = "complete"
@@ -212,7 +212,7 @@ class ImplementationSkillTests(unittest.TestCase):
             "changed_paths": ["src/model.py"],
             "summary": "Implemented the approved transform behavior.",
             "tests": ["VERIFY-model"],
-            "evidence_refs": ["external_executor/report/implementation_report.json"],
+            "evidence_refs": ["external_executor/report/phase_D/implementation_report.json"],
         })
         report_path.write_text(json.dumps(report), encoding="utf-8")
         run("compute_implementation_gate.py", "--report", str(report_path), "--write-back")

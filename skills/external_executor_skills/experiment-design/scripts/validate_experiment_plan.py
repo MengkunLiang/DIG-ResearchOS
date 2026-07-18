@@ -165,7 +165,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Validate the Phase C plan contract and anti-post-hoc requirements.")
     parser.add_argument("--workspace")
     parser.add_argument("--plan", default="external_executor/experiment_plan.json")
-    parser.add_argument("--output", default="external_executor/report/experiment_plan_validation.json")
+    parser.add_argument("--output", default="external_executor/report/phase_C/experiment_plan_validation.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     report = validate(load_json(resolve_in_workspace(ws, args.plan)))

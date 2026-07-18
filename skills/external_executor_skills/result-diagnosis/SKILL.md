@@ -33,9 +33,9 @@ Act as the evidence-bound analyst for one completed or partially completed Resea
 
 Write only:
 
-- `external_executor/report/result_diagnosis_preflight.json`;
-- `external_executor/report/diagnosis_evidence_snapshot.json`;
-- `external_executor/report/diagnosis_statistics.json`;
+- `external_executor/report/phase_E/result_diagnosis_preflight.json`;
+- `external_executor/report/phase_E/diagnosis_evidence_snapshot.json`;
+- `external_executor/report/phase_E/diagnosis_statistics.json`;
 - `external_executor/result_diagnosis_report.json`;
 - versioned analysis artifacts under `external_executor/result_diagnosis/`;
 - `result_pack.json#result_diagnoses` through the narrow apply script.
@@ -46,7 +46,7 @@ Do not change run records, raw results, configs, logs, protocol fingerprints, re
 
 ```bash
 python <skill-dir>/scripts/preflight_diagnosis.py --workspace <workspace> \
-  --output external_executor/report/result_diagnosis_preflight.json
+  --output external_executor/report/phase_E/result_diagnosis_preflight.json
 ```
 
 The preflight confirms:
@@ -67,7 +67,7 @@ Read `references/evidence-and-run-eligibility.md`, then run:
 ```bash
 python <skill-dir>/scripts/build_evidence_snapshot.py --workspace <workspace> \
   --iteration-id <iteration-id> \
-  --output external_executor/report/diagnosis_evidence_snapshot.json
+  --output external_executor/report/phase_E/diagnosis_evidence_snapshot.json
 ```
 
 The snapshot must:
@@ -86,7 +86,7 @@ Never diagnose from a conversational summary when a run record or metric artifac
 
 ```bash
 python <skill-dir>/scripts/normalize_run_metrics.py \
-  --snapshot <workspace>/external_executor/report/diagnosis_evidence_snapshot.json \
+  --snapshot <workspace>/external_executor/report/phase_E/diagnosis_evidence_snapshot.json \
   --output <workspace>/external_executor/result_diagnosis/<iteration-id>/metric_observations.json
 ```
 
@@ -161,7 +161,7 @@ python <skill-dir>/scripts/build_diagnosis_facts.py \
   --aggregates <metric-aggregates.json> \
   --comparisons <method-comparisons.json> \
   --anomalies <anomalies.json> \
-  --output external_executor/report/diagnosis_statistics.json
+  --output external_executor/report/phase_E/diagnosis_statistics.json
 ```
 
 This facts file identifies, per comparable setting:
@@ -187,8 +187,8 @@ Initialize the report:
 
 ```bash
 python <skill-dir>/scripts/initialize_diagnosis_report.py --workspace <workspace> \
-  --snapshot external_executor/report/diagnosis_evidence_snapshot.json \
-  --statistics external_executor/report/diagnosis_statistics.json \
+  --snapshot external_executor/report/phase_E/diagnosis_evidence_snapshot.json \
+  --statistics external_executor/report/phase_E/diagnosis_statistics.json \
   --output external_executor/result_diagnosis_report.json
 ```
 

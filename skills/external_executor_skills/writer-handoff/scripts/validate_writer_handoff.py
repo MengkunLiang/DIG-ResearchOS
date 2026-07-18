@@ -18,6 +18,7 @@ from _common import (
     relpath,
     resolve_in_workspace,
     resolve_workspace,
+    schema_major,
     sha256_file,
     utc_now,
 )
@@ -122,6 +123,12 @@ def validate_manifest(
             add(errors, "manifest_size_mismatch", raw_path, "registered size differs from the file")
     for asset in assets:
         path = str(asset["path"])
+        suffix = Path(path).suffix.lower()
+        allowed = {".svg", ".png"} if asset.get("kind") == "figure" else {".csv", ".tsv"}
+        if int(asset.get("size_bytes") or 0) <= 0:
+            add(errors, "empty_final_asset", path, "final figures and tables must be nonempty")
+        if suffix not in allowed:
+            add(errors, "unsupported_final_asset_format", path, f"allowed formats are {sorted(allowed)}")
         item = indexed.get(path)
         if not item:
             add(errors, "final_asset_unregistered", path, "every final figure and table must be registered in run_manifest.json")
@@ -219,8 +226,8 @@ def validate_report(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate the complete Writer Handoff package.")
     parser.add_argument("--workspace")
-    parser.add_argument("--snapshot", default="external_executor/report/writer_handoff_snapshot.json")
-    parser.add_argument("--facts", default="external_executor/report/writer_handoff_facts.json")
+    parser.add_argument("--snapshot", default="external_executor/report/phase_F/writer_handoff_snapshot.json")
+    parser.add_argument("--facts", default="external_executor/report/phase_F/writer_handoff_facts.json")
     parser.add_argument("--report", default="external_executor/executor_research_report.md")
     parser.add_argument("--output")
     args = parser.parse_args()
@@ -247,6 +254,15 @@ def main() -> int:
     if facts.get("input_fingerprint") != snapshot.get("input_fingerprint"):
         add(errors, "facts_snapshot_fingerprint_mismatch", args.facts, "facts were not built from this snapshot")
 
+    for rel, document in (
+        ("external_executor/result_pack.json", result),
+        ("external_executor/executor_status.json", status),
+        ("external_executor/report/run_manifest.json", manifest),
+    ):
+        major = schema_major(document.get("schema_version"))
+        if major not in {None, 1}:
+            add(errors, "unsupported_schema_major", rel, repr(document.get("schema_version")))
+
     result_status = normalize_status(result.get("executor_status") or result.get("status"))
     executor_status = normalize_status(status.get("executor_status") or status.get("status") or status.get("current_state"))
     if result_status not in TERMINAL_STATUSES:
@@ -267,9 +283,28 @@ def main() -> int:
         if result.get(section) in (None, {}, []):
             target = errors if result_status == "completed" else warnings
             add(target, "final_result_section_missing", "external_executor/result_pack.json", section)
+        elif result_status == "completed" and isinstance(result.get(section), dict):
+            section_status = normalize_status(result[section].get("status"))
+            if section_status in {"not_started", "blocked", "failed", "stale", "unavailable", "invalid"}:
+                add(errors, "completed_result_has_invalid_section", "external_executor/result_pack.json", f"{section}={section_status}")
 
     checks = {}
     checks.update(validate_manifest(ws, manifest, assets, errors, warnings))
+    registered_paths = {
+        str(item.get("path") or item.get("artifact_path"))
+        for item in manifest_items(manifest)
+        if item.get("path") or item.get("artifact_path")
+    }
+    for experiment in facts.get("experiments", []):
+        for key in ("configurations", "result_files", "log_files", "figures", "tables"):
+            for path in experiment.get(key, []):
+                if path not in registered_paths:
+                    add(errors, "experiment_artifact_unregistered", str(path), f"experiment {experiment.get('experiment_id')} field {key}")
+    for result_record in facts.get("comprehensive_results", []):
+        for key in ("raw_result_files", "figure_files", "table_files"):
+            for path in result_record.get(key, []):
+                if path not in registered_paths:
+                    add(errors, "result_artifact_unregistered", str(path), f"result {result_record.get('result_id')} field {key}")
     if report_text:
         checks.update(validate_report(ws, report_text, facts, assets, errors, warnings))
     status_label = "blocked" if errors else ("partial" if warnings or executor_status != "completed" else "ready")
@@ -296,7 +331,7 @@ def main() -> int:
         "recommended_next_action": "handoff_complete" if status_label == "ready" else "handoff_complete_with_constraints" if status_label == "partial" else "repair_writer_handoff",
         "validated_at": utc_now(),
     }
-    destination = output_path(ws, args.output, "external_executor/report/writer_handoff_validation.json")
+    destination = output_path(ws, args.output, "external_executor/report/phase_F/writer_handoff_validation.json")
     dump_json_atomic(destination, validation)
     print(json.dumps({"status": status_label, "errors": len(errors), "warnings": len(warnings)}))
     return 2 if errors else 0

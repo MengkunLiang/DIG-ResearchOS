@@ -285,11 +285,11 @@ def generated_items(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Inventory traceable result figures and tables from the pinned evidence snapshot.")
     parser.add_argument("--workspace")
-    parser.add_argument("--snapshot", default="external_executor/report/final_evidence_snapshot.json")
-    parser.add_argument("--framework", default="external_executor/report/framework_figure_spec.json")
-    parser.add_argument("--tables-report", default="external_executor/report/result_table_build_report.json")
-    parser.add_argument("--figures-report", default="external_executor/report/result_figure_build_report.json")
-    parser.add_argument("--output", default="external_executor/report/figure_table_inventory.json")
+    parser.add_argument("--snapshot", default="external_executor/report/phase_F/final_evidence_snapshot.json")
+    parser.add_argument("--framework", default="external_executor/report/phase_F/framework_figure_spec.json")
+    parser.add_argument("--tables-report", default="external_executor/report/phase_F/result_table_build_report.json")
+    parser.add_argument("--figures-report", default="external_executor/report/phase_F/result_figure_build_report.json")
+    parser.add_argument("--output", default="external_executor/report/phase_F/figure_table_inventory.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)
@@ -332,7 +332,7 @@ def main() -> int:
         "missing_rendered_paths": [],
         "caption_draft": framework.get("caption_draft"),
         "must_not_imply": [item.get("reason") for item in framework.get("must_not_show", [])],
-        "evidence_mapping_ref": "external_executor/report/framework_figure_spec.json#evidence_mapping",
+        "evidence_mapping_ref": "external_executor/report/phase_F/framework_figure_spec.json#evidence_mapping",
         "notes": [],
     }
     items.insert(0, framework_item)

@@ -3,15 +3,15 @@
 ## Child-owned artifacts
 
 ```text
-external_executor/report/resource_preflight.json
+external_executor/report/phase_B/resource_preflight.json
 external_executor/resource_requirement_matrix.json
-external_executor/report/resource_local_inventory.json
-external_executor/report/resource_search_records.json
-external_executor/report/resource_source_report.json
-external_executor/report/resource_source_report.md
-external_executor/report/resource_preparation_report.json
-external_executor/report/static_review.json
-external_executor/report/validation_report.json
+external_executor/report/phase_B/resource_local_inventory.json
+external_executor/report/phase_B/resource_search_records.json
+external_executor/report/phase_B/resource_source_report.json
+external_executor/report/phase_B/resource_source_report.md
+external_executor/report/phase_B/resource_preparation_report.json
+external_executor/report/phase_B/static_review.json
+external_executor/report/phase_B/validation_report.json
 resources/**
 ```
 
@@ -41,8 +41,8 @@ The root owns manifest registration and executor status.
   "reimplementations": {"status": "not_started|not_needed|complete|partial|blocked|stale", "items": []},
   "resource_source_report": {
     "status": "not_started|not_needed|complete|partial|blocked|stale",
-    "json_path": "external_executor/report/resource_source_report.json",
-    "markdown_path": "external_executor/report/resource_source_report.md",
+    "json_path": "external_executor/report/phase_B/resource_source_report.json",
+    "markdown_path": "external_executor/report/phase_B/resource_source_report.md",
     "source_roots": ["resources"],
     "counts": {"byhand": 0, "Remote_acquisition": 0, "reproduction": 0},
     "categories": {"byhand": [], "Remote_acquisition": [], "reproduction": []}
@@ -129,7 +129,7 @@ Use workspace-relative paths. An artifact reference should contain, when availab
 child_skill=resource-and-baseline-preparation
 status=complete|partial|blocked|failed
 resource_readiness=ready|partial|blocked
-report=external_executor/report/resource_preparation_report.json
+report=external_executor/report/phase_B/resource_preparation_report.json
 matrix=external_executor/resource_requirement_matrix.json
 approved_requirement_ids=<ids>
 constrained_requirement_ids=<ids>

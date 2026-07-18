@@ -270,6 +270,7 @@ class SemanticValidator:
     def validate(self) -> list[Finding]:
         try:
             self._validate_sources()
+            self._validate_proposal_context()
             ids = self._collect_ids()
             # A blocked pack is a recoverable protocol-gap record. It must be
             # structurally valid and explain the blocker, but it intentionally
@@ -318,6 +319,56 @@ class SemanticValidator:
                 self.error("source.used_but_unavailable", path, "a used source must be available")
             if self.verify_hashes and entry["availability"] == "available":
                 self._verify_source_hash(entry, path)
+
+    def _validate_proposal_context(self) -> None:
+        """Keep the Proposal useful to T5 without promoting it to evidence."""
+
+        context = self.pack["context_reboost"]["research_context"]["proposal_context"]
+        source_type = context["source_type"]
+        manifest_path = context["manifest_path"]
+        source_ids = {item["source_id"] for item in context["source_refs"]}
+        entries_by_path = {entry["path"]: entry for entry in self.pack["source_manifest"]}
+        if source_type == "formal_proposal":
+            if manifest_path != "ideation/proposal/proposal_manifest.json":
+                self.error(
+                    "proposal.manifest_path_invalid",
+                    "/context_reboost/research_context/proposal_context/manifest_path",
+                    "formal_proposal must declare ideation/proposal/proposal_manifest.json",
+                )
+            if context["path"] != "ideation/proposal/research_proposal.md":
+                self.error(
+                    "proposal.path_invalid",
+                    "/context_reboost/research_context/proposal_context/path",
+                    "formal_proposal must declare ideation/proposal/research_proposal.md",
+                )
+            for source_id in {"SRC_RESEARCH_PROPOSAL", "SRC_PROPOSAL_MANIFEST"}:
+                if source_id not in source_ids:
+                    self.error(
+                        "proposal.source_ref_missing",
+                        "/context_reboost/research_context/proposal_context/source_refs",
+                        f"formal_proposal must retain {source_id}",
+                    )
+            for path in {"ideation/proposal/research_proposal.md", "ideation/proposal/proposal_manifest.json"}:
+                entry = entries_by_path.get(path)
+                if entry is None or entry["availability"] != "available" or entry["used"] is not True:
+                    self.error(
+                        "proposal.source_not_used",
+                        "/source_manifest",
+                        f"formal_proposal requires available, used source: {path}",
+                    )
+        elif source_type == "legacy_formalization_fallback":
+            if manifest_path:
+                self.error(
+                    "proposal.fallback_manifest_unexpected",
+                    "/context_reboost/research_context/proposal_context/manifest_path",
+                    "legacy_formalization_fallback must not claim a formal proposal manifest",
+                )
+            if {"SRC_RESEARCH_PROPOSAL", "SRC_PROPOSAL_MANIFEST"} & source_ids:
+                self.error(
+                    "proposal.fallback_source_ref_unexpected",
+                    "/context_reboost/research_context/proposal_context/source_refs",
+                    "legacy_formalization_fallback must not present an invalid Proposal as formal context",
+                )
 
     def _verify_source_hash(self, entry: dict, path: str) -> None:
         if self.source_root is None:
@@ -483,6 +534,8 @@ class SemanticValidator:
             self.error("writer.method_intent_not_banned", "/writer_handoff_contract/must_not_use_as_final_fact_source", "method_intent must be forbidden as a final fact source")
         if "research_context" not in final_fact_bans:
             self.error("writer.research_context_not_banned", "/writer_handoff_contract/must_not_use_as_final_fact_source", "research_context must be forbidden as a final fact source")
+        if "research_proposal" not in final_fact_bans:
+            self.error("writer.research_proposal_not_banned", "/writer_handoff_contract/must_not_use_as_final_fact_source", "research_proposal must be forbidden as a final fact source")
 
     def _validate_status(self) -> None:
         status = self.pack["generation_status"]

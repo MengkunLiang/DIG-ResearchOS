@@ -10,8 +10,8 @@ from _common import artifact_ref, assert_write_allowed, dump_json_atomic, load_j
 def main() -> int:
     parser = argparse.ArgumentParser(description="Initialize module attribution report.")
     parser.add_argument("--workspace")
-    parser.add_argument("--snapshot", default="external_executor/report/module_attribution_snapshot.json")
-    parser.add_argument("--facts", default="external_executor/report/module_attribution_facts.json")
+    parser.add_argument("--snapshot", default="external_executor/report/phase_E/module_attribution_snapshot.json")
+    parser.add_argument("--facts", default="external_executor/report/phase_E/module_attribution_facts.json")
     parser.add_argument("--output", default="external_executor/module_attribution_report.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)

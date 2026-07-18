@@ -37,6 +37,8 @@ tests/manual/
 AGENTS.md
 BACKGROUND.md
 tests/
+!skills/external_executor_skills/research-execution/tests/
+!skills/external_executor_skills/research-execution/tests/test_*.py
 
 # IDEs
 .vscode/

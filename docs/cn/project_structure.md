@@ -39,7 +39,13 @@ workspace/<project>/
 ├── ideation/                   T4 candidates, selection, hypotheses, audits
 ├── drafts/                     Survey/manuscript sections, claims, reviews
 ├── external_executor/          T5 handoff、executor 输出和 T8 交接报告
-│   ├── report/                 T5-REBOOST 过程报告和诊断文件
+│   ├── report/                 T5 回执、全局 run_manifest 和 Phase A-F 报告
+│   │   ├── phase_A/            Context alignment 和输入指纹
+│   │   ├── phase_B/            资源与 baseline 准备
+│   │   ├── phase_C/            实验设计和协议校验
+│   │   ├── phase_D/            复现、实现、review 和运行控制
+│   │   ├── phase_E/            结果诊断和模块归因
+│   │   └── phase_F/            Evidence Packaging 和 Writer Handoff
 │   └── expr/                   初始化为空的材料/部署区域
 ├── experiments/                可选/legacy 摄取后的运行证据和 claim mapping
 ├── submission/                 Final bundle, compile report, fingerprints
@@ -55,6 +61,8 @@ workspace/<project>/
 | `external_executor/` | ResearchOS + 选定的外部执行器 | 交接文件、executor 输出，以及必需的 T8 交接报告 `executor_research_report.md` |
 | `experiments/` | 结果摄取和审计工具 | 可选/legacy 的观察结果，而非模型猜测 |
 | `_runtime/` | 仅运行时 | 操作状态；请勿编辑以更改研究结论 |
+
+外部 Skill 的过程文件统一放在 `external_executor/report/phase_A/` 至 `phase_F/`。`external_executor/report/run_manifest.json` 是唯一直接保留在 `report/` 根目录的跨 Phase 外部执行文件。Reboost、专属化、executor selection 和 capability 回执产生于 Phase A 之前，因此保持现有的 report 根路径。
 
 ### T4 Ideation Artifact
 

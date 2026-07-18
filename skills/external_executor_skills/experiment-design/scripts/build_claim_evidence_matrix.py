@@ -79,7 +79,7 @@ def normalize_claim(item: Any, index: int, source: str) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Normalize the confirmed claim-to-evidence contract.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/report/claim_evidence_matrix.json")
+    parser.add_argument("--output", default="external_executor/report/phase_C/claim_evidence_matrix.json")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 

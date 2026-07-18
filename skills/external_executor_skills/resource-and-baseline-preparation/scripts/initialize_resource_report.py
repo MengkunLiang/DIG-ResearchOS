@@ -25,8 +25,8 @@ SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
     "reimplementations": {"status": "not_started", "items": []},
     "resource_source_report": {
         "status": "not_started",
-        "json_path": "external_executor/report/resource_source_report.json",
-        "markdown_path": "external_executor/report/resource_source_report.md",
+        "json_path": "external_executor/report/phase_B/resource_source_report.json",
+        "markdown_path": "external_executor/report/phase_B/resource_source_report.md",
         "source_roots": ["resources"],
         "counts": {"byhand": 0, "Remote_acquisition": 0, "reproduction": 0},
         "categories": {"byhand": [], "Remote_acquisition": [], "reproduction": []},
@@ -51,7 +51,7 @@ def main() -> int:
         description="Create or refresh the Phase B report envelope without overwriting reviewed sections by default."
     )
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/report/resource_preparation_report.json")
+    parser.add_argument("--output", default="external_executor/report/phase_B/resource_preparation_report.json")
     parser.add_argument(
         "--force",
         action="store_true",
@@ -64,7 +64,7 @@ def main() -> int:
     output = resolve_in_workspace(workspace, args.output)
     assert_write_allowed(workspace, output)
 
-    report_dir = ext / "report"
+    report_dir = ext / "report" / "phase_B"
     preflight = load_json(report_dir / "resource_preflight.json")
     if preflight.get("status") == "blocked":
         raise SystemExit("Resource preflight is blocked; do not initialize an acquisition report")

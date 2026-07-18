@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -73,7 +74,8 @@ class EvidencePackagingScriptTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        work = ext / "workdir"
+        implementation_root = ext / "expr" / "implementation" / "ITER-2" / "IMPL-2"
+        work = implementation_root / "worktree"
         (work / "src").mkdir(parents=True)
         (work / "config").mkdir()
         (work / "logs").mkdir()
@@ -310,7 +312,7 @@ class EvidencePackagingScriptTests(unittest.TestCase):
         result["implementations"] = {
             "status": "complete", "active_implementation_id": "IMPL-2", "items": [{
                 "implementation_id": "IMPL-2", "iteration_id": "ITER-2",
-                "implementation_root": "external_executor/workdir",
+                "implementation_root": rel(implementation_root),
                 "final_worktree_fingerprint": "WORKTREE-FP-2",
                 "method_spec_fingerprint": "SPEC-FP-2", "protocol_fingerprint": "PROTO-1",
                 "module_mapping": {"status": "complete", "items": legacy_spec["modules"]},
@@ -401,7 +403,7 @@ class EvidencePackagingScriptTests(unittest.TestCase):
         ws = self.make_workspace()
         self.execute_pipeline(ws)
         ext = ws / "external_executor"
-        gate = json.loads((ext / "report/evidence_packaging_gate.json").read_text())
+        gate = json.loads((ext / "report/phase_F/evidence_packaging_gate.json").read_text())
         self.assertEqual(gate["status"], "ready")
         method = json.loads((ext / "evidence_package/realized_method_package.json").read_text())
         self.assertEqual(method["final_method_name"], "RealizedGateNet")
@@ -413,7 +415,7 @@ class EvidencePackagingScriptTests(unittest.TestCase):
         support = {m["module_id"]: m["empirical_support"]["status"] for m in method["implemented_modules"]}
         self.assertEqual(support["M1"], "supported")
         self.assertNotEqual(support["M2"], "supported")
-        framework = json.loads((ext / "report/framework_figure_spec.json").read_text())
+        framework = json.loads((ext / "report/phase_F/framework_figure_spec.json").read_text())
         self.assertEqual(framework["status"], "ready_for_T7_audit")
         self.assertTrue(framework["rendered_files"])
         self.assertEqual(framework["rendered_files"][0]["path"], "external_executor/figure/framework_figure.svg")
@@ -431,13 +433,13 @@ class EvidencePackagingScriptTests(unittest.TestCase):
             "evidence_packaging_gate.json", "evidence_packaging_report.json",
             "evidence_packaging_report_validation.json",
         ):
-            self.assertTrue((ext / "report" / process_file).is_file())
+            self.assertTrue((ext / "report" / "phase_F" / process_file).is_file())
             self.assertFalse((ext / process_file).exists())
         result = json.loads((ext / "result_pack.json").read_text())
         self.assertTrue(result["sibling_section"]["preserve"])
         for key in ("realized_method_package", "framework_figure", "figure_table_inventory", "evidence_mapping", "evidence_packaging"):
             self.assertIn(key, result)
-        mapping = json.loads((ext / "report/evidence_mapping.json").read_text())
+        mapping = json.loads((ext / "report/phase_F/evidence_mapping.json").read_text())
         module_claims = {item["module_id"]: item["claim_ids"] for item in mapping["module_mappings"]}
         self.assertEqual(module_claims["M1"], ["CLM-1"])
         self.assertEqual(module_claims["M2"], ["CLM-1"])
@@ -445,13 +447,14 @@ class EvidencePackagingScriptTests(unittest.TestCase):
     def test_historical_implementation_is_not_merged_into_final_method(self) -> None:
         ws = self.make_workspace()
         ext = ws / "external_executor"
-        old_root = ext / "workdir/old/worktree"
+        old_implementation_root = ext / "expr/implementation/ITER-1/IMPL-OLD"
+        old_root = old_implementation_root / "worktree"
         old_root.mkdir(parents=True)
         (old_root / "old.py").write_text("OLD = True\n", encoding="utf-8")
         result = json.loads((ext / "result_pack.json").read_text(encoding="utf-8"))
         result["implementations"]["items"].insert(0, {
             "implementation_id": "IMPL-OLD", "iteration_id": "ITER-1",
-            "implementation_root": "external_executor/workdir/old",
+            "implementation_root": old_implementation_root.relative_to(ws).as_posix(),
             "final_worktree_fingerprint": "OLD-FP", "method_spec_fingerprint": "OLD-SPEC",
             "protocol_fingerprint": "PROTO-1",
             "module_mapping": {"status": "complete", "items": [{
@@ -467,6 +470,28 @@ class EvidencePackagingScriptTests(unittest.TestCase):
         self.assertEqual(method["final_version"]["implementation_id"], "IMPL-2")
         self.assertNotIn("OLD", {item["module_id"] for item in method["implemented_modules"]})
         self.assertFalse(any("old.py" in ref for item in method["implemented_modules"] for ref in item["code_refs"]))
+
+    def test_legacy_workdir_cannot_be_selected_as_final_method(self) -> None:
+        ws = self.make_workspace()
+        ext = ws / "external_executor"
+        result = json.loads((ext / "result_pack.json").read_text(encoding="utf-8"))
+        active = result["implementations"]["items"][-1]
+        current_root = ws / active["implementation_root"]
+        legacy_root = ext / "workdir/final-method"
+        shutil.copytree(current_root, legacy_root)
+        active["implementation_root"] = legacy_root.relative_to(ws).as_posix()
+        (ext / "result_pack.json").write_text(json.dumps(result), encoding="utf-8")
+
+        run("preflight_evidence_packaging.py", "--workspace", str(ws))
+        run("build_evidence_snapshot.py", "--workspace", str(ws))
+        run("validate_evidence_snapshot.py", "--workspace", str(ws))
+        run("build_realized_method_package.py", "--workspace", str(ws))
+        method = json.loads((ext / "evidence_package/realized_method_package.json").read_text())
+        self.assertEqual(method["status"], "unavailable")
+        self.assertIn(
+            "active_implementation_root_outside_expr_implementation",
+            method["source_validation"]["errors"],
+        )
 
     def test_realized_method_expands_nested_module_attribution_report(self) -> None:
         ws = self.make_workspace()
@@ -502,7 +527,7 @@ class EvidencePackagingScriptTests(unittest.TestCase):
         result_path.write_text(json.dumps(result), encoding="utf-8")
         proc = run("validate_evidence_snapshot.py", "--workspace", str(ws), check=False)
         self.assertNotEqual(proc.returncode, 0)
-        validation = json.loads((ws / "external_executor/report/final_evidence_snapshot_validation.json").read_text())
+        validation = json.loads((ws / "external_executor/report/phase_F/final_evidence_snapshot_validation.json").read_text())
         self.assertEqual(validation["status"], "blocked")
         self.assertTrue(any("snapshot_source_changed" in item for item in validation["errors"]))
 
@@ -510,7 +535,7 @@ class EvidencePackagingScriptTests(unittest.TestCase):
         ws = self.make_workspace(with_stale_run=True)
         run("preflight_evidence_packaging.py", "--workspace", str(ws))
         run("build_evidence_snapshot.py", "--workspace", str(ws))
-        snapshot = json.loads((ws / "external_executor/report/final_evidence_snapshot.json").read_text())
+        snapshot = json.loads((ws / "external_executor/report/phase_F/final_evidence_snapshot.json").read_text())
         active_ids = {item["record_id"] for item in snapshot["active_formal_records"]}
         stale_ids = {item["record_id"] for item in snapshot["inactive_or_stale_records"]}
         self.assertIn("RUN-1", active_ids)
@@ -521,13 +546,13 @@ class EvidencePackagingScriptTests(unittest.TestCase):
         ws = self.make_workspace()
         self.execute_pipeline(ws)
         ext = ws / "external_executor"
-        report_path = ext / "report/evidence_packaging_report.json"
+        report_path = ext / "report/phase_F/evidence_packaging_report.json"
         report = json.loads(report_path.read_text())
         report["framework_figure"]["snapshot_fingerprint"] = "different-snapshot"
         report_path.write_text(json.dumps(report), encoding="utf-8")
         proc = run("validate_evidence_packaging_report.py", "--workspace", str(ws), check=False)
         self.assertNotEqual(proc.returncode, 0)
-        validation = json.loads((ext / "report/evidence_packaging_report_validation.json").read_text())
+        validation = json.loads((ext / "report/phase_F/evidence_packaging_report_validation.json").read_text())
         self.assertEqual(validation["status"], "blocked")
         self.assertTrue(any("snapshot" in item for item in validation["errors"]))
 
@@ -558,7 +583,7 @@ class EvidencePackagingScriptTests(unittest.TestCase):
         framework.write_text("<svg xmlns='http://www.w3.org/2000/svg'/>\n", encoding="utf-8")
         run("render_result_figures.py", "--workspace", str(ws))
 
-        report = json.loads((ext / "report/result_figure_build_report.json").read_text())
+        report = json.loads((ext / "report/phase_F/result_figure_build_report.json").read_text())
         main_figures = [item for item in report["figures"] if item["kind"] == "main"]
         self.assertEqual({item["protocol_fingerprint"] for item in main_figures}, {"PROTO-1", "PROTO-2"})
         self.assertEqual(len(main_figures), 2)
