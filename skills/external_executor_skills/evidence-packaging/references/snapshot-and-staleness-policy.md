@@ -15,6 +15,9 @@ The snapshot records:
 - stale, failed, superseded, excluded, smoke, and small-scale history;
 - run-manifest artifact identities, paths, expected checksums, actual checksums, and existence;
 - source control-file hashes.
+- the selected active implementation and final iteration;
+- the matching method-refinement record and immutable method-spec path, parsed value, fingerprint, and file hash;
+- the selected implementation review, diagnosis, attribution, decision, and runs bound to the active implementation.
 
 The snapshot does not duplicate large raw artifacts. It identifies and verifies them.
 
@@ -56,11 +59,14 @@ After snapshot creation:
 
 - all package components carry the snapshot ID and fingerprint;
 - source section hashes are rechecked before final validation;
+- the selected method-spec file hash is rechecked before final validation;
 - an artifact checksum mismatch blocks the package;
 - a changed result-pack section requires a new snapshot;
 - adding or replacing a run, config, attribution, figure, or method record requires rebuilding all dependent F1-F3 outputs.
 
 Do not patch a package component to a new evidence state while retaining the old snapshot ID.
+
+Package builders consume the values embedded in this snapshot. They may inspect live files only to verify existence and immutability; they must not silently replace pinned values with newer live result-pack content.
 
 ## Protocol consistency
 

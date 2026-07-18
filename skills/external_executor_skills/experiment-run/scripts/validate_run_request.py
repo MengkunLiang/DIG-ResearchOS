@@ -15,10 +15,15 @@ from _common import error, is_under_workspace_path, load_json, require_allowed, 
 RUN_TYPES = {"smoke", "small_scale", "formal", "ablation", "robustness", "diagnostic", "efficiency"}
 LEVELS = {"none": 0, "smoke": 1, "small_scale": 2, "formal": 3}
 ROLES = {"confirmatory", "diagnostic", "exploratory"}
+METHOD_ROLES = {"ours", "baseline"}
 DATA_KINDS = {"real", "toy", "synthetic", "dry_run"}
 DEPENDENCY_KINDS = {"code", "config", "dataset", "resource", "metric", "evaluator", "checkpoint"}
 SECRET_PATTERN = re.compile(r"(secret|token|password|passwd|api[_-]?key|credential|private[_-]?key)", re.I)
 SHELL_NAMES = {"sh", "bash", "dash", "zsh", "fish", "cmd", "cmd.exe", "powershell", "pwsh"}
+ABLATION_FIELDS = {
+    "variant_id", "reference_variant_id", "pair_id", "target_module_ids", "module_states",
+    "intervention", "preprocessing_fingerprint", "fairness_fingerprint", "metric_directions",
+}
 
 
 def _experiment_entry(plan: Any, experiment_id: str) -> dict[str, Any] | None:
@@ -43,10 +48,43 @@ def _compare_declared(entry: dict[str, Any], request: dict[str, Any], errors: li
             errors.append(error("plan_mismatch", f"{field}: plan={entry[field]!r}, request={request.get(field)!r}"))
     plan_dataset = entry.get("dataset")
     request_dataset = request.get("dataset")
-    if isinstance(plan_dataset, dict) and isinstance(request_dataset, dict):
-        for field in ("id", "version", "split"):
-            if field in plan_dataset and plan_dataset[field] != request_dataset.get(field):
+    if isinstance(request_dataset, dict):
+        expected_dataset = plan_dataset.get("id") if isinstance(plan_dataset, dict) else plan_dataset
+        expected_version = plan_dataset.get("version") if isinstance(plan_dataset, dict) else entry.get("dataset_version")
+        expected_split = plan_dataset.get("split") if isinstance(plan_dataset, dict) else entry.get("split")
+        for field, expected in (("id", expected_dataset), ("version", expected_version), ("split", expected_split)):
+            if expected not in (None, "") and expected != request_dataset.get(field):
                 errors.append(error("plan_dataset_mismatch", field))
+    for field in ("preprocessing_fingerprint", "fairness_fingerprint", "setting", "subset"):
+        if entry.get(field) not in (None, "") and entry.get(field) != request.get(field):
+            errors.append(error("plan_mismatch", f"{field}: plan={entry.get(field)!r}, request={request.get(field)!r}"))
+    if entry.get("metric_directions") and entry.get("metric_directions") != request.get("metric_directions"):
+        errors.append(error("plan_mismatch", "metric_directions"))
+    if request.get("run_type") != "ablation":
+        return
+    contract = entry.get("attribution_contract")
+    if not isinstance(contract, dict):
+        errors.append(error("ablation_contract_missing", str(entry.get("experiment_id"))))
+        return
+    variants = {
+        str(item.get("variant_id")): item
+        for item in contract.get("variant_contracts", [])
+        if isinstance(item, dict) and item.get("variant_id")
+    }
+    variant = variants.get(str(request.get("variant_id")))
+    if variant is None:
+        errors.append(error("ablation_variant_not_declared", str(request.get("variant_id"))))
+        return
+    for field in ("reference_variant_id", "module_states"):
+        if variant.get(field) != request.get(field):
+            errors.append(error("ablation_variant_mismatch", field))
+    if sorted(str(x) for x in request.get("target_module_ids", [])) != sorted(str(x) for x in contract.get("target_module_ids", [])):
+        errors.append(error("ablation_target_modules_mismatch", str(request.get("target_module_ids"))))
+    planned_intervention = variant.get("intervention", {})
+    requested_intervention = request.get("intervention", {})
+    for field in ("type", "controlled", "module_ids", "action", "replacements"):
+        if field in planned_intervention and planned_intervention.get(field) != requested_intervention.get(field):
+            errors.append(error("ablation_intervention_mismatch", field))
 
 
 def validate_request(root: Path, request: Any) -> dict[str, Any]:
@@ -56,14 +94,14 @@ def validate_request(root: Path, request: Any) -> dict[str, Any]:
         return {"valid": False, "errors": [error("invalid_type", "request must be an object")], "warnings": []}
     required = {
         "schema_version", "run_id", "experiment_id", "iteration_id", "run_type", "execution_level",
-        "analysis_role", "command", "cwd", "timeout_seconds", "experiment_plan_ref", "iteration_plan_ref",
+        "analysis_role", "method_id", "method_role", "implementation_id", "command", "cwd", "timeout_seconds", "experiment_plan_ref", "iteration_plan_ref",
         "review_ref", "review_id", "input_fingerprint", "protocol_fingerprint", "config_ref", "raw_log_path",
         "metric_output_path", "run_record_path", "checkpoint_path", "declared_outputs", "dependencies",
         "dataset", "seed", "repeat_index", "resources", "budget", "environment", "isolation", "data_kind",
     }
     for key in sorted(required - request.keys()):
         errors.append(error("missing_field", key))
-    for key in ("run_id", "experiment_id", "iteration_id", "review_id", "input_fingerprint", "protocol_fingerprint"):
+    for key in ("run_id", "experiment_id", "iteration_id", "method_id", "implementation_id", "review_id", "input_fingerprint", "protocol_fingerprint"):
         if not isinstance(request.get(key), str) or not request.get(key).strip():
             errors.append(error("invalid_identity", key))
     if request.get("schema_version") != "external_executor_run_request.v1":
@@ -75,8 +113,28 @@ def validate_request(root: Path, request: Any) -> dict[str, Any]:
         errors.append(error("invalid_execution_level", str(level)))
     if request.get("analysis_role") not in ROLES:
         errors.append(error("invalid_analysis_role", str(request.get("analysis_role"))))
+    if request.get("method_role") not in METHOD_ROLES:
+        errors.append(error("invalid_method_role", str(request.get("method_role"))))
     if request.get("data_kind") not in DATA_KINDS:
         errors.append(error("invalid_data_kind", str(request.get("data_kind"))))
+    if request.get("run_type") == "ablation":
+        for key in sorted(ABLATION_FIELDS - request.keys()):
+            errors.append(error("missing_ablation_field", key))
+        for key in ("variant_id", "reference_variant_id", "pair_id", "preprocessing_fingerprint", "fairness_fingerprint"):
+            if not isinstance(request.get(key), str) or not request.get(key).strip():
+                errors.append(error("invalid_ablation_identity", key))
+        target_ids = request.get("target_module_ids")
+        states = request.get("module_states")
+        if not isinstance(target_ids, list) or not target_ids or not all(isinstance(x, str) and x for x in target_ids):
+            errors.append(error("invalid_target_module_ids", str(target_ids)))
+        if not isinstance(states, dict) or set(states) != set(target_ids or []) or not all(isinstance(x, bool) for x in states.values()):
+            errors.append(error("invalid_module_states", str(states)))
+        intervention = request.get("intervention")
+        if not isinstance(intervention, dict) or not isinstance(intervention.get("controlled"), bool) or not intervention.get("type"):
+            errors.append(error("invalid_intervention", str(intervention)))
+        directions = request.get("metric_directions")
+        if not isinstance(directions, dict) or not directions or not all(value in {"higher_is_better", "lower_is_better"} for value in directions.values()):
+            errors.append(error("invalid_metric_directions", str(directions)))
     expected_level = {"smoke": "smoke", "small_scale": "small_scale", "formal": "formal"}.get(request.get("run_type"))
     if expected_level and level != expected_level:
         errors.append(error("run_type_level_mismatch", f"{request.get('run_type')} requires {expected_level}"))
@@ -157,10 +215,7 @@ def validate_request(root: Path, request: Any) -> dict[str, Any]:
                 require_allowed(root, path)
                 if kind in {"code", "config"} and not is_under_workspace_path(root, path, "external_executor/expr"):
                     errors.append(error(f"{kind}_dependency_not_under_expr", str(item.get("path"))))
-                if kind in {"dataset", "resource"} and not (
-                    is_under_workspace_path(root, path, "resources")
-                    or is_under_workspace_path(root, path, "resource")
-                ):
+                if kind in {"dataset", "resource"} and not is_under_workspace_path(root, path, "resources"):
                     errors.append(error(f"{kind}_dependency_not_under_resource", str(item.get("path"))))
                 if not path.is_file():
                     raise ValueError("dependency must be a regular file")

@@ -34,8 +34,7 @@ Read only for a targeted gap:
 - `literature/comparison_table.csv`: baseline identity or comparison family is unclear;
 - `literature/deep_read_notes/`: a specific full-text mechanism claim needs verification;
 - `literature/shallow_read_notes/`: only when noting weak abstract-level support;
-- `resources/`: an already supplied by-hand local resource changes capability or baseline interpretation;
-- `resource/`: an acquired or reimplemented resource changes capability or baseline interpretation;
+- `resources/`: a supplied, acquired, or reimplemented resource changes capability or baseline interpretation;
 - `user_seeds/seed_external_resources.jsonl`: resource hint provenance;
 - `user_seeds/bridge_domains.yaml`: bridge-domain search prior only.
 - `ideation/hypothesis_brief.yaml` and `ideation/selected/t45_search_targets.json`: Pre-Novelty lineage and search-scope context only. They may explain how the selected Candidate reached T4.5, but they cannot replace formal hypotheses, the experiment plan, or the novelty audit.

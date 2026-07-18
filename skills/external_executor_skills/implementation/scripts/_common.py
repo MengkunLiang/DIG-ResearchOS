@@ -183,7 +183,7 @@ def active_iteration(result_pack: dict[str, Any]) -> dict[str, Any] | None:
     return candidates[-1] if candidates else None
 
 
-def implementation_spec(result_pack: dict[str, Any], iteration: dict[str, Any] | None) -> dict[str, Any] | None:
+def implementation_spec(result_pack: dict[str, Any], iteration: dict[str, Any] | None, workspace: Path | None = None) -> dict[str, Any] | None:
     candidates: list[dict[str, Any]] = []
     for key in ("implementation_spec", "method_implementation_spec", "implementation_specs"):
         value = result_pack.get(key)
@@ -197,6 +197,26 @@ def implementation_spec(result_pack: dict[str, Any], iteration: dict[str, Any] |
         embedded = iteration.get("implementation_spec") or iteration.get("approved_implementation_delta")
         if isinstance(embedded, dict):
             candidates.append(embedded)
+    refinements = result_pack.get("method_refinements")
+    refinement_items = refinements.get("items", []) if isinstance(refinements, dict) else refinements if isinstance(refinements, list) else []
+    if workspace:
+        for record in refinement_items:
+            if not isinstance(record, dict):
+                continue
+            ref = record.get("snapshot_ref") or record.get("spec_ref")
+            if not ref:
+                continue
+            try:
+                loaded = load_json(resolve_in_workspace(workspace, str(ref)))
+            except Exception:
+                continue
+            if isinstance(loaded, dict):
+                candidates.append(loaded)
+        current = workspace / "external_executor" / "method_implementation_spec.json"
+        if current.exists():
+            loaded = load_json(current)
+            if isinstance(loaded, dict):
+                candidates.append(loaded)
     if not candidates:
         return None
     iteration_id = (iteration or {}).get("iteration_id") or (iteration or {}).get("id")

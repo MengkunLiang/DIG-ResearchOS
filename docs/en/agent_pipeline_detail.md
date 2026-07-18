@@ -309,7 +309,7 @@ Therefore, the resume semantics of ResearchOS are essentially:
 | `T5-HANDOFF` | `ExperimenterAgent` | `handoff` | Legacy-compatible protocol compiler; retains the same external-executor contract for an older workspace or explicit recovery path | `external_executor/handoff_pack.json` and the external-executor control files |
 | `T5-EXECUTOR-GATE` | `ExperimenterAgent` | `executor_gate` | State-machine-level immediate gate; user selects mock/Claude Code/Codex CLI/manual, writes executor control receipts, and deterministically patches AGENTS/CLAUDE | `external_executor/report/executor_selection.json`, `external_executor/report/executor_capabilities.json` |
 | `T5-EXTERNAL-WAIT` | `ExperimenterAgent` | `external_wait` | No-LLM wait/resume boundary; checks whether the external executor has written the required T8 report plus supporting result pack/status/manifest files | `external_executor/wait_acceptance_report.json`; required downstream input `external_executor/executor_research_report.md` |
-| `T5-DRY-RUN` | `ExperimenterAgent` | `dry_run` | Run through the result_pack/status/manifest/raw/config/log file protocol with a mock executor; explicitly `mock_only=true`; does not synthesize empirical T8 claims | `external_executor/result_pack.json`, `executor_status.json`, `run_manifest.json`, `heartbeat.json`, `raw_results/`, `configs/`, `logs/` |
+| `T5-DRY-RUN` | `ExperimenterAgent` | `dry_run` | Run through the result_pack/status/manifest/raw/config/log file protocol with a mock executor; explicitly `mock_only=true`; does not synthesize empirical T8 claims | `external_executor/result_pack.json`, `executor_status.json`, `external_executor/report/run_manifest.json`, `heartbeat.json`, `raw_results/`, `configs/`, `logs/` |
 | `LEGACY-T5-PILOT` | `ExperimenterAgent` | `pilot` | Legacy compatibility node: explicit old internal small-scale experiment | `pilot_plan.yaml`, `pilot_code/`, `pilot_results.json`, `motivation_validation.md` |
 | `LEGACY-T6-NOVELTY` | `NoveltyAgent` | - | Legacy compatibility node: incremental novelty review based on Pilot | `novelty_report.md`, `collision_cases.md`, `must_add_baselines.md` |
 | `T8-STYLE-GATE` | runtime gate | `style_gate` | State-machine-level immediate gate, confirm IS/CCF-A/both writing style, language, and LaTeX template, and record human interaction provenance | `drafts/writing_style.json` |
@@ -2834,7 +2834,7 @@ Interaction details: When the CLI runs interactively, pressing Enter directly in
 - mode: `external_wait`
 - Execution method: runtime pre-finalizer, preferentially does not call LLM
 
-`T5-EXTERNAL-WAIT` reads `external_executor/report/executor_selection.json`, `external_executor/executor_research_report.md`, `external_executor/result_pack.json`, `external_executor/executor_status.json`, and `external_executor/run_manifest.json`. If files are missing, the report is empty, `semantics` is incorrect, the executor in result/status/manifest does not match selection, a real executor reuses an old `mock_only/dry_run` result pack, the status/current_state is not `done`/`COMPLETED`, metrics are empty, referenced raw/config/log do not exist, sha256 does not match, the path is not within the `rw` range of `allowed_paths.txt`, or a real execution has no non-empty run/raw result record, the runtime writes `external_executor/wait_rejection_report.md` and throws a recoverable pause, leaving the project state `resume`-able. After an external Codex/Claude/manual executor fixes the results, the user executes `researchos resume`, the runtime re-checks and writes `external_executor/wait_acceptance_report.json`, then enters `T8-STYLE-GATE`. This avoids hidden errors such as "results not yet written, evidence not auditable, or accidentally consuming old results after switching from mock to real executor."
+`T5-EXTERNAL-WAIT` reads `external_executor/report/executor_selection.json`, `external_executor/executor_research_report.md`, `external_executor/result_pack.json`, `external_executor/executor_status.json`, and `external_executor/report/run_manifest.json`. If files are missing, the report is empty, `semantics` is incorrect, the executor in result/status/manifest does not match selection, a real executor reuses an old `mock_only/dry_run` result pack, the status/current_state is not `done`/`COMPLETED`, metrics are empty, referenced raw/config/log do not exist, sha256 does not match, the path is not within the `rw` range of `allowed_paths.txt`, or a real execution has no non-empty run/raw result record, the runtime writes `external_executor/wait_rejection_report.md` and throws a recoverable pause, leaving the project state `resume`-able. After an external Codex/Claude/manual executor fixes the results, the user executes `researchos resume`, the runtime re-checks and writes `external_executor/wait_acceptance_report.json`, then enters `T8-STYLE-GATE`. This avoids hidden errors such as "results not yet written, evidence not auditable, or accidentally consuming old results after switching from mock to real executor."
 
 ## 6.11 T5-DRY-RUN: ExperimenterAgent (dry_run)
 
@@ -2854,7 +2854,7 @@ Interaction details: When the CLI runs interactively, pressing Enter directly in
 | --- | --- |
 | `external_executor/result_pack.json` | schema-compatible mock result pack |
 | `external_executor/executor_status.json` | Executor status; `accepted=false`, handoff validation/T8 will decide acceptance for writing later |
-| `external_executor/run_manifest.json` | raw/config/log artifact list with sha256 |
+| `external_executor/report/run_manifest.json` | raw/config/log artifact list with sha256 |
 | `external_executor/heartbeat.json` | External executor heartbeat/status file |
 | `external_executor/raw_results/mock_results.json` | Mock raw metrics |
 | `external_executor/configs/mock_config.json` | Mock config |
@@ -2866,7 +2866,7 @@ Interaction details: When the CLI runs interactively, pressing Enter directly in
 
 ## 6.12 Removed T7/T7.5 Nodes and Current T5-to-T8 Handoff
 
-T7 result ingestion, integrity audit, post-experiment novelty review, result-to-claim mapping, and the T7.5 PI decision node have been removed from the current main state machine. The external-executor root Skill now owns the final handoff-input validation after it finishes dispatching child Skills. The main chain is:
+T7 result ingestion, integrity audit, post-experiment novelty review, result-to-claim mapping, and the T7.5 PI decision node have been removed from the current main state machine. After Evidence Packaging, the final `writer-handoff` child Skill compiles the core research report and performs the final handoff validation; the root only dispatches it and records its result. The main chain is:
 
 ```text
 T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-EXECUTOR-GATE
@@ -2883,9 +2883,9 @@ The only required T5-to-T8 evidence interface is:
 external_executor/executor_research_report.md
 ```
 
-Other files under `external_executor/`, including `result_pack.json`, `executor_status.json`, `run_manifest.json`, `raw_results/`, `configs/`, `logs/`, and `expr/`, remain available for T8 as traceable supporting context. They are not a replacement for the report. The current T5 gate defines this interface and validates its presence downstream, but it does not synthesize the report inside ResearchOS. A missing or empty report blocks `T8-RESOURCE` through the task contract/prerequisite check.
+Other files under `external_executor/`, including `result_pack.json`, `executor_status.json`, `report/run_manifest.json`, `raw_results/`, `configs/`, `logs/`, and `expr/`, remain available for T8 as traceable supporting context. They are not a replacement for the report. The current T5 gate defines this interface and validates its presence downstream, but it does not synthesize the report inside ResearchOS. A missing or empty report blocks `T8-RESOURCE` through the task contract/prerequisite check.
 
-The former T7 audit responsibilities are preserved only as handoff validation inside the external-executor root Skill: after all child Skills complete, the root Skill runs its final validation script and records whether the report and supporting external-executor directory are present. It does not write manuscript artifacts and does not approve the paper.
+The former T7 handoff checks are implemented by the final `writer-handoff` child Skill. After evidence packaging, it compiles `executor_research_report.md` from the frozen result pack and manifest, then validates executor status, result pack, run manifest, the report, and every final figure and table. The external-executor root records the child result and does not run a duplicate final validator. Neither component writes manuscript artifacts or approves paper claims.
 
 ### Legacy command behavior
 
@@ -3326,7 +3326,7 @@ Current recovery is no longer limited to only one or two stages, but is connecte
   - `external_executor/report/executor_capabilities.json`
   - `external_executor/result_pack.json`
   - `external_executor/executor_status.json`
-  - `external_executor/run_manifest.json`
+  - `external_executor/report/run_manifest.json`
   - `external_executor/wait_rejection_report.md`
   - `external_executor/wait_acceptance_report.json`
 - Legacy T5 internal experiment debugging:

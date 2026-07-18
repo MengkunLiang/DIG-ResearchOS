@@ -23,11 +23,13 @@ from _common import (
     utc_now,
     walk_dicts,
 )
+from _method_sources import resolve_final_sources
 
 SNAPSHOT_SECTIONS = [
     "context_alignment", "resource_requirement_matrix", "resources", "resource_readiness",
     "claim_evidence_matrix", "experiment_plan", "baseline_reproductions", "baseline_reproduction",
-    "method_specification", "implementation_spec", "implementation_records", "implementation",
+    "method_refinements", "method_specification", "implementation_spec", "implementations",
+    "implementation_records", "implementation", "implementation_reviews",
     "code_and_protocol_reviews", "code_and_protocol_review", "experiment_runs", "run_records", "runs",
     "result_diagnoses", "result_diagnosis", "diagnosis_records", "module_attributions", "module_attribution",
     "attribution_records", "iteration_plans", "iteration_decisions", "claim_boundaries", "claim_boundary",
@@ -125,25 +127,63 @@ def manifest_artifacts(ws: Path, manifest: dict[str, Any]) -> tuple[list[dict], 
     return output, issues
 
 
+def selected_method_spec(ws: Path, selection: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+    refinement = selection.get("method_refinement")
+    if not isinstance(refinement, dict):
+        return None, ["selected_method_refinement_missing"]
+    candidates = [refinement.get("snapshot_ref"), refinement.get("spec_ref")]
+    issues: list[str] = []
+    for value in candidates:
+        if not value:
+            continue
+        try:
+            path = resolve_in_workspace(ws, str(value))
+        except ValueError as exc:
+            issues.append(f"invalid_method_spec_path:{value}:{exc}")
+            continue
+        if not path.is_file():
+            issues.append(f"method_spec_missing:{value}")
+            continue
+        try:
+            data = load_json(path)
+        except Exception as exc:  # noqa: BLE001
+            issues.append(f"method_spec_invalid_json:{value}:{exc}")
+            continue
+        expected = refinement.get("spec_fingerprint")
+        actual = data.get("spec_fingerprint") if isinstance(data, dict) else None
+        if expected and actual != expected:
+            issues.append(f"method_spec_fingerprint_mismatch:{value}")
+            continue
+        return {
+            "path": relpath(ws, path),
+            "sha256": file_ref(ws, path).get("sha256"),
+            "spec_fingerprint": actual,
+            "value": data,
+        }, issues
+    return None, issues or ["method_spec_reference_missing"]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Pin the final evidence input set used by all Phase F1-F3 products.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/final_evidence_snapshot.json")
+    parser.add_argument("--output", default="external_executor/report/final_evidence_snapshot.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)
     ext = ws / "external_executor"
     result = load_json(ext / "result_pack.json")
-    manifest = load_json(ext / "run_manifest.json")
+    manifest = load_json(ext / "report" / "run_manifest.json")
     status = load_json(ext / "executor_status.json")
     handoff = load_json(ext / "handoff_pack.json")
-    preflight = load_json(ext / "evidence_packaging_preflight.json")
+    preflight = load_json(ext / "report" / "evidence_packaging_preflight.json")
 
     sections = section_digest(result)
+    selection = resolve_final_sources(result)
+    method_spec, method_spec_issues = selected_method_spec(ws, selection)
     active, inactive, other = classify_records(result)
     artifacts, artifact_issues = manifest_artifacts(ws, manifest)
     current_protocols = sorted({item.get("protocol_fingerprint") for item in active if item.get("protocol_fingerprint")})
-    issues = list(artifact_issues)
+    issues = list(artifact_issues) + list(selection.get("errors", [])) + method_spec_issues
     if len(current_protocols) > 1:
         issues.append("multiple_active_protocol_fingerprints")
     if not active:
@@ -159,6 +199,9 @@ def main() -> int:
         "other_records": other,
         "manifest_artifacts": artifacts,
         "active_protocol_fingerprints": current_protocols,
+        "final_source_selection": selection,
+        "selected_method_spec": method_spec,
+        "handoff_method_intent": handoff.get("method_intent", {}),
     }
     fingerprint = canonical_json_hash(snapshot_payload)
     snapshot = {
@@ -171,15 +214,19 @@ def main() -> int:
         "executor_state_at_snapshot": status.get("status"),
         "current_phase_at_snapshot": status.get("current_phase") or status.get("phase"),
         "active_protocol_fingerprint": current_protocols[0] if len(current_protocols) == 1 else None,
+        "final_source_selection": selection,
+        "selected_method_spec": method_spec,
+        "handoff_method_intent": handoff.get("method_intent", {}),
         "section_digests": sections,
         "active_formal_records": active,
         "inactive_or_stale_records": inactive,
         "other_records": other,
         "manifest_artifacts": artifacts,
         "issues": issues,
+        "warnings": selection.get("warnings", []),
         "source_refs": [
             "external_executor/result_pack.json",
-            "external_executor/run_manifest.json",
+            "external_executor/report/run_manifest.json",
             "external_executor/executor_status.json",
             "external_executor/handoff_pack.json",
         ],

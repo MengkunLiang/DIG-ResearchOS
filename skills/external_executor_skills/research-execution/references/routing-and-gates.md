@@ -37,10 +37,15 @@ Use this reference when selecting a child skill, recording an iteration decision
 | Review `blocked` | None | Stop or request human review |
 | Review pass | Requested run level approved | `experiment-run` |
 | New usable runs | Provenance complete enough to inspect | `result-diagnosis` |
-| Diagnosis complete | Attribution evidence sufficient | `module-attribution` |
-| Diagnosis complete, evidence insufficient | Attribution marked unsupported | Root iteration decision |
-| Iteration stop | Evidence snapshot pinned | `evidence-packaging` |
+| New terminal failed/unusable runs | Failure record and logs preserved | `result-diagnosis` |
+| Target reached, ablation contract absent | Required mechanism identified | `experiment-design` |
+| Target reached, required ablation pairs incomplete | Plan-declared variants and missing pair surfaces known | `experiment-run` |
+| Diagnosis complete and all final ablation pairs complete | Final implementation and pairable evidence pinned | `module-attribution` |
+| Attribution `partial`, more controlled evidence requested | Attribution limitations and requested evidence recorded | `experiment-design` |
+| Attribution `blocked` | Blocking attribution issue recorded | Human review |
+| Attribution ready or constrained stop-and-report | Evidence snapshot can be pinned | `evidence-packaging` |
 | Evidence package valid | Handoff fields resolvable | `writer-handoff` |
+| Terminal outcome recorded, report absent or handoff validation blocked | Final core inputs and assets frozen | `writer-handoff` |
 
 ## Loop decision table
 
@@ -56,6 +61,16 @@ Use this reference when selecting a child skill, recording an iteration decision
 | `stop_and_report` | Stop condition or no justified next action | Pin snapshot and package evidence |
 
 One iteration decision has one primary value. Store secondary actions separately so routing remains deterministic.
+
+## Method optimization loop
+
+- Count the initial implementation as iteration 1 and permit at most 10 total method implementation/debug iterations.
+- Send every terminal experiment outcome to `result-diagnosis`, including failures with no metrics.
+- A failed/incomplete our-method run creates a new copied implementation for bounded debug after diagnosis.
+- A completed run that does not beat every required baseline on every comparable surface creates a new copied method refinement. Falling behind a majority of baselines is always a required refinement, but beating a majority is not the completion target.
+- A later iteration must use the previous implementation `worktree/` as `base_source`; prior method versions remain unchanged.
+- Once all required baselines are beaten, complete the final method's required ablations before leaving the loop.
+- Stop at target, iteration 10, budget exhaustion, or an existing authority/security/scope stop. Preserve the latest main and ablation raw evidence under `external_executor/raw_results/`.
 
 ## Human-review gates
 
@@ -74,7 +89,7 @@ The request must contain the proposed change, reason, affected claims, affected 
 
 ## Finalization routes
 
-- `completed`: final validation passes and all mandatory work is complete.
+- `completed`: all mandatory scientific work is complete and Writer Handoff validation is ready.
 - `partial`: auditable evidence exists but one or more mandatory evidence/package elements are incomplete.
 - `blocked`: a prerequisite or authority prevents the minimum loop or next required action.
 - `failed`: execution encountered an unrecoverable failure and produced no reliable experiment result, though diagnostic artifacts remain.

@@ -45,7 +45,7 @@ def normalize_metrics(benchmark: dict[str, Any], scope: dict[str, Any]) -> dict[
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build a versioned protocol snapshot from confirmed scope and approved resources.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/protocol_snapshot.json")
+    parser.add_argument("--output", default="external_executor/report/protocol_snapshot.json")
     parser.add_argument("--overrides", help="Optional JSON file containing authorized protocol completions")
     parser.add_argument("--force-version", type=int)
     args = parser.parse_args()

@@ -21,7 +21,7 @@ Compile the experiment loop's final factual state into one internally consistent
    - `<workspace>/external_executor/handoff_pack.json`;
    - `<workspace>/external_executor/expected_outputs_schema.json`;
    - `<workspace>/external_executor/executor_status.json`;
-   - `<workspace>/external_executor/run_manifest.json`;
+   - `<workspace>/external_executor/report/run_manifest.json`;
    - `<workspace>/external_executor/result_pack.json`;
    - `<skill-dir>/references/snapshot-and-staleness-policy.md`;
    - `<skill-dir>/references/evidence-level-policy.md`;
@@ -31,13 +31,20 @@ Compile the experiment loop's final factual state into one internally consistent
 Write only:
 
 ```text
-external_executor/evidence_packaging_preflight.json
-external_executor/final_evidence_snapshot.json
-external_executor/final_evidence_snapshot_validation.json
-external_executor/evidence_package/**
-external_executor/evidence_packaging_gate.json
-external_executor/evidence_packaging_report.json
-external_executor/evidence_packaging_report_validation.json
+external_executor/evidence_package/realized_method_package.json
+external_executor/figure/*.svg
+external_executor/figure/*.png
+external_executor/table/*.csv
+external_executor/table/*.tsv
+external_executor/report/evidence_packaging_*
+external_executor/report/final_evidence_snapshot*.json
+external_executor/report/framework_figure_spec.json
+external_executor/report/framework_figure.mmd
+external_executor/report/result_table_build_report.json
+external_executor/report/result_figure_build_report.json
+external_executor/report/figure_table_inventory.json
+external_executor/report/evidence_mapping.json
+external_executor/report/evidence_package_manifest.json
 result_pack.json#realized_method_package
 result_pack.json#framework_figure
 result_pack.json#figure_table_inventory
@@ -53,7 +60,7 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/preflight_evidence_packaging.py --workspace <workspace> \
-  --output external_executor/evidence_packaging_preflight.json
+  --output external_executor/report/evidence_packaging_preflight.json
 ```
 
 Packaging is allowed after the root stops the loop, routes to Phase F, or records an honest terminal/stop state. Phase F must make the best possible package under `completed`, `partial`, `blocked`, or `failed`; those states do not authorize invented method facts, results, figures, paths, or evidence.
@@ -66,10 +73,10 @@ Read `references/snapshot-and-staleness-policy.md`, then run:
 
 ```bash
 python <skill-dir>/scripts/build_evidence_snapshot.py --workspace <workspace> \
-  --output external_executor/final_evidence_snapshot.json
+  --output external_executor/report/final_evidence_snapshot.json
 
 python <skill-dir>/scripts/validate_evidence_snapshot.py --workspace <workspace> \
-  --snapshot external_executor/final_evidence_snapshot.json
+  --snapshot external_executor/report/final_evidence_snapshot.json
 ```
 
 The snapshot must bind:
@@ -80,6 +87,10 @@ The snapshot must bind:
 - active protocol fingerprint;
 - run-manifest artifact paths and checksums;
 - executor state and final iteration decision context.
+- the one `implementations.active_implementation_id` record;
+- the method refinement whose `spec_fingerprint` matches that implementation;
+- the immutable method-spec snapshot file, content hash, and parsed value;
+- the review, diagnosis, attribution, and experiment runs selected for the same final iteration and implementation.
 
 Do not continue if the snapshot source changes while packaging. Rebuild the snapshot instead. Every F1-F3 output must carry exactly the same `snapshot_id` and `snapshot_fingerprint`.
 
@@ -89,11 +100,21 @@ Read `references/realized-method-contract.md`, then run:
 
 ```bash
 python <skill-dir>/scripts/build_realized_method_package.py --workspace <workspace> \
-  --snapshot external_executor/final_evidence_snapshot.json \
+  --snapshot external_executor/report/final_evidence_snapshot.json \
   --output external_executor/evidence_package/realized_method_package.json
 ```
 
-Treat the generated file as a deterministic scaffold, not a substitute for semantic inspection. Verify it directly against final implementation code, configs, review records, active experiment records, diagnoses, attribution records, and iteration decisions.
+The generated file is a deterministic, final-version scaffold. It reads selected result-pack values and the selected method specification from `final_evidence_snapshot.json`; it must not merge historical implementations or reread live result-pack sections. Semantic inspection may clarify summaries, but it must not change `final_version`, source validation, fingerprints, or evidence status without rebuilding the snapshot.
+
+Resolve final lineage in this order:
+
+1. select `result_pack.implementations.active_implementation_id`;
+2. select the `method_refinements` record matching its `method_spec_fingerprint`;
+3. follow the refinement `snapshot_ref` and verify the spec fingerprint and file hash;
+4. select review, diagnosis, attribution, decision, and experiment runs for that implementation/iteration;
+5. reject ambiguous selection instead of merging multiple implementation records.
+
+Read the final attribution report selected by `result_pack.module_attributions.current_by_iteration`, then expand its nested `module_attributions.items`. Do not treat the report envelope as one module record, and do not merge an earlier iteration's attribution into the final realized method.
 
 The package must distinguish:
 
@@ -118,9 +139,11 @@ Use only `direct_ablation` or `controlled_diagnostic` as controlled mechanism su
 
 Record final method name, one-sentence method, actual core mechanism, actual algorithm flow, losses, implemented/dropped/added modules, supported/unsupported mechanisms, claim boundary, and `delta_from_method_intent`. A module that exists in code but lacks experimental support remains part of the method definition and must not become an empirically supported contribution by wording.
 
+Also preserve `final_version`, separate `training_flow` and `inference_flow`, system/data interfaces, symbol table/pseudocode when available, configuration contract, ablation controls, method evolution across iterations, final-run binding, reproducibility requirements, evidence traceability, and the complete selected attribution sections. A loss is realized only when its implementation reference exists in the final implementation worktree.
+
 Set realized method status honestly:
 
-- `complete`: method identity, flow, modules, code/config mappings, and evidence distinctions are complete;
+- `complete`: final version identity, reviewed implementation, protocol, training/inference flow, realized losses, modules, code/config mappings, attribution, evidence traceability, and claim boundaries are complete and source validation passes;
 - `partial`: a usable method definition exists but some mappings or support assessments are unresolved;
 - `unavailable`: actual implemented method cannot be reconstructed reliably.
 
@@ -158,7 +181,29 @@ python <skill-dir>/scripts/render_framework_figure.py --workspace <workspace> \
   --write-back
 ```
 
-The provided renderer emits an editable Mermaid source and a standalone SVG without external dependencies. It is intentionally conservative. Project-specific redesign is allowed only if the same node, edge, evidence, and `must_not_show` contract remains intact.
+The renderer writes the final SVG to `external_executor/figure/framework_figure.svg` and the editable Mermaid source to `external_executor/report/framework_figure.mmd`. The SVG must reflect the final code/module structure, attribution status, and claim boundary. Project-specific redesign is allowed only if the same node, edge, evidence, and `must_not_show` contract remains intact.
+
+## Generate result tables and figures
+
+Build deterministic tables directly from snapshot-pinned structured files in `external_executor/raw_results/`. Skip unmanifested files and files whose current checksum differs from `final_evidence_snapshot.json`; record the reason instead of incorporating post-snapshot values:
+
+```bash
+python <skill-dir>/scripts/build_result_tables.py --workspace <workspace>
+python <skill-dir>/scripts/render_result_figures.py --workspace <workspace>
+```
+
+The table builder accepts CSV, TSV, JSON, and JSONL raw results, enriches them with pinned run metadata, and writes when data exists:
+
+```text
+external_executor/table/all_results.csv
+external_executor/table/main_comparison.csv
+external_executor/table/ablation_results.csv
+external_executor/table/other_experiments.csv
+```
+
+`main_comparison.csv` aggregates ours and baselines by protocol, dataset, split, metric, method, and repeat. `ablation_results.csv` preserves variant identity. `other_experiments.csv` covers robustness, efficiency, diagnostic, small-scale, and other non-main runs. Unknown metric direction remains `unknown`; never infer it from observed values.
+
+The figure renderer reads only generated aggregate tables and creates one SVG per dataset/split/metric/direction/protocol in `external_executor/figure/`. Never mix different metrics, directions, or protocol fingerprints on one axis. Main-result plots require both ours and baseline records under the same protocol; ablation plots require at least two variants. On rerun, remove only the renderer-owned `main_*.svg`, `ablation_*.svg`, and `other_*.svg` outputs before regeneration so stale plots cannot survive. Missing comparable data produces a report warning, not a fabricated plot.
 
 ## Build the result figure/table inventory
 
@@ -168,7 +213,7 @@ Read `references/figure-table-inventory-contract.md` and `references/visual-trac
 python <skill-dir>/scripts/build_figure_table_inventory.py --workspace <workspace>
 ```
 
-For each result figure or table record:
+After table and figure generation, build the inventory. For each result figure or table record:
 
 - artifact ID, kind, status, evidence layer, and claim candidate IDs;
 - source result and structured source-data references;
@@ -277,11 +322,11 @@ status=complete|partial|blocked|failed
 packaging_readiness=ready|partial|blocked
 snapshot_id=<id>
 snapshot_fingerprint=<sha256>
-report=external_executor/evidence_packaging_report.json
+report=external_executor/report/evidence_packaging_report.json
 realized_method=external_executor/evidence_package/realized_method_package.json
-framework_figure=external_executor/evidence_package/framework_figure_spec.json
-figure_table_inventory=external_executor/evidence_package/figure_table_inventory.json
-evidence_mapping=external_executor/evidence_package/evidence_mapping.json
+framework_figure=external_executor/figure/framework_figure.svg
+figure_table_inventory=external_executor/report/figure_table_inventory.json
+evidence_mapping=external_executor/report/evidence_mapping.json
 blocking_issues=<ids>
 constraints=<ids>
 recommended_next_action=continue_to_writer_handoff|continue_to_writer_handoff_with_constraints|repair_package_or_return_to_root
@@ -318,6 +363,8 @@ The recommendation is advisory. `research-execution` owns checkpointing, global 
 - `scripts/build_realized_method_package.py`: scaffold the final implemented method and intent delta.
 - `scripts/build_framework_figure_spec.py`: create an evidence-bound final architecture specification.
 - `scripts/render_framework_figure.py`: render conservative Mermaid and SVG assets when the spec is ready.
+- `scripts/build_result_tables.py`: normalize raw results and generate main, ablation, and other experiment tables.
+- `scripts/render_result_figures.py`: render per-dataset/per-metric SVGs from generated tables.
 - `scripts/build_figure_table_inventory.py`: inventory existing and required result visuals with provenance.
 - `scripts/build_evidence_mapping.py`: create bidirectional mappings.
 - `scripts/build_package_manifest.py`: aggregate package identities, checksums, roles, and relations.

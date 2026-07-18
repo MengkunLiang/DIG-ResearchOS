@@ -11,7 +11,7 @@ from validate_resource_report import validate_data
 def main() -> int:
     parser = argparse.ArgumentParser(description="Atomically apply only Phase B sections to result_pack.json.")
     parser.add_argument("--workspace")
-    parser.add_argument("--report", default="external_executor/resource_preparation_report.json")
+    parser.add_argument("--report", default="external_executor/report/resource_preparation_report.json")
     args = parser.parse_args()
 
     workspace = resolve_workspace(args.workspace)

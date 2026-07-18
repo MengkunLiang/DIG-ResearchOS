@@ -58,7 +58,7 @@ def category_from(product: Path, resource_root: Path, provenance: dict[str, Any]
         first = ""
     if first in CATEGORIES:
         return first
-    return "byhand" if resource_root.name == "resources" else "byhand"
+    return "byhand"
 
 
 def iter_products(resource_root: Path) -> list[Path]:
@@ -117,22 +117,20 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build a source report for products under resources/ and resource/.")
+    parser = argparse.ArgumentParser(description="Build a source report for products under resources/.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/resource_source_report.json")
-    parser.add_argument("--markdown-output", default="external_executor/resource_source_report.md")
-    parser.add_argument("--report", default="external_executor/resource_preparation_report.json")
+    parser.add_argument("--output", default="external_executor/report/resource_source_report.json")
+    parser.add_argument("--markdown-output", default="external_executor/report/resource_source_report.md")
+    parser.add_argument("--report", default="external_executor/report/resource_preparation_report.json")
     parser.add_argument("--write-back", action="store_true")
     args = parser.parse_args()
 
     workspace = resolve_workspace(args.workspace)
     byhand_root = workspace / "resources"
-    resource_root = workspace / "resource"
     output = resolve_in_workspace(workspace, args.output)
     markdown_output = resolve_in_workspace(workspace, args.markdown_output)
     records = [
         *[product_record(workspace, byhand_root, product) for product in iter_products(byhand_root)],
-        *[product_record(workspace, resource_root, product) for product in iter_products(resource_root)],
     ]
     categories = {category: [] for category in CATEGORIES}
     for record in records:
@@ -141,12 +139,11 @@ def main() -> int:
     payload = {
         "schema_version": "resource_source_report.v1",
         "generated_at": utc_now(),
-        "resource_root": "resource",
-        "source_roots": ["resources", "resource"],
-        "status": "complete" if (byhand_root.exists() or resource_root.exists()) else "partial",
+        "resource_root": "resources",
+        "source_roots": ["resources"],
+        "status": "complete" if byhand_root.exists() else "partial",
         "categories": categories,
         "counts": {category: len(categories[category]) for category in CATEGORIES},
-        "missing_resource_root": not resource_root.exists(),
         "missing_resources_root": not byhand_root.exists(),
     }
     assert_write_allowed(workspace, output)

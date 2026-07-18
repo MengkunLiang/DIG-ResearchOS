@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 
 from _common import (
-    active_iteration_id, assert_write_allowed, canonical_hash, current_diagnosis,
+    active_iteration_id, assert_write_allowed, canonical_hash, current_diagnosis, current_implementation,
     dump_json_atomic, load_json, relpath, resolve_in_workspace, resolve_workspace,
     schema_major, section_items, utc_now,
 )
@@ -14,7 +14,7 @@ from _common import (
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate module attribution prerequisites.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/module_attribution_preflight.json")
+    parser.add_argument("--output", default="external_executor/report/module_attribution_preflight.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     ext = ws / "external_executor"
@@ -46,17 +46,58 @@ def main() -> int:
     elif gate == "partial":
         warnings.append({"id": "partial_diagnosis", "message": "Attribution must preserve diagnosis limitations"})
     implementations = section_items(result.get("implementations"))
+    implementation = current_implementation(result, iteration_id)
     method_intent = handoff.get("method_intent", {}) if isinstance(handoff, dict) else {}
     declared_modules = method_intent.get("candidate_modules", []) if isinstance(method_intent, dict) else []
     if not implementations and not declared_modules:
         issues.append({"id": "missing_module_identity", "severity": "blocking", "message": "No implementation mapping or method-intent modules"})
+    if gate == "ready_for_attribution" and not implementation:
+        issues.append({"id": "missing_current_implementation", "severity": "blocking", "message": f"No active implementation record for {iteration_id}"})
     runs = [x for x in section_items(result.get("experiment_runs")) if str(x.get("iteration_id")) == str(iteration_id)]
     if not runs:
         issues.append({"id": "missing_iteration_runs", "severity": "blocking", "message": "No runs for active iteration"})
     intervention_runs = [x for x in runs if str(x.get("run_type", "")).lower() in {"ablation", "diagnostic"} or x.get("module_states") or x.get("disabled_modules") or x.get("removed_modules")]
     if not intervention_runs:
         warnings.append({"id": "no_intervention_runs", "message": "Only implementation facts/correlational attribution may be possible"})
-    targets = [output, ext / "module_attribution_snapshot.json", ext / "module_attribution_facts.json", ext / "module_attribution_report.json", ext / "module_attribution"]
+    pair_groups: dict[tuple[str, str], list[dict]] = {}
+    for run in intervention_runs:
+        if str(run.get("run_type", "")).lower() != "ablation":
+            continue
+        if str(run.get("run_status") or run.get("status") or "").lower() not in {"completed", "complete", "success", "succeeded"}:
+            continue
+        key = (str(run.get("experiment_id") or ""), str(run.get("pair_id") or ""))
+        if not all(key) or not isinstance(run.get("module_states"), dict) or not run.get("reference_variant_id"):
+            continue
+        if not isinstance(run.get("intervention"), dict) or run["intervention"].get("controlled") is not True:
+            continue
+        if implementation and run.get("implementation_id") != implementation.get("implementation_id"):
+            continue
+        directions = run.get("metric_directions")
+        if not isinstance(directions, dict) or not directions:
+            continue
+        pair_groups.setdefault(key, []).append(run)
+    pairable_groups = []
+    for key, group in pair_groups.items():
+        modules = {str(module) for run in group for module in run.get("module_states", {})}
+        if modules and all(
+            any(run.get("module_states", {}).get(module) is True for run in group)
+            and any(run.get("module_states", {}).get(module) is False for run in group)
+            for module in modules
+        ):
+            pairable_groups.append(key)
+    if gate == "ready_for_attribution" and not pairable_groups:
+        issues.append({
+            "id": "missing_pairable_ablation_evidence",
+            "severity": "blocking",
+            "message": "No final-implementation ablation group has explicit pair/reference/module-state/metric-direction evidence",
+        })
+    targets = [
+        output,
+        ext / "report" / "module_attribution_snapshot.json",
+        ext / "report" / "module_attribution_facts.json",
+        ext / "module_attribution_report.json",
+        ext / "report" / "module_attribution",
+    ]
     for target in targets:
         try:
             assert_write_allowed(ws, target)
@@ -69,6 +110,8 @@ def main() -> int:
         "status": status, "iteration_id": iteration_id, "diagnosis_id": diagnosis.get("diagnosis_id"),
         "diagnosis_gate": gate, "input_fingerprint": fingerprint,
         "run_count": len(runs), "intervention_run_count": len(intervention_runs),
+        "pairable_ablation_group_count": len(pairable_groups),
+        "recommended_next_action": "experiment-design" if any(item["id"] == "missing_pairable_ablation_evidence" for item in issues) else "continue",
         "issues": issues, "warnings": warnings,
     }
     assert_write_allowed(ws, output)

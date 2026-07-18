@@ -3,11 +3,11 @@
 ## Child-owned artifacts
 
 ```text
-external_executor/module_attribution_preflight.json
-external_executor/module_attribution_snapshot.json
-external_executor/module_attribution_facts.json
+external_executor/report/module_attribution_preflight.json
+external_executor/report/module_attribution_snapshot.json
+external_executor/report/module_attribution_facts.json
 external_executor/module_attribution_report.json
-external_executor/module_attribution/**
+external_executor/report/module_attribution/**
 ```
 
 The root owns manifest registration, executor status, scope gates and iteration decisions.
@@ -44,6 +44,8 @@ The root owns manifest registration, executor status, scope gates and iteration 
     "unsupported_mechanism_ids": [],
     "material_confound_ids": [],
     "blocking_issue_ids": [],
+    "direct_evidence_module_ids": [],
+    "uncovered_required_module_ids": [],
     "recommendation_counts": {},
     "next_action": "return_for_iteration_decision|add_controlled_evidence|repair_or_rerun|human_review|stop_and_report"
   },
@@ -102,6 +104,8 @@ Required sections remain present for blocked/failed outcomes.
 Requires:
 
 - at least one relevant module attribution;
+- at least one final-method module supported by direct ablation or controlled diagnostic evidence;
+- no required implemented module left uncovered;
 - every substantive attribution has known evidence refs and confidence;
 - direct causal language appears only with eligible intervention evidence;
 - material/blocking confounds are propagated;

@@ -4,6 +4,8 @@
 
 The inventory is a traceability ledger, not a list of attractive images. It includes ready, partial, missing, blocked, and stale artifacts.
 
+Final generated tables live only under `external_executor/table/`; final generated SVG/PNG figures live only under `external_executor/figure/`. Specs, recipes, inventories, manifests, and validation reports live under `external_executor/report/`.
+
 ## Item fields
 
 ```json

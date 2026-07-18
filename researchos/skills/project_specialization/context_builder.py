@@ -978,7 +978,7 @@ def _resume_policy(iteration_budget: Mapping[str, Any], execution_contract: Mapp
     if not is_empty_value(plateau):
         items.append(f"Stop or resume decisions must respect plateau definition: {plateau}")
     write_paths = _string_list(execution_contract.get("write_paths"))
-    for path in ("external_executor/executor_status.json", "external_executor/run_manifest.json", "external_executor/job_state.json"):
+    for path in ("external_executor/executor_status.json", "external_executor/report/run_manifest.json", "external_executor/job_state.json"):
         if path in write_paths:
             items.append(f"Resume state must preserve and update {path}.")
     return _dedupe_strings(items)

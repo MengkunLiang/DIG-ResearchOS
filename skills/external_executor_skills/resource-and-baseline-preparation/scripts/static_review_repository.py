@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from _common import assert_write_allowed, dump_json_atomic, is_within, resolve_workspace, tree_manifest, utc_now
+from _common import assert_write_allowed, dump_json_atomic, is_within, relpath, resolve_in_workspace, resolve_workspace, tree_manifest, utc_now
 
 TEXT_LIMIT = 2 * 1024 * 1024
 PATTERNS = [
@@ -48,13 +48,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Static, non-executing repository risk review.")
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--path", required=True)
-    parser.add_argument("--output", required=True)
+    parser.add_argument("--output")
     parser.add_argument("--max-files", type=int, default=30000)
     args = parser.parse_args()
 
     workspace = resolve_workspace(args.workspace)
     root = Path(args.path).expanduser().resolve()
-    output = Path(args.output).expanduser().resolve()
+    output = resolve_in_workspace(
+        workspace,
+        args.output or "external_executor/report/static_review.json",
+    )
     if not is_within(root, workspace):
         raise SystemExit(f"Repository path is outside workspace: {root}")
     assert_write_allowed(workspace, output)
@@ -107,7 +110,7 @@ def main() -> int:
     report = {
         "schema_version": "repository_static_review.v1",
         "generated_at": utc_now(),
-        "path": str(root),
+        "path": relpath(workspace, root),
         "status": status,
         "manifest_sha256": manifest["manifest_sha256"],
         "manifest_truncated": manifest["truncated"],

@@ -27,18 +27,19 @@ Prepare the minimum experiment loop without confusing resource availability with
 
 Write only:
 
-- `external_executor/resource_preflight.json`;
+- `external_executor/report/resource_preflight.json`;
 - `external_executor/resource_requirement_matrix.json`;
-- `external_executor/resource_local_inventory.json`;
-- `external_executor/resource_search_records.json`;
-- `external_executor/resource_source_report.json`;
-- `external_executor/resource_source_report.md`;
-- `external_executor/resource_preparation_report.json`;
-- authorized by-hand local material under `resources/`;
-- authorized remote acquisitions and baseline reimplementations under `resource/`;
+- `external_executor/report/resource_local_inventory.json`;
+- `external_executor/report/resource_search_records.json`;
+- `external_executor/report/resource_source_report.json`;
+- `external_executor/report/resource_source_report.md`;
+- `external_executor/report/resource_preparation_report.json`;
+- `external_executor/report/static_review.json`;
+- `external_executor/report/validation_report.json`;
+- authorized resource material, remote acquisitions, and baseline reimplementations under `resources/`;
 - the Phase B result-pack sections listed in `references/output-contract.md`, through the narrow apply script.
 
-Do not change `executor_status.json`, `run_manifest.json`, budgets, iteration decisions, context alignment, experiment plans, baseline reproduction records, or sibling-owned sections. Return control to `research-execution` after applying the report.
+Do not change `external_executor/executor_status.json`, `external_executor/report/run_manifest.json`, budgets, iteration decisions, context alignment, experiment plans, baseline reproduction records, or sibling-owned sections. Return control to `research-execution` after applying the report.
 
 ## Run deterministic preflight
 
@@ -46,7 +47,7 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/preflight_resources.py --workspace <workspace> \
-  --output external_executor/resource_preflight.json
+  --output external_executor/report/resource_preflight.json
 ```
 
 The preflight must confirm:
@@ -54,10 +55,10 @@ The preflight must confirm:
 - `context_alignment.status` is `pass` or non-blocking `mismatch`;
 - `confirmed_execution_scope` contains required baselines, benchmark/protocol information, minimum loop, claim constraints, and acquisition policy;
 - acquisition mode, capability flags, and allowed domains agree;
-- local output, `resources/`, `resource/`, and source-report paths are writable under policy;
+- local output, `resources/`, and report paths are writable under policy;
 - no unsupported major schema is required.
 
-A preflight warning prompts targeted review. A preflight blocker prevents acquisition and reimplementation. `external_executor/expr/` is not a resource inventory source; whether it is empty, guide-only, or populated is not a Phase B local-resource blocker. Missing `resources/` by-hand inputs, `resource/` acquired/reimplemented products, `resources/baseline_candidates.jsonl`, `resource/baseline_candidates.jsonl`, or `literature/baseline_map.json` are also not blockers; this skill owns discovering/acquiring/reimplementing missing resources.
+A preflight warning prompts targeted review. A preflight blocker prevents acquisition and reimplementation. Missing `resources/` by-hand inputs, `resources/baseline_candidates.jsonl`, or `literature/baseline_map.json` are not blockers; this skill owns discovering/acquiring/reimplementing missing resources under `resources/`.
 
 ## Build the resource requirement matrix
 
@@ -87,13 +88,11 @@ Do not silently weaken a requirement because a convenient candidate exists.
 
 For each unsatisfied requirement, proceed in this exact order:
 
-1. verify by-hand local resources under the project `resources/` area;
-2. search and acquire authorized public remote resources;
-3. reimplement an unavailable required baseline when policy permits.
+1. verify local resources under the project `resources/` area;
+2. search and acquire authorized public remote resources under `resources/`;
+3. reimplement an unavailable required baseline under `resources/` when policy permits.
 
 After each step, review candidates against the requirement matrix and check whether all minimum-loop requirements are now satisfied. If they are satisfied, stop the strategy for those requirements and do not run later fallback steps. If all three steps finish and a minimum-loop required resource is still unsatisfied, mark the requirement blocked, record the blocker, and return to `research-execution` for human supplementation or scope review.
-
-Never inspect `external_executor/expr/` for candidate baselines, benchmarks, datasets, checkpoints, or evaluation resources. `external_executor/expr/` is the formal experiment area after baseline and method construction; using it as a resource source makes execution artifacts indistinguishable from prepared inputs.
 
 ## Inventory local resource material first
 
@@ -101,18 +100,14 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/inventory_local_resources.py --workspace <workspace> \
-  --output external_executor/resource_local_inventory.json
+  --output external_executor/report/resource_local_inventory.json
 ```
 
 Inspect in this order:
 
 ```text
 resources/                        # by-hand local project resources
-resource/                         # acquired/reimplemented products from this skill
-user_seeds/
 ```
-
-Do not inventory `external_executor/expr/`, even if it exists and contains files. Existing files there are execution workspace material, not approved candidate resources.
 
 Use `references/resource-review-checklist.md` to map candidates to requirements. Inspect provenance, fixed version, license, README, configuration, entry points, dependency manifests, dataset split, preprocessing, metric implementation, benchmark protocol, checkpoints, symlinks, submodules, and minimum-loop coverage. Do not execute third-party setup, download, shell, notebook, training, or evaluation code during inventory.
 
@@ -131,7 +126,7 @@ Initialize the durable report envelope after preflight, matrix creation, and loc
 
 ```bash
 python <skill-dir>/scripts/initialize_resource_report.py --workspace <workspace> \
-  --output external_executor/resource_preparation_report.json
+  --output external_executor/report/resource_preparation_report.json
 ```
 
 The initializer preserves already reviewed child-owned sections by default. Use `--force` only when the root has invalidated the entire Phase B checkpoint.
@@ -156,7 +151,7 @@ Search these platform groups first, then broaden only if they cannot satisfy the
 - Dataset: Hugging Face, OpenML, Kaggle, UCI, Zenodo, Dataverse, DataCite.
 - Benchmark: OpenML, Hugging Face Leaderboards, Codabench, EvalAI, HELM, and relevant domain-specific platforms such as OGB, MTEB, or OpenCompass.
 
-Record every public source class checked, selected candidate, rejection, and remaining uncertainty in `external_executor/resource_search_records.json`.
+Record every public source class checked, selected candidate, rejection, and remaining uncertainty in `external_executor/report/resource_search_records.json`.
 
 Prefer, in order:
 
@@ -181,8 +176,8 @@ Immediately perform static review:
 
 ```bash
 python <skill-dir>/scripts/static_review_repository.py --workspace <workspace> \
-  --path <workspace>/resource/Remote_acquisition/<candidate-id> \
-  --output <workspace>/resource/Remote_acquisition/<candidate-id>/static_review.json
+  --path <workspace>/resources/Remote_acquisition/<candidate-id> \
+  --output external_executor/report/static_review.json
 ```
 
 Treat static review as risk discovery, not proof of safety. Never run a fetched install script merely because the scan passed.
@@ -222,14 +217,15 @@ Validate the package before considering it a candidate:
 
 ```bash
 python <skill-dir>/scripts/validate_reimplementation_package.py --workspace <workspace> \
-  --path <reimplementation-package> --mode candidate
+  --path <reimplementation-package> --mode candidate \
+  --output external_executor/report/validation_report.json
 ```
 
 If the central mechanism or protocol cannot be recovered, mark the baseline unavailable rather than inventing missing details.
 
 After reimplementation validation and independent review, recompute readiness. If the reimplemented candidate still cannot satisfy the minimum-loop requirement, mark Phase B `blocked` and request human-provided resource material or an approved scope/baseline decision from the root.
 
-Place reimplementation products under `resource/reproduction/<baseline>/`.
+Place reimplementation products under `resources/reproduction/<baseline>/`.
 
 ## Perform an independent resource review
 
@@ -258,20 +254,20 @@ A baseline may be marked executable, or approved for `baseline_reproduction` / `
 
 ## Compute the readiness gate
 
-Assemble `external_executor/resource_preparation_report.json` using `references/output-contract.md`, then run:
+Assemble `external_executor/report/resource_preparation_report.json` using `references/output-contract.md`, then run:
 
 ```bash
 python <skill-dir>/scripts/compute_resource_readiness.py --workspace <workspace> \
-  --report <workspace>/external_executor/resource_preparation_report.json \
+  --report <workspace>/external_executor/report/resource_preparation_report.json \
   --write-back
 ```
 
-Before final validation, build the source report for by-hand products under `resources/` and acquired/reimplemented products under `resource/`:
+Before final validation, build the source report for resource products under `resources/`:
 
 ```bash
 python <skill-dir>/scripts/build_resource_source_report.py --workspace <workspace> \
-  --output external_executor/resource_source_report.json \
-  --markdown-output external_executor/resource_source_report.md \
+  --output external_executor/report/resource_source_report.json \
+  --markdown-output external_executor/report/resource_source_report.md \
   --write-back
 ```
 
@@ -291,10 +287,10 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/validate_resource_report.py --workspace <workspace> \
-  --report external_executor/resource_preparation_report.json
+  --report external_executor/report/resource_preparation_report.json
 
 python <skill-dir>/scripts/apply_resource_report.py --workspace <workspace> \
-  --report external_executor/resource_preparation_report.json
+  --report external_executor/report/resource_preparation_report.json
 ```
 
 The apply script updates only:
@@ -319,7 +315,7 @@ Return a compact child result:
 child_skill=resource-and-baseline-preparation
 status=complete|partial|blocked|failed
 resource_readiness=ready|partial|blocked
-report=external_executor/resource_preparation_report.json
+report=external_executor/report/resource_preparation_report.json
 matrix=external_executor/resource_requirement_matrix.json
 approved_requirement_ids=<ids>
 constrained_requirement_ids=<ids>
@@ -357,7 +353,7 @@ The recommendation is advisory. `research-execution` owns manifest registration,
 - `scripts/initialize_resource_report.py`: create or refresh the durable Phase B report envelope without overwriting reviewed sections.
 - `scripts/stage_local_resource.py`: copy accepted local material into `resources/byhand/` with provenance.
 - `scripts/acquire_github_resource.py`: fetch one immutable public Git revision without submodules or code execution.
-- `scripts/build_resource_source_report.py`: classify by-hand products under `resources/` and acquired/reimplemented products under `resource/` by source category.
+- `scripts/build_resource_source_report.py`: classify products under `resources/` by source category.
 - `scripts/static_review_repository.py`: inspect repository metadata and risky patterns statically.
 - `scripts/scaffold_reimplementation.py`: create a provenance-first baseline reimplementation package.
 - `scripts/validate_reimplementation_package.py`: validate reimplementation completeness and labels.

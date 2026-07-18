@@ -1,70 +1,35 @@
 # Output Contract
 
-## Snapshot
+## Final downstream document
 
-`writer_handoff_snapshot.v1` contains `handoff_id`, `input_fingerprint`, `source_versions`, `writer_handoff_contract`, `expected_requirements`, `sections`, `manifest`, and source references.
+`external_executor/executor_research_report.md` is the primary ResearchOS and T8 handoff. It contains the eight required sections in `research-report-contract.md` and refers to original workspace-relative artifacts.
 
-## Inventory
-
-`writer_handoff_inventory.v1` contains categorized `items`, each with `item_id`, `category`, `status`, `source_ids`, `artifact_refs`, `evidence_level`, `t7_consumers`, and limitations.
-
-## Claim map
-
-`writer_handoff_claim_map.v1` contains `claims`, each with `claim_id`, question/summary, support refs by class, counterevidence refs, required-baseline status, evidence ceiling, limitations, risks, must-not-claim consequences, and `audit_status=pending_T7`.
-
-## T7 index
-
-`writer_handoff_t7_index.v1` maps consumer stages to artifacts and source IDs. It includes schema/fingerprint information and integrity status.
-
-## Report
-
-Required fields:
+## Process and validation files
 
 ```text
-schema_version
-handoff_id
-status
-pre_audit
-input_fingerprint
-source_snapshot
-method_summary
-implementation_summary
-results
-figures
-tables
-claim_candidates
-must_not_claim
-limitations
-open_risks
-failed_and_unusable_work
-recovery_notes
-recommended_storyline_update
-t7_ingest_index
-integrity_validation
-blocking_issues
-warnings
-handoff_gate
+external_executor/report/writer_handoff_preflight.json
+external_executor/report/writer_handoff_snapshot.json
+external_executor/report/writer_handoff_facts.json
+external_executor/report/writer_handoff_validation.json
 ```
 
-`status`: `complete | partial | blocked | failed`.
+`writer_handoff_snapshot.v2` stores complete core documents, core file hashes, final figure/table hashes, `handoff_id`, and `input_fingerprint`.
 
-`handoff_gate.status`:
+`writer_handoff_facts.v1` stores project, implementation, experiment, comprehensive-result, preliminary Claim, verified-literature, limitation, and artifact-index records derived from the snapshot.
+
+`writer_handoff_validation.v2` stores `ready | partial | blocked`, the six validated surfaces, hashes, coverage checks, errors, warnings, and the recommended next action.
+
+## Prohibited legacy outputs
+
+Do not produce:
 
 ```text
-ready_for_T7_audit
-partial_for_T7_audit
-blocked_for_T7_audit
+writer_handoff_inventory.json
+writer_handoff_claim_map.json
+writer_handoff_t7_index.json
+writer_handoff_integrity.json
+writer_handoff_report.json
+result_pack.json#writer_handoff
 ```
 
-`recommended_next_action`:
-
-```text
-return_to_root_for_final_validation
-return_to_root_with_partial_handoff
-repair_handoff
-stop_and_report
-```
-
-## Narrow apply
-
-Only `result_pack.writer_handoff` may be replaced. Sibling sections remain byte-equivalent after JSON normalization.
+These parallel indexes are no longer the downstream contract. Their necessary facts are consolidated into `writer_handoff_facts.json` and the final Markdown report.

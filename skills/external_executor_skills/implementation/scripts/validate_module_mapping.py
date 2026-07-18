@@ -13,7 +13,7 @@ VALID_STATUS = {"implemented", "partial", "not_implemented", "blocked", "adapter
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate implementation module-to-code/config/test/ablation mapping.")
     parser.add_argument("--workspace")
-    parser.add_argument("--contract", default="external_executor/implementation_change_contract.json")
+    parser.add_argument("--contract", default="external_executor/report/implementation_change_contract.json")
     parser.add_argument("--mapping", required=True)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()

@@ -143,7 +143,7 @@ def validate_data(workspace: Path, data: dict[str, Any]) -> tuple[list[str], lis
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate implementation report structure, evidence, and Builder boundary.")
     parser.add_argument("--workspace")
-    parser.add_argument("--report", default="external_executor/implementation_report.json")
+    parser.add_argument("--report", default="external_executor/report/implementation_report.json")
     args = parser.parse_args()
     workspace = resolve_workspace(args.workspace)
     report_path = resolve_in_workspace(workspace, args.report)

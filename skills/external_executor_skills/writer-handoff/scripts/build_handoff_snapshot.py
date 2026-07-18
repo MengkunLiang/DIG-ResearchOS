@@ -1,19 +1,73 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, json, sys
-from _common import *
 
-def main():
-    ap=argparse.ArgumentParser(); ap.add_argument('--workspace'); ap.add_argument('--output'); args=ap.parse_args()
-    ws=resolve_workspace(args.workspace); ext=ws/'external_executor'
-    result=load_json(ext/'result_pack.json'); handoff=load_json(ext/'handoff_pack.json') if (ext/'handoff_pack.json').exists() else {}; expected=load_json(ext/'expected_outputs_schema.json') if (ext/'expected_outputs_schema.json').exists() else {}; manifest=load_json(ext/'run_manifest.json') if (ext/'run_manifest.json').exists() else {}
-    contract=get_nested(handoff,'context_reboost.writer_handoff_contract','writer_handoff_contract',default=[])
-    boundaries=get_nested(handoff,'context_reboost.claim_boundaries','claim_boundaries',default=[])
-    must_not=get_nested(handoff,'context_reboost.must_not_claim','must_not_claim',default=[])
-    selected=['context_alignment','resource_readiness','baseline_reproduction','claim_evidence_matrix','experiment_plan','experiment_runs','implementation_reviews','implementations','result_diagnoses','module_attributions','iteration_decisions','evidence_package','evidence_packaging','realized_method_package','final_framework_figure','figure_table_inventory','failed_trials','scope_change_requests','open_blockers','open_risks','resource_risks','material_gaps']
-    sections={k:result.get(k) for k in selected if k in result}
-    identity={'result_schema':result.get('schema_version'),'manifest_schema':manifest.get('schema_version'),'handoff_schema':handoff.get('schema_version'),'expected_schema':expected.get('schema_version'),'contract':contract,'sections':sections,'manifest':manifest}
-    fp=canonical_hash(identity); hid=stable_id('WH',fp[:16])
-    payload={'schema_version':'writer_handoff_snapshot.v1','handoff_id':hid,'input_fingerprint':fp,'source_versions':{k:v for k,v in identity.items() if k.endswith('_schema')},'writer_handoff_contract':contract,'handoff_claim_boundaries':listify(boundaries),'handoff_must_not_claim':listify(must_not),'expected_requirements':get_nested(expected,'writer_handoff','properties.writer_handoff',default={}), 'sections':sections,'manifest':manifest,'source_result_pack_path':'external_executor/result_pack.json','created_at':utc_now()}
-    out=output_path(ws,args.output,'external_executor/writer_handoff_snapshot.json'); dump_json_atomic(out,payload); print(json.dumps({'handoff_id':hid,'input_fingerprint':fp}))
-if __name__=='__main__': sys.exit(main())
+import argparse
+import json
+import sys
+from typing import Any
+
+from _common import (
+    canonical_hash,
+    dump_json_atomic,
+    file_entry,
+    load_json,
+    output_path,
+    resolve_workspace,
+    stable_id,
+    utc_now,
+)
+
+
+def optional_json(path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    value = load_json(path)
+    return value if isinstance(value, dict) else {}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Pin final core state and all figure/table assets for Writer Handoff.")
+    parser.add_argument("--workspace")
+    parser.add_argument("--output")
+    args = parser.parse_args()
+    ws = resolve_workspace(args.workspace)
+    ext = ws / "external_executor"
+    paths = {
+        "result_pack": ext / "result_pack.json",
+        "executor_status": ext / "executor_status.json",
+        "run_manifest": ext / "report/run_manifest.json",
+        "handoff_pack": ext / "handoff_pack.json",
+        "expected_outputs_schema": ext / "expected_outputs_schema.json",
+    }
+    documents = {name: optional_json(path) for name, path in paths.items()}
+    core_files = {name: file_entry(ws, path) for name, path in paths.items() if path.is_file()}
+    assets: list[dict[str, Any]] = []
+    for kind in ("figure", "table"):
+        root = ext / kind
+        for path in sorted(item for item in root.rglob("*") if item.is_file()) if root.is_dir() else []:
+            assets.append({"kind": kind, **file_entry(ws, path)})
+
+    identity = {"core_files": core_files, "assets": assets, "documents": documents}
+    fingerprint = canonical_hash(identity)
+    snapshot = {
+        "schema_version": "writer_handoff_snapshot.v2",
+        "handoff_id": stable_id("WH", fingerprint[:16]),
+        "input_fingerprint": fingerprint,
+        "core_files": core_files,
+        "assets": assets,
+        "documents": documents,
+        "source_paths": {name: entry["path"] for name, entry in core_files.items()},
+        "created_at": utc_now(),
+    }
+    destination = output_path(
+        ws,
+        args.output,
+        "external_executor/report/writer_handoff_snapshot.json",
+    )
+    dump_json_atomic(destination, snapshot)
+    print(json.dumps({"handoff_id": snapshot["handoff_id"], "assets": len(assets)}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import importlib.util
 import json
 import os
@@ -39,11 +40,11 @@ class BaselineReproductionTests(unittest.TestCase):
         ext = ws / "external_executor"
         ext.mkdir()
         (ext / "AGENTS.md").write_text("controlled test\n", encoding="utf-8")
-        (ext / "allowed_paths.txt").write_text("external_executor/\n", encoding="utf-8")
+        (ext / "allowed_paths.txt").write_text("external_executor/\nresources/\n", encoding="utf-8")
         (ext / "expected_outputs_schema.json").write_text(
             json.dumps({"schema_version": "external_executor_result.v1"}), encoding="utf-8"
         )
-        source = ext / "workdir/resources/local/cand-a"
+        source = ws / "resources" / "local" / "cand-a"
         source.mkdir(parents=True)
         (source / "train.py").write_text(
             "import json\n"
@@ -67,7 +68,7 @@ class BaselineReproductionTests(unittest.TestCase):
                         "baseline_id": "BASE-A",
                         "baseline_name": "Baseline A",
                         "requirement_ids": ["REQ-A"],
-                        "local_path": "external_executor/workdir/resources/local/cand-a",
+                        "local_path": "resources/local/cand-a",
                         "source_class": "official_author_repo",
                         "manifest_sha256": "sourcehash",
                         "approved_for": ["baseline_reproduction"],
@@ -125,7 +126,7 @@ class BaselineReproductionTests(unittest.TestCase):
         run("build_reproduction_plan.py", "--workspace", str(ws))
         run("initialize_reproduction_report.py", "--workspace", str(ws))
 
-        plan = json.loads((ws / "external_executor/baseline_reproduction_plan.json").read_text())
+        plan = json.loads((ws / "external_executor/report/baseline_reproduction_plan.json").read_text())
         reproduction_id = plan["items"][0]["reproduction_id"]
         run(
             "prepare_attempt.py",
@@ -137,10 +138,13 @@ class BaselineReproductionTests(unittest.TestCase):
             "1",
         )
         attempt = next(
-            (ws / "external_executor/workdir/baseline_reproduction").glob(
+            (ws / "external_executor/expr/baselines").glob(
                 f"*/{reproduction_id}/attempt-1"
             )
         )
+        fragment = json.loads((attempt / "plan_fragment.json").read_text())
+        result_dir = ws / fragment["result_dir"]
+        evidence_dir = ws / fragment["evidence_dir"]
 
         old_secret = os.environ.get("SUPER_SECRET_TOKEN")
         os.environ["SUPER_SECRET_TOKEN"] = "do-not-record"
@@ -148,7 +152,7 @@ class BaselineReproductionTests(unittest.TestCase):
             run(
                 "capture_environment.py",
                 "--path",
-                str(attempt / "environment.json"),
+                str(evidence_dir / "environment.json"),
                 "--source",
                 str(attempt / "source"),
                 "--env-name",
@@ -159,7 +163,7 @@ class BaselineReproductionTests(unittest.TestCase):
                 os.environ.pop("SUPER_SECRET_TOKEN", None)
             else:
                 os.environ["SUPER_SECRET_TOKEN"] = old_secret
-        self.assertNotIn("do-not-record", (attempt / "environment.json").read_text())
+        self.assertNotIn("do-not-record", (evidence_dir / "environment.json").read_text())
 
         proc = run(
             "run_reproduction.py",
@@ -172,6 +176,10 @@ class BaselineReproductionTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue((result_dir / "stdout.log").exists())
+        self.assertTrue((result_dir / "stderr.log").exists())
+        self.assertFalse((result_dir / "run_record.json").exists())
+        self.assertTrue((evidence_dir / "run_record.json").exists())
         run(
             "extract_metrics.py",
             "--attempt-dir",
@@ -179,30 +187,39 @@ class BaselineReproductionTests(unittest.TestCase):
             "--spec",
             str(attempt / "plan_fragment.json"),
             "--output",
-            str(attempt / "metrics.json"),
+            str(evidence_dir / "metrics.json"),
         )
+        metrics = json.loads((evidence_dir / "metrics.json").read_text())
+        raw_csv_path = ws / metrics["items"][0]["raw_csv_path"]
+        self.assertTrue(raw_csv_path.exists())
+        with raw_csv_path.open(newline="", encoding="utf-8") as fh:
+            rows = list(csv.DictReader(fh))
+        self.assertEqual(rows[0]["dataset_name"], "Data")
+        self.assertEqual(rows[0]["dataset_split"], "test")
+        self.assertEqual(rows[0]["metric_name"], "accuracy")
+        self.assertEqual(float(rows[0]["value"]), 0.81)
         eval_proc = run(
             "evaluate_reproduction.py",
             "--plan-fragment",
             str(attempt / "plan_fragment.json"),
             "--run-record",
-            str(attempt / "run_record.json"),
+            str(evidence_dir / "run_record.json"),
             "--metrics",
-            str(attempt / "metrics.json"),
+            str(evidence_dir / "metrics.json"),
             "--environment",
-            str(attempt / "environment.json"),
+            str(evidence_dir / "environment.json"),
             "--output",
-            str(attempt / "reproduction_evaluation.json"),
+            str(evidence_dir / "reproduction_evaluation.json"),
             check=False,
         )
         self.assertEqual(eval_proc.returncode, 0, eval_proc.stderr)
-        evaluation = json.loads((attempt / "reproduction_evaluation.json").read_text())
+        evaluation = json.loads((evidence_dir / "reproduction_evaluation.json").read_text())
         self.assertEqual(evaluation["technical_outcome"], "reproduced_within_tolerance")
         self.assertEqual(evaluation["comparability_status"], "formal_review_candidate")
 
-        report_path = ws / "external_executor/baseline_reproduction_report.json"
+        report_path = ws / "external_executor/report/baseline_reproduction_report.json"
         report = json.loads(report_path.read_text())
-        run_record = json.loads((attempt / "run_record.json").read_text())
+        run_record = json.loads((evidence_dir / "run_record.json").read_text())
         item = report["items"][0]
         item.update(
             {
@@ -214,7 +231,7 @@ class BaselineReproductionTests(unittest.TestCase):
                         "attempt_id": run_record["run_id"],
                         "run_id": run_record["run_id"],
                         "run_record_ref": str(
-                            (attempt / "run_record.json").relative_to(ws).as_posix()
+                            (evidence_dir / "run_record.json").relative_to(ws).as_posix()
                         ),
                     }
                 ],
@@ -246,7 +263,10 @@ class BaselineReproductionTests(unittest.TestCase):
 
     def test_failure_classifier(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="fail-class-test-"))
-        (root / "run.json").write_text(
+        (root / "project.yaml").write_text("project_id: fail\n", encoding="utf-8")
+        report = root / "external_executor" / "report" / "baseline_reproduction" / "case"
+        report.mkdir(parents=True)
+        (report / "run.json").write_text(
             json.dumps(
                 {
                     "run_id": "RUN-1",
@@ -257,20 +277,20 @@ class BaselineReproductionTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        (root / "stdout.log").write_text("", encoding="utf-8")
-        (root / "stderr.log").write_text("CUDA out of memory", encoding="utf-8")
+        (report / "stdout.log").write_text("", encoding="utf-8")
+        (report / "stderr.log").write_text("CUDA out of memory", encoding="utf-8")
         run(
             "classify_failure.py",
             "--run-record",
-            str(root / "run.json"),
+            str(report / "run.json"),
             "--stdout",
-            str(root / "stdout.log"),
+            str(report / "stdout.log"),
             "--stderr",
-            str(root / "stderr.log"),
+            str(report / "stderr.log"),
             "--output",
-            str(root / "failure.json"),
+            str(report / "failure.json"),
         )
-        data = json.loads((root / "failure.json").read_text())
+        data = json.loads((report / "failure.json").read_text())
         self.assertEqual(data["primary_category"], "out_of_memory")
 
     def test_prepare_rejects_escaping_symlink(self) -> None:

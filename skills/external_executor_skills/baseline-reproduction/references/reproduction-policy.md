@@ -10,7 +10,8 @@ The Skill may:
 
 - copy an approved baseline candidate into a controlled deployment directory under `external_executor/expr/`;
 - configure and execute the baseline command authorized by the current iteration plan;
-- capture logs, metrics, environment, hardware, resource/version identity, and checksums under `external_executor/raw_results/`;
+- capture normalized metrics, environment, hardware, resource/version identity, run records, and process reports under `external_executor/report/baseline_reproduction/`;
+- capture stdout/stderr logs, baseline-produced outputs, per-dataset/per-metric raw metric CSV files, and other original experiment outputs under `external_executor/raw_results/baseline_reproduction/`;
 - perform bounded compatibility, adapter, configuration, seed, logging, and metric-extraction repairs;
 - compare reproduced outputs with a predeclared reference or sanity rule;
 - classify failures and record claim risks;
@@ -21,6 +22,7 @@ The Skill may not:
 - search for, download, or choose new resources;
 - replace or drop a required baseline;
 - change benchmark, task, dataset, split, primary metric, aggregation, or claim role;
+- alter, replace, skip, or partially implement around the baseline's core idea, core module, core objective, or core design just to make execution succeed;
 - add favorable extra data, pretraining, tuning budget, or compute;
 - modify proposed-method code or experiment conclusions;
 - approve formal comparison or write paper claims.
@@ -37,7 +39,7 @@ planned
   -> accepted | needs_fix | blocked | stale
 ```
 
-Every attempt remains immutable after review. A repair creates a new attempt and patch record. Corrected output does not erase the failed path.
+Before review, repairs are made directly to the deployed baseline copy under `external_executor/expr/baselines/<baseline-id>/...` and must remain inside the original baseline's core idea, modules, and design. Every attempt remains immutable after review. A repair creates a new attempt or explicit patch record when the prior attempt has already been reviewed. Corrected output does not erase the failed path.
 
 ## Fingerprint invalidation
 
@@ -56,7 +58,7 @@ Documentation-only changes may remain valid when the root can prove they do not 
 ## Evidence levels
 
 - `engineering_evidence`: command runs, shapes load, outputs exist.
-- `reproduction_candidate`: complete run and metric provenance under the locked protocol.
+- `reproduction_candidate`: complete run and metric provenance, including raw metric CSV files, under the locked protocol.
 - `formal_review_candidate`: passing independent reproduction review; still requires the later code/protocol gate.
 - `unsupported`: missing or invalid provenance, protocol mismatch, or unreviewed substitution.
 

@@ -47,7 +47,7 @@ def main() -> int:
         add(report, "errors", "no_allowed_paths", "allowed_paths.txt has no usable workspace paths")
 
     status_path = resolve_in_workspace(root, "external_executor/executor_status.json")
-    manifest_path = resolve_in_workspace(root, "external_executor/run_manifest.json")
+    manifest_path = resolve_in_workspace(root, "external_executor/report/run_manifest.json")
     result_path = resolve_in_workspace(root, "external_executor/result_pack.json")
 
     if not status_path.exists():
@@ -69,6 +69,13 @@ def main() -> int:
     for key in ("completed_checkpoints", "stale_checkpoints", "active_blockers"):
         if key in status and not isinstance(status[key], list):
             add(report, "errors", "invalid_status_field", f"{key} must be an array")
+    loop = status.get("iteration_loop")
+    if isinstance(loop, dict):
+        if loop.get("max_iterations") != 10:
+            add(report, "errors", "invalid_iteration_limit", "iteration_loop.max_iterations must remain fixed at 10")
+        current_iteration = loop.get("current_iteration")
+        if not isinstance(current_iteration, int) or isinstance(current_iteration, bool) or not 0 <= current_iteration <= 10:
+            add(report, "errors", "invalid_iteration_count", repr(current_iteration))
 
     if args.mode == "final" and status.get("executor_status") == "running":
         add(report, "errors", "unfinished_status", "final validation cannot leave executor_status=running")
@@ -76,7 +83,7 @@ def main() -> int:
         add(report, "errors", "completed_with_blockers", "completed status has active blockers")
 
     if not manifest_path.exists():
-        add(report, "errors", "missing_manifest", "run_manifest.json is missing")
+        add(report, "errors", "missing_manifest", "external_executor/report/run_manifest.json is missing")
         manifest = {}
     else:
         try:

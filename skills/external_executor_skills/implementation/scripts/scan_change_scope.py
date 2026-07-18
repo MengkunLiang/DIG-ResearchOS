@@ -50,7 +50,7 @@ def dependency_allowed(path: str, contract: dict[str, Any]) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Scan implementation changes against approved path and safety scope.")
     parser.add_argument("--workspace")
-    parser.add_argument("--contract", default="external_executor/implementation_change_contract.json")
+    parser.add_argument("--contract", default="external_executor/report/implementation_change_contract.json")
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 

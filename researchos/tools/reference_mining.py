@@ -60,7 +60,7 @@ PATTERN_RULES = [
         "mechanism": "Separate executor completion from verifier acceptance and persist resumable run status.",
         "researchos_target_stage": ["T5-DRY-RUN", "T5-EXTERNAL-WAIT", "runtime-resume"],
         "adaptation": "Keep executor_status.accepted=false until external-executor handoff validation confirms required artifacts.",
-        "required_artifacts": ["external_executor/executor_status.json", "external_executor/run_manifest.json"],
+        "required_artifacts": ["external_executor/executor_status.json", "external_executor/report/run_manifest.json"],
         "acceptance_tests": ["status done with accepted true is rejected in dry-run", "run manifest is present"],
     },
     {

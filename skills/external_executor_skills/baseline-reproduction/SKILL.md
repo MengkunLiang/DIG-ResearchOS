@@ -29,11 +29,12 @@ Turn an approved baseline resource into auditable execution evidence. A runnable
 
 Write only:
 
-- `external_executor/baseline_reproduction_preflight.json`;
-- `external_executor/baseline_reproduction_plan.json`;
-- `external_executor/baseline_reproduction_report.json`;
-- controlled baseline deployments, copied source, configs, and repair patches under `external_executor/expr/baseline_reproduction/`;
-- baseline stdout/stderr logs, metrics, environment records, run records, and produced outputs under `external_executor/raw_results/baseline_reproduction/`;
+- `external_executor/report/baseline_reproduction_preflight.json`;
+- `external_executor/report/baseline_reproduction_plan.json`;
+- `external_executor/report/baseline_reproduction_report.json`;
+- controlled baseline deployments, copied source, configs, and repair patches under `external_executor/expr/baselines/<baseline-id>/`;
+- environment records, run records, normalized metrics, failure classifications, evaluations, and other process reports under `external_executor/report/baseline_reproduction/`;
+- baseline stdout/stderr logs, baseline-produced output files, per-dataset/per-metric raw-result CSV files, and other original experiment outputs under `external_executor/raw_results/baseline_reproduction/`;
 - `result_pack.json#baseline_reproduction` through the narrow apply script.
 
 Do not change resources, experiment design, iteration decisions, executor status, run manifest, proposed-method code, or sibling-owned result-pack sections. The root registers produced artifacts and chooses the next child.
@@ -57,18 +58,19 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/preflight_reproduction.py --workspace <workspace> \
-  --output external_executor/baseline_reproduction_preflight.json
+  --output external_executor/report/baseline_reproduction_preflight.json
 ```
 
 Preflight must establish:
 
 - context alignment is non-blocking;
 - the minimum loop is feasible under resource readiness;
-- every requested baseline maps to a Phase B candidate with `approved_for` containing `baseline_reproduction` or `formal_comparison`;
-- experiment plan and protocol fingerprint exist;
-- the active iteration plan authorizes the baseline IDs and bounded action;
-- relevant source, dataset, split, metric, config, and output paths exist or are explicitly unresolved;
-- no resource, protocol, license, security, or path blocker remains.
+- at least one Phase B baseline candidate exists and approved candidates have `approved_for` containing `baseline_reproduction` or `formal_comparison`;
+- experiment plan status and protocol fingerprint are present;
+- a root-owned active iteration plan exists; ambiguous baseline authorization is reported as a warning;
+- Phase D1 write targets are allowed by `allowed_paths.txt`.
+
+Detailed source path, dataset split, metric, command, config, and output completeness is checked when building the reproduction plan; unresolved fields make plan items `incomplete` rather than being fully decided by preflight.
 
 Warnings require targeted review. Blockers prevent execution.
 
@@ -78,7 +80,7 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/build_reproduction_plan.py --workspace <workspace> \
-  --output external_executor/baseline_reproduction_plan.json
+  --output external_executor/report/baseline_reproduction_plan.json
 ```
 
 Complete each plan item using `references/reproduction-plan-contract.md`. Before execution, every item must specify:
@@ -97,29 +99,37 @@ Complete each plan item using `references/reproduction-plan-contract.md`. Before
 
 Do not infer a missing primary metric or split from repository defaults. Do not edit the locked protocol to make the baseline pass.
 
-## Prepare an isolated attempt workspace
+## Prepare a deployed baseline workspace
 
 For each authorized item, create a controlled copy:
 
 ```bash
 python <skill-dir>/scripts/prepare_attempt.py --workspace <workspace> \
-  --plan external_executor/baseline_reproduction_plan.json \
+  --plan external_executor/report/baseline_reproduction_plan.json \
   --reproduction-id <reproduction-id> --attempt <N>
 ```
 
 The deployment directory is:
 
 ```text
-external_executor/expr/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/
+external_executor/expr/baselines/<baseline-id>/<reproduction-id>/attempt-<N>/
 ```
 
-The paired raw-result directory is:
+The paired evidence/report directory is:
+
+```text
+external_executor/report/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/
+```
+
+The paired raw-result directory is only for original outputs produced by running the baseline, including stdout/stderr logs and metric/result files:
 
 ```text
 external_executor/raw_results/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/
 ```
 
-The deployment directory contains the copied source, immutable plan fragment, source/config manifests, and repair patches. The raw-result directory contains runtime evidence and outputs. Never patch the Phase B source in place. Reject path-escaping symlinks.
+The deployment directory contains the copied baseline source, plan fragment, patch/config directories, and attempt provenance with initial source/config manifest hashes. If execution fails because of implementation, environment, path, logging, or metric-extraction problems, debug and modify the deployed copy under `external_executor/expr/baselines/<baseline-id>/...` until the authorized baseline command can run or a bounded stop condition is reached. Never patch the Phase B source in `resources/` in place. Reject path-escaping symlinks.
+
+When modifying/debugging the deployed baseline, stay inside the baseline's original core idea, core modules, and core design. You may fix compatibility, paths, configuration plumbing, deterministic seed handling, logging, and metric extraction. You may not replace the algorithm, omit a required core module, substitute a different model or objective, use extra data/pretraining/tuning budget, change the locked dataset/split/metric, or otherwise cross the baseline's conceptual boundary merely to make the command succeed. Record material edits and risks in the report.
 
 ## Capture the execution environment
 
@@ -127,7 +137,7 @@ Run before the first command and after a material environment repair:
 
 ```bash
 python <skill-dir>/scripts/capture_environment.py \
-  --path <raw-result-dir>/environment.json \
+  --path <evidence-dir>/environment.json \
   --source <deployment-dir>/source
 ```
 
@@ -139,7 +149,7 @@ Read `references/environment-and-execution-safety.md`, then run:
 
 ```bash
 python <skill-dir>/scripts/run_reproduction.py --workspace <workspace> \
-  --plan external_executor/baseline_reproduction_plan.json \
+  --plan external_executor/report/baseline_reproduction_plan.json \
   --reproduction-id <reproduction-id> --attempt <N>
 ```
 
@@ -149,9 +159,10 @@ The runner:
 - checks the executable against the plan allowlist;
 - sanitizes inherited environment variables and withholds credentials by default;
 - executes from the deployment directory under `external_executor/expr/`;
-- exposes `RESEARCHOS_OUTPUT_DIR` under the paired `external_executor/raw_results/` directory;
+- exposes `RESEARCHOS_OUTPUT_DIR` and `RESEARCHOS_RAW_RESULTS_DIR` under the paired raw-result directory;
 - writes stdout/stderr continuously to the raw-result directory;
 - records start/end time, exit status, timeout, resource usage, expected-output checks, and checksums;
+- keeps process records, environment captures, normalized metrics, failure classifications, and evaluations in the report/evidence directory rather than `raw_results`;
 - preserves failed and superseded attempts;
 - never upgrades evidence level based on exit code alone.
 
@@ -165,10 +176,10 @@ Use a declared extractor; never copy a number from the console by memory:
 python <skill-dir>/scripts/extract_metrics.py \
   --attempt-dir <deployment-dir> \
   --spec <deployment-dir>/plan_fragment.json \
-  --output <raw-result-dir>/metrics.json
+  --output <evidence-dir>/metrics.json
 ```
 
-Supported generic extraction modes are JSON file/path, JSON Lines, CSV column, and regex against a named log. Record the exact source file, selector, units, direction, aggregation, and raw matched value. If multiple seeds/repeats are planned, keep per-run values and aggregate only by the locked rule.
+Supported generic extraction modes are JSON file/path, JSON Lines, CSV column, and regex against a named log. Record the exact source file, selector, units, direction, aggregation, and raw matched value in the normalized report file. The extractor must also write per-dataset/per-metric metric values as CSV under `<raw-result-dir>/raw_metrics/<dataset>/<metric>.csv` and reference those files from `metrics.json`. If multiple seeds/repeats are planned, keep per-run values and aggregate only by the locked rule. Do not write run records, environment captures, normalized JSON reports, or diagnostics under `external_executor/raw_results/`; raw baseline logs and original baseline outputs may stay there.
 
 ## Classify failures before repair
 
@@ -176,10 +187,10 @@ When execution or evidence validation fails, run:
 
 ```bash
 python <skill-dir>/scripts/classify_failure.py \
-  --run-record <raw-result-dir>/run_record.json \
+  --run-record <evidence-dir>/run_record.json \
   --stdout <raw-result-dir>/stdout.log \
   --stderr <raw-result-dir>/stderr.log \
-  --output <raw-result-dir>/failure_classification.json
+  --output <evidence-dir>/failure_classification.json
 ```
 
 Use the taxonomy in `references/failure-and-repair-taxonomy.md`. The script provides a heuristic proposal; the Builder and Reviewer must inspect the direct evidence before accepting the category.
@@ -194,7 +205,7 @@ request_replacement_review
 block_execution
 ```
 
-A repair must be classified and bounded. Record changed files, patch, rationale, algorithm/protocol impact, fairness impact, and new fingerprint. Environment compatibility fixes, path/config adapters, deterministic seed plumbing, and logging/metric extraction fixes may be repaired when authorized. Algorithm substitutions, stronger pretraining, extra data, changed split, changed metric, or favorable hyperparameter expansion require root/human review and are not ordinary repairs.
+A repair must be classified and bounded. Record changed files, patch, rationale, algorithm/protocol impact, fairness impact, and new fingerprint. Environment compatibility fixes, path/config adapters, deterministic seed plumbing, and logging/metric extraction fixes may be repaired directly in the deployed baseline under `external_executor/expr/baselines/` when authorized. Any change that alters or omits the baseline's core idea, core module, core objective, or core design is forbidden for this Skill. Algorithm substitutions, stronger pretraining, extra data, changed split, changed metric, favorable hyperparameter expansion, or partial implementations that skip required core behavior require root/human review and are not ordinary repairs.
 
 ## Evaluate reproduction and comparability
 
@@ -203,10 +214,10 @@ Run after each candidate evidence bundle:
 ```bash
 python <skill-dir>/scripts/evaluate_reproduction.py \
   --plan-fragment <deployment-dir>/plan_fragment.json \
-  --run-record <raw-result-dir>/run_record.json \
-  --metrics <raw-result-dir>/metrics.json \
-  --environment <raw-result-dir>/environment.json \
-  --output <raw-result-dir>/reproduction_evaluation.json
+  --run-record <evidence-dir>/run_record.json \
+  --metrics <evidence-dir>/metrics.json \
+  --environment <evidence-dir>/environment.json \
+  --output <evidence-dir>/reproduction_evaluation.json
 ```
 
 Use `references/sanity-and-comparability.md`. Separate:
@@ -267,22 +278,22 @@ Initialize or resume the report envelope:
 
 ```bash
 python <skill-dir>/scripts/initialize_reproduction_report.py --workspace <workspace> \
-  --plan external_executor/baseline_reproduction_plan.json \
-  --output external_executor/baseline_reproduction_report.json
+  --plan external_executor/report/baseline_reproduction_plan.json \
+  --output external_executor/report/baseline_reproduction_report.json
 ```
 
 Populate attempts, evaluations, reviews, repairs, risks, and Artifact references. Preserve prior attempts and stale history. Then run:
 
 ```bash
 python <skill-dir>/scripts/compute_reproduction_gate.py \
-  --report <workspace>/external_executor/baseline_reproduction_report.json \
+  --report <workspace>/external_executor/report/baseline_reproduction_report.json \
   --write-back
 
 python <skill-dir>/scripts/validate_reproduction_report.py --workspace <workspace> \
-  --report external_executor/baseline_reproduction_report.json
+  --report external_executor/report/baseline_reproduction_report.json
 
 python <skill-dir>/scripts/apply_reproduction_report.py --workspace <workspace> \
-  --report external_executor/baseline_reproduction_report.json
+  --report external_executor/report/baseline_reproduction_report.json
 ```
 
 The apply script updates only `result_pack.json#baseline_reproduction`.
@@ -301,8 +312,8 @@ Return:
 child_skill=baseline-reproduction
 status=complete|partial|blocked|failed
 reproduction_gate=pass|partial|blocked
-report=external_executor/baseline_reproduction_report.json
-plan=external_executor/baseline_reproduction_plan.json
+report=external_executor/report/baseline_reproduction_report.json
+plan=external_executor/report/baseline_reproduction_plan.json
 reproduced_baseline_ids=<ids>
 conditional_baseline_ids=<ids>
 blocking_baseline_ids=<ids>
@@ -316,7 +327,7 @@ The recommendation is advisory. `research-execution` owns manifest registration,
 ## Evidence and boundary rules
 
 - Preserve every attempt; never overwrite a failed or superseded run.
-- A result without command, config, split, seed/repeat, raw log, metric output, source version, environment, and protocol fingerprint is not comparable evidence.
+- A result without command, config, split, seed/repeat, raw log, per-dataset/per-metric raw metric CSV, metric output, source version, environment, and protocol fingerprint is not comparable evidence.
 - Keep paper/author reference values separate from reproduced measurements.
 - Record the acceptance rule before judging the result; never loosen tolerance after seeing failure without a versioned, reviewed protocol change.
 - `smoke`, toy, synthetic, shortened training, reduced data, or fewer repeats cannot become formal baseline evidence.

@@ -14,10 +14,10 @@ Read this before dispatching a child. Child skills return control to `research-e
 | `implementation` | Approved spec and iteration plan | Code/config/patch/tests deployed under `external_executor/expr/` | Declared delta is implemented and testable |
 | `code-and-protocol-review` | Code, config, tests, protocol | Review verdict and evidence | `pass`, `needs_fix`, or `blocked` is evidence-backed |
 | `experiment-run` | Approved run level and budget | Runs from `external_executor/expr/`; logs, metrics, records, checkpoints in `external_executor/raw_results/` | Each run has complete status and provenance |
-| `result-diagnosis` | New usable runs | Per-iteration diagnosis | Findings cite evidence and confidence |
+| `result-diagnosis` | New terminal runs, including failed/unusable attempts, plus reviewed baseline reproductions | Per-iteration diagnosis, baseline performance summary, method-change assessment | Findings cite evidence/confidence and give a concrete repair/refinement surface when needed |
 | `module-attribution` | Diagnosis and controlled evidence | Per-iteration attribution | Attribution basis is explicit |
 | `evidence-packaging` | Pinned final snapshot | Realized method, framework, figure/table inventory | Package maps to code and evidence |
-| `writer-handoff` | Valid package and risks | Writer handoff, validation | `executor_research_report.md` is ready for T8 |
+| `writer-handoff` | Terminal status/result pack, frozen manifest, valid evidence package, final figures/tables | `executor_research_report.md`, fact snapshot, complete handoff validation | Four core files and all final figures/tables are coherent and ready for ResearchOS/T8 |
 
 ## Dispatch envelope
 
@@ -60,6 +60,7 @@ The recommended action is advisory. The root validates artifacts and decides the
 - A runner writes raw execution records; it does not reinterpret claims.
 - A diagnosis/attribution skill reads raw evidence but does not alter it.
 - Packaging creates derived artifacts from a pinned snapshot and records the source fingerprint.
+- Writer Handoff validates final core state and presentation assets but does not modify them or write a result-pack section.
 
 ## Failure return
 

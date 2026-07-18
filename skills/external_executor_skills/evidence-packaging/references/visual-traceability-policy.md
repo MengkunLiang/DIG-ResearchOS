@@ -7,14 +7,16 @@ For every result number shown in a figure or table:
 ```text
 formal/eligible run record
 → raw log or metric output
-→ structured result/source table
-→ plotting or table-generation script
+→ normalized long-form table (`external_executor/table/all_results.csv`)
+→ protocol-preserving aggregate table
+→ deterministic plotting or table-generation script
 → editable visual/table source
 → rendered artifact
 → caption and claim candidate
 ```
 
 Each link must be inspectable through paths, stable IDs, checksums, or structured record references.
+Only raw result files pinned in `final_evidence_snapshot.json` may contribute numbers. If a current checksum differs from the pinned checksum, skip the source and regenerate the snapshot only through the root workflow.
 
 ## No manual numeric edits
 
@@ -53,8 +55,12 @@ Plot scripts must:
 - state required dependencies;
 - preserve units and metric direction;
 - expose sorting/filtering/exclusion logic;
+- group comparisons by dataset, split, metric, metric direction, and protocol fingerprint;
+- render different metrics, directions, or protocol fingerprints on separate axes/files;
 - avoid network access during rendering unless explicitly authorized;
 - not mutate the source result artifact.
+
+The filenames `main_*.svg`, `ablation_*.svg`, and `other_*.svg` are reserved for the deterministic result renderer. On rerun, replace or remove its prior outputs so unsupported stale visuals cannot remain active.
 
 ## Captions
 

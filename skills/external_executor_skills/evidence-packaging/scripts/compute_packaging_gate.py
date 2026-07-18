@@ -9,13 +9,15 @@ from _common import dump_json_atomic, load_json, nonempty, resolve_in_workspace,
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compute Phase F1-F3 readiness from snapshot, method, visuals, mappings, and manifest.")
     parser.add_argument("--workspace")
-    parser.add_argument("--snapshot-validation", default="external_executor/final_evidence_snapshot_validation.json")
+    parser.add_argument("--snapshot-validation", default="external_executor/report/final_evidence_snapshot_validation.json")
     parser.add_argument("--method", default="external_executor/evidence_package/realized_method_package.json")
-    parser.add_argument("--framework", default="external_executor/evidence_package/framework_figure_spec.json")
-    parser.add_argument("--inventory", default="external_executor/evidence_package/figure_table_inventory.json")
-    parser.add_argument("--mapping", default="external_executor/evidence_package/evidence_mapping.json")
-    parser.add_argument("--manifest", default="external_executor/evidence_package/evidence_package_manifest.json")
-    parser.add_argument("--output", default="external_executor/evidence_packaging_gate.json")
+    parser.add_argument("--framework", default="external_executor/report/framework_figure_spec.json")
+    parser.add_argument("--inventory", default="external_executor/report/figure_table_inventory.json")
+    parser.add_argument("--mapping", default="external_executor/report/evidence_mapping.json")
+    parser.add_argument("--manifest", default="external_executor/report/evidence_package_manifest.json")
+    parser.add_argument("--tables-report", default="external_executor/report/result_table_build_report.json")
+    parser.add_argument("--figures-report", default="external_executor/report/result_figure_build_report.json")
+    parser.add_argument("--output", default="external_executor/report/evidence_packaging_gate.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)
@@ -25,6 +27,8 @@ def main() -> int:
     inventory = load_json(resolve_in_workspace(ws, args.inventory))
     mapping = load_json(resolve_in_workspace(ws, args.mapping))
     manifest = load_json(resolve_in_workspace(ws, args.manifest))
+    tables_report = load_json(resolve_in_workspace(ws, args.tables_report))
+    figures_report = load_json(resolve_in_workspace(ws, args.figures_report))
 
     fps = {
         "method": method.get("snapshot_fingerprint"),
@@ -47,8 +51,11 @@ def main() -> int:
         blockers.append("realized_method_unavailable")
     elif method.get("status") == "partial":
         constraints.extend([f"method_unresolved:{field}" for field in method.get("unresolved_fields", [])])
+        constraints.extend([f"method_source:{error}" for error in method.get("source_validation", {}).get("errors", [])])
     elif method.get("status") != "complete":
         blockers.append(f"invalid_realized_method_status:{method.get('status')}")
+    elif method.get("source_validation", {}).get("status") != "pass":
+        blockers.append("complete_method_source_validation_not_passed")
 
     if framework.get("status") == "missing":
         constraints.append("framework_figure_missing")
@@ -80,6 +87,19 @@ def main() -> int:
     constraints.extend([f"mapping:{warning}" for warning in mapping.get("validation", {}).get("warnings", [])])
     if manifest.get("missing_entities"):
         constraints.extend([f"manifest_missing:{path}" for path in manifest.get("missing_entities", [])])
+    table_kinds = {item.get("kind") for item in tables_report.get("tables", []) if isinstance(item, dict)}
+    if "main" not in table_kinds:
+        constraints.append("main_comparison_table_missing")
+    if "ablation" not in table_kinds:
+        constraints.append("ablation_table_missing")
+    if not figures_report.get("figures"):
+        constraints.append("no_generated_result_figures")
+    for item in tables_report.get("tables", []):
+        if isinstance(item, dict) and item.get("path") and not str(item["path"]).startswith("external_executor/table/"):
+            blockers.append(f"generated_table_outside_table_dir:{item['path']}")
+    for item in figures_report.get("figures", []):
+        if isinstance(item, dict) and item.get("path") and not str(item["path"]).startswith("external_executor/figure/"):
+            blockers.append(f"generated_figure_outside_figure_dir:{item['path']}")
 
     blockers = sorted(set(blockers))
     constraints = sorted(set(constraints))

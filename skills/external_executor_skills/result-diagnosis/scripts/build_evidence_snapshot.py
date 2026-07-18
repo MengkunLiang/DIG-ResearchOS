@@ -47,6 +47,92 @@ def is_raw_results_ref(value: Any) -> bool:
     return path == "external_executor/raw_results" or path.startswith("external_executor/raw_results/")
 
 
+def dataset_fields(run: dict[str, Any]) -> tuple[Any, Any, Any]:
+    dataset = run.get("dataset")
+    if isinstance(dataset, dict):
+        return (
+            dataset.get("id") or dataset.get("name"),
+            dataset.get("version") or run.get("dataset_version"),
+            dataset.get("split") or run.get("dataset_split") or run.get("split"),
+        )
+    return dataset or run.get("dataset_id"), run.get("dataset_version"), run.get("dataset_split") or run.get("split")
+
+
+def baseline_metric_map(metrics: dict[str, Any]) -> dict[str, Any]:
+    output: dict[str, Any] = {}
+    for item in metrics.get("items", []) if isinstance(metrics, dict) else []:
+        if not isinstance(item, dict) or not item.get("name"):
+            continue
+        output[str(item["name"])] = {
+            "value": item.get("value"),
+            "direction": item.get("direction"),
+            "unit": item.get("units"),
+            "aggregation": item.get("aggregation") or "reported",
+            "source_ref": item.get("raw_csv_path"),
+        }
+    return output
+
+
+def baseline_reproduction_runs(ws: Path, result: dict[str, Any], iteration_id: str) -> list[dict[str, Any]]:
+    """Materialize reviewed baseline attempts as read-only comparison records."""
+    section = result.get("baseline_reproduction")
+    items = section.get("items", []) if isinstance(section, dict) else []
+    materialized: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("status") not in {"reproduced", "partially_reproduced"}:
+            continue
+        review = item.get("review") if isinstance(item.get("review"), dict) else {}
+        if review.get("verdict") != "pass" or review.get("approved_for") != "formal_review_candidate":
+            continue
+        selected = item.get("selected_attempt_id")
+        attempts = item.get("attempts", []) if isinstance(item.get("attempts"), list) else []
+        attempt = next((x for x in attempts if isinstance(x, dict) and (x.get("attempt_id") == selected or x.get("run_id") == selected)), None)
+        if attempt is None and attempts:
+            attempt = next((x for x in reversed(attempts) if isinstance(x, dict)), None)
+        if not attempt or not attempt.get("run_record_ref"):
+            continue
+        try:
+            record_path = resolve_in_workspace(ws, str(attempt["run_record_ref"]))
+            record = load_json(record_path)
+            metrics_ref = attempt.get("metrics_ref") or attempt.get("metric_report_ref")
+            metrics_path = resolve_in_workspace(ws, str(metrics_ref)) if metrics_ref else record_path.parent / "metrics.json"
+            metrics_doc = load_json(metrics_path)
+        except Exception:
+            continue
+        metrics = baseline_metric_map(metrics_doc)
+        baseline_dataset, baseline_dataset_version, baseline_split = dataset_fields(record)
+        seeds = record.get("seeds") if isinstance(record.get("seeds"), list) else []
+        materialized.append({
+            **record,
+            "iteration_id": str(iteration_id),
+            "experiment_id": item.get("experiment_id") or item.get("reproduction_id") or item.get("baseline_id"),
+            "method_id": item.get("baseline_id") or item.get("candidate_id"),
+            "method_role": "baseline",
+            "implementation_id": item.get("reproduction_id") or record.get("run_id"),
+            "run_type": "formal",
+            "analysis_role": "confirmatory",
+            "run_status": "completed" if record.get("status") == "completed" else record.get("status"),
+            "review_approval": "formal",
+            "dataset": baseline_dataset,
+            "dataset_version": baseline_dataset_version,
+            "dataset_split": baseline_split,
+            "seed": record.get("seed") if record.get("seed") is not None else (seeds[0] if seeds else None),
+            "repeat_id": record.get("repeat_id") or attempt.get("attempt_id") or record.get("run_id"),
+            "config_ref": record.get("deployment_dir") or record.get("working_directory"),
+            "raw_log_ref": record.get("stdout_path"),
+            "metric_output_ref": None,
+            "metrics": metrics,
+            "environment_ref": record.get("environment_path"),
+            "code_version": record.get("source_manifest_sha256"),
+            "resource_version": item.get("candidate_id"),
+            "protocol_fingerprint": item.get("protocol_fingerprint") or record.get("protocol_fingerprint"),
+            "fairness_fingerprint": item.get("fairness_fingerprint") or record.get("fairness_fingerprint"),
+            "baseline_reproduction_ref": relpath(ws, record_path),
+            "metrics_report_ref": relpath(ws, metrics_path),
+        })
+    return materialized
+
+
 def formal_provenance_missing(run: dict[str, Any]) -> list[str]:
     checks = {
         "config_ref": run.get("config_ref") or run.get("config") or run.get("config_path"),
@@ -97,7 +183,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Pin and classify one iteration's run evidence.")
     parser.add_argument("--workspace")
     parser.add_argument("--iteration-id")
-    parser.add_argument("--output", default="external_executor/diagnosis_evidence_snapshot.json")
+    parser.add_argument("--output", default="external_executor/report/diagnosis_evidence_snapshot.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     ext = ws / "external_executor"
@@ -106,7 +192,10 @@ def main() -> int:
     if not iteration_id:
         raise SystemExit("Cannot identify iteration")
     output = resolve_in_workspace(ws, args.output)
-    runs = [r for r in section_items(result.get("experiment_runs")) if str(r.get("iteration_id")) == str(iteration_id)]
+    iteration_runs = [r for r in section_items(result.get("experiment_runs")) if str(r.get("iteration_id")) == str(iteration_id)]
+    baseline_runs = baseline_reproduction_runs(ws, result, str(iteration_id))
+    existing_ids = {str(r.get("run_id")) for r in iteration_runs if r.get("run_id")}
+    runs = iteration_runs + [r for r in baseline_runs if str(r.get("run_id")) not in existing_ids]
     plan = result.get("experiment_plan", {})
     protocol_fp = plan.get("protocol_fingerprint") or result.get("protocol_fingerprint")
     claim_items = section_items(result.get("claim_evidence_matrix"))
@@ -129,6 +218,7 @@ def main() -> int:
         mid, role = method_identity(run)
         eligibility, reasons = classify(run)
         evidence_id = stable_id("RUN", rid, canonical_hash(run))
+        dataset, dataset_version, split = dataset_fields(run)
         item = {
             "evidence_id": evidence_id,
             "run_id": rid,
@@ -143,9 +233,9 @@ def main() -> int:
             "eligibility": eligibility,
             "exclusion_reasons": reasons,
             "setting": run.get("setting") or run.get("setting_id") or run.get("subset") or "default",
-            "dataset": run.get("dataset") or run.get("dataset_id"),
-            "dataset_version": run.get("dataset_version"),
-            "split": run.get("dataset_split") or run.get("split"),
+            "dataset": dataset,
+            "dataset_version": dataset_version,
+            "split": split,
             "preprocessing_fingerprint": run.get("preprocessing_fingerprint"),
             "protocol_fingerprint": run.get("protocol_fingerprint") or protocol_fp,
             "fairness_fingerprint": run.get("fairness_fingerprint"),
@@ -191,7 +281,9 @@ def main() -> int:
     assert_write_allowed(ws, output)
     dump_json_atomic(output, snapshot)
     print(f"{snapshot['status']}: included={len(included)} excluded={len(excluded)}")
-    return 2 if not included else 0
+    # Failure-only iterations are still valid diagnosis inputs: they must flow
+    # through result-diagnosis and become an explicit repair/debug decision.
+    return 0 if items else 2
 
 
 if __name__ == "__main__":

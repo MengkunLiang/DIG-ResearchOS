@@ -76,6 +76,42 @@ def validate(plan: dict[str, Any]) -> dict[str, Any]:
                 errors.append(f"ablation_missing_mechanism_ref:{eid}")
             if not nonempty(exp.get("variants")) or len(exp.get("variants", [])) < 2:
                 errors.append(f"ablation_missing_controlled_variants:{eid}")
+            for field in ("preprocessing_fingerprint", "fairness_fingerprint", "metric_directions"):
+                if not nonempty(exp.get(field)):
+                    errors.append(f"ablation_missing_{field}:{eid}")
+            contract = exp.get("attribution_contract")
+            if not isinstance(contract, dict):
+                errors.append(f"ablation_missing_attribution_contract:{eid}")
+            else:
+                target_ids = contract.get("target_module_ids")
+                variants = contract.get("variant_contracts")
+                if not isinstance(target_ids, list) or not target_ids or not all(isinstance(x, str) and x for x in target_ids):
+                    errors.append(f"ablation_missing_target_module_ids:{eid}")
+                if not isinstance(variants, list) or len(variants) < 2:
+                    errors.append(f"ablation_missing_variant_contracts:{eid}")
+                else:
+                    reference_id = contract.get("reference_variant_id")
+                    variant_ids = {x.get("variant_id") for x in variants if isinstance(x, dict)}
+                    if not reference_id or reference_id not in variant_ids:
+                        errors.append(f"ablation_invalid_reference_variant:{eid}")
+                    if set(exp.get("variants", [])) != variant_ids:
+                        errors.append(f"ablation_variants_contract_mismatch:{eid}")
+                    for variant in variants:
+                        if not isinstance(variant, dict):
+                            errors.append(f"ablation_malformed_variant_contract:{eid}")
+                            continue
+                        states = variant.get("module_states")
+                        if not isinstance(states, dict) or set(states) != set(target_ids or []):
+                            errors.append(f"ablation_variant_module_states_mismatch:{eid}:{variant.get('variant_id')}")
+                        if not isinstance(variant.get("intervention"), dict):
+                            errors.append(f"ablation_variant_intervention_missing:{eid}:{variant.get('variant_id')}")
+                required_fields = set(contract.get("required_run_fields", []))
+                expected_fields = {
+                    "variant_id", "reference_variant_id", "pair_id", "target_module_ids", "module_states",
+                    "intervention", "preprocessing_fingerprint", "fairness_fingerprint", "metric_directions",
+                }
+                if not expected_fields <= required_fields:
+                    errors.append(f"ablation_required_run_fields_incomplete:{eid}")
         for dep in exp.get("depends_on", []):
             if dep not in exp_ids:
                 errors.append(f"unknown_dependency:{eid}:{dep}")
@@ -129,7 +165,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Validate the Phase C plan contract and anti-post-hoc requirements.")
     parser.add_argument("--workspace")
     parser.add_argument("--plan", default="external_executor/experiment_plan.json")
-    parser.add_argument("--output", default="external_executor/experiment_plan_validation.json")
+    parser.add_argument("--output", default="external_executor/report/experiment_plan_validation.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     report = validate(load_json(resolve_in_workspace(ws, args.plan)))

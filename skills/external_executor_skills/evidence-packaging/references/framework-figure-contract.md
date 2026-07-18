@@ -13,6 +13,8 @@ realized_method_package
 
 The initial framework sketch in `method_intent` is only a comparison input. It must not override the realized method.
 
+The final rendered asset is `external_executor/figure/framework_figure.svg`. The machine-readable spec and editable Mermaid source are process artifacts under `external_executor/report/`.
+
 ## Required fields
 
 ```json
@@ -48,6 +50,7 @@ Every method node must identify:
 - evidence refs;
 - visual emphasis;
 - `must_not_imply` boundary.
+- linked pre-T7 claim candidate IDs.
 
 A node may be visually central because it is structurally central. It may be highlighted as empirically supported only when controlled evidence exists.
 

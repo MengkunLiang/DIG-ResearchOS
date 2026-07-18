@@ -1,33 +1,87 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse
-from pathlib import Path
-from _common import *
 
-def main():
-    ap=argparse.ArgumentParser(); ap.add_argument('--workspace'); ap.add_argument('--output'); args=ap.parse_args()
-    ws=resolve_workspace(args.workspace); ext=ws/'external_executor'; issues=[]; warnings=[]
-    files=['AGENTS.md','allowed_paths.txt','handoff_pack.json','expected_outputs_schema.json','result_pack.json','run_manifest.json']
-    loaded={}
-    for name in files:
-        p=ext/name
-        if not p.exists():
-            (issues if name in {'AGENTS.md','allowed_paths.txt','result_pack.json'} else warnings).append({'id':f'missing-{name}','message':f'Missing {name}'})
-        elif p.suffix=='.json':
-            try: loaded[name]=load_json(p)
-            except Exception as e: issues.append({'id':f'invalid-{name}','message':str(e)})
-    result=loaded.get('result_pack.json',{})
-    for name,obj in loaded.items():
-        major=schema_major(obj.get('schema_version')) if isinstance(obj,dict) else None
-        if major not in {None,1}: issues.append({'id':f'unsupported-{name}','message':f'Unsupported major {major}'})
-    for sec in ('realized_method_package','final_framework_figure','figure_table_inventory'):
-        if sec not in result: warnings.append({'id':f'missing-{sec}','message':f'{sec} absent; handoff will be partial'})
-    pkg=result.get('evidence_package') or result.get('evidence_packaging') or {}
-    if not pkg and not any(k in result for k in ('realized_method_package','figure_table_inventory')):
-        issues.append({'id':'evidence-package-unresolved','message':'No evidence package or packaged sections can be resolved'})
-    out=output_path(ws,args.output,'external_executor/writer_handoff_preflight.json')
-    payload={'schema_version':'writer_handoff_preflight.v1','status':'blocked' if issues else ('partial' if warnings else 'pass'),'workspace':str(ws),'checked_files':files,'issues':issues,'warnings':warnings,'input_fingerprint':canonical_hash({'files':{k:v for k,v in loaded.items()},'issues':issues,'warnings':warnings}),'created_at':utc_now()}
-    dump_json_atomic(out,payload); print(json.dumps(payload,ensure_ascii=False))
-    return 2 if issues else 0
-if __name__=='__main__':
-    import json,sys; sys.exit(main())
+import argparse
+import json
+import sys
+
+from _common import canonical_hash, load_json, output_path, resolve_workspace, schema_major, utc_now, dump_json_atomic
+
+
+REQUIRED_JSON = {
+    "result_pack": "result_pack.json",
+    "executor_status": "executor_status.json",
+    "run_manifest": "report/run_manifest.json",
+}
+CONTROL_FILES = ("AGENTS.md", "allowed_paths.txt", "handoff_pack.json", "expected_outputs_schema.json")
+OUTPUTS = (
+    "external_executor/report/writer_handoff_preflight.json",
+    "external_executor/report/writer_handoff_snapshot.json",
+    "external_executor/report/writer_handoff_facts.json",
+    "external_executor/executor_research_report.md",
+    "external_executor/report/writer_handoff_validation.json",
+)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Check final Writer Handoff inputs and write boundaries.")
+    parser.add_argument("--workspace")
+    parser.add_argument("--output")
+    args = parser.parse_args()
+    ws = resolve_workspace(args.workspace)
+    ext = ws / "external_executor"
+    errors: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    documents: dict[str, object] = {}
+
+    for name in CONTROL_FILES:
+        path = ext / name
+        if not path.is_file():
+            errors.append({"code": "missing_control", "path": f"external_executor/{name}"})
+    for label, rel in REQUIRED_JSON.items():
+        path = ext / rel
+        if not path.is_file():
+            errors.append({"code": "missing_required_input", "path": f"external_executor/{rel}"})
+            continue
+        try:
+            value = load_json(path)
+            if not isinstance(value, dict):
+                raise TypeError("expected a JSON object")
+            documents[label] = value
+            major = schema_major(value.get("schema_version"))
+            if major not in {None, 1}:
+                errors.append({"code": "unsupported_schema_major", "path": f"external_executor/{rel}"})
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"code": "invalid_json", "path": f"external_executor/{rel}", "message": str(exc)})
+
+    for directory in ("figure", "table"):
+        path = ext / directory
+        if not path.is_dir():
+            warnings.append({"code": "missing_asset_directory", "path": f"external_executor/{directory}/"})
+        elif not any(item.is_file() for item in path.rglob("*")):
+            warnings.append({"code": "empty_asset_directory", "path": f"external_executor/{directory}/"})
+
+    for rel in OUTPUTS:
+        try:
+            output_path(ws, rel, rel)
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"code": "write_boundary_error", "path": rel, "message": str(exc)})
+
+    report = {
+        "schema_version": "writer_handoff_preflight.v2",
+        "status": "blocked" if errors else ("partial" if warnings else "pass"),
+        "required_inputs": [f"external_executor/{value}" for value in REQUIRED_JSON.values()],
+        "required_outputs": list(OUTPUTS),
+        "errors": errors,
+        "warnings": warnings,
+        "input_fingerprint": canonical_hash(documents),
+        "created_at": utc_now(),
+    }
+    destination = output_path(ws, args.output, OUTPUTS[0])
+    dump_json_atomic(destination, report)
+    print(json.dumps(report, ensure_ascii=False))
+    return 2 if errors else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

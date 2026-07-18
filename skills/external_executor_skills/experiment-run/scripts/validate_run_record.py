@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from _common import canonical_sha256, error, expand_regular_files, load_json, resolve_in_workspace, sha256_file, workspace_root
-from validate_run_request import RUN_TYPES, ROLES, validate_request
+from validate_run_request import ABLATION_FIELDS, RUN_TYPES, ROLES, validate_request
 
 STATUSES = {"completed", "failed", "cancelled", "unusable", "stale"}
 EVIDENCE_USES = {"engineering_only", "diagnostic_only", "pre_audit_candidate", "none"}
@@ -49,11 +49,14 @@ def validate_record(root: Path, record: Any) -> dict[str, Any]:
         return {"valid": False, "errors": [error("invalid_type", "record must be an object")], "warnings": []}
     required = {
         "schema_version", "run_id", "experiment_id", "iteration_id", "request_ref", "request_fingerprint",
-        "run_type", "execution_level", "analysis_role", "run_status", "evidence_level", "evidence_use",
+        "run_type", "execution_level", "analysis_role", "method_id", "method_role", "implementation_id",
+        "run_status", "evidence_level", "evidence_use",
         "review", "protocol_fingerprint", "command", "cwd", "config_ref", "dataset", "data_kind", "seed",
         "repeat_index", "dependencies", "environment", "hardware", "started_at", "finished_at",
         "duration_seconds", "exit", "raw_log_ref", "metric_output_ref", "metrics", "artifacts", "actual_budget",
-        "failure", "recovery", "created_at",
+        "failure", "recovery", "created_at", "claim_ids", "variant_id", "reference_variant_id", "pair_id",
+        "target_module_ids", "module_states", "intervention", "dataset_version", "split",
+        "preprocessing_fingerprint", "fairness_fingerprint", "setting", "subset", "metric_directions",
     }
     for key in sorted(required - record.keys()):
         errors.append(error("missing_field", key))
@@ -70,6 +73,16 @@ def validate_record(root: Path, record: Any) -> dict[str, Any]:
         errors.append(error("invalid_run_status", str(status)))
     if record.get("evidence_use") not in EVIDENCE_USES:
         errors.append(error("invalid_evidence_use", str(record.get("evidence_use"))))
+    if record.get("run_type") == "ablation":
+        for key in sorted(ABLATION_FIELDS):
+            if key not in record:
+                errors.append(error("missing_ablation_record_field", key))
+        target_ids = record.get("target_module_ids")
+        states = record.get("module_states")
+        if not isinstance(target_ids, list) or not target_ids or not isinstance(states, dict) or set(states) != set(target_ids):
+            errors.append(error("invalid_ablation_record_states", str(states)))
+        if not record.get("pair_id") or not record.get("reference_variant_id"):
+            errors.append(error("invalid_ablation_pair_identity", str(record.get("pair_id"))))
     try:
         request = load_json(resolve_in_workspace(root, str(record.get("request_ref", "")), must_exist=True))
         if canonical_sha256(request) != record.get("request_fingerprint"):
@@ -77,7 +90,13 @@ def validate_record(root: Path, record: Any) -> dict[str, Any]:
         request_validation = validate_request(root, request)
         for item in request_validation["errors"]:
             errors.append(error("request_no_longer_valid", f"{item['code']}: {item['message']}"))
-        for field in ("run_id", "experiment_id", "iteration_id", "run_type", "execution_level", "analysis_role", "protocol_fingerprint", "command", "cwd", "seed", "repeat_index", "dataset", "data_kind"):
+        for field in (
+            "run_id", "experiment_id", "iteration_id", "run_type", "execution_level", "analysis_role", "method_id",
+            "method_role", "implementation_id", "protocol_fingerprint", "command", "cwd", "seed", "repeat_index",
+            "dataset", "data_kind", "claim_ids", "variant_id", "reference_variant_id", "pair_id",
+            "target_module_ids", "module_states", "intervention", "preprocessing_fingerprint",
+            "fairness_fingerprint", "setting", "subset", "metric_directions",
+        ):
             if request.get(field) != record.get(field):
                 errors.append(error("request_record_mismatch", field))
         expected_paths = {

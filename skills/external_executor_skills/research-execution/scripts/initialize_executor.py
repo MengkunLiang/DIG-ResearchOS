@@ -17,7 +17,7 @@ FALLBACK_REQUIRED = [
     "baseline_reproduction", "claim_evidence_matrix", "experiment_plan",
     "experiment_runs", "implementation_reviews", "result_diagnoses",
     "module_attributions", "iteration_decisions", "realized_method_package",
-    "final_framework_figure", "figure_table_inventory", "writer_handoff",
+    "framework_figure", "figure_table_inventory",
 ]
 
 
@@ -63,6 +63,7 @@ def main() -> int:
         "stale_checkpoints": [],
         "active_blockers": [],
         "budget": {},
+        "iteration_loop": {"current_iteration": 0, "max_iterations": 10, "last_decision_id": None, "outcome": "not_started"},
         "input_fingerprint": None,
         "next_action": "context-alignment",
         "updated_at": now,
@@ -82,10 +83,11 @@ def main() -> int:
             result_pack[key] = "running"
         else:
             result_pack[key] = {"status": "not_started", "items": [], "blocking_issues": []}
+    result_pack.setdefault("iteration_plans", {"status": "not_started", "items": [], "active_iteration_id": None})
 
     payloads = {
         external / "executor_status.json": status,
-        external / "run_manifest.json": manifest,
+        external / "report" / "run_manifest.json": manifest,
         external / "result_pack.json": result_pack,
     }
     for path, payload in payloads.items():

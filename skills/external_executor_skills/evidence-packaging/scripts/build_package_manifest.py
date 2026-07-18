@@ -37,12 +37,14 @@ def entity_for_path(ws: Path, path_value: str, role: str, snapshot_fp: str | Non
 def main() -> int:
     parser = argparse.ArgumentParser(description="Create a lightweight Research-Object-style manifest for the evidence package.")
     parser.add_argument("--workspace")
-    parser.add_argument("--snapshot", default="external_executor/final_evidence_snapshot.json")
+    parser.add_argument("--snapshot", default="external_executor/report/final_evidence_snapshot.json")
     parser.add_argument("--method", default="external_executor/evidence_package/realized_method_package.json")
-    parser.add_argument("--framework", default="external_executor/evidence_package/framework_figure_spec.json")
-    parser.add_argument("--inventory", default="external_executor/evidence_package/figure_table_inventory.json")
-    parser.add_argument("--mapping", default="external_executor/evidence_package/evidence_mapping.json")
-    parser.add_argument("--output", default="external_executor/evidence_package/evidence_package_manifest.json")
+    parser.add_argument("--framework", default="external_executor/report/framework_figure_spec.json")
+    parser.add_argument("--inventory", default="external_executor/report/figure_table_inventory.json")
+    parser.add_argument("--mapping", default="external_executor/report/evidence_mapping.json")
+    parser.add_argument("--tables-report", default="external_executor/report/result_table_build_report.json")
+    parser.add_argument("--figures-report", default="external_executor/report/result_figure_build_report.json")
+    parser.add_argument("--output", default="external_executor/report/evidence_package_manifest.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)
@@ -51,6 +53,8 @@ def main() -> int:
     framework = load_json(resolve_in_workspace(ws, args.framework))
     inventory = load_json(resolve_in_workspace(ws, args.inventory))
     mapping = load_json(resolve_in_workspace(ws, args.mapping))
+    tables_report = load_json(resolve_in_workspace(ws, args.tables_report))
+    figures_report = load_json(resolve_in_workspace(ws, args.figures_report))
     fp = snapshot.get("snapshot_fingerprint")
 
     core_paths = {
@@ -59,9 +63,27 @@ def main() -> int:
         "framework_figure_spec": args.framework,
         "figure_table_inventory": args.inventory,
         "evidence_mapping": args.mapping,
+        "result_table_build_report": args.tables_report,
+        "result_figure_build_report": args.figures_report,
     }
     entities = [entity_for_path(ws, path, role, fp) for role, path in core_paths.items()]
     known_paths = {entity["path"] for entity in entities}
+
+    source_paths = []
+    source_paths.extend(str(value).split("#", 1)[0] for value in method.get("source_refs", []) if value)
+    final_version = method.get("final_version", {})
+    if final_version.get("implementation_root"):
+        source_paths.append(str(final_version["implementation_root"]))
+    for module in method.get("implemented_modules", []):
+        source_paths.extend(str(value).split("#", 1)[0] for value in module.get("code_refs", []) if value)
+    for loss in method.get("actual_losses", []):
+        source_paths.extend(str(value).split("#", 1)[0] for value in loss.get("implementation_refs", []) if value)
+    for index, path_value in enumerate(unique_strings(source_paths), start=1):
+        if path_value in known_paths:
+            continue
+        entity = entity_for_path(ws, path_value, f"realized_method_source_{index}", fp)
+        entities.append(entity)
+        known_paths.add(entity["path"])
 
     for file_value in [framework.get("editable_source"), *framework.get("rendered_files", [])]:
         if isinstance(file_value, dict):
@@ -78,6 +100,13 @@ def main() -> int:
                 entity = entity_for_path(ws, file_value, f"{item.get('kind')}_render", fp)
                 entities.append(entity)
                 known_paths.add(entity["path"])
+    for item in [*tables_report.get("tables", []), *figures_report.get("figures", [])]:
+        file_value = item.get("path") if isinstance(item, dict) else None
+        if isinstance(file_value, str) and file_value not in known_paths:
+            role = "generated_table" if file_value.startswith("external_executor/table/") else "generated_figure"
+            entity = entity_for_path(ws, file_value, role, fp)
+            entities.append(entity)
+            known_paths.add(entity["path"])
 
     by_role = {entity["role"]: entity["entity_id"] for entity in entities}
     relationships = [
@@ -87,6 +116,16 @@ def main() -> int:
         {"subject": by_role.get("evidence_mapping"), "predicate": "maps", "object": by_role.get("realized_method_package")},
         {"subject": by_role.get("evidence_mapping"), "predicate": "maps", "object": by_role.get("figure_table_inventory")},
     ]
+    method_entity = by_role.get("realized_method_package")
+    relationships.extend(
+        {
+            "subject": method_entity,
+            "predicate": "derivedFrom",
+            "object": entity["entity_id"],
+        }
+        for entity in entities
+        if method_entity and entity["role"].startswith("realized_method_source_")
+    )
     relationships = [rel for rel in relationships if rel["subject"] and rel["object"]]
     missing = [entity["path"] for entity in entities if not entity["exists"]]
     package = {

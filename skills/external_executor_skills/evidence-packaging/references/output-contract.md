@@ -3,19 +3,26 @@
 ## Owned artifacts
 
 ```text
-external_executor/evidence_packaging_preflight.json
-external_executor/final_evidence_snapshot.json
-external_executor/final_evidence_snapshot_validation.json
 external_executor/evidence_package/realized_method_package.json
-external_executor/evidence_package/framework_figure_spec.json
-external_executor/evidence_package/framework_figure.mmd
-external_executor/evidence_package/framework_figure.svg
-external_executor/evidence_package/figure_table_inventory.json
-external_executor/evidence_package/evidence_mapping.json
-external_executor/evidence_package/evidence_package_manifest.json
-external_executor/evidence_packaging_gate.json
-external_executor/evidence_packaging_report.json
-external_executor/evidence_packaging_report_validation.json
+external_executor/figure/framework_figure.svg
+external_executor/figure/<main|ablation|other>_<dataset>_<split>_<metric>_<protocol>.svg
+external_executor/table/all_results.csv
+external_executor/table/main_comparison.csv
+external_executor/table/ablation_results.csv
+external_executor/table/other_experiments.csv
+external_executor/report/evidence_packaging_preflight.json
+external_executor/report/final_evidence_snapshot.json
+external_executor/report/final_evidence_snapshot_validation.json
+external_executor/report/framework_figure_spec.json
+external_executor/report/framework_figure.mmd
+external_executor/report/result_table_build_report.json
+external_executor/report/result_figure_build_report.json
+external_executor/report/figure_table_inventory.json
+external_executor/report/evidence_mapping.json
+external_executor/report/evidence_package_manifest.json
+external_executor/report/evidence_packaging_gate.json
+external_executor/report/evidence_packaging_report.json
+external_executor/report/evidence_packaging_report_validation.json
 ```
 
 Root owns registration in `run_manifest.json` and final executor state.
@@ -33,6 +40,8 @@ Root owns registration in `run_manifest.json` and final executor state.
   "snapshot_fingerprint": "",
   "realized_method_package": {},
   "framework_figure": {},
+  "result_tables": {},
+  "result_figures": {},
   "figure_table_inventory": {},
   "evidence_mapping": {},
   "package_manifest": {},
@@ -83,11 +92,11 @@ status=complete|partial|blocked|failed
 packaging_readiness=ready|partial|blocked
 snapshot_id=<id>
 snapshot_fingerprint=<sha256>
-report=external_executor/evidence_packaging_report.json
+report=external_executor/report/evidence_packaging_report.json
 realized_method=external_executor/evidence_package/realized_method_package.json
-framework_figure=external_executor/evidence_package/framework_figure_spec.json
-figure_table_inventory=external_executor/evidence_package/figure_table_inventory.json
-evidence_mapping=external_executor/evidence_package/evidence_mapping.json
+framework_figure=external_executor/figure/framework_figure.svg
+figure_table_inventory=external_executor/report/figure_table_inventory.json
+evidence_mapping=external_executor/report/evidence_mapping.json
 blocking_issues=<ids>
 constraints=<ids>
 recommended_next_action=continue_to_writer_handoff|continue_to_writer_handoff_with_constraints|repair_package_or_return_to_root

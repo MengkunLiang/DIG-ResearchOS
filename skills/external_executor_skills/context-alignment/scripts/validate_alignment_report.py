@@ -96,9 +96,13 @@ def validate_report(report: Any, root=None) -> dict[str, Any]:
                 resolve_in_workspace(root, path)
             except ValueError as exc:
                 issue(errors, "source_path_escape", str(exc))
-        inventory_path = resolve_in_workspace(root, "external_executor/context_source_inventory.json")
+        inventory_path = resolve_in_workspace(root, "external_executor/report/context_source_inventory.json")
         if not inventory_path.is_file():
-            issue(errors, "missing_source_inventory", "context_source_inventory.json is required")
+            issue(
+                errors,
+                "missing_source_inventory",
+                "external_executor/report/context_source_inventory.json is required",
+            )
             inventory_sources = {}
         else:
             try:
@@ -267,7 +271,7 @@ def validate_report(report: Any, root=None) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", required=True)
-    parser.add_argument("--report", default="external_executor/context_alignment_report.json")
+    parser.add_argument("--report", default="external_executor/report/context_alignment_report.json")
     args = parser.parse_args()
     root = workspace_root(args.workspace)
     path = resolve_in_workspace(root, args.report)

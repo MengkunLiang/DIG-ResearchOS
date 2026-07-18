@@ -580,7 +580,7 @@ def create_directory_guides(workspace_dir: Path, *, runtime_dir_name: str = "_ru
             "purpose": "ResearchOS 与 Codex/Claude/manual 外部实验执行器的边界目录。",
             "produced_by": "T5-REBOOST-GATE, T5-HANDOFF, T5-SPECIALIZE-EXECUTOR-SKILLS, T5-EXPR-MATERIAL-GATE, T5-EXECUTOR-GATE, external executor, T5-DRY-RUN.",
             "consumed_by": "T5-EXTERNAL-WAIT, T8.",
-            "key_files": "AGENTS.md, CLAUDE.md, handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt, report/, skills/, expr/, executor_research_report.md, result_pack.json, executor_status.json, run_manifest.json.",
+            "key_files": "AGENTS.md, CLAUDE.md, handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt, report/, skills/, expr/, executor_research_report.md, result_pack.json, executor_status.json.",
             "human_editable": "Place experiment materials under expr/ and manual executor outputs only; skills/ is generated and customized by ResearchOS before execution.",
             "agent_editable": "ResearchOS customizes skills/ during T5; external executor may write only paths allowed by allowed_paths.txt.",
             "do_not_put": "Final paper text, API keys, unrelated notebooks, ResearchOS source edits.",
@@ -796,15 +796,15 @@ def _describe_key_file(item: str) -> str:
         "AGENTS.md": "外部执行器给 Codex/agent 的工作约束。",
         "CLAUDE.md": "外部执行器给 Claude Code 的工作约束。",
         "skills": "T5 编译出的项目特化外部执行器 skill suite。",
-        "report": "T5-REBOOST 的过程报告和候选 handoff 诊断文件；不作为执行器输入。",
+        "report": "T5-REBOOST/T5-EXECUTOR-GATE 的过程报告与回执，research-execution 控制文件，以及 Writer Handoff 的 preflight/snapshot/facts/validation 文件。",
         "expr": "用户手动放置 baseline model、dataset、权重和实验材料的位置。",
         "handoff_pack.json": "T5 编译的实验任务、协议、证据契约和 allowed paths。",
         "expected_outputs_schema.json": "外部执行器必须写回的 result pack/status/manifest schema。",
         "allowed_paths.txt": "外部执行器可读写路径边界。",
-        "executor_research_report.md": "T5 直接交给 T8 的核心外部执行研究报告。",
+        "executor_research_report.md": "Writer Handoff 根据最终 result pack、manifest 和图表形成并验证的 T8 核心外部执行研究报告。",
         "result_pack.json": "外部执行器写回的支持性结果包，供 T8 需要时回查。",
         "executor_status.json": "外部执行器状态、accepted/mock/dry-run 标记。",
-        "run_manifest.json": "运行记录、raw/config/log 路径和 provenance。",
+        "run_manifest.json": "运行记录、raw/config/log 路径和 provenance；当前标准位置是 external_executor/report/run_manifest.json。",
         "results_summary.json": "旧内部实验链标准化后的实验结果摘要。",
         "evidence_index.json": "指标、raw result、config、log、hash 的证据索引。",
         "integrity_audit.json": "实验诚信和 provenance 审计。",
@@ -1003,14 +1003,14 @@ def _default_dir_guide(rel_dir: str, *, runtime_dir_name: str) -> dict[str, str]
         }
     if normalized == "external_executor/report":
         return {
-            "purpose": "ResearchOS T5 process reports plus executor selection/capability control receipts.",
-            "produced_by": "T5-REBOOST-GATE, T5-SPECIALIZE-EXECUTOR-SKILLS, and T5-EXECUTOR-GATE.",
+            "purpose": "ResearchOS T5 process reports, executor selection/capability receipts, and root external-executor run-control indexes.",
+            "produced_by": "T5-REBOOST-GATE, T5-SPECIALIZE-EXECUTOR-SKILLS, T5-EXECUTOR-GATE, research-execution, and T5-DRY-RUN.",
             "consumed_by": "ResearchOS validation/resume and external executor Skill preflight where explicitly referenced.",
-            "key_files": "reboost_report.json, reboost_validation_report.json, skill_specialization_report.json, skill_specialization_execution.json, executor_selection.json, executor_capabilities.json.",
-            "human_editable": "No; rerun T5-REBOOST or repair upstream sources instead.",
-            "agent_editable": "ResearchOS T5 publication/gate tools only.",
+            "key_files": "reboost_report.json, reboost_validation_report.json, skill_specialization_report.json, skill_specialization_execution.json, executor_selection.json, executor_capabilities.json, input_fingerprint.json, run_manifest.json.",
+            "human_editable": "No; rerun T5-REBOOST or repair upstream sources instead. External manual executors should not hand-edit report/run_manifest.json except as part of the explicit research-execution protocol.",
+            "agent_editable": "ResearchOS T5 publication/gate tools and external research-execution root-control scripts.",
             "do_not_put": "Executor prompts, raw results, code, datasets, or manuscript text.",
-            "validation": "Reports must point back to their source artifacts; executor_selection/capabilities are written by T5-EXECUTOR-GATE.",
+            "validation": "Reports must point back to their source artifacts; executor_selection/capabilities are written by T5-EXECUTOR-GATE; run_manifest entries must point to existing artifacts and checksums.",
         }
     if normalized == "external_executor/expr":
         return {

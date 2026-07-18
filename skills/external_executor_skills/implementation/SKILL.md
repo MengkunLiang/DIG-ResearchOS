@@ -30,9 +30,9 @@ Act as the Builder for one approved ResearchOS iteration. Convert a bounded impl
 
 Write only:
 
-- `external_executor/implementation_preflight.json`;
-- `external_executor/implementation_change_contract.json`;
-- `external_executor/implementation_report.json`;
+- `external_executor/report/implementation_preflight.json`;
+- `external_executor/report/implementation_change_contract.json`;
+- `external_executor/report/implementation_report.json`;
 - versioned baseline adapter and method implementation deployments under `external_executor/expr/implementation/`;
 - `result_pack.json#implementations` through the narrow apply script.
 
@@ -42,7 +42,7 @@ Do not change root-owned status, manifest, budget, iteration decisions, experime
 
 ```bash
 python <skill-dir>/scripts/preflight_implementation.py --workspace <workspace> \
-  --output external_executor/implementation_preflight.json
+  --output external_executor/report/implementation_preflight.json
 ```
 
 The preflight confirms:
@@ -63,7 +63,7 @@ Read `references/change-contract.md`, then run:
 
 ```bash
 python <skill-dir>/scripts/build_change_contract.py --workspace <workspace> \
-  --output external_executor/implementation_change_contract.json
+  --output external_executor/report/implementation_change_contract.json
 ```
 
 Before editing code, ensure the contract identifies:
@@ -87,7 +87,7 @@ Read `references/worktree-and-patch-policy.md`, then run:
 
 ```bash
 python <skill-dir>/scripts/prepare_worktree.py --workspace <workspace> \
-  --contract external_executor/implementation_change_contract.json
+  --contract external_executor/report/implementation_change_contract.json
 ```
 
 The implementation root is:
@@ -103,6 +103,8 @@ external_executor/expr/implementation/<iteration-id>/<implementation-id>/
 ```
 
 `before/` is a read-only snapshot. Edit only this package's `worktree/` under `external_executor/expr/implementation/`. Never mutate acquired resources, baseline source snapshots, another `external_executor/expr/` deployment, or another iteration's evidence in place. Reject symlink escapes and preserve excluded/generated-file rules in provenance.
+
+For every diagnosis-driven iteration after the first, require `copy_previous_method=true` and require `base_source` to be the immediately preceding implementation's `worktree/`. `prepare_worktree.py` then creates a new iteration/implementation package from that source. Never reopen or edit the preceding worktree in place; a debug-only repair is still a new method version.
 
 ## Inspect before editing
 
@@ -167,7 +169,7 @@ Generate and validate the mapping:
 
 ```bash
 python <skill-dir>/scripts/validate_module_mapping.py --workspace <workspace> \
-  --contract external_executor/implementation_change_contract.json \
+  --contract external_executor/report/implementation_change_contract.json \
   --mapping <implementation-root>/mappings/module_mapping.json \
   --output <implementation-root>/mappings/module_mapping_validation.json
 ```
@@ -178,7 +180,7 @@ Use `run_verification.py` for bounded engineering checks:
 
 ```bash
 python <skill-dir>/scripts/run_verification.py --workspace <workspace> \
-  --contract external_executor/implementation_change_contract.json \
+  --contract external_executor/report/implementation_change_contract.json \
   --verification-id <verification-id> \
   --phase red|green|final \
   --expect failure|success
@@ -202,10 +204,10 @@ Never claim a test passes from memory or a previous code version. Final verifica
 
 ```bash
 python <skill-dir>/scripts/generate_patch_bundle.py --workspace <workspace> \
-  --contract external_executor/implementation_change_contract.json
+  --contract external_executor/report/implementation_change_contract.json
 
 python <skill-dir>/scripts/scan_change_scope.py --workspace <workspace> \
-  --contract external_executor/implementation_change_contract.json \
+  --contract external_executor/report/implementation_change_contract.json \
   --output <implementation-root>/patches/scope_scan.json
 ```
 
@@ -242,21 +244,21 @@ Initialize a complete report envelope:
 
 ```bash
 python <skill-dir>/scripts/initialize_implementation_report.py --workspace <workspace> \
-  --contract external_executor/implementation_change_contract.json \
-  --output external_executor/implementation_report.json
+  --contract external_executor/report/implementation_change_contract.json \
+  --output external_executor/report/implementation_report.json
 ```
 
 Complete the mappings, verification records, patch summary, scope findings, drift assessment, risks, and artifact references. Then run:
 
 ```bash
 python <skill-dir>/scripts/compute_implementation_gate.py \
-  --report <workspace>/external_executor/implementation_report.json --write-back
+  --report <workspace>/external_executor/report/implementation_report.json --write-back
 
 python <skill-dir>/scripts/validate_implementation_report.py --workspace <workspace> \
-  --report external_executor/implementation_report.json
+  --report external_executor/report/implementation_report.json
 
 python <skill-dir>/scripts/apply_implementation_report.py --workspace <workspace> \
-  --report external_executor/implementation_report.json
+  --report external_executor/report/implementation_report.json
 ```
 
 Gate outcomes:
@@ -277,7 +279,7 @@ status=complete|partial|blocked|failed
 implementation_gate=ready_for_review|needs_fix|blocked
 implementation_id=<id>
 iteration_id=<id>
-report=external_executor/implementation_report.json
+report=external_executor/report/implementation_report.json
 implementation_root=external_executor/expr/implementation/<iteration>/<implementation>/
 patch_bundle=<path>
 module_mapping=<path>

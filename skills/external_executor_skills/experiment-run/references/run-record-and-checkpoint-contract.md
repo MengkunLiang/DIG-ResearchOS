@@ -21,6 +21,16 @@
   "run_type": "",
   "execution_level": "",
   "analysis_role": "",
+  "method_id": "",
+  "method_role": "ours | baseline",
+  "implementation_id": "",
+  "claim_ids": [],
+  "variant_id": "",
+  "reference_variant_id": "",
+  "pair_id": "",
+  "target_module_ids": [],
+  "module_states": {},
+  "intervention": {},
   "run_status": "completed | failed | cancelled | unusable | stale",
   "evidence_level": "raw_result | diagnostic_hint | unsupported",
   "evidence_use": "engineering_only | diagnostic_only | pre_audit_candidate | none",
@@ -35,6 +45,13 @@
   "cwd": "",
   "config_ref": {},
   "dataset": {"id": "", "version": "", "split": ""},
+  "dataset_version": "",
+  "split": "",
+  "preprocessing_fingerprint": "",
+  "fairness_fingerprint": "",
+  "setting": "default",
+  "subset": "all",
+  "metric_directions": {},
   "seed": 0,
   "repeat_index": 0,
   "dependencies": [],
@@ -56,6 +73,8 @@
 ```
 
 The record describes one attempt. It is immutable after terminal finalization except that the root may later copy it into a new record with `run_status=stale` and an explicit invalidation reason.
+
+For ablations, the terminal record must preserve every reviewed attribution field byte-for-byte from the request. A completed process without pair identity, reference identity, target-module states, controlled intervention, or metric directions is not valid attribution evidence.
 
 Run records are read from `external_executor/raw_results/` through their request/checkpoint references. `cwd` identifies the executed deployment under `external_executor/expr/`; raw-result refs identify the durable evidence under `external_executor/raw_results/`.
 

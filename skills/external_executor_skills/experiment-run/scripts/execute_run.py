@@ -118,6 +118,9 @@ def main() -> int:
     child_env["RESEARCHOS_OUTPUT_DIR"] = str(metric_path.parent)
     started_at = now_utc()
     started = time.monotonic()
+    dataset = request["dataset"]
+    dataset_version = dataset.get("version") if isinstance(dataset, dict) else request.get("dataset_version")
+    dataset_split = dataset.get("split") if isinstance(dataset, dict) else request.get("split")
     base_record: dict[str, Any] = {
         "schema_version": "external_executor_experiment_run.v1",
         "run_id": request["run_id"],
@@ -128,6 +131,16 @@ def main() -> int:
         "run_type": request["run_type"],
         "execution_level": request["execution_level"],
         "analysis_role": request["analysis_role"],
+        "method_id": request["method_id"],
+        "method_role": request["method_role"],
+        "implementation_id": request["implementation_id"],
+        "claim_ids": request.get("claim_ids", []),
+        "variant_id": request.get("variant_id"),
+        "reference_variant_id": request.get("reference_variant_id"),
+        "pair_id": request.get("pair_id"),
+        "target_module_ids": request.get("target_module_ids", []),
+        "module_states": request.get("module_states", {}),
+        "intervention": request.get("intervention", {}),
         "run_status": "running",
         "evidence_level": "unsupported",
         "evidence_use": "none",
@@ -141,7 +154,14 @@ def main() -> int:
         "command": request["command"],
         "cwd": request["cwd"],
         "config_ref": artifact_ref(root, config_path),
-        "dataset": request["dataset"],
+        "dataset": dataset,
+        "dataset_version": dataset_version,
+        "split": dataset_split,
+        "preprocessing_fingerprint": request.get("preprocessing_fingerprint"),
+        "fairness_fingerprint": request.get("fairness_fingerprint"),
+        "setting": request.get("setting", "default"),
+        "subset": request.get("subset", "all"),
+        "metric_directions": request.get("metric_directions", {}),
         "data_kind": request["data_kind"],
         "seed": request["seed"],
         "repeat_index": request["repeat_index"],

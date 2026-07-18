@@ -28,7 +28,7 @@ def resource_preexec(memory_mb: int | None, cpu_seconds: int | None):
 
 
 def find_attempt(ws: Path, item: dict, attempt: int) -> Path:
-    base = ws / "external_executor" / "expr" / "baseline_reproduction"
+    base = ws / "external_executor" / "expr" / "baselines"
     matches = list(base.glob(f"*/{item['reproduction_id']}/attempt-{attempt}"))
     if len(matches) != 1:
         raise FileNotFoundError(f"Expected one attempt directory, found {len(matches)}")
@@ -39,8 +39,16 @@ def result_dir_for(ws: Path, attempt_dir: Path, fragment: dict) -> Path:
     value = fragment.get("result_dir")
     if value:
         return resolve_in_workspace(ws, str(value))
-    rel = attempt_dir.relative_to(ws / "external_executor" / "expr" / "baseline_reproduction")
+    rel = attempt_dir.relative_to(ws / "external_executor" / "expr" / "baselines")
     return (ws / "external_executor" / "raw_results" / "baseline_reproduction" / rel).resolve(strict=False)
+
+
+def evidence_dir_for(ws: Path, attempt_dir: Path, fragment: dict) -> Path:
+    value = fragment.get("evidence_dir")
+    if value:
+        return resolve_in_workspace(ws, str(value))
+    rel = attempt_dir.relative_to(ws / "external_executor" / "expr" / "baselines")
+    return (ws / "external_executor" / "report" / "baseline_reproduction" / rel).resolve(strict=False)
 
 
 def stage_output(ws: Path, source: Path, target_root: Path, rel: str) -> dict:
@@ -62,7 +70,7 @@ def stage_output(ws: Path, source: Path, target_root: Path, rel: str) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Run one authorized baseline reproduction command.")
     ap.add_argument("--workspace")
-    ap.add_argument("--plan", default="external_executor/baseline_reproduction_plan.json")
+    ap.add_argument("--plan", default="external_executor/report/baseline_reproduction_plan.json")
     ap.add_argument("--reproduction-id", required=True)
     ap.add_argument("--attempt", type=int, required=True)
     ap.add_argument("--allow-executable", action="append", default=[])
@@ -82,10 +90,15 @@ def main() -> int:
     assert_write_allowed(ws, attempt_dir)
     fragment = load_json(attempt_dir / "plan_fragment.json")
     result_dir = result_dir_for(ws, attempt_dir, fragment)
+    evidence_dir = evidence_dir_for(ws, attempt_dir, fragment)
     if not is_within(result_dir, ws / "external_executor" / "raw_results"):
         raise SystemExit(f"Result directory must be under external_executor/raw_results: {result_dir}")
+    if not is_within(evidence_dir, ws / "external_executor" / "report"):
+        raise SystemExit(f"Evidence directory must be under external_executor/report: {evidence_dir}")
     assert_write_allowed(ws, result_dir)
+    assert_write_allowed(ws, evidence_dir)
     result_dir.mkdir(parents=True, exist_ok=True)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
     (result_dir / "outputs").mkdir(exist_ok=True)
     work_rel = execution.get("working_directory", ".")
     workdir = (attempt_dir / "source" / work_rel).resolve(strict=False)
@@ -109,10 +122,11 @@ def main() -> int:
     env["RESEARCHOS_ATTEMPT_DIR"] = str(attempt_dir)
     env["RESEARCHOS_DEPLOYMENT_DIR"] = str(attempt_dir)
     env["RESEARCHOS_RAW_RESULTS_DIR"] = str(result_dir)
+    env["RESEARCHOS_EVIDENCE_DIR"] = str(evidence_dir)
     env["RESEARCHOS_OUTPUT_DIR"] = str(result_dir / "outputs")
     stdout_path = result_dir / "stdout.log"
     stderr_path = result_dir / "stderr.log"
-    record_path = result_dir / "run_record.json"
+    record_path = evidence_dir / "run_record.json"
     if record_path.exists():
         raise SystemExit("run_record.json already exists; create a new attempt instead of overwriting")
 
@@ -163,27 +177,33 @@ def main() -> int:
     produced = []
     for rel in execution.get("expected_outputs", []):
         raw_output = (result_dir / "outputs" / rel).resolve(strict=False)
+        direct_raw_output = (result_dir / rel).resolve(strict=False)
         work_output = (workdir / rel).resolve(strict=False)
         valid_raw = is_within(raw_output, result_dir) and raw_output.exists()
+        valid_direct_raw = is_within(direct_raw_output, result_dir) and direct_raw_output.exists()
         valid_work = is_within(work_output, workdir) and work_output.exists()
-        valid = valid_raw or valid_work
-        stored_under_raw = bool(valid_raw)
+        valid = valid_raw or valid_direct_raw or valid_work
+        stored_under_raw = bool(valid_raw or valid_direct_raw)
         staged = None
-        if not valid_raw and valid_work:
+        if not valid_raw and not valid_direct_raw and valid_work:
             staged = stage_output(ws, work_output, result_dir / "outputs", rel)
             stored_under_raw = True
         expected_checks.append({
             "path": rel,
             "exists": bool(valid),
-            "type": "directory" if valid and (raw_output if valid_raw else work_output).is_dir() else "file" if valid else None,
+            "type": "directory" if valid and (raw_output if valid_raw else direct_raw_output if valid_direct_raw else work_output).is_dir() else "file" if valid else None,
             "stored_under_raw_results": stored_under_raw,
         })
         if valid_raw and raw_output.is_file():
             produced.append({"path": relpath(ws, raw_output), "sha256": sha256_file(raw_output), "size_bytes": raw_output.stat().st_size})
+        elif valid_direct_raw and direct_raw_output.is_file():
+            produced.append({"path": relpath(ws, direct_raw_output), "sha256": sha256_file(direct_raw_output), "size_bytes": direct_raw_output.stat().st_size})
         elif staged:
             staged["staged_from"] = relpath(ws, work_output)
             produced.append(staged)
     provenance = load_json(attempt_dir / "attempt_provenance.json")
+    executed_source_manifest = tree_manifest(attempt_dir / "source")
+    executed_config_manifest = tree_manifest(attempt_dir / "configs")
     run_id = stable_id("RUN", item["reproduction_id"], args.attempt, started_at)
     record = {
         "schema_version": "baseline_run_record.v1",
@@ -201,6 +221,7 @@ def main() -> int:
         "working_directory": relpath(ws, workdir),
         "deployment_dir": relpath(ws, attempt_dir),
         "result_dir": relpath(ws, result_dir),
+        "evidence_dir": relpath(ws, evidence_dir),
         "exit_code": exit_code,
         "termination_signal": termination_signal,
         "timed_out": timed_out,
@@ -209,14 +230,16 @@ def main() -> int:
         "resource_usage": {"user_cpu_seconds": round(end_cpu.ru_utime - start_cpu.ru_utime, 6), "system_cpu_seconds": round(end_cpu.ru_stime - start_cpu.ru_stime, 6), "max_rss": end_cpu.ru_maxrss},
         "protocol_fingerprint": item.get("protocol_fingerprint"),
         "fairness_fingerprint": item.get("fairness_fingerprint"),
-        "source_manifest_sha256": provenance.get("source_manifest_sha256"),
-        "config_manifest_sha256": provenance.get("config_manifest_sha256"),
+        "source_manifest_sha256": executed_source_manifest["manifest_sha256"],
+        "config_manifest_sha256": executed_config_manifest["manifest_sha256"],
+        "prepared_source_manifest_sha256": provenance.get("source_manifest_sha256"),
+        "prepared_config_manifest_sha256": provenance.get("config_manifest_sha256"),
         "dataset": item.get("dataset", {}),
         "seeds": item.get("seeds", []),
         "repeats": item.get("repeats", 1),
         "stdout_path": relpath(ws, stdout_path),
         "stderr_path": relpath(ws, stderr_path),
-        "environment_path": relpath(ws, result_dir / "environment.json") if (result_dir / "environment.json").exists() else None,
+        "environment_path": relpath(ws, evidence_dir / "environment.json") if (evidence_dir / "environment.json").exists() else None,
         "expected_outputs": execution.get("expected_outputs", []),
         "output_checks": expected_checks,
         "produced_artifacts": produced,

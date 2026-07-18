@@ -38,6 +38,7 @@ Ordinary, when authorized:
 Not ordinary repair; escalate:
 
 - replacing algorithmic modules or losses;
+- omitting, stubbing, weakening, or partially implementing required core modules or core design steps;
 - using a different checkpoint/pretraining source;
 - adding extra data or augmentation not allowed by protocol;
 - changing dataset split, metric, aggregation, repeat count, or early stopping to favor the baseline;

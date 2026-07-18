@@ -12,7 +12,7 @@
   "iteration_id": "",
   "protocol_fingerprint": "",
   "fairness_fingerprint": "",
-  "plan_ref": "external_executor/baseline_reproduction_plan.json",
+  "plan_ref": "external_executor/report/baseline_reproduction_plan.json",
   "items": [],
   "repair_attempts": [],
   "failure_classifications": [],
@@ -80,7 +80,7 @@
 - `pass`: every required active item is `reproduced`, has review `pass`, and approval `formal_review_candidate`; no blocking/stale required item exists.
 - `partial`: at least one useful result exists, but one or more required items are conditional, incomplete, unavailable, failed, or stale; `formal_comparison_ready=false`.
 - `blocked`: a required item is blocked by scope, access, security/license, protocol authority, or an exhausted non-repairable condition.
-- Child `status=complete` may accompany gate `partial` or `blocked` when the Skill completed its analysis honestly.
+- Child `status=complete` may accompany gate `partial` when all active items have reached terminal non-running states. Gate `blocked` is written back as child `status=blocked` unless the report is already marked `failed`.
 - `failed` is reserved for unrecoverable Skill/tool failure, not baseline non-reproduction.
 
 ## Result-pack mapping
@@ -107,7 +107,7 @@ It does not modify `experiment_runs`; later general experiment execution owns th
 }
 ```
 
-Artifact refs with `evidence_level=raw_result` must point under `external_executor/raw_results/baseline_reproduction/`. Deployment/source references point under `external_executor/expr/baseline_reproduction/`; approved input resources remain under `resources/` for by-hand local material or `resource/` for acquired/reimplemented material. `external_executor/workdir/` is not an approved input resource root.
+Artifact refs with `evidence_level=raw_result` must point to original baseline-run outputs under `external_executor/raw_results/baseline_reproduction/`, such as stdout/stderr logs, baseline-produced result files, and per-dataset/per-metric raw metric CSV files. Metric extraction must leave one CSV of raw metric values per dataset and metric under `external_executor/raw_results/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/raw_metrics/<dataset>/<metric>.csv`, and the normalized `external_executor/report/baseline_reproduction/.../metrics.json` must reference those CSV files. Run records, environment captures, normalized JSON reports, failure classifications, and evaluations are process/report artifacts under `external_executor/report/baseline_reproduction/`, not raw results. Deployment/source references point under `external_executor/expr/baselines/`; approved input resources remain under `resources/`. `external_executor/workdir/` is not an approved input resource root.
 
 ## Child return
 
@@ -115,8 +115,8 @@ Artifact refs with `evidence_level=raw_result` must point under `external_execut
 child_skill=baseline-reproduction
 status=complete|partial|blocked|failed
 reproduction_gate=pass|partial|blocked
-report=external_executor/baseline_reproduction_report.json
-plan=external_executor/baseline_reproduction_plan.json
+report=external_executor/report/baseline_reproduction_report.json
+plan=external_executor/report/baseline_reproduction_plan.json
 reproduced_baseline_ids=<ids>
 conditional_baseline_ids=<ids>
 blocking_baseline_ids=<ids>

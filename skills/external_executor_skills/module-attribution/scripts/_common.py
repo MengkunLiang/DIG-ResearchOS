@@ -210,6 +210,18 @@ def current_diagnosis(result: dict[str, Any], iteration_id: str) -> dict[str, An
     return matches[-1] if matches else None
 
 
+def current_implementation(result: dict[str, Any], iteration_id: str) -> dict[str, Any] | None:
+    section = result.get("implementations")
+    records = section_items(section)
+    active_id = section.get("active_implementation_id") if isinstance(section, dict) else None
+    if active_id:
+        active = [item for item in records if str(item.get("implementation_id")) == str(active_id)]
+        if active and str(active[-1].get("iteration_id")) == str(iteration_id):
+            return active[-1]
+    matching = [item for item in records if str(item.get("iteration_id")) == str(iteration_id)]
+    return matching[-1] if matching else None
+
+
 def metric_direction(value: Any) -> str | None:
     if value is None:
         return None

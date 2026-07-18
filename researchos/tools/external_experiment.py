@@ -38,8 +38,11 @@ from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 
 EXECUTOR_SELECTION_PATH = "external_executor/report/executor_selection.json"
 EXECUTOR_CAPABILITIES_PATH = "external_executor/report/executor_capabilities.json"
+INPUT_FINGERPRINT_PATH = "external_executor/report/input_fingerprint.json"
+RUN_MANIFEST_PATH = "external_executor/report/run_manifest.json"
 LEGACY_EXECUTOR_SELECTION_PATH = "external_executor/executor_selection.json"
 LEGACY_EXECUTOR_CAPABILITIES_PATH = "external_executor/executor_capabilities.json"
+LEGACY_RUN_MANIFEST_PATH = "external_executor/run_manifest.json"
 
 
 def _sha256(path: Path) -> str:
@@ -99,6 +102,14 @@ def _executor_selection_path(workspace: Path) -> Path:
 
 def _executor_capabilities_path(workspace: Path) -> Path:
     return _first_existing_external_report_path(workspace, EXECUTOR_CAPABILITIES_PATH, LEGACY_EXECUTOR_CAPABILITIES_PATH)
+
+
+def _run_manifest_ref(workspace: Path, *payloads: dict[str, Any]) -> str:
+    for payload in payloads:
+        value = payload.get("run_manifest") if isinstance(payload, dict) else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return RUN_MANIFEST_PATH if (workspace / RUN_MANIFEST_PATH).exists() else LEGACY_RUN_MANIFEST_PATH
 
 
 def _workspace_relative(workspace: Path, path: Path) -> str:
@@ -243,8 +254,8 @@ def _scan_external_artifacts(workspace: Path) -> dict[str, list[dict[str, Any]]]
         "configs": ("external_executor/configs", "config"),
         "logs": ("external_executor/logs", "log"),
         "patches": ("external_executor/patches", "patch"),
-        "figures": ("external_executor/figures", "figure"),
-        "tables": ("external_executor/tables", "table"),
+        "figures": ("external_executor/figure", "figure"),
+        "tables": ("external_executor/table", "table"),
     }
     scanned: dict[str, list[dict[str, Any]]] = {}
     for key, (rel_dir, role) in specs.items():
@@ -275,12 +286,17 @@ def _result_pack_extra_fields(result_pack: dict[str, Any]) -> dict[str, Any]:
         "manual_notes",
         "evidence_grade",
         "limitations",
+        "result_diagnoses",
+        "module_attributions",
+        "framework_figure",
     }
     return {key: value for key, value in result_pack.items() if key not in known}
 
 
 def _run_records_from_result_pack(result_pack: dict[str, Any], manifest: dict[str, Any]) -> list[dict[str, Any]]:
     source_runs = result_pack.get("experiment_runs")
+    if isinstance(source_runs, dict):
+        source_runs = source_runs.get("items")
     if not isinstance(source_runs, list) or not source_runs:
         source_runs = result_pack.get("runs")
     if not isinstance(source_runs, list) or not source_runs:
@@ -321,6 +337,40 @@ def _coerce_str_list(value: Any) -> list[str]:
     return []
 
 
+def _current_result_section(
+    result_pack: dict[str, Any],
+    canonical: str,
+    legacy: str | None = None,
+    *,
+    id_keys: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    value = result_pack.get(canonical)
+    if (value is None or value == {}) and legacy:
+        value = result_pack.get(legacy)
+    if not isinstance(value, dict):
+        return {}
+    items = value.get("items")
+    if not isinstance(items, list):
+        return value
+    current = value.get("current_by_iteration")
+    if isinstance(current, dict) and current:
+        current_id = list(current.values())[-1]
+        for item in items:
+            if isinstance(item, dict) and any(item.get(key) == current_id for key in id_keys):
+                return item
+    return next((item for item in reversed(items) if isinstance(item, dict)), {})
+
+
+def _result_section_items(result_pack: dict[str, Any], *names: str) -> list[dict[str, Any]]:
+    for name in names:
+        value = result_pack.get(name)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        if isinstance(value, dict) and isinstance(value.get("items"), list):
+            return [item for item in value["items"] if isinstance(item, dict)]
+    return []
+
+
 PRE_T5_SOURCE_FILES = [
     "project.yaml",
     "literature/synthesis.md",
@@ -341,7 +391,6 @@ PRE_T5_SOURCE_FILES = [
     "ideation/risks.md",
     "ideation/novelty_audit.md",
     "novelty/novelty_audit.md",
-    "resource/baseline_candidates.jsonl",
     "resources/baseline_candidates.jsonl",
     "literature/baseline_map.json",
     "literature/notes_manifest.json",
@@ -369,14 +418,19 @@ EXTERNAL_RESULT_REQUIRED_FIELDS = [
     "metrics",
     "artifacts",
     "baseline_coverage",
-    "result_diagnosis",
-    "module_attribution",
+    "result_diagnoses",
+    "module_attributions",
     "realized_method_package",
-    "final_framework_figure",
+    "framework_figure",
     "figure_table_inventory",
-    "writer_handoff",
     "run_manifest",
 ]
+
+EXTERNAL_RESULT_FIELD_ALIASES = {
+    "result_diagnoses": ("result_diagnoses", "result_diagnosis"),
+    "module_attributions": ("module_attributions", "module_attribution"),
+    "framework_figure": ("framework_figure", "final_framework_figure"),
+}
 
 
 SKILL_SUITE = [
@@ -640,7 +694,7 @@ def _source_role(rel_path: str) -> str:
         return "ideation_context"
     if rel_path.startswith("novelty/"):
         return "novelty_context"
-    if rel_path.startswith("resource/") or rel_path.startswith("resources/"):
+    if rel_path.startswith("resources/"):
         return "resource_hint"
     if rel_path.startswith("user_seeds/"):
         return "user_seed_hint"
@@ -1035,8 +1089,8 @@ def _build_minimum_experiment_loop(exp_plan: dict[str, Any], metrics: list[str])
             "metrics": metrics,
             "required_output": "result_pack.experiment_runs",
         },
-        {"step": "diagnosis_and_attribution", "required_output": "result_pack.result_diagnosis/module_attribution"},
-        {"step": "writer_handoff", "required_output": "result_pack.writer_handoff"},
+        {"step": "diagnosis_and_attribution", "required_output": "result_pack.result_diagnoses/module_attributions"},
+        {"step": "writer_handoff", "required_output": "external_executor/executor_research_report.md"},
     ]
 
 
@@ -1094,7 +1148,7 @@ def _build_expected_outputs_schema() -> dict[str, Any]:
             "external_executor/executor_research_report.md",
             "external_executor/result_pack.json",
             "external_executor/executor_status.json",
-            "external_executor/run_manifest.json",
+            RUN_MANIFEST_PATH,
             "external_executor/raw_results/",
             "external_executor/configs/",
             "external_executor/logs/",
@@ -1106,7 +1160,7 @@ def _build_expected_outputs_schema() -> dict[str, Any]:
         "field_semantics": {
             "method_intent": "T5 draft intent only; never final method source.",
             "realized_method_package": "External executor's implemented method package after runs and diagnosis.",
-            "final_framework_figure": "Framework figure candidate that final handoff validation must preserve before T8 use.",
+            "framework_figure": "Framework figure candidate that final handoff validation must preserve before T8 use.",
             "writer_handoff": "Structured method/experiment/figure handoff for T8.",
         },
     }
@@ -2243,10 +2297,9 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 "external_executor/configs/",
                 "external_executor/logs/",
                 "external_executor/patches/",
-                "external_executor/figures/",
-                    "external_executor/tables/",
+                "external_executor/figure/",
+                    "external_executor/table/",
                     "external_executor/expr/",
-                    "resource/",
                     "resources/",
                 "literature/",
                 "ideation/",
@@ -2256,14 +2309,13 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 "external_executor/configs/",
                 "external_executor/logs/",
                 "external_executor/patches/",
-                "external_executor/figures/",
-                "external_executor/tables/",
+                "external_executor/figure/",
+                "external_executor/table/",
                 "external_executor/expr/",
-                "resource/",
                 "resources/",
                 "external_executor/result_pack.json",
                 "external_executor/executor_status.json",
-                "external_executor/run_manifest.json",
+                RUN_MANIFEST_PATH,
             ],
             "prohibited_paths": [
                 "researchos/",
@@ -2275,13 +2327,13 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
             "authority_rules": [
                 {"action": "deploy method and baseline code under external_executor/expr", "authority": "allowed"},
                 {"action": "place by-hand local resources under resources", "authority": "allowed"},
-                {"action": "place remote acquisitions and baseline reimplementations under resource", "authority": "allowed"},
+                {"action": "place remote acquisitions and baseline reimplementations under resources", "authority": "allowed"},
                 {"action": "change task, benchmark, or contribution type", "authority": "human_approval"},
                 {"action": "write paper claims", "authority": "forbidden"},
             ],
             "scope_change_policy": {
                 "silent_changes_forbidden": True,
-                "request_artifact": "external_executor/scope_change_request.json",
+                "request_artifact": "external_executor/report/scope_change_request.json",
                 "major_change_action": "human_review",
                 "minor_change_action": "record_and_continue",
             },
@@ -2343,85 +2395,91 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
 def _allowed_path_rules_for_external_executor() -> list[str]:
     return [
         "rw  resources/",
-        "rw  resource/",
         "rw  external_executor/raw_results/",
         "rw  external_executor/configs/",
         "rw  external_executor/logs/",
         "rw  external_executor/patches/",
-        "rw  external_executor/figures/",
-        "rw  external_executor/tables/",
+        "rw  external_executor/figure/",
+        "rw  external_executor/table/",
         "rw  external_executor/expr/",
         "rw  external_executor/env/",
         "rw  external_executor/runs/",
         "rw  external_executor/method_specs/",
         "rw  external_executor/evidence_package/",
-        "rw  external_executor/preflight_context.json",
-        "rw  external_executor/context_source_inventory.json",
-        "rw  external_executor/context_alignment_report.json",
-        "rw  external_executor/resource_preflight.json",
+        "rw  external_executor/report/preflight_context.json",
+        "rw  external_executor/report/context_source_inventory.json",
+        "rw  external_executor/report/context_alignment_report.json",
+        "rw  external_executor/report/resource_preflight.json",
         "rw  external_executor/resource_requirement_matrix.json",
-        "rw  external_executor/resource_local_inventory.json",
-        "rw  external_executor/resource_search_records.json",
-        "rw  external_executor/resource_source_report.json",
-        "rw  external_executor/resource_source_report.md",
-        "rw  external_executor/resource_preparation_report.json",
-        "rw  external_executor/baseline_reproduction_preflight.json",
-        "rw  external_executor/baseline_reproduction_plan.json",
-        "rw  external_executor/baseline_reproduction_report.json",
-        "rw  external_executor/claim_evidence_matrix.json",
-        "rw  external_executor/protocol_snapshot.json",
-        "rw  external_executor/protocol_fingerprint.json",
-        "rw  external_executor/protocol_change_impact.json",
+        "rw  external_executor/report/resource_local_inventory.json",
+        "rw  external_executor/report/resource_search_records.json",
+        "rw  external_executor/report/resource_source_report.json",
+        "rw  external_executor/report/resource_source_report.md",
+        "rw  external_executor/report/resource_preparation_report.json",
+        "rw  external_executor/report/static_review.json",
+        "rw  external_executor/report/validation_report.json",
+        "rw  external_executor/report/baseline_reproduction_preflight.json",
+        "rw  external_executor/report/baseline_reproduction_plan.json",
+        "rw  external_executor/report/baseline_reproduction_report.json",
+        "rw  external_executor/report/baseline_reproduction/",
+        "rw  external_executor/report/claim_evidence_matrix.json",
+        "rw  external_executor/report/protocol_snapshot.json",
+        "rw  external_executor/report/protocol_fingerprint.json",
+        "rw  external_executor/report/protocol_change_impact.json",
         "rw  external_executor/experiment_plan.json",
-        "rw  external_executor/experiment_plan_validation.json",
-        "rw  external_executor/experiment_plan_dag_validation.json",
-        "rw  external_executor/experiment_design_preflight.json",
-        "rw  external_executor/experiment_design_report.json",
-        "rw  external_executor/experiment_design_report_validation.json",
-        "rw  external_executor/experiment_design_gate.json",
-        "rw  external_executor/method_intent_contract.json",
+        "rw  external_executor/report/experiment_plan_validation.json",
+        "rw  external_executor/report/experiment_plan_dag_validation.json",
+        "rw  external_executor/report/experiment_design_preflight.json",
+        "rw  external_executor/report/experiment_design_report.json",
+        "rw  external_executor/report/experiment_design_report_validation.json",
+        "rw  external_executor/report/experiment_design_gate.json",
+        "rw  external_executor/report/method_intent_contract.json",
         "rw  external_executor/method_implementation_spec.json",
-        "rw  external_executor/method_implementation_spec_validation.json",
-        "rw  external_executor/method_implementation_brief.md",
-        "rw  external_executor/method_spec_fingerprint.json",
-        "rw  external_executor/method_delta.json",
-        "rw  external_executor/method_scope_assessment.json",
-        "rw  external_executor/method_refinement_preflight.json",
-        "rw  external_executor/method_refinement_review.json",
-        "rw  external_executor/method_refinement_report.json",
-        "rw  external_executor/method_refinement_report_validation.json",
-        "rw  external_executor/implementation_preflight.json",
-        "rw  external_executor/implementation_change_contract.json",
-        "rw  external_executor/implementation_report.json",
-        "rw  external_executor/module_attribution_preflight.json",
-        "rw  external_executor/module_attribution_snapshot.json",
-        "rw  external_executor/module_attribution_facts.json",
+        "rw  external_executor/report/method_implementation_spec_validation.json",
+        "rw  external_executor/report/method_implementation_brief.md",
+        "rw  external_executor/report/method_spec_fingerprint.json",
+        "rw  external_executor/report/method_delta.json",
+        "rw  external_executor/report/method_scope_assessment.json",
+        "rw  external_executor/report/scope_change_request.json",
+        "rw  external_executor/report/method_refinement_preflight.json",
+        "rw  external_executor/report/method_refinement_review.json",
+        "rw  external_executor/report/method_refinement_report.json",
+        "rw  external_executor/report/method_refinement_report_validation.json",
+        "rw  external_executor/report/implementation_preflight.json",
+        "rw  external_executor/report/implementation_change_contract.json",
+        "rw  external_executor/report/implementation_report.json",
+        "rw  external_executor/report/module_attribution_preflight.json",
+        "rw  external_executor/report/module_attribution_snapshot.json",
+        "rw  external_executor/report/module_attribution_facts.json",
         "rw  external_executor/module_attribution_report.json",
-        "rw  external_executor/module_attribution/",
-        "rw  external_executor/result_diagnosis_preflight.json",
-        "rw  external_executor/diagnosis_evidence_snapshot.json",
-        "rw  external_executor/diagnosis_statistics.json",
+        "rw  external_executor/report/module_attribution/",
+        "rw  external_executor/report/result_diagnosis_preflight.json",
+        "rw  external_executor/report/diagnosis_evidence_snapshot.json",
+        "rw  external_executor/report/diagnosis_statistics.json",
         "rw  external_executor/result_diagnosis_report.json",
         "rw  external_executor/result_diagnosis/",
-        "rw  external_executor/final_evidence_snapshot.json",
-        "rw  external_executor/final_evidence_snapshot_validation.json",
-        "rw  external_executor/evidence_packaging_preflight.json",
-        "rw  external_executor/evidence_packaging_report.json",
-        "rw  external_executor/evidence_packaging_report_validation.json",
-        "rw  external_executor/evidence_packaging_gate.json",
-        "rw  external_executor/writer_handoff_preflight.json",
-        "rw  external_executor/writer_handoff_snapshot.json",
-        "rw  external_executor/writer_handoff_claim_map.json",
-        "rw  external_executor/writer_handoff_inventory.json",
-        "rw  external_executor/writer_handoff_integrity.json",
-        "rw  external_executor/writer_handoff_t7_index.json",
-        "rw  external_executor/writer_handoff_report.json",
-        "rw  external_executor/writer_handoff/",
-        "rw  external_executor/input_fingerprint.json",
+        "rw  external_executor/report/evidence_packaging_preflight.json",
+        "rw  external_executor/report/final_evidence_snapshot.json",
+        "rw  external_executor/report/final_evidence_snapshot_validation.json",
+        "rw  external_executor/report/framework_figure_spec.json",
+        "rw  external_executor/report/framework_figure.mmd",
+        "rw  external_executor/report/result_table_build_report.json",
+        "rw  external_executor/report/result_figure_build_report.json",
+        "rw  external_executor/report/figure_table_inventory.json",
+        "rw  external_executor/report/evidence_mapping.json",
+        "rw  external_executor/report/evidence_package_manifest.json",
+        "rw  external_executor/report/evidence_packaging_gate.json",
+        "rw  external_executor/report/evidence_packaging_report.json",
+        "rw  external_executor/report/evidence_packaging_report_validation.json",
+        "rw  external_executor/report/writer_handoff_preflight.json",
+        "rw  external_executor/report/writer_handoff_snapshot.json",
+        "rw  external_executor/report/writer_handoff_facts.json",
+        "rw  external_executor/report/writer_handoff_validation.json",
+        f"rw  {INPUT_FINGERPRINT_PATH}",
         "rw  external_executor/executor_research_report.md",
         "rw  external_executor/result_pack.json",
         "rw  external_executor/executor_status.json",
-        "rw  external_executor/run_manifest.json",
+        f"rw  {RUN_MANIFEST_PATH}",
         "rw  external_executor/job_state.json",
         "ro  external_executor/handoff_pack.json",
         "ro  external_executor/expected_outputs_schema.json",
@@ -2470,12 +2528,12 @@ def _guide_view_from_reboost_pack(pack: dict[str, Any], project: dict[str, Any],
                 "external_executor/executor_research_report.md",
                 "external_executor/result_pack.json",
                 "external_executor/executor_status.json",
-                "external_executor/run_manifest.json",
+                RUN_MANIFEST_PATH,
                 "external_executor/raw_results/",
                 "external_executor/configs/",
                 "external_executor/logs/",
-                "external_executor/figures/",
-                "external_executor/tables/",
+                "external_executor/figure/",
+                "external_executor/table/",
             ],
         },
     }
@@ -2516,7 +2574,7 @@ def build_executor_selection_payload(
         )
         payload["resume_instruction"] = (
             "After Codex writes external_executor/executor_research_report.md, result_pack.json, "
-            "executor_status.json, and run_manifest.json, run: python -m researchos.cli resume --workspace <workspace>"
+            f"executor_status.json, and {RUN_MANIFEST_PATH}, run: python -m researchos.cli resume --workspace <workspace>"
         )
     return payload
 
@@ -2618,7 +2676,7 @@ def validate_external_executor_ready(
     selection, selection_hash = _executor_selection_payload(workspace)
     selection_rel = _workspace_relative(workspace, _executor_selection_path(workspace)) if selection else ""
     selected_executor = _selection_selected_executor(selection)
-    manifest_rel = str(result_pack.get("run_manifest") or status.get("run_manifest") or "external_executor/run_manifest.json")
+    manifest_rel = _run_manifest_ref(workspace, result_pack, status)
     manifest = _read_json(workspace / manifest_rel)
     allowed_paths_path = workspace / "external_executor" / "allowed_paths.txt"
     allowed_rules = _parse_allowed_paths(allowed_paths_path)
@@ -2629,7 +2687,10 @@ def validate_external_executor_ready(
         issues.append("result_pack semantics invalid")
     if status.get("semantics") != "external_executor_status":
         issues.append("executor_status semantics invalid")
-    missing_required_fields = [field for field in EXTERNAL_RESULT_REQUIRED_FIELDS if field not in result_pack]
+    missing_required_fields = [
+        field for field in EXTERNAL_RESULT_REQUIRED_FIELDS
+        if not any(alias in result_pack for alias in EXTERNAL_RESULT_FIELD_ALIASES.get(field, (field,)))
+    ]
     if missing_required_fields:
         issues.append("result_pack missing required fields: " + ", ".join(missing_required_fields))
     if selection.get("semantics") != "external_executor_selection" or not selected_executor:
@@ -2853,14 +2914,13 @@ def _write_external_executor_guides(
         "8. novelty/required_baselines.json, if present\n"
         "9. ideation/novelty_audit.md\n\n"
         "## Read if present\n"
-        "- resource/baseline_candidates.jsonl\n"
         "- resources/baseline_candidates.jsonl\n"
         "- literature/baseline_map.json\n"
-        "- user_seeds/seed_external_resources.jsonl\n\n"
+        "\n"
         "Missing optional resource or baseline map files are not blockers. Use the handoff, project context, and Phase B acquisition workflow.\n\n"
         "## Resource materials\n"
-        "Do not search `external_executor/expr/` for baseline, benchmark, dataset, checkpoint, or evaluation resources. "
-        "Place by-hand local resources under `resources/`; place public remote acquisitions and baseline reimplementations under `resource/`; `external_executor/expr/` is the formal execution area for deployed method and baseline code after resources are prepared.\n\n"
+        "Phase B resource preparation uses `resources/` as the only resource material root. "
+        "Place by-hand local resources, public remote acquisitions, and baseline reimplementations under `resources/`.\n\n"
         "## Resource acquisition policy\n"
         "Dataset downloads, GitHub access, and baseline reimplementation are allowed within `allowed_paths.txt` and license/security review constraints.\n\n"
         "```json\n"
@@ -2888,7 +2948,7 @@ def _write_external_executor_guides(
         "1. Read handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt.\n"
         "2. Read optional baseline/resource maps only if they exist; missing maps are not blockers.\n"
         "3. If mock_only=true, emit schema-valid mock artifacts with mock_only=true and dry_run=true.\n"
-        "4. If real, put by-hand local resources under resources/, acquire or reimplement external resources under resource/, and deploy runnable baseline/method code under external_executor/expr/.\n"
+        "4. If real, keep Phase B resource materials under resources/; later build/run skills deploy runnable assets according to their own instructions.\n"
         f"5. Run required configs over seeds {seeds}.\n"
         "6. Write all required outputs and stop after executor_research_report.md.\n\n"
         "## Metrics\n"
@@ -2902,7 +2962,7 @@ def _write_external_executor_guides(
         f"# External Executor Workspace - {project_id}\n\n"
         + common_header
         + "ResearchOS writes experiment contracts here. External executors write auditable result artifacts here.\n\n"
-        "Key files: handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt, AGENTS.md, CLAUDE.md, report/executor_selection.json, result_pack.json.\n"
+        "Key files: handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt, AGENTS.md, CLAUDE.md, report/executor_selection.json, report/run_manifest.json, result_pack.json.\n"
     )
     dir_guide = (
         "# Workspace Directory Guide\n\n"
@@ -2928,7 +2988,8 @@ def _write_external_executor_guides(
         "| `executor_research_report.md` | T5 直接交给 T8 的核心外部执行研究报告。 |\n"
         "| `result_pack.json` | 外部执行器写回的支持性结果包，供 T8 需要时回查。 |\n"
         "| `executor_status.json` | 外部执行器状态、accepted/mock/dry-run 标记。 |\n"
-        "| `run_manifest.json` | 运行记录、raw/config/log 路径和 provenance。 |\n\n"
+        "| `report/input_fingerprint.json` | research-execution 初始化/恢复时计算的控制输入指纹。 |\n"
+        "| `report/run_manifest.json` | 运行记录、raw/config/log 路径和 provenance。 |\n\n"
         "Generated by ResearchOS workspace initialization.\n"
     )
     _write_text(policy.resolve_write("external_executor/AGENTS.md"), agents)
@@ -3152,6 +3213,8 @@ def _build_result_audit(
     if isinstance(inventory, dict):
         for key in ("figures", "tables"):
             inventory_items.extend(item for item in inventory.get(key, []) or [] if isinstance(item, dict))
+        if isinstance(inventory.get("items"), list):
+            inventory_items.extend(item for item in inventory["items"] if isinstance(item, dict))
     elif isinstance(inventory, list):
         inventory_items = [item for item in inventory if isinstance(item, dict)]
     for item in inventory_items:
@@ -3220,6 +3283,17 @@ def _build_method_and_figure_audits(
         issues.append({"level": "FAIL", "code": "missing_realized_method_package", "detail": "result_pack.realized_method_package missing"})
     elif realized.get("status") in {"mock_only", "missing"} or summary.get("mock_only"):
         issues.append({"level": "WARN", "code": "realized_method_mock_only", "detail": "mock/dry-run method package is not a final Method source"})
+    elif realized.get("status") == "unavailable":
+        issues.append({"level": "FAIL", "code": "realized_method_unavailable", "detail": "actual final method could not be reconstructed"})
+    elif realized.get("status") != "complete":
+        issues.append({"level": "WARN", "code": "realized_method_partial", "detail": ", ".join(_coerce_str_list(realized.get("unresolved_fields"))) or "method package is partial"})
+    if realized and realized.get("source_validation", {}).get("status") != "pass":
+        issues.append({"level": "WARN", "code": "realized_method_source_validation_incomplete", "detail": ", ".join(_coerce_str_list(realized.get("source_validation", {}).get("errors")))})
+    if realized and not realized.get("final_version"):
+        issues.append({"level": "WARN", "code": "realized_method_final_version_missing", "detail": "final implementation/spec/review identity is absent"})
+    for field in ("training_flow", "inference_flow", "actual_losses"):
+        if realized and not realized.get(field):
+            issues.append({"level": "WARN", "code": f"realized_method_{field}_missing", "detail": f"{field} is required for formal Method writing"})
     intent_modules = {
         str(item.get("module_id") or item.get("name") or "")
         for item in method_intent.get("candidate_modules", []) or []
@@ -3271,10 +3345,16 @@ def _build_method_and_figure_audits(
         "requires_post_novelty_check": contribution_drift in {"minor", "major"} or bool(scope_changes),
         "required_action": required_action,
     }
+    method_status = (
+        "fail" if any(item.get("level") == "FAIL" for item in issues)
+        else "mock_only" if summary.get("mock_only")
+        else "warn" if any(item.get("level") == "WARN" for item in issues)
+        else "pass"
+    )
     method_audit = {
         "version": "1.0",
         "semantics": "external_method_intent_vs_realized_audit",
-        "status": "fail" if any(item.get("level") == "FAIL" for item in issues) else ("mock_only" if summary.get("mock_only") else "pass"),
+        "status": method_status,
         "contribution_drift": contribution_drift,
         "method_consistency_audit": method_consistency_audit,
         "method_intent_status": method_intent.get("status"),
@@ -3288,8 +3368,13 @@ def _build_method_and_figure_audits(
     }
     figure_issues: list[dict[str, Any]] = []
     figure_path = str(figure.get("path") or "") if figure else ""
+    if not figure_path and figure:
+        rendered = figure.get("rendered_files") if isinstance(figure.get("rendered_files"), list) else []
+        if rendered:
+            first = rendered[0]
+            figure_path = str(first.get("path") if isinstance(first, dict) else first or "")
     if not figure:
-        figure_issues.append({"level": "FAIL", "code": "missing_final_framework_figure", "detail": "result_pack.final_framework_figure missing"})
+        figure_issues.append({"level": "FAIL", "code": "missing_final_framework_figure", "detail": "result_pack.framework_figure/final_framework_figure missing"})
     elif figure.get("status") in {"mock_only", "missing"} or summary.get("mock_only"):
         figure_issues.append({"level": "WARN", "code": "framework_figure_mock_only", "detail": "mock/dry-run figure cannot be used by T8"})
     elif figure_path and not (workspace / figure_path).exists():
@@ -3314,8 +3399,20 @@ def _build_method_and_figure_audits(
     if figure_nodes and not evidence_mapping and not summary.get("mock_only"):
         figure_issues.append({"level": "WARN", "code": "framework_figure_missing_evidence_mapping", "detail": "figure nodes lack evidence_mapping"})
     inventory_figures = inventory.get("figures") if isinstance(inventory.get("figures"), list) else []
+    if not inventory_figures and isinstance(inventory.get("items"), list):
+        inventory_figures = [
+            item for item in inventory["items"]
+            if isinstance(item, dict) and item.get("kind") in {"figure", "framework_figure"}
+        ]
     if figure_path and inventory_figures:
-        inv_paths = {str(item.get("path") or "") for item in inventory_figures if isinstance(item, dict)}
+        inv_paths = {
+            str(
+                item.get("path")
+                or ((item.get("rendered_files") or [{}])[0].get("path") if isinstance((item.get("rendered_files") or [{}])[0], dict) else (item.get("rendered_files") or [""])[0])
+                or ""
+            )
+            for item in inventory_figures if isinstance(item, dict)
+        }
         if figure_path not in inv_paths:
             figure_issues.append({"level": "WARN", "code": "framework_figure_not_in_inventory", "detail": figure_path})
     framework_matches_code = bool(figure) and not any(item.get("level") == "FAIL" for item in figure_issues)
@@ -3324,7 +3421,7 @@ def _build_method_and_figure_audits(
         "version": "1.0",
         "semantics": "external_framework_figure_audit",
         "status": "fail" if any(item.get("level") == "FAIL" for item in figure_issues) else ("mock_only" if summary.get("mock_only") else "pass"),
-        "figure_ref": "external_executor/result_pack.json#final_framework_figure",
+        "figure_ref": "external_executor/result_pack.json#framework_figure",
         "figure_path": figure_path or None,
         "consistent_with_realized_method": False if summary.get("mock_only") else framework_matches_code,
         "implemented_module_ids": sorted(item for item in realized_modules if item),
@@ -3359,6 +3456,12 @@ def _format_method_writing_resources(
     for key in ("ours_effective_modules", "ours_weak_modules", "mechanism_supported", "mechanism_not_supported"):
         for item in module_attribution.get(key, []) or []:
             ablation_mapping.append({"source": key, "item": item})
+    for key in ("module_attributions", "mechanism_attributions", "interaction_effects"):
+        section = module_attribution.get(key, {})
+        items = section.get("items", []) if isinstance(section, dict) else section if isinstance(section, list) else []
+        for item in items:
+            if isinstance(item, dict):
+                ablation_mapping.append({"source": key, "item": item})
     wrapper = {
         "method_overview": realized.get("one_sentence_method") or realized.get("final_method_name") or "",
         "realized_method_package": realized,
@@ -3951,7 +4054,7 @@ class BuildExperimentHandoffPackTool(Tool):
                     "executor_research_report": "external_executor/executor_research_report.md",
                     "result_pack": "external_executor/result_pack.json",
                     "status": "external_executor/executor_status.json",
-                    "run_manifest": "external_executor/run_manifest.json",
+                    "run_manifest": RUN_MANIFEST_PATH,
                     "raw_results": "external_executor/raw_results/",
                     "configs": "external_executor/configs/",
                     "logs_dir": "external_executor/logs",
@@ -3962,12 +4065,12 @@ class BuildExperimentHandoffPackTool(Tool):
                         "external_executor/executor_research_report.md",
                         "external_executor/result_pack.json",
                         "external_executor/executor_status.json",
-                        "external_executor/run_manifest.json",
+                        RUN_MANIFEST_PATH,
                         "external_executor/raw_results/",
                         "external_executor/configs/",
                         "external_executor/logs/",
-                        "external_executor/figures/",
-                        "external_executor/tables/",
+                        "external_executor/figure/",
+                        "external_executor/table/",
                     ],
                     "result_pack_semantics": "external_executor_result_pack",
                     "required_fields": EXTERNAL_RESULT_REQUIRED_FIELDS,
@@ -4011,7 +4114,8 @@ class BuildExperimentHandoffPackTool(Tool):
             )
             _write_external_executor_guides(self.policy, handoff, selection=executor_selection)
             specialization_status = "deferred_to_T5-SPECIALIZE-EXECUTOR-SKILLS"
-            (self.policy.workspace_dir / "external_executor" / "expr").mkdir(parents=True, exist_ok=True)
+            for directory in ("expr", "report", "figure", "table"):
+                (self.policy.workspace_dir / "external_executor" / directory).mkdir(parents=True, exist_ok=True)
         except ToolAccessDenied as exc:
             return ToolResult(ok=False, content=str(exc), error="access_denied")
         except Exception as exc:
@@ -4181,7 +4285,7 @@ class MockExternalDryRunTool(Tool):
             raw_result_rel = "external_executor/raw_results/mock_results.json"
             config_rel = "external_executor/configs/mock_config.json"
             log_rel = "external_executor/logs/mock_dry_run.log"
-            manifest_rel = "external_executor/run_manifest.json"
+            manifest_rel = RUN_MANIFEST_PATH
             heartbeat_rel = "external_executor/heartbeat.json"
             raw_result = {
                 "version": "1.0",
@@ -4308,7 +4412,7 @@ class MockExternalDryRunTool(Tool):
             writer_handoff = {
                 "status": "mock_only",
                 "method_package_ref": "result_pack.realized_method_package",
-                "result_diagnosis_ref": "result_pack.result_diagnosis",
+                "result_diagnosis_ref": "result_pack.result_diagnoses",
                 "figure_table_inventory_ref": "result_pack.figure_table_inventory",
                 "must_not_claim": ["Do not use mock dry-run outputs as empirical evidence."],
             }
@@ -4344,10 +4448,10 @@ class MockExternalDryRunTool(Tool):
                 "metrics": metrics,
                 "artifacts": artifacts,
                 "baseline_coverage": baseline_coverage,
-                "result_diagnosis": result_diagnosis,
-                "module_attribution": module_attribution,
+                "result_diagnoses": {"status": "mock_only", "items": [result_diagnosis]},
+                "module_attributions": {"status": "mock_only", "items": [module_attribution]},
                 "realized_method_package": realized_method_package,
-                "final_framework_figure": final_framework_figure,
+                "framework_figure": final_framework_figure,
                 "figure_table_inventory": figure_table_inventory,
                 "writer_handoff": writer_handoff,
                 "run_manifest": manifest_rel,
@@ -4411,7 +4515,7 @@ class IngestExternalResultsTool(Tool):
                 return ToolResult(ok=False, content="result_pack metrics must be a list", error="invalid_metrics")
             if not metrics and not result_pack.get("mock_only"):
                 return ToolResult(ok=False, content="real result_pack metrics missing", error="missing_metrics")
-            manifest_rel = str(result_pack.get("run_manifest") or "external_executor/run_manifest.json")
+            manifest_rel = _run_manifest_ref(self.policy.workspace_dir, result_pack)
             manifest = _read_json(self.policy.workspace_dir / manifest_rel)
             scanned_artifacts = _scan_external_artifacts(self.policy.workspace_dir)
             declared_artifacts = [item for item in result_pack.get("artifacts", []) or [] if isinstance(item, dict)]
@@ -4461,14 +4565,14 @@ class IngestExternalResultsTool(Tool):
                 "experiments": experiments,
                 "metrics": _metrics_object(metrics),
                 "metric_records": metrics,
-                "experiment_runs": result_pack.get("experiment_runs") or result_pack.get("runs") or [],
+                "experiment_runs": _result_section_items(result_pack, "experiment_runs", "runs"),
                 "run_manifest": manifest_rel,
                 "baseline_coverage": result_pack.get("baseline_coverage") or {},
                 "context_alignment": result_pack.get("context_alignment") or {},
-                "result_diagnosis": result_pack.get("result_diagnosis") or {},
-                "module_attribution": result_pack.get("module_attribution") or {},
+                "result_diagnosis": _current_result_section(result_pack, "result_diagnoses", "result_diagnosis", id_keys=("diagnosis_id",)),
+                "module_attribution": _current_result_section(result_pack, "module_attributions", "module_attribution", id_keys=("attribution_id",)),
                 "realized_method_package": result_pack.get("realized_method_package") or {},
-                "final_framework_figure": result_pack.get("final_framework_figure") or {},
+                "final_framework_figure": result_pack.get("framework_figure") or result_pack.get("final_framework_figure") or {},
                 "figure_table_inventory": result_pack.get("figure_table_inventory") or {},
                 "writer_handoff": result_pack.get("writer_handoff") or {},
                 "quality_status": "mock_only" if result_pack.get("mock_only") else "ingested_unverified",
@@ -4524,13 +4628,13 @@ class IngestExternalResultsTool(Tool):
                 "figure_files": _artifact_paths(scanned_artifacts["figures"]),
                 "table_files": _artifact_paths(scanned_artifacts["tables"]),
                 "scanned_artifacts": scanned_artifacts,
-                "experiment_runs": result_pack.get("experiment_runs") or result_pack.get("runs") or [],
+                "experiment_runs": _result_section_items(result_pack, "experiment_runs", "runs"),
                 "baseline_reproduction": result_pack.get("baseline_reproduction") or [],
                 "resources": result_pack.get("resources") or {},
-                "result_diagnosis": result_pack.get("result_diagnosis") or {},
-                "module_attribution": result_pack.get("module_attribution") or {},
+                "result_diagnosis": _current_result_section(result_pack, "result_diagnoses", "result_diagnosis", id_keys=("diagnosis_id",)),
+                "module_attribution": _current_result_section(result_pack, "module_attributions", "module_attribution", id_keys=("attribution_id",)),
                 "realized_method_package": result_pack.get("realized_method_package") or {},
-                "final_framework_figure": result_pack.get("final_framework_figure") or {},
+                "final_framework_figure": result_pack.get("framework_figure") or result_pack.get("final_framework_figure") or {},
                 "figure_table_inventory": result_pack.get("figure_table_inventory") or {},
                 "writer_handoff": result_pack.get("writer_handoff") or {},
                 "extra_fields": _result_pack_extra_fields(result_pack),
@@ -4554,7 +4658,7 @@ class IngestExternalResultsTool(Tool):
                 "artifact_count": len(all_artifacts),
                 "run_record_count": max(0, len(_run_records_from_result_pack(result_pack, manifest)) - 1),
                 "method_package_present": bool(result_pack.get("realized_method_package")),
-                "framework_figure_present": bool(result_pack.get("final_framework_figure")),
+                "framework_figure_present": bool(result_pack.get("framework_figure") or result_pack.get("final_framework_figure")),
                 "results_summary": params.results_summary_path,
             }
             _write_json(self.policy.resolve_write(params.ingest_report_path), report)
@@ -4749,7 +4853,7 @@ class MapResultsToClaimsTool(Tool):
             method_audit = audit.get("method_audit") if isinstance(audit.get("method_audit"), dict) else {}
             framework_figure_audit = audit.get("framework_figure_audit") if isinstance(audit.get("framework_figure_audit"), dict) else {}
             contribution_drift = str(audit.get("contribution_drift") or method_audit.get("contribution_drift") or "unknown")
-            method_blocked = method_audit.get("status") in {"fail", "mock_only"} or contribution_drift == "major"
+            method_blocked = method_audit.get("status") in {"fail", "warn", "mock_only"} or contribution_drift == "major"
             result_audit = audit.get("result_audit") if isinstance(audit.get("result_audit"), dict) else {}
             metric_provenance = result_audit.get("metric_provenance") if isinstance(result_audit.get("metric_provenance"), dict) else {}
             audited_metric_ids = {

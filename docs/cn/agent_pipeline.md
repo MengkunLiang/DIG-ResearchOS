@@ -71,7 +71,7 @@ Gate1 首先展示 1–3 个 Portfolio Candidates，但会保留 6–8 个 Activ
 
 ## T5 到 T8 外部证据路径
 
-ResearchOS 先准备执行器 handoff，然后运行 `T5-SPECIALIZE-EXECUTOR-SKILLS`：LLM 消费仓库级 `project-skill-specialization` Skill，调用确定性 wrapper，ResearchOS 再独立校验已发布的 context/report/13-Skill suite，之后才进入 executor 选择。外部执行必须把 T8 核心交接文件留在 `external_executor/executor_research_report.md`；`external_executor/` 下的其他文件继续保留，供 T8 按需读取作为追溯材料。外部执行器总控 Skill 在完成前会做最终 handoff 输入检查。模拟空运行仅验证协议链，不生成经验性 claim。
+ResearchOS 先准备执行器 handoff，然后运行 `T5-SPECIALIZE-EXECUTOR-SKILLS`：LLM 消费仓库级 `project-skill-specialization` Skill，调用确定性 wrapper，ResearchOS 再独立校验已发布的 context/report/13-Skill suite，之后才进入 executor 选择。外部执行必须把 T8 核心交接文件留在 `external_executor/executor_research_report.md`；`external_executor/` 下的其他文件继续保留，供 T8 按需读取作为追溯材料。Evidence Packaging 完成后，由 `writer-handoff` 子 Skill 形成该报告，并核验最终 status、result pack、manifest、figure 和 table；总控 Skill 只记录 child 结果，不再重复最终核验。模拟空运行仅验证协议链，不生成经验性 claim。
 
 ## T8-T9 撰写与提交
 

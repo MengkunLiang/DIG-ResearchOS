@@ -18,7 +18,7 @@ verification-evidence bundle
 
 If any of these changes after review begins, the old review becomes stale. Do not extend a verdict to unreviewed changes.
 
-The executable code/config snapshot for baseline and ours runs must be under `external_executor/expr/`. Resource inputs are referenced from `resources/` for by-hand local material or `resource/` for acquired/reimplemented material; raw run evidence is referenced from `external_executor/raw_results/`.
+The executable code/config snapshot for baseline and ours runs must be under `external_executor/expr/`. Resource inputs are referenced from `resources/`; raw run evidence is referenced from `external_executor/raw_results/`.
 
 ## Per-iteration scope
 

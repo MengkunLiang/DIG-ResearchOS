@@ -253,9 +253,10 @@ def active_iteration_plan(result: dict[str, Any]) -> dict[str, Any]:
     if isinstance(direct, dict) and direct:
         return direct
     plans = result.get("iteration_plans")
-    if isinstance(plans, list) and plans:
-        active = [p for p in plans if isinstance(p, dict) and p.get("status") in {"active", "planned", "running"}]
-        return (active or [p for p in plans if isinstance(p, dict)])[-1]
+    plan_items = plans.get("items", []) if isinstance(plans, dict) else plans if isinstance(plans, list) else []
+    if plan_items:
+        active = [p for p in plan_items if isinstance(p, dict) and p.get("status") in {"active", "planned", "running"}]
+        return (active or [p for p in plan_items if isinstance(p, dict)])[-1]
     return {}
 
 
@@ -267,6 +268,11 @@ def latest_record(result: dict[str, Any], keys: Iterable[str]) -> dict[str, Any]
             if dicts:
                 return dicts[-1]
         if isinstance(value, dict) and value:
+            records = value.get("items")
+            if isinstance(records, list):
+                dicts = [item for item in records if isinstance(item, dict)]
+                if dicts:
+                    return dicts[-1]
             return value
     return {}
 

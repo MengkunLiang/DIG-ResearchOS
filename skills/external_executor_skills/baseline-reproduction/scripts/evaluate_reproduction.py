@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from _common import dump_json_atomic, find_workspace, finite_number, is_within, load_json, stable_id, utc_now
+from _common import dump_json_atomic, find_workspace, finite_number, is_within, load_json, resolve_in_workspace, stable_id, utc_now
 
 
 def compare(value: float, ref: dict) -> dict:
@@ -37,8 +37,8 @@ def main() -> int:
     args = ap.parse_args()
     output = Path(args.output).resolve()
     workspace = find_workspace(output)
-    if not is_within(output, workspace / "external_executor" / "raw_results"):
-        raise SystemExit("Reproduction evaluations must be written under external_executor/raw_results")
+    if not is_within(output, workspace / "external_executor" / "report"):
+        raise SystemExit("Reproduction evaluations must be written under external_executor/report")
     plan = load_json(Path(args.plan_fragment).resolve())
     run = load_json(Path(args.run_record).resolve())
     metrics = load_json(Path(args.metrics).resolve())
@@ -52,6 +52,22 @@ def main() -> int:
         findings.append({"severity": "high", "id": "expected_output_missing"})
     if not metrics.get("items"):
         findings.append({"severity": "blocking", "id": "metrics_missing"})
+    metric_csv_complete = True
+    for item in metrics.get("items", []):
+        ref = item.get("raw_csv_path")
+        if not ref:
+            metric_csv_complete = False
+            findings.append({"severity": "high", "id": "raw_metric_csv_missing", "metric": item.get("name")})
+            continue
+        try:
+            csv_path = resolve_in_workspace(workspace, str(ref))
+        except Exception as exc:
+            metric_csv_complete = False
+            findings.append({"severity": "high", "id": "raw_metric_csv_invalid", "metric": item.get("name"), "detail": str(exc)})
+            continue
+        if not is_within(csv_path, workspace / "external_executor" / "raw_results") or not csv_path.exists():
+            metric_csv_complete = False
+            findings.append({"severity": "high", "id": "raw_metric_csv_unavailable", "metric": item.get("name"), "path": str(ref)})
     if not primary:
         findings.append({"severity": "high", "id": "primary_metric_missing"})
     if not run.get("environment_path") or not env.get("environment_fingerprint"):
@@ -69,7 +85,7 @@ def main() -> int:
     blocking = any(f["severity"] == "blocking" for f in findings)
     all_ref_pass = comparisons and all(c.get("passed") is True for c in comparisons if c.get("type") != "none") and all(c.get("type") != "none" for c in comparisons)
     any_ref_pass = any(c.get("passed") is True for c in comparisons)
-    provenance_complete = all([run.get("argv"), run.get("stdout_path"), run.get("stderr_path"), run.get("source_manifest_sha256"), run.get("config_manifest_sha256") is not None, run.get("dataset", {}).get("split"), metrics.get("items"), env.get("environment_fingerprint")])
+    provenance_complete = all([run.get("argv"), run.get("stdout_path"), run.get("stderr_path"), run.get("source_manifest_sha256"), run.get("config_manifest_sha256") is not None, run.get("dataset", {}).get("split"), metrics.get("items"), metric_csv_complete, env.get("environment_fingerprint")])
     repeat_complete = int(plan.get("repeats", 1)) <= max([m.get("count", 0) for m in metrics.get("items", [])] or [0]) or int(plan.get("repeats", 1)) == 1
 
     if blocking or run.get("status") != "completed":
@@ -89,7 +105,7 @@ def main() -> int:
         "schema_version": "baseline_reproduction_evaluation.v1", "evaluation_id": evaluation_id,
         "generated_at": utc_now(), "reproduction_id": plan.get("reproduction_id"), "run_id": run.get("run_id"),
         "technical_outcome": outcome, "comparability_status": comp,
-        "dimensions": {"executability": run.get("status") == "completed", "protocol_fidelity": not any(f["id"] == "protocol_fingerprint_mismatch" for f in findings), "fairness_fidelity": not any(f["id"] == "fairness_fingerprint_mismatch" for f in findings), "provenance_complete": provenance_complete, "repeat_sufficiency": repeat_complete, "reference_agreement": all_ref_pass if comparisons else None},
+        "dimensions": {"executability": run.get("status") == "completed", "protocol_fidelity": not any(f["id"] == "protocol_fingerprint_mismatch" for f in findings), "fairness_fidelity": not any(f["id"] == "fairness_fingerprint_mismatch" for f in findings), "provenance_complete": provenance_complete, "raw_metric_csv_complete": metric_csv_complete, "repeat_sufficiency": repeat_complete, "reference_agreement": all_ref_pass if comparisons else None},
         "reference_comparisons": comparisons, "findings": findings,
         "review_required": True, "notes": ["formal_review_candidate is not formal approval."],
     }

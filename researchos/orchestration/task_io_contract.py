@@ -1040,7 +1040,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "outputs": {
             "result_pack": "external_executor/result_pack.json",
             "executor_status": "external_executor/executor_status.json",
-            "run_manifest": "external_executor/run_manifest.json",
+            "run_manifest": "external_executor/report/run_manifest.json",
             "heartbeat": "external_executor/heartbeat.json",
             "raw_results_dir": "external_executor/raw_results",
             "configs_dir": "external_executor/configs",

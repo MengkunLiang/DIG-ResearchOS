@@ -23,6 +23,9 @@ def step_module_id(step: Any) -> str | None:
         for key in ("module_id", "related_module", "component_id"):
             if nonempty(step.get(key)):
                 return str(step[key])
+        module_ids = step.get("module_ids")
+        if isinstance(module_ids, list) and module_ids:
+            return str(module_ids[0])
     return None
 
 
@@ -30,7 +33,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build an evidence-bound framework-figure specification from one realized-method package.")
     parser.add_argument("--workspace")
     parser.add_argument("--method", default="external_executor/evidence_package/realized_method_package.json")
-    parser.add_argument("--output", default="external_executor/evidence_package/framework_figure_spec.json")
+    parser.add_argument("--output", default="external_executor/report/framework_figure_spec.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)
@@ -42,6 +45,13 @@ def main() -> int:
     unsupported = method.get("module_attribution", {}).get("unsupported_mechanisms", [])
     hint_only = method.get("module_attribution", {}).get("definition_or_hint_only", [])
     flow = method.get("actual_algorithm_flow", [])
+    traceability = method.get("evidence_traceability", [])
+    claims_by_module: dict[str, list[str]] = {}
+    for item in traceability:
+        if not isinstance(item, dict) or not item.get("claim_id"):
+            continue
+        for module_id in listify(item.get("module_ids")):
+            claims_by_module.setdefault(str(module_id), []).append(str(item["claim_id"]))
 
     nodes: list[dict[str, Any]] = []
     for module in modules:
@@ -56,6 +66,7 @@ def main() -> int:
             "empirical_support_status": support.get("status"),
             "code_refs": module.get("code_refs", []),
             "config_keys": module.get("config_keys", []),
+            "claim_ids": unique_strings(claims_by_module.get(mid, [])),
             "evidence_refs": unique_strings(module.get("implementation_evidence_refs", []) + support.get("evidence_refs", [])),
             "visual_emphasis": "primary" if support.get("status") == "supported" else "neutral",
             "must_not_imply": (
@@ -137,6 +148,16 @@ def main() -> int:
             "reason": "hint_or_implementation_fact_must_not_be_shown_as_causal_support",
             "source_refs": item.get("evidence_refs", []),
         })
+    claim_boundary = method.get("claim_boundary", {}) if isinstance(method.get("claim_boundary"), dict) else {}
+    for boundary in claim_boundary.get("must_not_claim", []):
+        statement = boundary.get("statement") if isinstance(boundary, dict) else boundary
+        if statement:
+            must_not_show.append({
+                "item": str(statement),
+                "reason": "claim_boundary_annotation",
+                "action": "annotate",
+                "source_refs": listify(boundary.get("source_refs")) if isinstance(boundary, dict) else [],
+            })
 
     unresolved = []
     if method.get("status") != "complete":
@@ -186,6 +207,8 @@ def main() -> int:
             "edge_count": len(edges),
             "supported_attribution_refs": [item.get("attribution_id") for item in supported],
         },
+        "final_version": method.get("final_version", {}),
+        "claim_boundary": claim_boundary,
         "unresolved_fields": sorted(set(unresolved)),
         "spec_fingerprint": None,
         "notes": [],

@@ -104,7 +104,9 @@ def main() -> int:
     }
     dump_json_atomic(output, payload)
     print(f"{payload['status']}: observations={len(observations)} rejected={len(rejected)}")
-    return 2 if not observations else 0
+    # A failure-only iteration intentionally has no metric observations but
+    # still must proceed to a diagnosis and repair decision.
+    return 0 if snapshot.get("runs") else 2
 
 
 if __name__ == "__main__":

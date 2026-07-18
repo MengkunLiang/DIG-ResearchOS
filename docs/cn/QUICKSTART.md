@@ -168,7 +168,7 @@ python -m researchos.cli run-task T5-EXECUTOR-GATE \
   --workspace <workspace>
 ```
 
-真实 Codex/Claude/manual executor 完成后，T5 会直接恢复到 T8。T5 到 T8 的必需接口是 `external_executor/executor_research_report.md`；`external_executor/` 下其他文件继续作为可追溯上下文供 Writer 按需读取。当前 T5 gate 只定义并校验这个接口，不自行生成该报告。
+真实 Codex/Claude/manual executor 完成后，T5 会直接恢复到 T8。T5 到 T8 的必需接口是 `external_executor/executor_research_report.md`；`external_executor/` 下其他文件继续作为可追溯上下文供 Writer 按需读取。外部执行器最后一个 `writer-handoff` 子 Skill 负责形成并核验该报告；ResearchOS 的 T5 runtime gate 只对返回接口做独立检查，不自行生成报告。
 
 对于由旧版本创建、且已在 `T5-EXTERNAL-WAIT` 状态下暂停但没有 `external_executor/skills/` 的工作区，可用离线确定性命令在不调用模型的情况下修复或校验同一套件：
 

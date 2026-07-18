@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -19,6 +20,18 @@ def run(script: str, *args: str, check: bool = True) -> subprocess.CompletedProc
         capture_output=True,
         check=check,
     )
+
+
+def load_local_common() -> object:
+    """Load this Skill's helper without reusing another Skill's ``_common``."""
+
+    sys.path.insert(0, str(SCRIPTS))
+    spec = importlib.util.spec_from_file_location("implementation_common_for_test", SCRIPTS / "_common.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules["_common"] = module
+    return module
 
 
 class ImplementationSkillTests(unittest.TestCase):
@@ -116,8 +129,11 @@ class ImplementationSkillTests(unittest.TestCase):
 
     def prepare(self, ws: Path) -> tuple[dict, Path]:
         run("preflight_implementation.py", "--workspace", str(ws))
+        self.assertTrue((ws / "external_executor/report/implementation_preflight.json").is_file())
+        self.assertFalse((ws / "external_executor/implementation_preflight.json").exists())
         run("build_change_contract.py", "--workspace", str(ws))
-        contract = json.loads((ws / "external_executor/implementation_change_contract.json").read_text())
+        contract = json.loads((ws / "external_executor/report/implementation_change_contract.json").read_text())
+        self.assertFalse((ws / "external_executor/implementation_change_contract.json").exists())
         self.assertEqual(contract["status"], "ready")
         run("prepare_worktree.py", "--workspace", str(ws))
         impl_root = ws / contract["implementation_root"]
@@ -187,7 +203,8 @@ class ImplementationSkillTests(unittest.TestCase):
         )
         run("initialize_implementation_report.py", "--workspace", str(ws))
 
-        report_path = ws / "external_executor/implementation_report.json"
+        report_path = ws / "external_executor/report/implementation_report.json"
+        self.assertFalse((ws / "external_executor/implementation_report.json").exists())
         report = json.loads(report_path.read_text())
         report["implemented_changes"]["status"] = "complete"
         report["implemented_changes"]["items"][0].update({
@@ -195,7 +212,7 @@ class ImplementationSkillTests(unittest.TestCase):
             "changed_paths": ["src/model.py"],
             "summary": "Implemented the approved transform behavior.",
             "tests": ["VERIFY-model"],
-            "evidence_refs": ["external_executor/implementation_report.json"],
+            "evidence_refs": ["external_executor/report/implementation_report.json"],
         })
         report_path.write_text(json.dumps(report), encoding="utf-8")
         run("compute_implementation_gate.py", "--report", str(report_path), "--write-back")
@@ -209,17 +226,15 @@ class ImplementationSkillTests(unittest.TestCase):
         self.assertEqual(result["implementations"]["status"], "complete")
 
     def test_10_secret_and_scope_primitives(self) -> None:
-        sys.path.insert(0, str(SCRIPTS))
+        common = load_local_common()
         from scan_change_scope import SECRET_PATTERNS
-        from _common import match_any
         text = 'API_KEY = "super-secret-token-123456"'
         self.assertTrue(any(pattern.search(text) for _, pattern in SECRET_PATTERNS))
-        self.assertTrue(match_any("src/model.py", ["src/*.py"]))
-        self.assertFalse(match_any("protocol/locked.json", ["src/*.py"]))
+        self.assertTrue(common.match_any("src/model.py", ["src/*.py"]))
+        self.assertFalse(common.match_any("protocol/locked.json", ["src/*.py"]))
 
     def test_20_symlink_detection_primitive(self) -> None:
-        sys.path.insert(0, str(SCRIPTS))
-        from _common import reject_symlinks
+        common = load_local_common()
         root = Path(tempfile.mkdtemp(prefix="implementation-symlink-test-"))
         target = root / "target.py"
         target.write_text("value = 1\n", encoding="utf-8")
@@ -228,7 +243,7 @@ class ImplementationSkillTests(unittest.TestCase):
             link.symlink_to(target)
         except (OSError, NotImplementedError):
             self.skipTest("symlinks are unavailable")
-        self.assertIn(str(link), reject_symlinks(root))
+        self.assertIn(str(link), common.reject_symlinks(root))
 
 
 if __name__ == "__main__":

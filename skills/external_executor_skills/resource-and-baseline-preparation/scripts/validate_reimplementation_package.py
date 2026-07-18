@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from _common import assert_write_allowed, dump_json_atomic, is_within, resolve_workspace, tree_manifest, utc_now
+from _common import assert_write_allowed, dump_json_atomic, is_within, relpath, resolve_in_workspace, resolve_workspace, tree_manifest, utc_now
 
 FORBIDDEN_LABELS = {"official", "author_implementation", "exact_reproduction", "protocol_equivalent", "paper_result_reproduced"}
 ALLOWED_LABELS = {"executor_reimplementation", "approximate_reproduction"}
@@ -66,7 +66,7 @@ def main() -> int:
     report = {
         "schema_version": "baseline_reimplementation_validation.v1",
         "generated_at": utc_now(),
-        "path": str(root),
+        "path": relpath(workspace, root),
         "mode": args.mode,
         "status": status,
         "errors": errors,
@@ -74,7 +74,10 @@ def main() -> int:
         "manifest_sha256": manifest.get("manifest_sha256"),
         "approved_for": ["resource_review"] if status == "pass" else ["none"],
     }
-    output = Path(args.output).expanduser().resolve() if args.output else root / "validation_report.json"
+    output = resolve_in_workspace(
+        workspace,
+        args.output or "external_executor/report/validation_report.json",
+    )
     assert_write_allowed(workspace, output)
     dump_json_atomic(output, report)
     print(f"{status}: {len(errors)} errors")

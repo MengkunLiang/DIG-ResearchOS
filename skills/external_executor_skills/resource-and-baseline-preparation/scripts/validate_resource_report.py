@@ -30,18 +30,11 @@ EXECUTABLE_BASELINE_CRITERIA = {
 }
 
 
-def _is_expr_path(value: Any) -> bool:
+def _is_outside_resources_path(value: Any) -> bool:
     if not isinstance(value, str):
         return False
     normalized = value.replace("\\", "/").strip().lstrip("./").rstrip("/")
-    return normalized == "external_executor/expr" or normalized.startswith("external_executor/expr/")
-
-
-def _is_forbidden_workdir_resource(value: Any) -> bool:
-    if not isinstance(value, str):
-        return False
-    normalized = value.replace("\\", "/").strip().lstrip("./").rstrip("/")
-    return normalized == "external_executor/workdir/resources" or normalized.startswith("external_executor/workdir/resources/")
+    return bool(normalized) and not (normalized == "resources" or normalized.startswith("resources/"))
 
 
 def _candidate_paths(candidate: dict[str, Any]) -> list[str]:
@@ -115,10 +108,8 @@ def validate_data(data: dict[str, Any]) -> tuple[list[str], list[str]]:
             continue
         errors.extend(ensure_known_ids(candidate.get("requirement_ids", []), known_req, "requirement ID in candidate"))
         for candidate_path in _candidate_paths(candidate):
-            if _is_expr_path(candidate_path):
-                errors.append(f"candidate uses external_executor/expr as resource source: {candidate.get('candidate_id')}")
-            if _is_forbidden_workdir_resource(candidate_path):
-                errors.append(f"candidate uses forbidden workdir resource path: {candidate.get('candidate_id')}")
+            if _is_outside_resources_path(candidate_path):
+                errors.append(f"candidate path is outside resources/: {candidate.get('candidate_id')}")
 
     reviews = data.get("resource_reviews", {}).get("items", [])
     for review in reviews:
@@ -208,7 +199,7 @@ def validate_data(data: dict[str, Any]) -> tuple[list[str], list[str]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate Phase B report structure and gate consistency.")
     parser.add_argument("--workspace")
-    parser.add_argument("--report", default="external_executor/resource_preparation_report.json")
+    parser.add_argument("--report", default="external_executor/report/resource_preparation_report.json")
     args = parser.parse_args()
     workspace = resolve_workspace(args.workspace)
     path = resolve_in_workspace(workspace, args.report)

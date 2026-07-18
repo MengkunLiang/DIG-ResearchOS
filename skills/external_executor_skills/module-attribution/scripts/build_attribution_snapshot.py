@@ -6,13 +6,13 @@ from pathlib import Path
 from typing import Any
 
 from _common import (
-    assert_write_allowed, canonical_hash, current_diagnosis, dump_json_atomic,
+    assert_write_allowed, canonical_hash, current_diagnosis, current_implementation, dump_json_atomic,
     get_nested, listify, load_json, metric_direction, normalize_state_map, relpath,
     resolve_in_workspace, resolve_workspace, section_items, stable_id, utc_now,
 )
 
 
-def module_records(result: dict[str, Any], handoff: dict[str, Any]) -> list[dict[str, Any]]:
+def module_records(result: dict[str, Any], handoff: dict[str, Any], iteration_id: str) -> list[dict[str, Any]]:
     records: dict[str, dict[str, Any]] = {}
     intent = handoff.get("method_intent", {}) if isinstance(handoff, dict) else {}
     for idx, item in enumerate(intent.get("candidate_modules", []) if isinstance(intent, dict) else [], 1):
@@ -27,7 +27,8 @@ def module_records(result: dict[str, Any], handoff: dict[str, Any]) -> list[dict
             "diagnostic_switches": [], "mechanism_ids": listify(item.get("mechanism_id") or item.get("related_claim")),
             "implementation_status": "declared_only", "source_refs": ["external_executor/handoff_pack.json#method_intent"], "notes": [],
         }
-    for impl in section_items(result.get("implementations")):
+    implementation = current_implementation(result, iteration_id)
+    for impl in [implementation] if implementation else []:
         for item in impl.get("module_mappings", {}).get("items", []) if isinstance(impl.get("module_mappings"), dict) else listify(impl.get("module_mappings")):
             if not isinstance(item, dict):
                 continue
@@ -91,6 +92,13 @@ def mechanism_records(result: dict[str, Any], handoff: dict[str, Any], modules: 
     return list(out.values())
 
 
+def experiment_entry(plan: dict[str, Any], experiment_id: Any) -> dict[str, Any]:
+    for item in section_items(plan.get("experiments")) or section_items(plan):
+        if str(item.get("experiment_id") or item.get("id")) == str(experiment_id):
+            return item
+    return {}
+
+
 def metric_records(run: dict[str, Any], plan: dict[str, Any]) -> list[dict[str, Any]]:
     metrics = run.get("metrics") or run.get("metric_output") or run.get("results") or {}
     if isinstance(metrics, list):
@@ -104,7 +112,21 @@ def metric_records(run: dict[str, Any], plan: dict[str, Any]) -> list[dict[str, 
                 items.append({"name": name, "value": value})
     else:
         items = []
-    plan_metrics = {str(x.get("name")): x for x in listify(plan.get("metrics")) if isinstance(x, dict) and x.get("name")}
+    entry = experiment_entry(plan, run.get("experiment_id"))
+    declared_metrics = listify(entry.get("metrics")) or listify(get_nested(plan, "protocol_snapshot.protocol.metrics.primary", default=[]))
+    plan_metrics: dict[str, dict[str, Any]] = {}
+    for metric in declared_metrics:
+        if isinstance(metric, dict) and (metric.get("name") or metric.get("metric")):
+            plan_metrics[str(metric.get("name") or metric.get("metric"))] = metric
+        elif isinstance(metric, str):
+            plan_metrics[metric] = {"name": metric}
+    directions = (
+        run.get("metric_directions")
+        or entry.get("metric_directions")
+        or get_nested(plan, "protocol_snapshot.protocol.metrics.directions", default={})
+        or {}
+    )
+    aggregation = get_nested(plan, "protocol_snapshot.protocol.metrics.aggregation", default={})
     out = []
     for item in items:
         if not isinstance(item, dict):
@@ -112,8 +134,20 @@ def metric_records(run: dict[str, Any], plan: dict[str, Any]) -> list[dict[str, 
         name = str(item.get("name") or item.get("metric") or "")
         if not name:
             continue
-        direction = metric_direction(item.get("direction")) or metric_direction(plan_metrics.get(name, {}).get("direction"))
-        out.append({"metric_name": name, "value": item.get("value"), "direction": direction, "aggregation": item.get("aggregation", plan_metrics.get(name, {}).get("aggregation", "mean")), "unit": item.get("unit"), "source_ref": item.get("source_ref")})
+        direction = (
+            metric_direction(item.get("direction"))
+            or metric_direction(directions.get(name) if isinstance(directions, dict) else None)
+            or metric_direction(plan_metrics.get(name, {}).get("direction"))
+        )
+        declared_aggregation = aggregation.get(name) if isinstance(aggregation, dict) else aggregation
+        out.append({
+            "metric_name": name,
+            "value": item.get("value"),
+            "direction": direction,
+            "aggregation": item.get("aggregation", plan_metrics.get(name, {}).get("aggregation", declared_aggregation or "mean")),
+            "unit": item.get("unit", plan_metrics.get(name, {}).get("unit")),
+            "source_ref": item.get("source_ref"),
+        })
     return out
 
 
@@ -121,7 +155,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Pin module attribution evidence snapshot.")
     parser.add_argument("--workspace")
     parser.add_argument("--iteration-id", required=True)
-    parser.add_argument("--output", default="external_executor/module_attribution_snapshot.json")
+    parser.add_argument("--output", default="external_executor/report/module_attribution_snapshot.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     ext = ws / "external_executor"
@@ -131,7 +165,9 @@ def main() -> int:
     diagnosis = current_diagnosis(result, args.iteration_id)
     if not diagnosis:
         raise SystemExit(f"No current diagnosis for {args.iteration_id}")
-    modules = module_records(result, handoff)
+    implementation = current_implementation(result, args.iteration_id)
+    active_implementation_id = implementation.get("implementation_id") if implementation else None
+    modules = module_records(result, handoff, args.iteration_id)
     mechanisms = mechanism_records(result, handoff, modules)
     plan = result.get("experiment_plan", {}) if isinstance(result.get("experiment_plan"), dict) else {}
     runs = []
@@ -150,12 +186,33 @@ def main() -> int:
             state_map[str(mid)] = True
         intervention = run.get("intervention", {}) if isinstance(run.get("intervention"), dict) else {}
         explicit = bool(state_map or intervention or run.get("reference_variant_id"))
-        eligible = status in {"completed", "complete", "success", "succeeded"} and bool(metric_records(run, plan))
+        metrics = metric_records(run, plan)
+        eligible = status in {"completed", "complete", "success", "succeeded"} and bool(metrics)
         reason = None
         if not eligible:
             reason = "nonterminal_or_missing_metric"
+        elif active_implementation_id and run.get("implementation_id") and str(run.get("implementation_id")) != str(active_implementation_id):
+            reason = "nonfinal_implementation"
+        elif run_type == "ablation" and not (
+            state_map
+            and run.get("pair_id")
+            and run.get("reference_variant_id")
+            and intervention.get("controlled") is True
+        ):
+            reason = "incomplete_ablation_identity"
+        elif any(not metric.get("direction") for metric in metrics):
+            reason = "missing_metric_direction"
         elif run_type not in {"ablation", "diagnostic", "formal", "small_scale"} and not explicit:
             reason = "not_attribution_relevant"
+        dataset = run.get("dataset")
+        if isinstance(dataset, dict):
+            dataset_id = dataset.get("id") or dataset.get("name")
+            dataset_version = dataset.get("version") or run.get("dataset_version")
+            split = dataset.get("split") or run.get("split")
+        else:
+            dataset_id = dataset
+            dataset_version = run.get("dataset_version")
+            split = run.get("split")
         evidence_id = stable_id("RUN", run_id, run.get("protocol_fingerprint"), run.get("seed"))
         record = {
             "evidence_id": evidence_id, "run_id": run_id, "iteration_id": args.iteration_id,
@@ -163,14 +220,23 @@ def main() -> int:
             "method_id": str(run.get("method_id") or run.get("variant", {}).get("method_id") or run.get("baseline_id") or "unknown"),
             "variant_id": str(run.get("variant_id") or run.get("variant", {}).get("variant_id") or run.get("name") or run_id),
             "reference_variant_id": run.get("reference_variant_id"), "run_type": run_type,
+            "pair_id": run.get("pair_id"), "target_module_ids": listify(run.get("target_module_ids")),
+            "implementation_id": run.get("implementation_id"),
             "analysis_role": run.get("analysis_role"), "status": status,
             "module_states": state_map, "intervention": intervention,
             "setting": run.get("setting", "default"), "subset": run.get("subset", "all"),
-            "dataset": run.get("dataset"), "dataset_version": run.get("dataset_version"), "split": run.get("split"),
+            "dataset": dataset_id, "dataset_version": dataset_version, "split": split,
             "preprocessing_fingerprint": run.get("preprocessing_fingerprint"),
             "protocol_fingerprint": run.get("protocol_fingerprint", plan.get("protocol_fingerprint")),
-            "fairness_fingerprint": run.get("fairness_fingerprint"), "seed": run.get("seed"), "repeat": run.get("repeat"),
-            "metrics": metric_records(run, plan), "artifact_refs": listify(run.get("artifact_refs")),
+            "fairness_fingerprint": run.get("fairness_fingerprint"), "seed": run.get("seed"),
+            "repeat": run.get("repeat_index", run.get("repeat")),
+            "metrics": metrics,
+            "artifact_refs": (
+                listify(run.get("artifacts"))
+                + listify(run.get("artifact_refs"))
+                + listify(run.get("raw_log_ref"))
+                + listify(run.get("metric_output_ref"))
+            ),
             "eligible": eligible and reason is None, "exclusion_reason": reason,
         }
         runs.append(record)
@@ -178,14 +244,39 @@ def main() -> int:
     payload = {
         "schema_version": "module_attribution_snapshot.v1", "generated_at": utc_now(),
         "status": "complete" if included else "partial", "iteration_id": args.iteration_id,
+        "implementation_id": active_implementation_id,
         "diagnosis_id": diagnosis.get("diagnosis_id"), "diagnosis_gate": diagnosis.get("diagnosis_gate"),
         "diagnosis_input_fingerprint": diagnosis.get("input_fingerprint"),
         "modules": modules, "mechanisms": mechanisms, "runs": runs,
         "included_run_ids": included, "excluded_run_ids": excluded,
         "diagnosis_anomalies": diagnosis.get("anomalies", {}), "diagnosis_confounds": diagnosis.get("confound_assessments", {}),
         "diagnosis_evidence_requests": diagnosis.get("evidence_requests", {}),
+        "iteration_history": [
+            {
+                "iteration_id": item.get("iteration_id"),
+                "diagnosis_id": item.get("diagnosis_id"),
+                "status": item.get("status"),
+                "method_change_assessment": item.get("method_change_assessment"),
+            }
+            for item in section_items(result.get("result_diagnoses"))
+        ],
+        "implementation_history": [
+            {
+                "implementation_id": item.get("implementation_id"),
+                "iteration_id": item.get("iteration_id"),
+                "status": item.get("status"),
+                "implementation_root": item.get("implementation_root"),
+            }
+            for item in section_items(result.get("implementations"))
+        ],
     }
-    payload["input_fingerprint"] = canonical_hash({k: payload[k] for k in ("iteration_id", "diagnosis_id", "diagnosis_input_fingerprint", "modules", "mechanisms", "runs")})
+    payload["input_fingerprint"] = canonical_hash({
+        key: payload[key]
+        for key in (
+            "iteration_id", "implementation_id", "diagnosis_id", "diagnosis_input_fingerprint",
+            "modules", "mechanisms", "runs", "iteration_history", "implementation_history",
+        )
+    })
     assert_write_allowed(ws, output)
     dump_json_atomic(output, payload)
     print(f"wrote {len(included)} included runs to {relpath(ws, output)}")

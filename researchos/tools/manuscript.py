@@ -1520,10 +1520,13 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
         "external_executor/executor_research_report.md",
         "external_executor/result_pack.json",
         "external_executor/executor_status.json",
-        "external_executor/run_manifest.json",
+        "external_executor/report/run_manifest.json",
         "external_executor/raw_results",
         "external_executor/configs",
         "external_executor/logs",
+        "external_executor/figure",
+        "external_executor/table",
+        "external_executor/report/figure_table_inventory.json",
         "external_executor/expr",
         "experiments/results_summary.json",
         "experiments/integrity_audit.json",
@@ -2159,7 +2162,7 @@ def build_evidence_and_figure_plans(
                 "experiments/seed_ensemble_summary.json",
                 "experiments/iteration_log.md",
                 "external_executor/raw_results",
-                "external_executor/run_manifest.json",
+                "external_executor/report/run_manifest.json",
                 "drafts/experiment_evidence_pack.json",
                 "drafts/result_to_claim.json",
             ),
@@ -5323,6 +5326,7 @@ def _artifact_kind(rel: str) -> str:
 def _glob_media(workspace: Path, *, kind: str) -> list[Path]:
     suffixes = {".png", ".jpg", ".jpeg", ".pdf", ".svg"} if kind == "figure" else {".csv", ".tsv", ".xlsx"}
     roots = [workspace / "experiments", workspace / "drafts", workspace / "evaluation"]
+    roots.append(workspace / "external_executor" / ("figure" if kind == "figure" else "table"))
     paths: list[Path] = []
     for root in roots:
         if not root.exists():

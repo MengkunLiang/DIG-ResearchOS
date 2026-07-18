@@ -9,21 +9,21 @@ from _common import canonical_json_hash, dump_json_atomic, load_json, resolve_in
 def main() -> int:
     parser = argparse.ArgumentParser(description="Assemble the durable method-refinement child report.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/method_refinement_report.json")
+    parser.add_argument("--output", default="external_executor/report/method_refinement_report.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     ext = ws / "external_executor"
 
     paths = {
-        "preflight": "external_executor/method_refinement_preflight.json",
-        "intent_contract": "external_executor/method_intent_contract.json",
+        "preflight": "external_executor/report/method_refinement_preflight.json",
+        "intent_contract": "external_executor/report/method_intent_contract.json",
         "implementation_spec": "external_executor/method_implementation_spec.json",
-        "spec_fingerprint": "external_executor/method_spec_fingerprint.json",
-        "delta": "external_executor/method_delta.json",
-        "scope_assessment": "external_executor/method_scope_assessment.json",
-        "spec_validation": "external_executor/method_implementation_spec_validation.json",
-        "review": "external_executor/method_refinement_review.json",
-        "implementation_brief": "external_executor/method_implementation_brief.md",
+        "spec_fingerprint": "external_executor/report/method_spec_fingerprint.json",
+        "delta": "external_executor/report/method_delta.json",
+        "scope_assessment": "external_executor/report/method_scope_assessment.json",
+        "spec_validation": "external_executor/report/method_implementation_spec_validation.json",
+        "review": "external_executor/report/method_refinement_review.json",
+        "implementation_brief": "external_executor/report/method_implementation_brief.md",
     }
     data = {key: load_json(resolve_in_workspace(ws, value)) for key, value in paths.items() if key != "implementation_brief"}
     review = data["review"]

@@ -116,7 +116,12 @@ def validate(data: dict[str, Any], known: set[str]) -> list[str]:
     gate = data.get("attribution_gate", {})
     if gate.get("status") not in GATES:
         errors.append(f"invalid attribution gate: {gate.get('status')}")
-    if gate.get("status") == "ready_for_iteration_decision" and (gate.get("blocking_issue_ids") or not data.get("module_attributions", {}).get("items")):
+    if gate.get("status") == "ready_for_iteration_decision" and (
+        gate.get("blocking_issue_ids")
+        or gate.get("uncovered_required_module_ids")
+        or not gate.get("direct_evidence_module_ids")
+        or not data.get("module_attributions", {}).get("items")
+    ):
         errors.append("ready gate inconsistent with blockers or empty module attributions")
     return errors
 
@@ -129,8 +134,8 @@ def main() -> int:
     ws = resolve_workspace(args.workspace)
     report_path = resolve_in_workspace(ws, args.report)
     data = load_json(report_path)
-    snapshot = load_json(ws / "external_executor/module_attribution_snapshot.json")
-    facts = load_json(ws / "external_executor/module_attribution_facts.json")
+    snapshot = load_json(ws / "external_executor/report/module_attribution_snapshot.json")
+    facts = load_json(ws / "external_executor/report/module_attribution_facts.json")
     result = load_json(ws / "external_executor/result_pack.json")
     known = collect_known_ids(snapshot, facts, result)
     errors = validate(data, known)

@@ -25,8 +25,8 @@
 | 文件 | 作用 |
 | --- | --- |
 | `_common.py` | 标准库公共函数：workspace/path、安全写入、fingerprint、稳定 ID、当前 iteration/diagnosis 解析、evidence ID 收集。 |
-| `preflight_attribution.py` | 校验当前 diagnosis、iteration、模块身份、运行记录、schema 和写入权限。 |
-| `build_attribution_snapshot.py` | 固定本轮 diagnosis、模块、机制、intervention run 和 metric 的完整证据表面。 |
+| `preflight_attribution.py` | 校验当前 diagnosis、最终 active implementation、显式可配对消融、运行记录、schema 和写入权限。 |
+| `build_attribution_snapshot.py` | 固定最终实现的 diagnosis、模块、机制、规范化 intervention run 和 metric 证据表面；历史迭代仅作上下文。 |
 | `inventory_modules.py` | 合并 method intent、implementation mapping 和 baseline module mapping，形成稳定模块注册表。 |
 | `normalize_attribution_evidence.py` | 将运行记录转成规范化 intervention observations，并标注证据类型。 |
 | `compute_ablation_effects.py` | 在严格 comparability key 和其他模块状态条件下，计算 paired module effects。 |
@@ -41,7 +41,7 @@
 
 | 文件 | 覆盖内容 |
 | --- | --- |
-| `test_module_attribution_scripts.py` | preflight、snapshot、模块 inventory、paired effects、factorial interaction、facts、Gate、evidence validation、因果升级拒绝和 narrow apply。 |
+| `test_module_attribution_scripts.py` | preflight、最终实现筛选、dataset/repeat 规范化、paired effects、factorial interaction、facts、Gate、evidence validation、因果升级拒绝和 narrow apply。 |
 
 ## 推荐运行顺序
 

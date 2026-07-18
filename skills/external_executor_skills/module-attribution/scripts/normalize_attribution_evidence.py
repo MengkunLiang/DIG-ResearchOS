@@ -24,7 +24,13 @@ def main() -> int:
         state_map = {str(k): bool(v) for k, v in run.get("module_states", {}).items() if str(k) in known_modules}
         intervention = run.get("intervention", {}) if isinstance(run.get("intervention"), dict) else {}
         intervention_type = str(intervention.get("type") or "").lower()
-        if state_map and run.get("run_type") == "ablation":
+        if (
+            state_map
+            and run.get("run_type") == "ablation"
+            and run.get("pair_id")
+            and run.get("reference_variant_id")
+            and intervention.get("controlled") is True
+        ):
             evidence_type = "direct_ablation"
         elif intervention and run.get("run_type") == "diagnostic":
             evidence_type = "controlled_diagnostic" if intervention.get("controlled", False) else "correlational_hint"
@@ -42,6 +48,8 @@ def main() -> int:
                 "intervention_id": obs_id, "run_evidence_id": run.get("evidence_id"), "run_id": run.get("run_id"),
                 "experiment_id": run.get("experiment_id"), "claim_ids": run.get("claim_ids", []),
                 "method_id": run.get("method_id"), "variant_id": run.get("variant_id"), "reference_variant_id": run.get("reference_variant_id"),
+                "pair_id": run.get("pair_id"), "implementation_id": run.get("implementation_id"),
+                "target_module_ids": run.get("target_module_ids", []),
                 "evidence_type": evidence_type, "intervention_type": intervention_type or ("module_state" if state_map else "none"),
                 "module_states": state_map, "intervention": intervention,
                 "setting": run.get("setting"), "subset": run.get("subset"), "dataset": run.get("dataset"), "dataset_version": run.get("dataset_version"),

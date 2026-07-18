@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
+ROOT_DECISION_SCRIPT = ROOT.parent / "research-execution" / "scripts" / "decide_iteration.py"
 
 
 def run(script: str, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -59,8 +60,8 @@ def make_workspace() -> Path:
                     "seed": seed,
                     "code_version": "code-1",
                     "config_ref": f"configs/{mid}-{seed}.json",
-                    "raw_log_ref": f"logs/{mid}-{seed}.log",
-                    "metric_output_ref": f"raw/{mid}-{seed}.json",
+                    "raw_log_ref": f"external_executor/raw_results/logs/{mid}-{seed}.log",
+                    "metric_output_ref": f"external_executor/raw_results/raw/{mid}-{seed}.json",
                     "environment_ref": "env.json",
                     "approved_for": ["formal"],
                     "metrics": {
@@ -102,6 +103,8 @@ def make_workspace() -> Path:
 def build_pipeline(ws: Path) -> None:
     ext = ws / "external_executor"
     run("preflight_diagnosis.py", "--workspace", str(ws))
+    assert (ext / "report/result_diagnosis_preflight.json").is_file()
+    assert not (ext / "result_diagnosis_preflight.json").exists()
     run(
         "build_evidence_snapshot.py",
         "--workspace",
@@ -118,7 +121,7 @@ def build_pipeline(ws: Path) -> None:
     run(
         "normalize_run_metrics.py",
         "--snapshot",
-        str(ext / "diagnosis_evidence_snapshot.json"),
+        str(ext / "report/diagnosis_evidence_snapshot.json"),
         "--output",
         str(obs),
     )
@@ -135,7 +138,7 @@ def build_pipeline(ws: Path) -> None:
     run(
         "detect_anomalies.py",
         "--snapshot",
-        str(ext / "diagnosis_evidence_snapshot.json"),
+        str(ext / "report/diagnosis_evidence_snapshot.json"),
         "--observations",
         str(obs),
         "--aggregates",
@@ -149,7 +152,7 @@ def build_pipeline(ws: Path) -> None:
     run(
         "build_diagnosis_facts.py",
         "--snapshot",
-        str(ext / "diagnosis_evidence_snapshot.json"),
+        str(ext / "report/diagnosis_evidence_snapshot.json"),
         "--observations",
         str(obs),
         "--aggregates",
@@ -159,7 +162,7 @@ def build_pipeline(ws: Path) -> None:
         "--anomalies",
         str(anoms),
         "--output",
-        str(ext / "diagnosis_statistics.json"),
+        str(ext / "report/diagnosis_statistics.json"),
     )
     run("initialize_diagnosis_report.py", "--workspace", str(ws))
 
@@ -182,12 +185,14 @@ class ResultDiagnosisTests(unittest.TestCase):
     def test_snapshot_statistics_and_anomaly_primitives(self) -> None:
         ws = self.base
         ext = ws / "external_executor"
-        snapshot = json.loads((ext / "diagnosis_evidence_snapshot.json").read_text())
+        snapshot = json.loads((ext / "report/diagnosis_evidence_snapshot.json").read_text())
+        self.assertFalse((ext / "diagnosis_evidence_snapshot.json").exists())
         self.assertEqual(len(snapshot["included_run_ids"]), 9)
         work = ext / "workdir/result_diagnosis/iter-1"
         aggregates = json.loads((work / "metric_aggregates.json").read_text())
         comparisons = json.loads((work / "method_comparisons.json").read_text())
-        stats = json.loads((ext / "diagnosis_statistics.json").read_text())
+        stats = json.loads((ext / "report/diagnosis_statistics.json").read_text())
+        self.assertFalse((ext / "diagnosis_statistics.json").exists())
         self.assertEqual(len(aggregates["items"]), 3)
         self.assertEqual(len(comparisons["items"]), 2)
         self.assertTrue(all(x["numeric_outcome"] == "win" for x in comparisons["items"]))
@@ -209,7 +214,7 @@ class ResultDiagnosisTests(unittest.TestCase):
         run(
             "detect_anomalies.py",
             "--snapshot",
-            str(ws2 / "external_executor/diagnosis_evidence_snapshot.json"),
+            str(ws2 / "external_executor/report/diagnosis_evidence_snapshot.json"),
             "--observations",
             str(work2 / "metric_observations.json"),
             "--aggregates",
@@ -223,6 +228,71 @@ class ResultDiagnosisTests(unittest.TestCase):
         categories = {x["category"] for x in json.loads(single_anoms.read_text())["items"]}
         self.assertIn("insufficient_repeats", categories)
         shutil.rmtree(ws2.parent, ignore_errors=True)
+
+    def test_snapshot_materializes_reviewed_baseline_reproduction_metrics(self) -> None:
+        ws = make_workspace()
+        ext = ws / "external_executor"
+        result_path = ext / "result_pack.json"
+        result = json.loads(result_path.read_text())
+        result["experiment_runs"]["items"] = [
+            run for run in result["experiment_runs"]["items"] if run["method_role"] == "ours"
+        ]
+        result["context_alignment"]["confirmed_execution_scope"]["required_baselines"] = [{"baseline_id": "base-a"}]
+        evidence = ext / "report" / "baseline_reproduction" / "base-a" / "attempt-1"
+        raw = ext / "raw_results" / "baseline_reproduction" / "base-a" / "attempt-1"
+        evidence.mkdir(parents=True)
+        raw.mkdir(parents=True)
+        (raw / "stdout.log").write_text("baseline completed\n", encoding="utf-8")
+        run_record = {
+            "run_id": "BASE-RUN-1",
+            "status": "completed",
+            "dataset": {"name": "D", "version": "1", "split": "test"},
+            "protocol_fingerprint": "proto-1",
+            "fairness_fingerprint": "fair-1",
+            "deployment_dir": "external_executor/expr/baselines/base-a",
+            "stdout_path": "external_executor/raw_results/baseline_reproduction/base-a/attempt-1/stdout.log",
+            "environment_path": "external_executor/report/baseline_reproduction/base-a/attempt-1/environment.json",
+            "source_manifest_sha256": "source-a",
+        }
+        (evidence / "run_record.json").write_text(json.dumps(run_record), encoding="utf-8")
+        metrics = {
+            "status": "complete",
+            "items": [{
+                "name": "accuracy",
+                "value": 0.80,
+                "direction": "higher_is_better",
+                "aggregation": "mean",
+                "raw_csv_path": "external_executor/raw_results/baseline_reproduction/base-a/attempt-1/raw_metrics/D/accuracy.csv",
+            }],
+        }
+        (evidence / "metrics.json").write_text(json.dumps(metrics), encoding="utf-8")
+        result["baseline_reproduction"] = {
+            "status": "complete",
+            "items": [{
+                "baseline_id": "base-a",
+                "required": True,
+                "status": "reproduced",
+                "reproduction_id": "REPRO-A",
+                "protocol_fingerprint": "proto-1",
+                "fairness_fingerprint": "fair-1",
+                "selected_attempt_id": "BASE-RUN-1",
+                "attempts": [{
+                    "attempt_id": "BASE-RUN-1",
+                    "run_id": "BASE-RUN-1",
+                    "run_record_ref": "external_executor/report/baseline_reproduction/base-a/attempt-1/run_record.json",
+                }],
+                "review": {"verdict": "pass", "approved_for": "formal_review_candidate"},
+            }],
+        }
+        result_path.write_text(json.dumps(result), encoding="utf-8")
+        run("build_evidence_snapshot.py", "--workspace", str(ws), "--iteration-id", "iter-1")
+        snapshot = json.loads((ext / "report/diagnosis_evidence_snapshot.json").read_text())
+        baseline = [item for item in snapshot["runs"] if item["method_role"] == "baseline"]
+        self.assertEqual(len(baseline), 1)
+        self.assertEqual(baseline[0]["method_id"], "base-a")
+        self.assertEqual(baseline[0]["metrics"]["accuracy"]["value"], 0.80)
+        self.assertEqual(baseline[0]["eligibility"], "formal_candidate")
+        shutil.rmtree(ws, ignore_errors=True)
 
     def test_report_gate_validation_and_narrow_apply(self) -> None:
         ws = self.clone()
@@ -318,6 +388,62 @@ class ResultDiagnosisTests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("causal_claim", proc.stdout)
         self.assertIn("unknown evidence refs", proc.stdout)
+        shutil.rmtree(ws.parent, ignore_errors=True)
+
+    def test_root_decision_versions_an_underperforming_method(self) -> None:
+        ws = self.clone()
+        ext = ws / "external_executor"
+        worktree = ext / "expr/implementation/ITER-01/IMPL-01/worktree"
+        worktree.mkdir(parents=True)
+        (worktree / "method.py").write_text("VERSION = 1\n", encoding="utf-8")
+        status = {
+            "schema_version": "external_executor_status.v1", "executor_status": "running",
+            "iteration_id": "ITER-01", "current_phase": "E", "current_step": "E1",
+            "next_action": "result-diagnosis", "active_blockers": [], "budget": {},
+        }
+        result = {
+            "schema_version": "external_executor_result.v1", "executor_status": "running",
+            "experiment_plan": {"status": "complete", "experiments": [{"experiment_id": "MAIN", "run_type": "formal"}]},
+            "iteration_plans": {"status": "complete", "items": [{"iteration_id": "ITER-01", "iteration_number": 1, "status": "active"}]},
+            "implementations": {"status": "complete", "items": [{"implementation_id": "IMPL-01", "iteration_id": "ITER-01", "implementation_root": "external_executor/expr/implementation/ITER-01/IMPL-01"}]},
+            "experiment_runs": {"status": "complete", "items": [{"run_id": "RUN-1", "iteration_id": "ITER-01", "experiment_id": "MAIN", "method_id": "ours-v1", "method_role": "ours", "implementation_id": "IMPL-01", "run_type": "formal", "run_status": "completed"}]},
+            "result_diagnoses": {"status": "partial", "items": []},
+            "iteration_decisions": {"status": "not_started", "items": []},
+        }
+        diagnosis = {
+            "diagnosis_id": "DIAG-LOOP-1", "iteration_id": "ITER-01",
+            "baseline_performance": {"all_required_baselines_beaten": False, "required_baseline_ids": ["B1"]},
+            "method_change_assessment": {
+                "status": "complete", "change_required": True, "change_kind": "method_refinement",
+                "rationale": "The method remains below baseline B1.",
+                "failure_or_underperformance_causes": ["optimization instability"],
+                "proposed_changes": [{"summary": "Stabilize optimization", "target_paths": ["method.py"]}],
+                "must_preserve": ["core mechanism"], "prior_iteration_lessons": [], "evidence_refs": ["RUN-1"],
+            },
+        }
+        (ext / "executor_status.json").write_text(json.dumps(status), encoding="utf-8")
+        (ext / "result_pack.json").write_text(json.dumps(result), encoding="utf-8")
+        (ext / "result_diagnosis_report.json").write_text(json.dumps(diagnosis), encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(ROOT_DECISION_SCRIPT), "--workspace", str(ws)], text=True, capture_output=True, check=True)
+        output = json.loads(proc.stdout)
+        self.assertEqual(output["decision"]["next_action"], "method-refinement")
+        self.assertEqual(output["next_iteration_plan"]["iteration_number"], 2)
+        self.assertTrue(output["next_iteration_plan"]["base_source"].endswith("/worktree"))
+        self.assertTrue((ws / output["next_iteration_plan"]["plan_ref"]).is_file())
+
+        result = json.loads((ext / "result_pack.json").read_text())
+        final_plan = result["iteration_plans"]["items"][-1]
+        final_plan.update(iteration_id="ITER-10", iteration_number=10)
+        result["current_iteration_plan"] = final_plan
+        status = json.loads((ext / "executor_status.json").read_text())
+        status["iteration_id"] = "ITER-10"
+        diagnosis["iteration_id"] = "ITER-10"
+        diagnosis["diagnosis_id"] = "DIAG-LOOP-10"
+        (ext / "result_pack.json").write_text(json.dumps(result), encoding="utf-8")
+        (ext / "executor_status.json").write_text(json.dumps(status), encoding="utf-8")
+        (ext / "result_diagnosis_report.json").write_text(json.dumps(diagnosis), encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(ROOT_DECISION_SCRIPT), "--workspace", str(ws)], text=True, capture_output=True, check=True)
+        self.assertEqual(json.loads(proc.stdout)["decision"]["loop_outcome"], "max_iterations_reached")
         shutil.rmtree(ws.parent, ignore_errors=True)
 
 

@@ -16,7 +16,7 @@ FALLBACK_REQUIRED = [
     "baseline_reproduction", "claim_evidence_matrix", "experiment_plan",
     "experiment_runs", "implementation_reviews", "result_diagnoses",
     "module_attributions", "iteration_decisions", "realized_method_package",
-    "final_framework_figure", "figure_table_inventory", "writer_handoff",
+    "framework_figure", "figure_table_inventory",
 ]
 EXECUTOR_STATUSES = {"running", "completed", "partial", "blocked", "failed"}
 RUN_STATUSES = {"planned", "running", "completed", "failed", "cancelled", "stale", "unusable"}
@@ -94,7 +94,7 @@ def main() -> int:
         expected = {}
     manifest_paths: set[str] = set()
     try:
-        manifest = load_json(resolve_in_workspace(root, "external_executor/run_manifest.json"))
+        manifest = load_json(resolve_in_workspace(root, "external_executor/report/run_manifest.json"))
         for artifact in manifest.get("artifacts", []):
             if isinstance(artifact, dict) and isinstance(artifact.get("path"), str):
                 manifest_paths.add(artifact["path"])
@@ -129,11 +129,24 @@ def main() -> int:
         "protocol": ("protocol_fingerprint", "protocol_ref"),
     }
     for index, run in enumerate(runs):
+        run_status = run.get("run_status") or run.get("status")
         if run.get("run_type") and run.get("run_type") not in RUN_TYPES:
             report["errors"].append({"code": "invalid_run_type", "message": f"run[{index}]"})
-        if run.get("status") and run.get("status") not in RUN_STATUSES:
+        if run_status and run_status not in RUN_STATUSES:
             report["errors"].append({"code": "invalid_run_status", "message": f"run[{index}]"})
-        if args.mode == "final" and run.get("run_type") in {"formal", "ablation", "robustness", "efficiency"} and run.get("status") == "completed":
+        if args.mode == "final" and run.get("run_type") == "ablation" and run_status == "completed":
+            required_attribution = (
+                "implementation_id", "variant_id", "reference_variant_id", "pair_id", "target_module_ids",
+                "module_states", "intervention", "preprocessing_fingerprint", "fairness_fingerprint",
+                "metric_directions", "repeat_index",
+            )
+            for field in required_attribution:
+                if run.get(field) in (None, "", [], {}):
+                    report["errors"].append({
+                        "code": "ablation_attribution_provenance_missing",
+                        "message": f"run[{index}] missing {field}",
+                    })
+        if args.mode == "final" and run.get("run_type") in {"formal", "ablation", "robustness", "efficiency"} and run_status == "completed":
             formal_checked += 1
             for label, keys in provenance_groups.items():
                 if not has_any(run, keys):
@@ -162,7 +175,7 @@ def main() -> int:
                             report["errors"].append({"code": "formal_artifact_unregistered", "message": relative})
 
     if args.mode == "final" and status == "completed":
-        for section in ("realized_method_package", "writer_handoff"):
+        for section in ("realized_method_package",):
             value = result.get(section)
             if value in (None, {}, []):
                 report["errors"].append({"code": "completed_missing_section", "message": section})

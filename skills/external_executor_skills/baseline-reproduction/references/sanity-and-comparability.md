@@ -8,7 +8,7 @@ Judge at least these dimensions independently:
 2. **Identity fidelity** — executed code is the approved baseline candidate and variant.
 3. **Mechanism fidelity** — repairs/adapters did not change defining behavior.
 4. **Protocol fidelity** — dataset, split, preprocessing, metric, aggregation, seeds/repeats, budget, and evaluator match the locked protocol.
-5. **Provenance completeness** — command, config, logs, metrics, environment, versions, and hashes exist.
+5. **Provenance completeness** — command, config, logs, normalized metrics, per-dataset/per-metric raw metric CSV files, environment, versions, and hashes exist.
 6. **Reference agreement** — result satisfies the predeclared comparison rule, when a trustworthy reference exists.
 7. **Statistical sufficiency** — planned repeats/seeds and aggregation are complete.
 8. **Fairness** — no extra data, tuning, pretraining, compute, or favorable evaluation mismatch.

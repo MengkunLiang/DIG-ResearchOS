@@ -85,6 +85,7 @@ iteration_decision:
   "stale_checkpoints": [],
   "active_blockers": [],
   "budget": {},
+  "iteration_loop": {"current_iteration": 0, "max_iterations": 10, "last_decision_id": null, "outcome": "not_started"},
   "input_fingerprint": null,
   "next_action": "context-alignment",
   "updated_at": ""
@@ -115,9 +116,8 @@ result_diagnoses
 module_attributions
 iteration_decisions
 realized_method_package
-final_framework_figure
+framework_figure
 figure_table_inventory
-writer_handoff
 ```
 
 Optional sections include scope-change requests, failed trials, replacement baselines, additional resources, manual notes, and open blockers.

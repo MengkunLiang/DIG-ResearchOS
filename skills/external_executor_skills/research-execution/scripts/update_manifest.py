@@ -16,7 +16,7 @@ from _common import (
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", required=True)
-    parser.add_argument("--manifest", default="external_executor/run_manifest.json")
+    parser.add_argument("--manifest", default="external_executor/report/run_manifest.json")
     parser.add_argument("--artifact", action="append", required=True)
     parser.add_argument("--producer", required=True)
     parser.add_argument("--phase", required=True)

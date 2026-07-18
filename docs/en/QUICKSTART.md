@@ -165,7 +165,7 @@ python -m researchos.cli run-task T5-EXECUTOR-GATE \
   --workspace <workspace>
 ```
 
-After a real Codex/Claude/manual executor finishes, T5 resumes directly into T8. The required T5-to-T8 interface is `external_executor/executor_research_report.md`; other files under `external_executor/` remain available as optional traceable context for the Writer. The current T5 gates define and validate this interface, but they do not synthesize the report themselves.
+After a real Codex/Claude/manual executor finishes, T5 resumes directly into T8. The required T5-to-T8 interface is `external_executor/executor_research_report.md`; other files under `external_executor/` remain available as optional traceable context for the Writer. The external executor's final `writer-handoff` child Skill synthesizes and validates the report. The ResearchOS T5 runtime gate independently checks the returned interface but does not synthesize it.
 
 For a workspace created by an older release that is already paused in `T5-EXTERNAL-WAIT` without `external_executor/skills/`, the offline deterministic command can repair or validate the suite without calling a model:
 

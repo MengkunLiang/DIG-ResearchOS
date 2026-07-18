@@ -28,7 +28,7 @@ def section_status(value: Any) -> str | None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate implementation prerequisites and authority.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/implementation_preflight.json")
+    parser.add_argument("--output", default="external_executor/report/implementation_preflight.json")
     args = parser.parse_args()
 
     workspace = resolve_workspace(args.workspace)
@@ -103,7 +103,7 @@ def main() -> int:
         if not approved:
             issues.append({"id": "iteration_not_approved", "severity": "blocking", "message": repr(iteration.get("status"))})
 
-    spec = implementation_spec(result, iteration)
+    spec = implementation_spec(result, iteration, workspace)
     if not isinstance(spec, dict):
         issues.append({"id": "missing_implementation_spec", "severity": "blocking", "message": "No implementation specification or approved delta found."})
         spec = {}
@@ -124,11 +124,19 @@ def main() -> int:
         issues.append({"id": "base_source_missing", "severity": "blocking", "message": repr(base_source_value)})
     elif not (base_source.is_dir() or base_source.is_file()):
         issues.append({"id": "base_source_invalid", "severity": "blocking", "message": str(base_source)})
+    if iteration.get("copy_previous_method") is True and base_source is not None:
+        implementation_root = ext / "expr" / "implementation"
+        try:
+            base_source.relative_to(implementation_root)
+        except ValueError:
+            issues.append({"id": "later_iteration_must_copy_previous_implementation", "severity": "blocking", "message": relpath(workspace, base_source)})
+        if base_source.name != "worktree":
+            issues.append({"id": "previous_implementation_worktree_required", "severity": "blocking", "message": relpath(workspace, base_source)})
 
     write_targets = [
         output,
-        ext / "implementation_change_contract.json",
-        ext / "implementation_report.json",
+        ext / "report" / "implementation_change_contract.json",
+        ext / "report" / "implementation_report.json",
         ext / "expr" / "implementation",
         ext / "result_pack.json",
     ]

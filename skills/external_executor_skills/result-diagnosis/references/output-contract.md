@@ -3,9 +3,9 @@
 ## Child-owned artifacts
 
 ```text
-external_executor/result_diagnosis_preflight.json
-external_executor/diagnosis_evidence_snapshot.json
-external_executor/diagnosis_statistics.json
+external_executor/report/result_diagnosis_preflight.json
+external_executor/report/diagnosis_evidence_snapshot.json
+external_executor/report/diagnosis_statistics.json
 external_executor/result_diagnosis_report.json
 external_executor/result_diagnosis/**
 ```
@@ -27,12 +27,31 @@ The root owns manifest registration, executor status and iteration decisions.
   "metric_summaries": {"status": "complete|partial|blocked|stale", "items": []},
   "method_comparisons": {"status": "complete|partial|blocked|stale", "items": []},
   "strongest_baselines": {"status": "complete|partial|blocked|stale", "items": []},
+  "baseline_performance": {
+    "status": "complete|partial",
+    "required_baseline_ids": [],
+    "items": [],
+    "all_required_baselines_beaten": false,
+    "majority_baselines_beaten": false,
+    "worse_than_majority": false
+  },
   "setting_diagnostics": {"status": "complete|partial|blocked|stale", "items": []},
   "anomalies": {"status": "complete|partial|blocked|stale", "items": []},
   "confound_assessments": {"status": "complete|partial|blocked|stale", "items": []},
   "claim_implications": {"status": "complete|partial|blocked|stale", "items": []},
   "evidence_requests": {"status": "complete|partial|blocked|stale", "items": []},
   "risks": {"status": "complete|partial|blocked|stale", "items": []},
+  "method_change_assessment": {
+    "status": "needs_analysis|complete|blocked",
+    "change_required": true,
+    "change_kind": "none|implementation_debug|method_refinement|human_review",
+    "rationale": "",
+    "failure_or_underperformance_causes": [],
+    "proposed_changes": [],
+    "must_preserve": [],
+    "prior_iteration_lessons": [],
+    "evidence_refs": []
+  },
   "diagnosis_gate": {
     "status": "ready_for_attribution|partial|blocked",
     "evidence_sufficiency": "sufficient_for_attribution|limited|insufficient",
@@ -47,6 +66,8 @@ The root owns manifest registration, executor status and iteration decisions.
 ```
 
 Required sections remain present under blocked/failed states.
+
+`all_required_baselines_beaten=true` requires a comparable win against every required baseline on every included surface. Ties, mixed outcomes, and missing baseline coverage are not success. When a change is required, the assessment is complete only with an evidence-backed rationale, concrete proposed changes, invariants to preserve, prior-iteration lessons, and evidence references.
 
 ## Evidence reference vocabulary
 

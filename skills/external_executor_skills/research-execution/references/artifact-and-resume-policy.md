@@ -19,21 +19,22 @@ Core files:
 
 ```text
 external_executor/executor_status.json
-external_executor/run_manifest.json
+external_executor/report/run_manifest.json
 external_executor/result_pack.json
 external_executor/executor_research_report.md
-external_executor/input_fingerprint.json
+external_executor/report/input_fingerprint.json
 ```
 
 ## Ownership
 
 Read broadly and write narrowly:
 
-- Root owns executor status, global manifest metadata, iteration plans/decisions, budgets, blockers, and final validation.
+- Root owns executor status, global manifest metadata, iteration plans/decisions, budgets, blockers, and the intended terminal outcome.
 - Each child owns only the result-pack sections and files declared in its contract.
 - Reviewers write review records; they do not rewrite Builder outputs.
 - Packaging skills read evidence and create packages; they do not alter raw results.
-- T8 consumes `external_executor/executor_research_report.md` plus supporting `external_executor/` artifacts; this suite does not write manuscript artifacts.
+- Writer Handoff owns the final research report and validates the frozen status/result/manifest/figure/table package.
+- T8 consumes `external_executor/executor_research_report.md` plus supporting `external_executor/` artifacts; the root does not duplicate Writer Handoff validation.
 
 Never replace the entire result pack with a child-local view. Merge only the owned top-level section and preserve unknown fields for forward compatibility.
 

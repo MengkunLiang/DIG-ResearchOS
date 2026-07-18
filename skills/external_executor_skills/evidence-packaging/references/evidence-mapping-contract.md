@@ -16,6 +16,8 @@ module ID
 ↔ framework nodes
 ↔ result visuals
 ↔ claim candidate IDs
+↔ experiment IDs
+↔ mechanism IDs
 ```
 
 Rules:
@@ -24,6 +26,7 @@ Rules:
 - supported modules have empirical evidence refs;
 - unsupported/unassessed modules remain visible in the mapping;
 - dropped modules are mapped to the intent delta, not the final framework nodes.
+- module/claim/experiment links are derived from the selected method spec's `evidence_traceability` and the selected attribution report, not inferred from names.
 
 ## Visual mapping
 
@@ -53,6 +56,8 @@ claim candidate
 ```
 
 Use `audit_status=not_audited_by_T7`. Evidence packaging must not infer paper approval from record counts or upstream labels.
+
+Emit explicit graph edges for `module supportsCandidate claim`, `module testedBy experiment`, and `claim visualizedBy artifact`. The graph is navigational provenance, not a causal or paper-approval verdict.
 
 ## Bidirectional checks
 

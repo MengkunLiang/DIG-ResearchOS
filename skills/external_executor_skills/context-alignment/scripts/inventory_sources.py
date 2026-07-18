@@ -61,7 +61,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--include", action="append", default=[])
-    parser.add_argument("--output", default="external_executor/context_source_inventory.json")
+    parser.add_argument("--output", default="external_executor/report/context_source_inventory.json")
     args = parser.parse_args()
 
     root = workspace_root(args.workspace)

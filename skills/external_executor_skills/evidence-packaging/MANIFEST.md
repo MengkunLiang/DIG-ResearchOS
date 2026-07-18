@@ -24,6 +24,8 @@ evidence-packaging/
 │   ├── build_realized_method_package.py
 │   ├── build_framework_figure_spec.py
 │   ├── render_framework_figure.py
+│   ├── build_result_tables.py
+│   ├── render_result_figures.py
 │   ├── build_figure_table_inventory.py
 │   ├── build_evidence_mapping.py
 │   ├── build_package_manifest.py
@@ -56,6 +58,8 @@ evidence-packaging/
 | `build_realized_method_package.py` | 从实际实现、配置、归因与边界生成 realized method。 |
 | `build_framework_figure_spec.py` | 由 realized method 生成 evidence-bound 框架图规格。 |
 | `render_framework_figure.py` | 无外部依赖生成 Mermaid editable source 与 SVG；不完整规格拒绝渲染。 |
+| `build_result_tables.py` | 从 `raw_results/` 的 CSV/TSV/JSON/JSONL 生成规范长表、主比较表、消融表和其他实验表。 |
+| `render_result_figures.py` | 使用 Matplotlib 从生成表按 dataset/split/metric 渲染可复现 SVG。 |
 | `build_figure_table_inventory.py` | 识别真实视觉 Artifact，并记录数值和生成路径。 |
 | `build_evidence_mapping.py` | 生成模块、视觉和 claim candidate 的双向映射。 |
 | `build_package_manifest.py` | 生成轻量 Research Object 式 entities/relations/checksums manifest。 |
@@ -67,4 +71,4 @@ evidence-packaging/
 
 ## 外部依赖
 
-运行脚本仅依赖 Python 标准库。框架图默认输出 Mermaid 文本和 SVG，不要求 Graphviz、Mermaid CLI、Matplotlib 或 LaTeX。项目可以替换渲染器，但不能破坏同一 snapshot、node/edge evidence mapping 和 `must_not_show` 约束。
+除结果图渲染外，运行脚本仅依赖 Python 标准库。结果图使用 ResearchOS 已声明的 `matplotlib>=3.8,<4`；框架图不要求 Graphviz、Mermaid CLI 或 LaTeX。项目可以替换渲染器，但不能破坏同一 snapshot、node/edge evidence mapping、数值血缘和 `must_not_show` 约束。

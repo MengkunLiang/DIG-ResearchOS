@@ -31,8 +31,12 @@
 
 ## Result figures/tables
 
+- The numeric chain is inspectable from raw result to normalized long table, aggregate table, plotting script, SVG, and caption.
+- Every consumed raw result is present in the pinned manifest artifact set and still matches its snapshot checksum.
 - Every ready visual has source result, source data, config, log, metric output, plot script, protocol, and render.
 - Values, metric direction, aggregation, uncertainty, units, and seed count match sources.
+- Different metrics, directions, and protocol fingerprints are never mixed on one comparison axis.
+- Reruns remove obsolete generated tables/figures rather than leaving stale final assets.
 - Required missing visuals are explicit.
 - Stale visuals are not active.
 - Captions do not overstate evidence.

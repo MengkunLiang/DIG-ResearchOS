@@ -1,6 +1,6 @@
 ---
 name: research-execution
-description: Orchestrate or resume the complete ResearchOS external-executor workflow from T5 handoff through resource readiness, claim-bound experiment planning, build-review-run iterations, diagnosis, attribution, evidence packaging, and final downstream handoff validation. Use when Codex or Claude Code is launched in a ResearchOS workspace to execute `external_executor/skills/research-execution/SKILL.md`, continue an interrupted external experiment, decide the next project-specific child skill, enforce gates and budgets, or validate the final T8 handoff inputs. Do not use for an isolated child-stage task when that child skill is explicitly requested.
+description: Orchestrate or resume the complete ResearchOS external-executor workflow from T5 handoff through resource readiness, claim-bound experiment planning, build-review-run iterations, diagnosis, attribution, evidence packaging, and Writer Handoff. Use when Codex or Claude Code is launched in a ResearchOS workspace to execute `external_executor/skills/research-execution/SKILL.md`, continue an interrupted external experiment, decide the next project-specific child skill, or enforce gates and budgets. Do not use for an isolated child-stage task when that child skill is explicitly requested.
 ---
 
 # Research Execution
@@ -31,10 +31,9 @@ Never broaden permissions, resource-acquisition policy, research scope, or writa
 Write narrowly. This root skill owns:
 
 - `external_executor/executor_status.json`;
-- the global index and checkpoint metadata in `external_executor/run_manifest.json`;
+- the global index and checkpoint metadata in `external_executor/report/run_manifest.json`;
 - iteration plans and iteration decisions in `external_executor/result_pack.json`;
-- budget accounting, blockers, human-review requests, and final validation status.
-- the final downstream handoff input validation report in `external_executor/final_handoff_input_validation.json`.
+- budget accounting, blockers, human-review requests, and the intended terminal execution outcome.
 
 Child skills own their domain sections and files. Read `<root-skill>/references/child-skill-contracts.md` before the first dispatch. Do not let one child invoke another child or overwrite a sibling's section.
 
@@ -44,7 +43,7 @@ Run deterministic checks before choosing work:
 
 ```bash
 python <root-skill>/scripts/fingerprint_inputs.py --workspace <workspace> \
-  --output external_executor/input_fingerprint.json
+  --output external_executor/report/input_fingerprint.json
 
 python <root-skill>/scripts/validate_executor_state.py --workspace <workspace> \
   --mode resume
@@ -102,11 +101,11 @@ Child sequence and conditional use:
 | 9 | `result-diagnosis` | A new usable run set has not been diagnosed |
 | 10 | `module-attribution` | Evidence is sufficient for mechanism/module analysis |
 | 11 | `evidence-packaging` | Iteration stops and current evidence snapshot is stable |
-| 12 | `writer-handoff` | Evidence package exists and the T8 writer handoff report is ready |
+| 12 | `writer-handoff` | Evidence package exists and the final status/result/manifest/assets are ready to compile and validate for T8 |
 
 ## Control the build-review-run loop
 
-Before each iteration, create an iteration plan containing the trigger, approved changes, affected experiments, reusable runs, runs to execute, budget before execution, and expected decision surface.
+Before the first method build, create iteration `ITER-01` with `iteration_number=1`, `max_method_iterations=10`, the trigger, approved changes, affected experiments, reusable runs, runs to execute, budget before execution, and expected decision surface. Materialize the same plan at `external_executor/report/iteration_plans/ITER-01.json` and store that path as `plan_ref`; experiment run requests use it as `iteration_plan_ref`. Ten is a fixed total method implementation/debug-attempt limit, not a default that a child may raise.
 
 Enforce this loop:
 
@@ -121,13 +120,32 @@ plan
        -> pass: run only the approved level
   -> experiment run and checkpoint
   -> result diagnosis
-  -> module attribution when evidence permits
-  -> root iteration decision
+  -> deterministic root iteration decision
+       -> failed/incomplete run: copy the last method and debug in a new iteration
+       -> not better than every required baseline: method refinement, then copy/implement in a new iteration
+       -> better than every required baseline but final ablation contracts missing: return to experiment design
+       -> better than every required baseline but reference/intervention pairs incomplete: run the missing final ablations
+       -> target reached or a stop condition fires: leave the optimization loop
+  -> module attribution only after every required final ablation has complete comparable variants for every planned seed/repeat
+       -> partial/add evidence: return to experiment design
+       -> blocked: human review
+       -> ready: evidence packaging
 ```
+
+Every experiment attempt, including a failed launch or unusable result, must be applied to `result_pack.experiment_runs` and submitted to `result-diagnosis`. Do not bypass diagnosis by debugging directly from console output.
+
+After applying each diagnosis, run:
+
+```bash
+python <root-skill>/scripts/decide_iteration.py --workspace <workspace> \
+  --diagnosis external_executor/result_diagnosis_report.json
+```
+
+The helper records one root decision and the next durable route. It creates a new iteration only for a method modification/debug, materializes the plan under `external_executor/report/iteration_plans/`, binds its `base_source` to the immediately preceding implementation `worktree/`, carries all prior diagnosis lessons, and refuses an eleventh method iteration. For final ablations it verifies complete plan-declared variant sets, shared pair identity, exact module states, fingerprints, and seed/repeat coverage; a single completed ablation run is insufficient. Never edit an earlier method worktree in place.
 
 Do not run formal experiments without `review_status=pass` and `approved_for=formal`. Baseline work and method smoke tests may proceed independently only when the plan and fairness constraints allow it; do not make a superiority claim before required comparisons are valid.
 
-After diagnosis and attribution, choose one primary decision:
+The deterministic decision records one primary value:
 
 - `continue_same_idea`
 - `minor_method_fix`
@@ -139,6 +157,8 @@ After diagnosis and attribution, choose one primary decision:
 - `stop_and_report`
 
 Record rationale, evidence references, affected claims, planned changes, remaining budget, human-review requirement, and next action. Use `references/routing-and-gates.md` for route effects.
+
+The optimization target is reached only when completed formal our-method runs beat every required baseline on every comparable surface and every required final-method ablation has a complete, plan-matching reference/intervention pair for every declared seed/repeat surface. Missing, tied, mixed, or incomparable baseline evidence, or a lone completed ablation variant, is not success. Budget exhaustion, active authority/security blockers, and the fixed ten-iteration limit stop the loop honestly and package the best auditable evidence available.
 
 ## Enforce gates
 
@@ -174,13 +194,13 @@ python <root-skill>/scripts/validate_executor_state.py --workspace <workspace> \
 
 4. Atomically update `executor_status.json` only after the output validation passes.
 
-Use workspace-relative artifact paths. Bind formal results to config, raw log, metric output, split, seed/repeat, code version, resource version, environment, and protocol fingerprint. Executed code/config must be under `external_executor/expr/`; by-hand local resources must be under `resources/`; public remote acquisitions and baseline reimplementations must be under `resource/`; raw logs, metric outputs, records, checkpoints, and run-produced artifacts must be under `external_executor/raw_results/`.
+Use workspace-relative artifact paths. Bind formal results to config, raw log, metric output, split, seed/repeat, code version, resource version, environment, and protocol fingerprint. Executed code/config must be under `external_executor/expr/`; approved resources, public remote acquisitions, and baseline reimplementations must be under `resources/`; raw logs, metric outputs, records, checkpoints, and run-produced artifacts must be under `external_executor/raw_results/`.
 
 ## Stop honestly
 
 Stop or package partial evidence when any configured condition is met, including budget exhaustion, improvement plateau, required-baseline unavailability, audited target reached, implementation block, mandatory claim narrowing, human review, no valid formal result, minimum-loop block, or security/license block.
 
-`completed` means mandatory work and provenance are complete and final validation passes. Use `partial`, `blocked`, or `failed` according to `references/status-and-enums.md`; never use `completed` as a courtesy status.
+`completed` means mandatory scientific work and provenance are complete and Writer Handoff validation can pass. Use `partial`, `blocked`, or `failed` according to `references/status-and-enums.md`; never use `completed` as a courtesy status.
 
 Even after failure or blocking, preserve logs, failure records, valid partial evidence, open risks, and recovery instructions.
 
@@ -189,19 +209,11 @@ Even after failure or blocking, preserve logs, failure records, valid partial ev
 When iteration stops:
 
 1. Dispatch `evidence-packaging` against one pinned final evidence snapshot.
-2. Dispatch `writer-handoff` only after the package validates.
-3. Run:
-
-```bash
-python <root-skill>/scripts/validate_result_pack.py --workspace <workspace> --mode final
-python <root-skill>/scripts/validate_executor_state.py --workspace <workspace> --mode final
-python <root-skill>/scripts/validate_final_handoff_inputs.py --workspace <workspace> \
-  --output external_executor/final_handoff_input_validation.json
-```
-
-4. Treat a missing or empty `external_executor/executor_research_report.md` as a final validation failure. This is the required T5-to-T8 handoff file; `external_executor/result_pack.json`, `external_executor/executor_status.json`, `external_executor/run_manifest.json`, raw results, configs, logs, and other `external_executor/` files remain available as supporting context for T8.
-5. Set the final executor status from actual validation results.
-6. Leave all outputs in `external_executor/` for downstream ResearchOS handoff. Do not write manuscript artifacts yourself.
+2. Derive the intended terminal outcome from actual work and write the same `completed`, `partial`, `blocked`, or `failed` value to `executor_status.json` and `result_pack.json`. Register all evidence-packaging outputs before freezing the manifest.
+3. Dispatch `writer-handoff`. It creates `external_executor/executor_research_report.md` and validates the terminal status, result pack, run manifest, research report, and every final figure/table.
+4. Accept only `external_executor/report/writer_handoff_validation.json` with `status=ready|partial`. A blocked result routes back to `writer-handoff` repair or the authoritative producer identified by the validation error.
+5. Record the child checkpoint and stop. Do not run root-level result-pack, executor-state, or final-handoff validation after Writer Handoff, and do not rewrite the validated core files.
+6. Leave all outputs in `external_executor/` for downstream ResearchOS ingestion. Do not write manuscript artifacts yourself.
 
 The external handoff is a validated downstream input package, never “paper-approved.”
 
@@ -225,6 +237,6 @@ The external handoff is a validated downstream input package, never “paper-app
 - `scripts/initialize_executor.py`: create minimal state, manifest, and result-pack envelopes.
 - `scripts/update_manifest.py`: register artifacts with checksums and provenance.
 - `scripts/validate_executor_state.py`: validate controls, state, paths, and manifest integrity.
-- `scripts/validate_result_pack.py`: validate checkpoint/final result-pack contracts.
-- `scripts/validate_final_handoff_inputs.py`: validate the final downstream handoff input files exist and are readable.
+- `scripts/validate_result_pack.py`: validate checkpoint result-pack contracts before the terminal Writer Handoff snapshot.
 - `scripts/route_next_skill.py`: derive the next safe child action from durable state.
+- `scripts/decide_iteration.py`: enforce the diagnosis-driven method loop, versioning, baseline target, final ablations, budget stops, and fixed ten-iteration cap.

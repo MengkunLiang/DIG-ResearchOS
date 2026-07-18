@@ -33,7 +33,7 @@ external_executor/AGENTS.md
 external_executor/allowed_paths.txt
 external_executor/executor_status.json
 external_executor/result_pack.json
-external_executor/run_manifest.json
+external_executor/report/run_manifest.json
 ```
 
 Then read the dispatched iteration plan, experiment plan entry, latest implementation review, run request, config, and declared dependency files. Use the more restrictive path/security rule when controls disagree. A material authority, protocol, or scope conflict is `blocked`; do not guess.
@@ -66,6 +66,10 @@ Missing approval, budget, fingerprint, dependency, path authority, or isolation 
 
 Use an existing request if the root supplied one. Otherwise materialize the root's dispatch into the schema in `references/run-request-contract.md`; do not invent missing scientific fields.
 
+Bind every request to the exact deployment with non-empty `method_id`, `method_role`, and `implementation_id`. Use `method_role=ours` for the versioned method worktree and `method_role=baseline` only for an explicitly reviewed baseline deployment. These fields must survive unchanged into the terminal run record so `result-diagnosis` can compare methods without inferring identity from paths.
+
+For every ablation request, copy the experiment plan's reviewed `variant_id`, `reference_variant_id`, target modules, exact module states, and intervention. Add a stable `pair_id` shared by the comparable reference/intervention attempts, plus preprocessing/fairness fingerprints and metric directions. Never infer these fields from a variant name or command.
+
 Validate it before launch:
 
 ```bash
@@ -74,7 +78,7 @@ python <skill>/scripts/validate_run_request.py \
   --request <workspace-relative-run-request.json>
 ```
 
-The validator compares the request with the plan entry and review, verifies dependency checksums, checks the approval lattice, and confirms budget and path constraints.
+The validator compares the request with the plan entry and review, including exact ablation variant semantics, verifies dependency checksums, checks the approval lattice, and confirms budget and path constraints.
 
 ## Capture the execution environment
 

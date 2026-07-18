@@ -83,7 +83,7 @@ Review these axes separately so one pass cannot hide another failure:
 2. **Code correctness** — shapes, objectives, gradients, state, error handling, checkpointing, tests, and configuration wiring are credible.
 3. **Protocol fairness** — dataset/split/preprocessing/metric/evaluation/seed/tuning/extra-data/pretraining/compute treatment is comparable.
 4. **Data integrity** — no leakage, train/test contamination, target leakage, duplicate contamination, or evaluation-time fitting.
-5. **Reproducibility and observability** — commands, configs, seeds, versions, environment, logging, raw outputs, patch/code identity, and ablation switches are recoverable.
+5. **Reproducibility and observability** — commands, configs, seeds, versions, environment, logging, raw outputs, patch/code identity, and ablation switches are recoverable. For ablations, verify the plan's target module IDs, full/reference and intervention variant contracts, exact module states, pair identity requirements, metric directions, and preprocessing/fairness fingerprints against the implementation mapping and config switches.
 6. **Security and path compliance** — no unauthorized paths, secret exposure, unsafe third-party execution, or destructive behavior.
 7. **Contribution drift** — implementation does not replace the core mechanism, change task/benchmark/contribution type, silently drop baselines, or promote an engineering trick into a paper contribution.
 
@@ -106,7 +106,7 @@ python <skill-dir>/scripts/validate_verification_evidence.py --workspace <worksp
   --evidence external_executor/reviews/<iteration-id>/verification_evidence.json
 ```
 
-Formal approval requires evidence for relevant tests, protocol comparison, config/logging validation, and any changed metric/split/ablation path. A linter does not prove scientific correctness; one smoke run does not prove formal fairness.
+Formal approval requires evidence for relevant tests, protocol comparison, config/logging validation, and any changed metric/split/ablation path. Do not approve an ablation whose reviewed plan cannot be materialized into complete comparable reference/intervention run requests. A linter does not prove scientific correctness; one smoke run does not prove formal fairness.
 
 ## Record findings precisely
 
@@ -123,7 +123,7 @@ Each finding must name:
 
 Separate `unknown` from `failed`. Missing evidence is not proof of correctness or incorrectness; it is a gate limitation.
 
-For path compliance, check that executable deployments and code dependencies live under `external_executor/expr/`, prepared resources are read from `resources/` for by-hand local material or `resource/` for acquired/reimplemented material, and logs, metrics, run records, checkpoints, and run-produced artifacts are under `external_executor/raw_results/`.
+For path compliance, check that executable deployments and code dependencies live under `external_executor/expr/`, prepared resources are read from `resources/`, and logs, metrics, run records, checkpoints, and run-produced artifacts are under `external_executor/raw_results/`.
 
 ## Issue the gate verdict
 

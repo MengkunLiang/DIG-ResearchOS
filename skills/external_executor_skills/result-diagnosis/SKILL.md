@@ -29,13 +29,13 @@ Act as the evidence-bound analyst for one completed or partially completed Resea
    - `<skill-dir>/references/evidence-and-run-eligibility.md`;
    - `<skill-dir>/references/output-contract.md`.
    Raw logs, metric files, run records, checkpoints, and run-produced artifacts referenced by those records must resolve under `<workspace>/external_executor/raw_results/`.
-4. Stop with `blocked` when no iteration can be identified, the run set is absent, protocol/metric direction is indeterminate, formal records are presented without minimum provenance, raw evidence is outside `external_executor/raw_results/`, or the writable boundary cannot be determined.
+4. Stop with `blocked` when no iteration can be identified or the run set is absent. A terminal failed/cancelled/unusable our-method run is still a valid diagnosis input: preserve it and diagnose the engineering failure even when no metric exists. Positive scientific interpretation remains blocked when protocol/metric direction is indeterminate, formal records lack minimum provenance, raw evidence is outside `external_executor/raw_results/`, or the writable boundary cannot be determined.
 
 Write only:
 
-- `external_executor/result_diagnosis_preflight.json`;
-- `external_executor/diagnosis_evidence_snapshot.json`;
-- `external_executor/diagnosis_statistics.json`;
+- `external_executor/report/result_diagnosis_preflight.json`;
+- `external_executor/report/diagnosis_evidence_snapshot.json`;
+- `external_executor/report/diagnosis_statistics.json`;
 - `external_executor/result_diagnosis_report.json`;
 - versioned analysis artifacts under `external_executor/result_diagnosis/`;
 - `result_pack.json#result_diagnoses` through the narrow apply script.
@@ -46,7 +46,7 @@ Do not change run records, raw results, configs, logs, protocol fingerprints, re
 
 ```bash
 python <skill-dir>/scripts/preflight_diagnosis.py --workspace <workspace> \
-  --output external_executor/result_diagnosis_preflight.json
+  --output external_executor/report/result_diagnosis_preflight.json
 ```
 
 The preflight confirms:
@@ -67,7 +67,7 @@ Read `references/evidence-and-run-eligibility.md`, then run:
 ```bash
 python <skill-dir>/scripts/build_evidence_snapshot.py --workspace <workspace> \
   --iteration-id <iteration-id> \
-  --output external_executor/diagnosis_evidence_snapshot.json
+  --output external_executor/report/diagnosis_evidence_snapshot.json
 ```
 
 The snapshot must:
@@ -76,6 +76,7 @@ The snapshot must:
 - identify every included, excluded, stale, unusable, failed, and incomplete run;
 - preserve run type, analysis role, experiment/claim IDs, method/baseline identity, setting, dataset/split, seed/repeat, protocol fingerprint, code/resource version, review approval, metric and artifact references;
 - assign stable evidence IDs;
+- materialize each selected, formally reviewed baseline-reproduction attempt as read-only comparison evidence by following its run-record and normalized metric references; never copy or rewrite the baseline raw result;
 - record why each run is eligible only for `engineering`, `diagnostic`, `small_scale`, `formal_candidate`, or `excluded` use;
 - compute an input fingerprint over the exact diagnosis evidence surface.
 
@@ -85,7 +86,7 @@ Never diagnose from a conversational summary when a run record or metric artifac
 
 ```bash
 python <skill-dir>/scripts/normalize_run_metrics.py \
-  --snapshot <workspace>/external_executor/diagnosis_evidence_snapshot.json \
+  --snapshot <workspace>/external_executor/report/diagnosis_evidence_snapshot.json \
   --output <workspace>/external_executor/result_diagnosis/<iteration-id>/metric_observations.json
 ```
 
@@ -160,7 +161,7 @@ python <skill-dir>/scripts/build_diagnosis_facts.py \
   --aggregates <metric-aggregates.json> \
   --comparisons <method-comparisons.json> \
   --anomalies <anomalies.json> \
-  --output external_executor/diagnosis_statistics.json
+  --output external_executor/report/diagnosis_statistics.json
 ```
 
 This facts file identifies, per comparable setting:
@@ -186,8 +187,8 @@ Initialize the report:
 
 ```bash
 python <skill-dir>/scripts/initialize_diagnosis_report.py --workspace <workspace> \
-  --snapshot external_executor/diagnosis_evidence_snapshot.json \
-  --statistics external_executor/diagnosis_statistics.json \
+  --snapshot external_executor/report/diagnosis_evidence_snapshot.json \
+  --statistics external_executor/report/diagnosis_statistics.json \
   --output external_executor/result_diagnosis_report.json
 ```
 
@@ -202,6 +203,8 @@ Diagnose:
 5. claim implications: `supported`, `weakened`, `contradicted`, `unresolved`, or `not_tested`;
 6. concrete missing evidence or diagnostic experiments;
 7. risks to the next module-attribution step.
+
+Complete `method_change_assessment` on every iteration. If our method failed to run, classify the required action as `implementation_debug`; if it ran but did not beat every required baseline on every comparable surface, classify it as `method_refinement`. Record the observed causes or evidence-bounded hypotheses, concrete proposed changes, invariants to preserve, lessons from all earlier iterations, and evidence references. Do not mark the assessment complete with a generic “improve performance” instruction.
 
 Use interpretation levels:
 
@@ -288,6 +291,7 @@ The recommendation is advisory. `research-execution` owns routing, budget, check
 - Every diagnosis item needs resolvable evidence references and confidence.
 - Report practical magnitude separately from uncertainty and repeat sufficiency.
 - Never treat missing baseline or missing seed as a win.
+- Treat `all_required_baselines_beaten=true` only when every required baseline has comparable evidence and ours wins every compared surface; ties, missing comparisons, and mixed wins/losses do not satisfy the loop target.
 - Never convert `n=1` or a selected seed into a stable trend.
 - Never promote smoke/small-scale/toy/synthetic evidence to formal support.
 - Never infer causality from correlation, ranking or one uncontrolled comparison.

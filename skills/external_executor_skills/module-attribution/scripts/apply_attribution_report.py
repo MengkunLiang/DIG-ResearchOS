@@ -15,8 +15,8 @@ def main() -> int:
     ws = resolve_workspace(args.workspace)
     report_path = resolve_in_workspace(ws, args.report)
     report = load_json(report_path)
-    snapshot = load_json(ws / "external_executor/module_attribution_snapshot.json")
-    facts = load_json(ws / "external_executor/module_attribution_facts.json")
+    snapshot = load_json(ws / "external_executor/report/module_attribution_snapshot.json")
+    facts = load_json(ws / "external_executor/report/module_attribution_facts.json")
     result_path = ws / "external_executor/result_pack.json"
     result = load_json(result_path)
     errors = validate(report, collect_known_ids(snapshot, facts, result))

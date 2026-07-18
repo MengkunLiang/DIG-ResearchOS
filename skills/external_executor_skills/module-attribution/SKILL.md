@@ -34,11 +34,11 @@ Act as the evidence-bound mechanism analyst for one ResearchOS iteration. Determ
 
 Write only:
 
-- `external_executor/module_attribution_preflight.json`;
-- `external_executor/module_attribution_snapshot.json`;
-- `external_executor/module_attribution_facts.json`;
+- `external_executor/report/module_attribution_preflight.json`;
+- `external_executor/report/module_attribution_snapshot.json`;
+- `external_executor/report/module_attribution_facts.json`;
 - `external_executor/module_attribution_report.json`;
-- versioned analysis artifacts under `external_executor/module_attribution/`;
+- versioned analysis artifacts under `external_executor/report/module_attribution/`;
 - `result_pack.json#module_attributions` through the narrow apply script.
 
 Do not change runs, raw results, implementations, configs, reviews, diagnosis records, experiment plans, iteration plans/decisions, claim boundaries, method specifications, executor status, manifest, budget, or sibling sections. Return control to `research-execution` after applying the report.
@@ -47,7 +47,7 @@ Do not change runs, raw results, implementations, configs, reviews, diagnosis re
 
 ```bash
 python <skill-dir>/scripts/preflight_attribution.py --workspace <workspace> \
-  --output external_executor/module_attribution_preflight.json
+  --output external_executor/report/module_attribution_preflight.json
 ```
 
 The preflight confirms:
@@ -56,6 +56,8 @@ The preflight confirms:
 - the diagnosis gate is `ready_for_attribution` or a non-blocking `partial` with explicit limitations;
 - implementation/module mappings and experiment runs exist;
 - ablation, diagnostic, subset, and formal evidence classes remain distinguishable;
+- the final iteration's active implementation is identifiable;
+- at least one final-implementation ablation group has explicit pair/reference identity, controlled intervention, module states, metric directions, and both enabled/disabled observations when the diagnosis is ready for attribution;
 - metric direction, protocol fingerprint, method identity, and seed/repeat are recoverable where intervention effects are claimed;
 - unsupported schema or path conditions do not prevent analysis.
 
@@ -68,17 +70,19 @@ Read `references/evidence-hierarchy.md`, then run:
 ```bash
 python <skill-dir>/scripts/build_attribution_snapshot.py --workspace <workspace> \
   --iteration-id <iteration-id> \
-  --output external_executor/module_attribution_snapshot.json
+  --output external_executor/report/module_attribution_snapshot.json
 ```
 
 The snapshot must preserve:
 
 - current diagnosis and its input fingerprint;
-- ours and baseline module identities, code/config mappings, and mechanism links;
+- final-implementation ours and baseline module identities, code/config mappings, and mechanism links;
 - included/excluded intervention runs and reasons;
 - method/variant, removed/disabled/added modules, intervention type, setting/subset, dataset/split, seed/repeat, protocol/fairness fingerprints, metric observations, and artifact references;
 - diagnosis anomalies, confounds, and evidence requests relevant to attribution;
 - one deterministic attribution input fingerprint.
+
+Keep prior implementations and diagnoses only in `implementation_history` and `iteration_history`. Do not merge an earlier method version into the final implementation registry or effect estimates.
 
 Do not infer a module intervention from a variant name alone when explicit switch/mapping evidence is absent.
 
@@ -86,8 +90,8 @@ Do not infer a module intervention from a variant name alone when explicit switc
 
 ```bash
 python <skill-dir>/scripts/inventory_modules.py \
-  --snapshot <workspace>/external_executor/module_attribution_snapshot.json \
-  --output <workspace>/external_executor/module_attribution/<iteration-id>/module_registry.json
+  --snapshot <workspace>/external_executor/report/module_attribution_snapshot.json \
+  --output <workspace>/external_executor/report/module_attribution/<iteration-id>/module_registry.json
 ```
 
 Read `references/module-and-mechanism-contract.md`. Each module record distinguishes:
@@ -104,9 +108,9 @@ Implementation presence is `implementation_fact`, not evidence of benefit.
 
 ```bash
 python <skill-dir>/scripts/normalize_attribution_evidence.py \
-  --snapshot <workspace>/external_executor/module_attribution_snapshot.json \
+  --snapshot <workspace>/external_executor/report/module_attribution_snapshot.json \
   --module-registry <module-registry.json> \
-  --output <workspace>/external_executor/module_attribution/<iteration-id>/intervention_observations.json
+  --output <workspace>/external_executor/report/module_attribution/<iteration-id>/intervention_observations.json
 ```
 
 Classify each observation as one of:
@@ -119,7 +123,7 @@ implementation_fact
 unsupported
 ```
 
-A direct ablation requires an explicit intervention relative to a compatible reference variant. A controlled diagnostic requires a declared manipulation, held-constant comparison surface, and a metric relevant to the mechanism question. Subset performance without intervention is a correlational hint unless the plan defines a valid controlled contrast.
+A direct ablation requires a shared `pair_id`, explicit module states, a controlled intervention, and a compatible `reference_variant_id` under the same implementation and comparability surface. A controlled diagnostic requires a declared manipulation, held-constant comparison surface, and a metric relevant to the mechanism question. Subset performance without intervention is a correlational hint unless the plan defines a valid controlled contrast.
 
 ## Estimate direct module effects
 
@@ -128,7 +132,7 @@ Read `references/ablation-and-intervention-analysis.md`, then run:
 ```bash
 python <skill-dir>/scripts/compute_ablation_effects.py \
   --observations <intervention-observations.json> \
-  --output <workspace>/external_executor/module_attribution/<iteration-id>/ablation_effects.json
+  --output <workspace>/external_executor/report/module_attribution/<iteration-id>/ablation_effects.json
 ```
 
 Pair full/reference and intervened observations only when they agree on:
@@ -157,7 +161,7 @@ Read `references/interaction-and-confounding.md`, then run:
 python <skill-dir>/scripts/analyze_interactions.py \
   --observations <intervention-observations.json> \
   --ablation-effects <ablation-effects.json> \
-  --output <workspace>/external_executor/module_attribution/<iteration-id>/interaction_and_confounds.json
+  --output <workspace>/external_executor/report/module_attribution/<iteration-id>/interaction_and_confounds.json
 ```
 
 When a complete factorial contrast exists, compute pairwise difference-in-differences for module interactions. Otherwise record interaction as unsupported; do not estimate it from two independent single-module effects.
@@ -179,7 +183,7 @@ python <skill-dir>/scripts/build_attribution_facts.py \
   --module-registry <module-registry.json> \
   --ablation-effects <ablation-effects.json> \
   --interaction-analysis <interaction-and-confounds.json> \
-  --output external_executor/module_attribution_facts.json
+  --output external_executor/report/module_attribution_facts.json
 ```
 
 Facts identify:
@@ -206,8 +210,8 @@ Initialize:
 
 ```bash
 python <skill-dir>/scripts/initialize_attribution_report.py --workspace <workspace> \
-  --snapshot external_executor/module_attribution_snapshot.json \
-  --facts external_executor/module_attribution_facts.json \
+  --snapshot external_executor/report/module_attribution_snapshot.json \
+  --facts external_executor/report/module_attribution_facts.json \
   --output external_executor/module_attribution_report.json
 ```
 
@@ -261,11 +265,13 @@ python <skill-dir>/scripts/compute_attribution_gate.py \
 
 Use:
 
-- `ready_for_iteration_decision`: relevant modules/mechanisms have evidence-graded attribution, material confounds are propagated, and recommendations are bounded.
+- `ready_for_iteration_decision`: at least one final-method module has direct ablation or controlled-diagnostic evidence, every required implemented module is covered, material confounds are propagated, and recommendations are bounded.
 - `partial`: useful attribution exists, but coverage, pairing, interaction evidence, stability, or mechanism discrimination remains limited.
 - `blocked`: no scientifically valid attribution surface exists, intervention identity is ambiguous, protocol/fairness mismatch is blocking, or central evidence is missing.
 
 `ready_for_iteration_decision` does not mean the root must continue, modify, narrow, or stop. It only means the attribution evidence is ready for root consideration.
+
+When the gate is `partial` with `next_action=add_controlled_evidence` or `repair_or_rerun`, the root returns to experiment design rather than treating the mere presence of a report as completion. A blocked gate requires human review; constrained packaging is allowed only for `stop_and_report`.
 
 ## Validate and apply narrowly
 

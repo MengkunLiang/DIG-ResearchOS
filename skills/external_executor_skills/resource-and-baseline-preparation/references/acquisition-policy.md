@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This policy governs how Phase B obtains experiment resources. Authority comes from `handoff_pack.json`, `context_alignment.confirmed_execution_scope`, `AGENTS.md`, `external_executor/report/executor_selection.json`, and `allowed_paths.txt`. For ResearchOS T5 external execution, the default authority allows public remote platform access, public dataset download, and baseline reimplementation inside allowed paths, subject to license and security review.
+This policy governs how Phase B obtains experiment resources. The deterministic Phase B scripts read authority from `handoff_pack.json`, `result_pack.json#context_alignment.confirmed_execution_scope`, `AGENTS.md`, `expected_outputs_schema.json`, and `allowed_paths.txt`; executor selection may already be reflected in `AGENTS.md`, but these scripts do not read `external_executor/report/executor_selection.json` directly. For ResearchOS T5 external execution, the default authority allows public remote platform access, public dataset download, and baseline reimplementation inside allowed paths, subject to license and security review.
 
 ## Modes
 
@@ -14,7 +14,7 @@ This policy governs how Phase B obtains experiment resources. Authority comes fr
 
 A boolean flag cannot broaden a stricter mode. A mode cannot override `AGENTS.md`, path policy, restricted-data terms, or license restrictions.
 
-When a legacy handoff omits the acquisition policy, use the ResearchOS default mode `github_and_reimplementation` with `network_allowed=true`, `dataset_download_allowed=true`, and `baseline_reimplementation_allowed=true`. Do not inspect `external_executor/expr/` for baseline, benchmark, dataset, checkpoint, or evaluation resources. That directory is the formal execution area after baseline and method construction; by-hand local resource candidates belong under `resources/` or `user_seeds/`. Public remote acquisitions and baseline reimplementations must be placed under `resource/`.
+When a legacy handoff omits the acquisition policy, use the ResearchOS default mode `github_and_reimplementation` with `network_allowed=true`, `dataset_download_allowed=true`, and `baseline_reimplementation_allowed=true`. Resource candidates, public remote acquisitions, and baseline reimplementations for this skill must be placed under `resources/`.
 
 ## Ordered acquisition path
 

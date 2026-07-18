@@ -49,6 +49,20 @@ def approved_baselines(result: dict[str, Any], scope: dict[str, Any]) -> list[di
 
 def experiment_base(exp_id: str, name: str, role: str, run_type: str, kind: str, protocol: dict[str, Any]) -> dict[str, Any]:
     p = protocol.get("protocol", {})
+    preprocessing_fingerprint = (
+        get_nested(p, "preprocessing.fingerprint")
+        or get_nested(p, "preprocessing_fingerprint")
+        or get_nested(protocol, "fingerprints.preprocessing")
+    )
+    if not preprocessing_fingerprint and nonempty(get_nested(p, "dataset.preprocessing")):
+        preprocessing_fingerprint = canonical_json_hash(get_nested(p, "dataset.preprocessing"))
+    fairness_fingerprint = (
+        get_nested(p, "fairness.fingerprint")
+        or get_nested(p, "fairness_fingerprint")
+        or get_nested(protocol, "fingerprints.fairness")
+    )
+    if not fairness_fingerprint and nonempty(get_nested(p, "hyperparameters.fairness_rule")):
+        fairness_fingerprint = canonical_json_hash(get_nested(p, "hyperparameters.fairness_rule"))
     return {
         "experiment_id": exp_id,
         "name": name,
@@ -70,6 +84,10 @@ def experiment_base(exp_id: str, name: str, role: str, run_type: str, kind: str,
         "metrics": get_nested(p, "metrics.primary", default=[]),
         "secondary_metrics": get_nested(p, "metrics.secondary", default=[]),
         "metric_directions": get_nested(p, "metrics.directions", default={}),
+        "preprocessing_fingerprint": preprocessing_fingerprint,
+        "fairness_fingerprint": fairness_fingerprint,
+        "setting": "default",
+        "subset": "all",
         "seeds": get_nested(p, "seeds_and_repeats.seeds", default=[]),
         "seed_count": get_nested(p, "seeds_and_repeats.seed_count"),
         "repeats": get_nested(p, "seeds_and_repeats.repeats"),
@@ -91,9 +109,9 @@ def experiment_base(exp_id: str, name: str, role: str, run_type: str, kind: str,
 def main() -> int:
     parser = argparse.ArgumentParser(description="Create a versioned, claim-bound experiment plan scaffold.")
     parser.add_argument("--workspace")
-    parser.add_argument("--claims", default="external_executor/claim_evidence_matrix.json")
-    parser.add_argument("--protocol", default="external_executor/protocol_snapshot.json")
-    parser.add_argument("--fingerprint", default="external_executor/protocol_fingerprint.json")
+    parser.add_argument("--claims", default="external_executor/report/claim_evidence_matrix.json")
+    parser.add_argument("--protocol", default="external_executor/report/protocol_snapshot.json")
+    parser.add_argument("--fingerprint", default="external_executor/report/protocol_fingerprint.json")
     parser.add_argument("--output", default="external_executor/experiment_plan.json")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
@@ -187,6 +205,52 @@ def main() -> int:
         exp["mechanism_ref"] = mechanism
         exp["ablation_action"] = spec.get("action", "REMOVE_OR_REPLACE_AS_SPECIFIED")
         exp["ablation_replacements"] = listify(spec.get("replacement"))
+        target_module_ids = unique_strings(
+            listify(spec.get("target_module_ids"))
+            + listify(spec.get("module_ids"))
+            + listify(spec.get("target_module_id"))
+            + listify(spec.get("module_id"))
+            + listify(spec.get("related_module"))
+            + listify(spec.get("module"))
+            + listify(spec.get("mechanism_id"))
+        )
+        reference_variant_id = f"{exp_id}:full"
+        intervention_variant_id = f"{exp_id}:intervention"
+        exp["target_module_ids"] = target_module_ids
+        exp["attribution_contract"] = {
+            "target_module_ids": target_module_ids,
+            "reference_variant_id": reference_variant_id,
+            "variant_contracts": [
+                {
+                    "variant_id": reference_variant_id,
+                    "reference_variant_id": reference_variant_id,
+                    "module_states": {module_id: True for module_id in target_module_ids},
+                    "intervention": {"type": "none", "controlled": True, "module_ids": target_module_ids},
+                },
+                {
+                    "variant_id": intervention_variant_id,
+                    "reference_variant_id": reference_variant_id,
+                    "module_states": {module_id: False for module_id in target_module_ids},
+                    "intervention": {
+                        "type": "module_ablation",
+                        "controlled": True,
+                        "module_ids": target_module_ids,
+                        "action": exp["ablation_action"],
+                        "replacements": exp["ablation_replacements"],
+                    },
+                },
+            ],
+            "pairing_dimensions": [
+                "implementation_id", "protocol_fingerprint", "dataset.id", "dataset.version", "dataset.split",
+                "preprocessing_fingerprint", "setting", "subset", "metric", "seed", "repeat_index",
+                "fairness_fingerprint",
+            ],
+            "required_run_fields": [
+                "variant_id", "reference_variant_id", "pair_id", "target_module_ids", "module_states",
+                "intervention", "preprocessing_fingerprint", "fairness_fingerprint", "metric_directions",
+            ],
+        }
+        exp["variants"] = [reference_variant_id, intervention_variant_id]
         exp["depends_on"] = [smoke_id] + claim_main_ids
         exp["preconditions"] = ["ablation_switch_reviewed", "review_approved_for_ablation"]
         exp["decision_rule"] = "compare controlled variants with all non-target protocol factors fixed"
@@ -220,6 +284,8 @@ def main() -> int:
                 "estimated_cost", "decision_rule", "interpretation_if_positive", "interpretation_if_negative",
                 "interpretation_if_inconclusive", "risk_refs", "notes",
             ):
+                if exp.get("run_type") == "ablation" and key == "variants":
+                    continue
                 if nonempty(prior.get(key)):
                     exp[key] = deepcopy(prior[key])
 

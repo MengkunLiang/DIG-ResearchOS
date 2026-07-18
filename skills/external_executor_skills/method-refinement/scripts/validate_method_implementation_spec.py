@@ -20,12 +20,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Validate the method implementation specification contract.")
     parser.add_argument("--workspace")
     parser.add_argument("--spec", default="external_executor/method_implementation_spec.json")
-    parser.add_argument("--output", default="external_executor/method_implementation_spec_validation.json")
+    parser.add_argument("--output", default="external_executor/report/method_implementation_spec_validation.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     ext = ws / "external_executor"
     spec = load_json(resolve_in_workspace(ws, args.spec))
-    intent = load_json(ext / "method_intent_contract.json")
+    intent = load_json(ext / "report" / "method_intent_contract.json")
     result = load_json(ext / "result_pack.json")
 
     errors: list[str] = []

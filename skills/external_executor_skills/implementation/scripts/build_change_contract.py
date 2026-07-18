@@ -119,25 +119,28 @@ def normalize_verification(item: Any, index: int) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compile an approved implementation delta into a deterministic contract.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/implementation_change_contract.json")
+    parser.add_argument("--output", default="external_executor/report/implementation_change_contract.json")
     args = parser.parse_args()
 
     workspace = resolve_workspace(args.workspace)
     output = resolve_in_workspace(workspace, args.output)
     result = load_json(workspace / "external_executor" / "result_pack.json")
-    preflight_path = workspace / "external_executor" / "implementation_preflight.json"
+    preflight_path = workspace / "external_executor" / "report" / "implementation_preflight.json"
     preflight = load_json(preflight_path) if preflight_path.exists() else {}
     if preflight.get("status") == "blocked":
         raise SystemExit("Implementation preflight is blocked")
 
     iteration = active_iteration(result)
-    spec = implementation_spec(result, iteration)
+    spec = implementation_spec(result, iteration, workspace)
     if not iteration or not spec:
         raise SystemExit("Active iteration and implementation spec are required")
 
     iteration_id = str(iteration.get("iteration_id") or iteration.get("id") or stable_id("ITER", canonical_json_hash(iteration)))
     spec_id = str(spec.get("implementation_spec_id") or spec.get("spec_id") or spec.get("id") or stable_id("SPEC", canonical_json_hash(spec)))
-    raw_changes = spec.get("approved_changes") or spec.get("changes") or iteration.get("approved_changes") or iteration.get("planned_changes") or []
+    if iteration.get("copy_previous_method") is True:
+        raw_changes = iteration.get("approved_changes") or iteration.get("planned_changes") or spec.get("approved_changes") or spec.get("changes") or []
+    else:
+        raw_changes = spec.get("approved_changes") or spec.get("changes") or iteration.get("approved_changes") or iteration.get("planned_changes") or []
     changes = [normalize_change(item, index) for index, item in enumerate(listify(raw_changes), 1)]
     raw_modules = spec.get("module_contracts") or spec.get("modules") or []
     modules = [normalize_module(item, index, changes) for index, item in enumerate(listify(raw_modules), 1)]
@@ -155,6 +158,14 @@ def main() -> int:
     base_source = resolve_in_workspace(workspace, str(base_source_value))
     if not base_source.exists():
         raise SystemExit(f"Base source missing: {base_source}")
+    if iteration.get("copy_previous_method") is True:
+        implementation_root_anchor = workspace / "external_executor" / "expr" / "implementation"
+        try:
+            base_source.relative_to(implementation_root_anchor)
+        except ValueError as exc:
+            raise SystemExit("A later method iteration must copy a previous implementation worktree") from exc
+        if base_source.name != "worktree":
+            raise SystemExit("A later method iteration base_source must be the previous implementation worktree")
     base_manifest = tree_manifest(base_source)
 
     semantic_delta = [{key: change.get(key) for key in ("change_type", "summary", "target_paths", "module_ids")} for change in changes]

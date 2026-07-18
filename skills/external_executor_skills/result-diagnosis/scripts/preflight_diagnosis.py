@@ -15,7 +15,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Validate result-diagnosis prerequisites.")
     parser.add_argument("--workspace")
     parser.add_argument("--iteration-id")
-    parser.add_argument("--output", default="external_executor/result_diagnosis_preflight.json")
+    parser.add_argument("--output", default="external_executor/report/result_diagnosis_preflight.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)
@@ -55,7 +55,7 @@ def main() -> int:
         blockers.append({"id": "missing_iteration_id", "message": "Cannot identify iteration"})
     runs = section_items(result.get("experiment_runs"))
     selected = [r for r in runs if str(r.get("iteration_id")) == str(iteration_id)] if iteration_id else []
-    terminal = [r for r in selected if r.get("status") in {"completed", "failed", "cancelled", "stale", "unusable"}]
+    terminal = [r for r in selected if (r.get("run_status") or r.get("status")) in {"completed", "failed", "cancelled", "stale", "unusable"}]
     if not selected:
         blockers.append({"id": "missing_iteration_runs", "message": f"No run records for iteration {iteration_id}"})
     elif not terminal:
@@ -79,8 +79,8 @@ def main() -> int:
 
     targets = [
         output,
-        ext/"diagnosis_evidence_snapshot.json",
-        ext/"diagnosis_statistics.json",
+        ext/"report"/"diagnosis_evidence_snapshot.json",
+        ext/"report"/"diagnosis_statistics.json",
         ext/"result_diagnosis_report.json",
         ext/"result_diagnosis",
     ]

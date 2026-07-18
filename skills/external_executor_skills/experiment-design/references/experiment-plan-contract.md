@@ -37,7 +37,7 @@ Each experiment contains:
 - evidence needed;
 - dataset/version/split;
 - variants and baseline/resource references;
-- mechanism reference and intervention for ablations;
+- mechanism reference, target module IDs, and `attribution_contract` for ablations;
 - primary/secondary metrics and directions;
 - seeds, seed count, and repeats;
 - protocol fingerprint;
@@ -47,6 +47,16 @@ Each experiment contains:
 - decision rule;
 - positive, negative, and inconclusive interpretation;
 - failure handling, risks, and source references.
+
+Each required ablation `attribution_contract` contains:
+
+- `target_module_ids`;
+- one stable `reference_variant_id`;
+- at least two `variant_contracts` with exact `variant_id`, `reference_variant_id`, `module_states`, and controlled `intervention`;
+- pairing dimensions covering implementation, protocol, dataset/version/split, preprocessing, setting/subset, metric, seed/repeat, and fairness;
+- required run fields including `pair_id`, module state, intervention identity, fingerprints, and metric directions.
+
+The root considers the ablation complete only when every required variant exists in a comparable completed pair for every planned seed/repeat surface.
 
 ## Minimum experiment package
 

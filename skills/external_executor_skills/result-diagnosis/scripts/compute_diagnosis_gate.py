@@ -30,13 +30,25 @@ def main() -> int:
     claims = report.get("claim_implications", {})
     confounds = report.get("confound_assessments", {})
     interpretations_valid = all(substantive_items_valid(s) for s in (setting, claims, confounds))
+    performance = report.get("baseline_performance", {})
+    change = report.get("method_change_assessment", {})
+    change_ready = (
+        change.get("status") == "complete"
+        and bool(change.get("rationale"))
+        and (not change.get("change_required") or bool(change.get("proposed_changes")))
+    )
     claim_counts = {}
     for item in claims.get("items", []):
         claim_counts[item.get("status", "unknown")] = claim_counts.get(item.get("status", "unknown"), 0) + 1
 
     if blocking or not report.get("evidence_snapshot", {}).get("included_run_ids"):
         status = "blocked"; sufficiency = "insufficient"
-        next_action = "repair_or_rerun" if blocking else "stop_and_report"
+        next_action = "repair_or_rerun"
+    elif change.get("change_required"):
+        status = "partial"; sufficiency = "limited"
+        next_action = "repair_or_rerun" if change_ready else "add_diagnostic_run"
+    elif not performance.get("all_required_baselines_beaten"):
+        status = "partial"; sufficiency = "limited"; next_action = "repair_or_rerun"
     elif not comparisons or not strongest or not interpretations_valid:
         status = "partial"; sufficiency = "limited"; next_action = "add_diagnostic_run"
     elif material:
@@ -50,6 +62,8 @@ def main() -> int:
         "material_anomaly_ids": sorted(x for x in material if x),
         "blocking_issue_ids": sorted(x for x in blocking if x),
         "claim_counts": claim_counts, "next_action": next_action,
+        "all_required_baselines_beaten": bool(performance.get("all_required_baselines_beaten")),
+        "method_change_required": bool(change.get("change_required")),
         "computed_at": utc_now(), "computation": "diagnosis_gate_v1",
     }
     report["status"] = "complete" if status == "ready_for_attribution" else ("blocked" if status == "blocked" else "partial")

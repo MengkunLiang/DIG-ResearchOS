@@ -20,11 +20,11 @@ from _common import (
 def main() -> int:
     parser = argparse.ArgumentParser(description="Classify method scope drift and create a pending request for major changes.")
     parser.add_argument("--workspace")
-    parser.add_argument("--intent", default="external_executor/method_intent_contract.json")
+    parser.add_argument("--intent", default="external_executor/report/method_intent_contract.json")
     parser.add_argument("--spec", default="external_executor/method_implementation_spec.json")
-    parser.add_argument("--delta", default="external_executor/method_delta.json")
-    parser.add_argument("--output", default="external_executor/method_scope_assessment.json")
-    parser.add_argument("--request-output", default="external_executor/scope_change_request.json")
+    parser.add_argument("--delta", default="external_executor/report/method_delta.json")
+    parser.add_argument("--output", default="external_executor/report/method_scope_assessment.json")
+    parser.add_argument("--request-output", default="external_executor/report/scope_change_request.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)
@@ -79,7 +79,7 @@ def main() -> int:
             },
             "proposed_scope": spec.get("scope_boundary") or spec.get("research_contract") or {},
             "why_needed": "The proposed implementation specification contains one or more major changes outside the approved method intent.",
-            "evidence_refs": listify(iteration.get("evidence_refs")) + ["external_executor/method_delta.json"],
+            "evidence_refs": listify(iteration.get("evidence_refs")) + ["external_executor/report/method_delta.json"],
             "affected_claims": delta.get("affected_claims") or [],
             "affected_baselines": [],
             "affected_experiments": [],

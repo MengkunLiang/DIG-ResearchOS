@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import argparse
 
-from _common import canonical_json_hash, dump_json_atomic, load_json, resolve_in_workspace, resolve_workspace, utc_now
+from _common import canonical_json_hash, dump_json_atomic, load_json, resolve_in_workspace, resolve_workspace, sha256_file, utc_now
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate snapshot self-consistency and current source immutability.")
     parser.add_argument("--workspace")
-    parser.add_argument("--snapshot", default="external_executor/final_evidence_snapshot.json")
-    parser.add_argument("--output", default="external_executor/final_evidence_snapshot_validation.json")
+    parser.add_argument("--snapshot", default="external_executor/report/final_evidence_snapshot.json")
+    parser.add_argument("--output", default="external_executor/report/final_evidence_snapshot_validation.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)
@@ -34,6 +34,25 @@ def main() -> int:
             warnings.append(f"missing_artifact:{artifact.get('path')}")
         if artifact.get("checksum_valid") is False:
             errors.append(f"artifact_checksum_mismatch:{artifact.get('path')}")
+    selected_spec = snapshot.get("selected_method_spec")
+    if not isinstance(selected_spec, dict):
+        errors.append("selected_method_spec_missing")
+    else:
+        spec_path = resolve_in_workspace(ws, str(selected_spec.get("path") or ""))
+        if not spec_path.is_file():
+            errors.append("selected_method_spec_missing_on_disk")
+        elif selected_spec.get("sha256") != sha256_file(spec_path):
+            errors.append("selected_method_spec_changed")
+        selection = snapshot.get("final_source_selection", {})
+        refinement = selection.get("method_refinement", {}) if isinstance(selection, dict) else {}
+        if selected_spec.get("spec_fingerprint") != refinement.get("spec_fingerprint"):
+            errors.append("selected_method_spec_refinement_mismatch")
+    selection = snapshot.get("final_source_selection")
+    if not isinstance(selection, dict):
+        errors.append("final_source_selection_missing")
+    else:
+        errors.extend(f"final_source:{item}" for item in selection.get("errors", []))
+        warnings.extend(f"final_source:{item}" for item in selection.get("warnings", []))
     if len({r.get("protocol_fingerprint") for r in snapshot.get("active_formal_records", []) if r.get("protocol_fingerprint")}) > 1:
         errors.append("active_formal_evidence_crosses_protocols")
     if not snapshot.get("active_formal_records"):

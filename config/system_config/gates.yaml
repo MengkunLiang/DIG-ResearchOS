@@ -758,7 +758,7 @@ gates:
         literal: |
           材料就绪后，下一步会进入外部执行器选择 gate。
           如果选择 Codex CLI，系统会提示你在 workspace 根目录启动 Codex CLI，让它读取 external_executor/AGENTS.md 并执行 external_executor/skills/research-execution/SKILL.md。
-          Codex 完成后应写回 external_executor/executor_research_report.md、external_executor/result_pack.json、external_executor/executor_status.json 和 external_executor/run_manifest.json，然后使用 python -m researchos.cli resume --workspace <workspace> 恢复。
+          Codex 完成后应写回 external_executor/executor_research_report.md、external_executor/result_pack.json、external_executor/executor_status.json 和 external_executor/report/run_manifest.json，然后使用 python -m researchos.cli resume --workspace <workspace> 恢复。
     options:
       - id: materials_ready
         label: "材料已放置，继续"
@@ -799,7 +799,7 @@ gates:
           Codex CLI 选择后的操作：
           1. 在当前 workspace 根目录启动 Codex CLI。
           2. 对 Codex 说：请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research-execution/SKILL.md。
-          3. Codex 完成后必须写出 external_executor/executor_research_report.md、external_executor/result_pack.json、external_executor/executor_status.json 和 external_executor/run_manifest.json。
+          3. Codex 完成后必须写出 external_executor/executor_research_report.md、external_executor/result_pack.json、external_executor/executor_status.json 和 external_executor/report/run_manifest.json。
           4. 回到 ResearchOS，运行 python -m researchos.cli resume --workspace <workspace>。
           选择执行器后，系统会写入 external_executor/report/executor_selection.json、external_executor/report/executor_capabilities.json，并 patch AGENTS.md/CLAUDE.md。
     options:

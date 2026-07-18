@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import json
 import statistics
 from collections import defaultdict
 from pathlib import Path
@@ -16,9 +17,15 @@ def normalized(item: dict) -> float:
 
 
 def base_key(item: dict) -> tuple:
+    def comparable(value: object) -> object:
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return value
+
     return (
-        item.get("method_id"), item.get("protocol_fingerprint"), item.get("dataset"), item.get("dataset_version"), item.get("split"),
-        item.get("preprocessing_fingerprint"), item.get("setting"), item.get("subset"), item.get("metric_name"), item.get("direction"),
+        item.get("implementation_id"), item.get("method_id"), item.get("pair_id"), item.get("protocol_fingerprint"),
+        comparable(item.get("dataset")), comparable(item.get("dataset_version")), comparable(item.get("split")),
+        item.get("preprocessing_fingerprint"), comparable(item.get("setting")), comparable(item.get("subset")), item.get("metric_name"), item.get("direction"),
         item.get("aggregation"), item.get("seed"), item.get("repeat"), item.get("fairness_fingerprint"),
     )
 
@@ -59,18 +66,19 @@ def main() -> int:
                     value = full - no_a - no_b + none
                     # Aggregate factorial interaction across matched seeds/repeats while
                     # preserving every other comparability dimension.
-                    gkey = (a, b, *key[:11], key[13])
+                    implementation, method, _pair_id, protocol, dataset, dataset_version, split, preprocessing, setting, subset, metric, direction, aggregation, _seed, _repeat, fairness = key
+                    gkey = (a, b, implementation, method, protocol, dataset, dataset_version, split, preprocessing, setting, subset, metric, direction, aggregation, fairness)
                     interaction_pairs[gkey].append({"value": value, "runs": [cell[x]["run_id"] for x in ((True, True), (False, True), (True, False), (False, False))], "refs": [cell[x]["intervention_id"] for x in ((True, True), (False, True), (True, False), (False, False))]})
             if not found:
                 unsupported.append({"module_ids": [a, b], "comparison_key": list(key), "reason": "missing_complete_factorial"})
     interactions = []
     for gkey, pairs in interaction_pairs.items():
-        a, b, method, protocol, dataset, dataset_version, split, preprocessing, setting, subset, metric, direction, aggregation, fairness = gkey
+        a, b, implementation, method, protocol, dataset, dataset_version, split, preprocessing, setting, subset, metric, direction, aggregation, fairness = gkey
         values = [x["value"] for x in pairs]
         iid = stable_id("INTER", *gkey)
         interactions.append({
             "interaction_id": iid, "module_ids": [a, b], "paired_n": len(values), "values": values,
-            "setting_key": {"method_id": method, "protocol_fingerprint": protocol, "dataset": dataset, "dataset_version": dataset_version, "split": split, "preprocessing_fingerprint": preprocessing, "setting": setting, "subset": subset, "metric_name": metric, "direction": direction, "aggregation": aggregation, "fairness_fingerprint": fairness},
+            "setting_key": {"implementation_id": implementation, "method_id": method, "protocol_fingerprint": protocol, "dataset": dataset, "dataset_version": dataset_version, "split": split, "preprocessing_fingerprint": preprocessing, "setting": setting, "subset": subset, "metric_name": metric, "direction": direction, "aggregation": aggregation, "fairness_fingerprint": fairness},
             "mean_interaction": statistics.mean(values), "median_interaction": statistics.median(values),
             "stddev": statistics.stdev(values) if len(values) > 1 else None,
             "interaction_status": "synergistic" if statistics.mean(values) > 0 else ("antagonistic_or_redundant" if statistics.mean(values) < 0 else "neutral"),

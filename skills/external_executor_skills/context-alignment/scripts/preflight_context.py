@@ -49,8 +49,9 @@ def default_resource_acquisition_policy() -> dict[str, Any]:
         ],
         "material_absence_policy": (
             "external_executor/expr may be empty or contain only workspace guide files; "
-            "check resources/ for by-hand local materials; continue by authorized acquisition "
-            "into resource/ or reimplementation into resource/ when local materials are absent."
+            "check resources/ for by-hand, acquired, or reimplemented materials; continue "
+            "by authorized acquisition or reimplementation into resources/ when local "
+            "materials are absent."
         ),
     }
 
@@ -140,7 +141,7 @@ def add(report: dict[str, Any], level: str, code: str, message: str, path: str |
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", required=True)
-    parser.add_argument("--output", default="external_executor/preflight_context.json")
+    parser.add_argument("--output", default="external_executor/report/preflight_context.json")
     args = parser.parse_args()
 
     root = workspace_root(args.workspace)

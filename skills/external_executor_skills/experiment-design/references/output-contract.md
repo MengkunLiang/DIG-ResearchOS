@@ -3,17 +3,17 @@
 ## Standalone artifacts
 
 ```text
-external_executor/experiment_design_preflight.json
-external_executor/claim_evidence_matrix.json
-external_executor/protocol_snapshot.json
-external_executor/protocol_fingerprint.json
-external_executor/protocol_change_impact.json         # when needed
+external_executor/report/experiment_design_preflight.json
+external_executor/report/claim_evidence_matrix.json
+external_executor/report/protocol_snapshot.json
+external_executor/report/protocol_fingerprint.json
+external_executor/report/protocol_change_impact.json         # when needed
 external_executor/experiment_plan.json
-external_executor/experiment_plan_validation.json
-external_executor/experiment_plan_dag_validation.json
-external_executor/experiment_design_gate.json
-external_executor/experiment_design_report.json
-external_executor/experiment_design_report_validation.json
+external_executor/report/experiment_plan_validation.json
+external_executor/report/experiment_plan_dag_validation.json
+external_executor/report/experiment_design_gate.json
+external_executor/report/experiment_design_report.json
+external_executor/report/experiment_design_report_validation.json
 ```
 
 ## Narrow result-pack ownership

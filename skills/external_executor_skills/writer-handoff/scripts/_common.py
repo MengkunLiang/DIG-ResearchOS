@@ -28,6 +28,20 @@ def dump_json_atomic(path: Path, data: Any) -> None:
         if os.path.exists(tmp): os.unlink(tmp)
 
 
+def dump_text_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f'.{path.name}.', suffix='.tmp', dir=str(path.parent))
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+            fh.write(text)
+            if not text.endswith('\n'):
+                fh.write('\n')
+            fh.flush(); os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp): os.unlink(tmp)
+
+
 def resolve_workspace(value: str | None) -> Path:
     if value:
         ws = Path(value).expanduser().resolve()
@@ -99,6 +113,33 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def file_entry(ws: Path, path: Path) -> dict[str, Any]:
+    return {
+        'path': relpath(ws, path),
+        'sha256': sha256_file(path),
+        'size_bytes': path.stat().st_size,
+    }
+
+
+def manifest_items(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    for key in ('artifacts', 'items', 'entries'):
+        value = manifest.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        if isinstance(value, dict):
+            return [item for item in value.values() if isinstance(item, dict)]
+    return []
+
+
+def normalize_status(value: Any) -> str:
+    aliases = {
+        'done': 'completed', 'complete': 'completed', 'success': 'completed',
+        'succeeded': 'completed', 'partial_results_ready': 'partial',
+    }
+    text = str(value or '').strip().lower()
+    return aliases.get(text, text)
+
+
 def slugify(value: Any, fallback='item') -> str:
     s=re.sub(r'[^A-Za-z0-9]+','-',str(value)).strip('-').lower(); return s[:64] or fallback
 
@@ -151,6 +192,30 @@ def collect_paths(value: Any) -> list[str]:
         for k,v in d.items():
             if k in path_keys and isinstance(v,str) and v: out.append(v)
             if k in {'paths','rendered_files','code_paths','config_paths','artifact_paths'} and isinstance(v,list): out += [x for x in v if isinstance(x,str)]
+    return list(dict.fromkeys(out))
+
+
+def keyed_paths(value: Any, parent_key: str = '') -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            lowered = key.lower()
+            if isinstance(item, str) and item and (
+                lowered.endswith(('_path', '_ref', '_file'))
+                or lowered in {'path', 'editable_source', 'source_table', 'rendered_file'}
+            ):
+                out.append((lowered, item))
+            elif isinstance(item, list) and lowered.endswith(('_paths', '_refs', '_files')):
+                for child in item:
+                    if isinstance(child, str) and child:
+                        out.append((lowered, child))
+                    elif isinstance(child, dict):
+                        out.extend(keyed_paths(child, lowered))
+            elif isinstance(item, (dict, list)):
+                out.extend(keyed_paths(item, lowered))
+    elif isinstance(value, list):
+        for item in value:
+            out.extend(keyed_paths(item, parent_key))
     return list(dict.fromkeys(out))
 
 

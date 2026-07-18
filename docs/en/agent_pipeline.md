@@ -71,7 +71,7 @@ Choosing one complete Candidate creates `ideation/hypothesis_brief.yaml`, lineag
 
 ## T5 To T8 External Evidence Path
 
-ResearchOS prepares an executor handoff, then runs `T5-SPECIALIZE-EXECUTOR-SKILLS`: an LLM consumes the repository `project-skill-specialization` Skill, calls the deterministic wrapper, and ResearchOS independently validates the published context/report/13-Skill suite before executor selection. External execution must leave the core T8 handoff file at `external_executor/executor_research_report.md`; other files under `external_executor/` remain available for T8 to inspect as supporting context. The external-executor root Skill performs a final handoff-input check before completion. A mock dry run verifies the protocol chain only and does not create empirical claims.
+ResearchOS prepares an executor handoff, then runs `T5-SPECIALIZE-EXECUTOR-SKILLS`: an LLM consumes the repository `project-skill-specialization` Skill, calls the deterministic wrapper, and ResearchOS independently validates the published context/report/13-Skill suite before executor selection. External execution must leave the core T8 handoff file at `external_executor/executor_research_report.md`; other files under `external_executor/` remain available for T8 to inspect as supporting context. After evidence packaging, the `writer-handoff` child Skill compiles this report and validates final status, result pack, manifest, figures, and tables. The root records that child result without duplicating final validation. A mock dry run verifies the protocol chain only and does not create empirical claims.
 
 ## T8-T9 Writing And Submission
 

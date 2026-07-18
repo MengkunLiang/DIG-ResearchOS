@@ -27,7 +27,7 @@
   "requirement_ids": [],
   "source": {
     "class": "official_author_repo|author_recognized|third_party_reproduction|executor_reimplementation|approximate_reproduction",
-    "path": "resource/... or resources/...",
+    "path": "resources/...",
     "revision": "",
     "sha256": "",
     "resource_review_ids": []
@@ -108,14 +108,14 @@
 
 ## Stable identity
 
-`reproduction_id` derives from baseline ID, candidate ID, protocol fingerprint, fairness fingerprint, dataset/split, and config family. Changing one creates a new reproduction identity; changing only attempt number does not.
+The deterministic scaffold derives `reproduction_id` from baseline ID, candidate ID, protocol fingerprint, and fairness fingerprint. Changing one creates a new reproduction identity; changing only attempt number does not. Dataset, split, metric, and config changes should already be represented by a changed protocol or fairness fingerprint before this skill runs.
 
 ## Execution readiness
 
 An item is executable only when:
 
 - the candidate is approved for baseline reproduction;
-- source path exists inside the approved resource pool: `resources/` for by-hand local material or `resource/` for acquired/reimplemented material;
+- source path exists inside the approved resource pool: `resources/`;
 - `external_executor/workdir/` and `external_executor/expr/` are not approved source pools;
 - protocol/fairness fingerprints are non-empty;
 - dataset/split and primary metric are explicit;
@@ -130,11 +130,23 @@ A generated scaffold normally starts `incomplete` until project-specific command
 `working_directory` is resolved relative to the copied baseline deployment under:
 
 ```text
-external_executor/expr/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/source/
+external_executor/expr/baselines/<baseline-id>/<reproduction-id>/attempt-<N>/source/
 ```
 
-All logs, run records, normalized metrics, environment records, and staged produced outputs must be written under the paired raw-result directory:
+Run records, environment records, normalized metrics, failure classifications, evaluations, and other process reports must be written under the paired evidence directory:
+
+```text
+external_executor/report/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/
+```
+
+Baseline stdout/stderr logs, declared baseline-produced outputs, per-dataset/per-metric raw metric CSV files, and other original experiment outputs must be written under the paired raw-result directory:
 
 ```text
 external_executor/raw_results/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/
+```
+
+Metric extraction writes normalized `metrics.json` in the evidence directory and writes raw metric values under:
+
+```text
+external_executor/raw_results/baseline_reproduction/<baseline-id>/<reproduction-id>/attempt-<N>/raw_metrics/<dataset>/<metric>.csv
 ```

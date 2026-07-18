@@ -25,9 +25,9 @@ SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
     "reimplementations": {"status": "not_started", "items": []},
     "resource_source_report": {
         "status": "not_started",
-        "json_path": "external_executor/resource_source_report.json",
-        "markdown_path": "external_executor/resource_source_report.md",
-        "source_roots": ["resources", "resource"],
+        "json_path": "external_executor/report/resource_source_report.json",
+        "markdown_path": "external_executor/report/resource_source_report.md",
+        "source_roots": ["resources"],
         "counts": {"byhand": 0, "Remote_acquisition": 0, "reproduction": 0},
         "categories": {"byhand": [], "Remote_acquisition": [], "reproduction": []},
     },
@@ -51,7 +51,7 @@ def main() -> int:
         description="Create or refresh the Phase B report envelope without overwriting reviewed sections by default."
     )
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/resource_preparation_report.json")
+    parser.add_argument("--output", default="external_executor/report/resource_preparation_report.json")
     parser.add_argument(
         "--force",
         action="store_true",
@@ -64,11 +64,12 @@ def main() -> int:
     output = resolve_in_workspace(workspace, args.output)
     assert_write_allowed(workspace, output)
 
-    preflight = load_json(ext / "resource_preflight.json")
+    report_dir = ext / "report"
+    preflight = load_json(report_dir / "resource_preflight.json")
     if preflight.get("status") == "blocked":
         raise SystemExit("Resource preflight is blocked; do not initialize an acquisition report")
     matrix = load_json(ext / "resource_requirement_matrix.json")
-    local_inventory = load_json(ext / "resource_local_inventory.json")
+    local_inventory = load_json(report_dir / "resource_local_inventory.json")
 
     mode = preflight.get("policy_snapshot", {}).get("effective_mode")
     search_default = {
@@ -76,7 +77,7 @@ def main() -> int:
         "status": "not_needed" if mode == "local_only" else "not_started",
         "items": [],
     }
-    search_path = ext / "resource_search_records.json"
+    search_path = report_dir / "resource_search_records.json"
     search_records = load_optional(search_path, search_default)
     if not search_path.exists():
         assert_write_allowed(workspace, search_path)
@@ -125,7 +126,7 @@ def main() -> int:
         "artifact_refs": [
             {
                 "artifact_id": "resource-preflight",
-                "path": relpath(workspace, ext / "resource_preflight.json"),
+                "path": relpath(workspace, report_dir / "resource_preflight.json"),
                 "producer": "resource-and-baseline-preparation",
                 "evidence_level": "resource_definition",
             },
@@ -137,7 +138,7 @@ def main() -> int:
             },
             {
                 "artifact_id": "resource-local-inventory",
-                "path": relpath(workspace, ext / "resource_local_inventory.json"),
+                "path": relpath(workspace, report_dir / "resource_local_inventory.json"),
                 "producer": "resource-and-baseline-preparation",
                 "evidence_level": "provenance",
             },

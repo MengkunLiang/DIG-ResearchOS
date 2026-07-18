@@ -80,7 +80,7 @@ def main() -> int:
     }
     dump_json_atomic(Path(args.output).resolve(), payload)
     print(f"{payload['status']}: strongest={len(strongest)} facts={len(setting_facts)}")
-    return 2 if payload["status"] == "blocked" else 0
+    return 0 if snapshot.get("runs") else 2
 
 
 if __name__ == "__main__":

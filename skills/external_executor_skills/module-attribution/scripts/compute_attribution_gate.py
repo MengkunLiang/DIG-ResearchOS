@@ -30,6 +30,23 @@ def main() -> int:
     material = [x.get("confound_id") for x in confounds if x.get("severity") == "material" and x.get("status", "open") not in {"resolved", "controlled"}]
     valid = all(items_valid(x) for x in (modules, mechanisms, baseline, recommendations))
     module_items = modules.get("items", [])
+    registry_items = report.get("module_registry", {}).get("items", [])
+    required_module_ids = {
+        str(item.get("module_id"))
+        for item in registry_items
+        if item.get("module_id")
+        and item.get("owner_method_id", "ours") == "ours"
+        and item.get("implementation_status") == "implemented"
+    }
+    attributed_module_ids = {str(item.get("module_id")) for item in module_items if item.get("module_id")}
+    uncovered_modules = sorted(required_module_ids - attributed_module_ids)
+    direct_module_ids = sorted({
+        str(item.get("module_id"))
+        for item in module_items
+        if item.get("module_id")
+        and item.get("evidence_type") in {"direct_ablation", "controlled_diagnostic"}
+        and item.get("empirical_status") in {"beneficial", "neutral", "harmful", "mixed"}
+    })
     beneficial = [x.get("module_id") for x in module_items if x.get("empirical_status") == "beneficial"]
     harmful = [x.get("module_id") for x in module_items if x.get("empirical_status") == "harmful"]
     unsupported_mechs = [x.get("mechanism_id") for x in mechanisms.get("items", []) if x.get("status") == "unresolved"]
@@ -43,6 +60,8 @@ def main() -> int:
         status = "blocked"; sufficiency = "insufficient"; next_action = "stop_and_report"
     elif not valid:
         status = "partial"; sufficiency = "limited"; next_action = "add_controlled_evidence"
+    elif uncovered_modules or not direct_module_ids:
+        status = "partial"; sufficiency = "limited"; next_action = "add_controlled_evidence"
     elif material or any(x.get("confidence") in {"low", "insufficient"} for x in module_items + mechanisms.get("items", [])):
         status = "partial"; sufficiency = "limited"; next_action = "add_controlled_evidence"
     else:
@@ -54,6 +73,8 @@ def main() -> int:
         "unsupported_mechanism_ids": sorted(set(x for x in unsupported_mechs if x)),
         "material_confound_ids": sorted(set(x for x in material if x)),
         "blocking_issue_ids": sorted(set(x for x in blocking if x)),
+        "direct_evidence_module_ids": direct_module_ids,
+        "uncovered_required_module_ids": uncovered_modules,
         "recommendation_counts": counts, "next_action": next_action,
         "computed_at": utc_now(), "computation": "deterministic_attribution_gate_v1",
     }

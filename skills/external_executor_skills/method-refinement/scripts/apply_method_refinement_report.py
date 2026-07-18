@@ -23,8 +23,8 @@ def upsert(records: list, item: dict, key: str) -> list:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Narrowly apply method-refinement records to result_pack.json.")
     parser.add_argument("--workspace")
-    parser.add_argument("--report", default="external_executor/method_refinement_report.json")
-    parser.add_argument("--validation", default="external_executor/method_refinement_report_validation.json")
+    parser.add_argument("--report", default="external_executor/report/method_refinement_report.json")
+    parser.add_argument("--validation", default="external_executor/report/method_refinement_report_validation.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     ext = ws / "external_executor"

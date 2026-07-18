@@ -68,6 +68,10 @@ Use this shape with `compare_protocols.py`:
 
 - Each claimed module exists and is wired to the actual training/inference path.
 - Ablation switches remove only the intended mechanism and preserve comparable capacity/compute where possible.
+- Map every target module ID to an implemented config/code switch.
+- Review exact full/reference and intervention module states; do not rely on variant names.
+- Require a shared pair identity over implementation, protocol, dataset/split, preprocessing, setting/subset, metric, seed/repeat, and fairness fingerprints.
+- Reject missing metric direction, ambiguous reference variant, multi-module removal presented as single-module attribution, or intervention fields that cannot survive into the run record.
 - “Without module” does not accidentally change preprocessing, data, metric, or training budget.
 - Candidate or unsupported modules are not presented as validated contributions.
 

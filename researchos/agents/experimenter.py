@@ -17,7 +17,7 @@
 - T5-HANDOFF: legacy 兼容入口，生成 handoff；其项目 Skill suite 也由专门的 specialization 节点发布
 - T5-EXECUTOR-GATE: external_executor/report/executor_selection.json
 - T5-EXTERNAL-WAIT: external_executor/wait_acceptance_report.json
-- T5-DRY-RUN: external_executor/result_pack.json、executor_status.json、run_manifest.json、heartbeat.json、raw_results/configs/logs
+- T5-DRY-RUN: external_executor/result_pack.json、executor_status.json、external_executor/report/run_manifest.json、heartbeat.json、raw_results/configs/logs
 - T5-to-T8 handoff: external_executor/executor_research_report.md
 - Supporting context for T8: external_executor/ and optional legacy experiments/
 
@@ -77,6 +77,7 @@ from ..tools.docker_exec import check_docker_environment, get_default_image, loa
 from ..tools.external_experiment import (
     EXECUTOR_SELECTION_PATH,
     LEGACY_EXECUTOR_SELECTION_PATH,
+    RUN_MANIFEST_PATH,
     SKILL_SUITE,
     research_reboost_skill_prompt_excerpt,
     validate_context_reboost_handoff,
@@ -526,12 +527,11 @@ def _validate_external_handoff(ws: Path, *, require_specialization: bool = False
         "resources",
         "baseline_reproduction",
         "experiment_runs",
-        "result_diagnosis",
-        "module_attribution",
+        "result_diagnoses",
+        "module_attributions",
         "realized_method_package",
-        "final_framework_figure",
+        "framework_figure",
         "figure_table_inventory",
-        "writer_handoff",
     ):
         if not isinstance(required_fields, list) or field not in required_fields:
             return False, f"expected_outputs_schema.json required 缺少 {field}"
@@ -711,7 +711,7 @@ def _validate_external_dry_run(ws: Path) -> tuple[bool, str | None]:
         EXECUTOR_SELECTION_PATH,
         "external_executor/result_pack.json",
         "external_executor/executor_status.json",
-        "external_executor/run_manifest.json",
+        RUN_MANIFEST_PATH,
         "external_executor/heartbeat.json",
         "external_executor/raw_results",
         "external_executor/configs",
@@ -742,12 +742,11 @@ def _validate_external_dry_run(ws: Path) -> tuple[bool, str | None]:
         "resources",
         "baseline_reproduction",
         "experiment_runs",
-        "result_diagnosis",
-        "module_attribution",
+        "result_diagnoses",
+        "module_attributions",
         "realized_method_package",
-        "final_framework_figure",
+        "framework_figure",
         "figure_table_inventory",
-        "writer_handoff",
     ):
         if field not in result_pack:
             return False, f"dry-run result_pack 缺少 required 字段 {field}"
@@ -783,11 +782,11 @@ def _validate_external_dry_run(ws: Path) -> tuple[bool, str | None]:
             return False, f"result_pack.metrics[{idx}] 必须标记 mock_only=true"
         if str(metric.get("source_artifact")) not in artifact_by_path:
             return False, f"result_pack.metrics[{idx}].source_artifact 未被 artifacts 索引"
-    manifest, err = _read_json_artifact(ws, "external_executor/run_manifest.json")
+    manifest, err = _read_json_artifact(ws, RUN_MANIFEST_PATH)
     if err:
         return False, err
     if manifest.get("semantics") != "external_executor_run_manifest":
-        return False, "external_executor/run_manifest.json semantics 不正确"
+        return False, f"{RUN_MANIFEST_PATH} semantics 不正确"
     if manifest.get("dry_run") is not True or manifest.get("mock_only") is not True:
         return False, "run_manifest 必须显式 dry_run=true 且 mock_only=true"
     status, err = _read_json_artifact(ws, "external_executor/executor_status.json")
@@ -799,8 +798,8 @@ def _validate_external_dry_run(ws: Path) -> tuple[bool, str | None]:
         return False, "executor_status.status 必须是 done"
     if status.get("accepted") is True:
         return False, "dry-run executor_status.accepted 不能为 true；执行器 done 不等于 ResearchOS accepted"
-    if status.get("run_manifest") != "external_executor/run_manifest.json":
-        return False, "executor_status.run_manifest 必须指向 external_executor/run_manifest.json"
+    if status.get("run_manifest") != RUN_MANIFEST_PATH:
+        return False, f"executor_status.run_manifest 必须指向 {RUN_MANIFEST_PATH}"
     return True, None
 
 

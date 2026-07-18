@@ -86,7 +86,7 @@ def normalize_module(comp: dict[str, Any], *, contribution_role: str, status: st
             {"failure_id": f"FAIL-{module_id}-invalid-interface", "symptom": "declared input/output contract is violated", "handling": "fail fast and preserve logs"}
         ],
         "evidence_links": [],
-        "source_refs": comp.get("source_refs") or ["external_executor/method_intent_contract.json"],
+        "source_refs": comp.get("source_refs") or ["external_executor/report/method_intent_contract.json"],
     }
 
 
@@ -120,7 +120,7 @@ def previous_version(result: dict[str, Any], previous: dict[str, Any]) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build a versioned implementation specification from method intent and active plan.")
     parser.add_argument("--workspace")
-    parser.add_argument("--intent", default="external_executor/method_intent_contract.json")
+    parser.add_argument("--intent", default="external_executor/report/method_intent_contract.json")
     parser.add_argument("--previous")
     parser.add_argument("--output", default="external_executor/method_implementation_spec.json")
     args = parser.parse_args()
@@ -129,12 +129,17 @@ def main() -> int:
     ext = ws / "external_executor"
     intent = load_json(resolve_in_workspace(ws, args.intent))
     result = load_json(ext / "result_pack.json")
-    preflight = load_json(ext / "method_refinement_preflight.json", default={})
+    preflight = load_json(ext / "report" / "method_refinement_preflight.json", default={})
     plan = dictify(result.get("experiment_plan"))
     iteration = active_iteration_plan(result)
     previous: dict[str, Any] = {}
     if args.previous:
         previous = load_json(resolve_in_workspace(ws, args.previous))
+    else:
+        refinements = listify(result.get("method_refinements"))
+        prior = [item for item in refinements if isinstance(item, dict) and item.get("snapshot_ref")]
+        if prior:
+            previous = load_json(resolve_in_workspace(ws, str(prior[-1]["snapshot_ref"])))
 
     iteration_id = str(iteration.get("iteration_id") or iteration.get("id") or "iteration-unknown")
     spec_version = previous_version(result, previous) + 1
@@ -267,6 +272,8 @@ def main() -> int:
             "raw_results_root": "external_executor/raw_results/",
         },
         "modules": modules,
+        "approved_changes": listify(iteration.get("approved_changes") or iteration.get("planned_changes")),
+        "iteration_history_summary": listify(iteration.get("iteration_history_summary")),
         "objectives_and_losses": previous.get("objectives_and_losses", []),
         "training_flow": training_flow,
         "inference_flow": previous.get("inference_flow", training_flow),
@@ -323,7 +330,7 @@ def main() -> int:
         },
         "evidence_traceability": traceability,
         "source_refs": [
-            "external_executor/method_intent_contract.json",
+            "external_executor/report/method_intent_contract.json",
             "external_executor/result_pack.json#experiment_plan",
             "external_executor/result_pack.json#current_iteration_plan|iteration_plans",
         ],

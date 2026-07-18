@@ -3,15 +3,16 @@
 ## Child-owned artifacts
 
 ```text
-external_executor/resource_preflight.json
+external_executor/report/resource_preflight.json
 external_executor/resource_requirement_matrix.json
-external_executor/resource_local_inventory.json
-external_executor/resource_search_records.json
-external_executor/resource_source_report.json
-external_executor/resource_source_report.md
-external_executor/resource_preparation_report.json
+external_executor/report/resource_local_inventory.json
+external_executor/report/resource_search_records.json
+external_executor/report/resource_source_report.json
+external_executor/report/resource_source_report.md
+external_executor/report/resource_preparation_report.json
+external_executor/report/static_review.json
+external_executor/report/validation_report.json
 resources/**
-resource/**
 ```
 
 The root owns manifest registration and executor status.
@@ -28,27 +29,27 @@ The root owns manifest registration and executor status.
   "policy_snapshot": {},
   "resource_requirement_matrix": {
     "schema_version": "resource_requirement_matrix.v1",
-    "status": "complete|partial|blocked|stale",
+    "status": "not_started|not_needed|complete|partial|blocked|stale",
     "items": []
   },
-  "local_inventory": {"status": "complete|partial|blocked|stale", "items": []},
-  "remote_search_records": {"status": "not_needed|complete|partial|blocked|stale", "items": []},
-  "staged_resources": {"status": "not_started|complete|partial|blocked|stale", "items": []},
-  "acquired_resources": {"status": "not_needed|complete|partial|blocked|stale", "items": []},
-  "baseline_candidates": {"status": "complete|partial|blocked|stale", "items": []},
-  "dataset_inventory": {"status": "complete|partial|blocked|stale", "items": []},
-  "reimplementations": {"status": "not_needed|complete|partial|blocked|stale", "items": []},
+  "local_inventory": {"status": "not_started|not_needed|complete|partial|blocked|stale", "items": []},
+  "remote_search_records": {"status": "not_started|not_needed|complete|partial|blocked|stale", "items": []},
+  "staged_resources": {"status": "not_started|not_needed|complete|partial|blocked|stale", "items": []},
+  "acquired_resources": {"status": "not_started|not_needed|complete|partial|blocked|stale", "items": []},
+  "baseline_candidates": {"status": "not_started|not_needed|complete|partial|blocked|stale", "items": []},
+  "dataset_inventory": {"status": "not_started|not_needed|complete|partial|blocked|stale", "items": []},
+  "reimplementations": {"status": "not_started|not_needed|complete|partial|blocked|stale", "items": []},
   "resource_source_report": {
-    "status": "not_started|complete|partial|blocked|stale",
-    "json_path": "external_executor/resource_source_report.json",
-    "markdown_path": "external_executor/resource_source_report.md",
-    "source_roots": ["resources", "resource"],
+    "status": "not_started|not_needed|complete|partial|blocked|stale",
+    "json_path": "external_executor/report/resource_source_report.json",
+    "markdown_path": "external_executor/report/resource_source_report.md",
+    "source_roots": ["resources"],
     "counts": {"byhand": 0, "Remote_acquisition": 0, "reproduction": 0},
     "categories": {"byhand": [], "Remote_acquisition": [], "reproduction": []}
   },
-  "resource_reviews": {"status": "complete|partial|blocked|stale", "items": []},
-  "material_gaps": {"status": "complete|partial|blocked|stale", "items": []},
-  "resource_risks": {"status": "complete|partial|blocked|stale", "items": []},
+  "resource_reviews": {"status": "not_started|not_needed|complete|partial|blocked|stale", "items": []},
+  "material_gaps": {"status": "not_started|not_needed|complete|partial|blocked|stale", "items": []},
+  "resource_risks": {"status": "not_started|not_needed|complete|partial|blocked|stale", "items": []},
   "resource_readiness": {
     "status": "ready|partial|blocked",
     "minimum_loop_feasible": false,
@@ -96,9 +97,9 @@ resource_readiness <- report.resource_readiness
 - Every requirement ID is unique.
 - Every candidate references known requirement IDs.
 - Every review references a known candidate and known requirement IDs.
-- No candidate may use `external_executor/expr/` as its source path; that directory is the formal execution area, not the Phase B resource pool.
-- Staged local products must be under `resources/byhand/`, remote acquisitions under `resource/Remote_acquisition/`, and baseline reimplementations under `resource/reproduction/`.
-- The final resource source report must classify by-hand products under `resources/` and acquired/reimplemented products under `resource/` as `byhand`, `Remote_acquisition`, or `reproduction`.
+- Candidate paths must be under `resources/`.
+- Staged local products must be under `resources/byhand/`, remote acquisitions under `resources/Remote_acquisition/`, and baseline reimplementations under `resources/reproduction/`.
+- The final resource source report must classify products under `resources/` as `byhand`, `Remote_acquisition`, or `reproduction`.
 - Every required baseline requirement is represented by a candidate, a material gap, or a blocker.
 - `ready` requires all minimum-loop blocking requirements to be satisfied by passing reviews with suitable approvals.
 - `partial` requires `minimum_loop_feasible=true` and at least one documented constraint/gap/risk.
@@ -128,7 +129,7 @@ Use workspace-relative paths. An artifact reference should contain, when availab
 child_skill=resource-and-baseline-preparation
 status=complete|partial|blocked|failed
 resource_readiness=ready|partial|blocked
-report=external_executor/resource_preparation_report.json
+report=external_executor/report/resource_preparation_report.json
 matrix=external_executor/resource_requirement_matrix.json
 approved_requirement_ids=<ids>
 constrained_requirement_ids=<ids>

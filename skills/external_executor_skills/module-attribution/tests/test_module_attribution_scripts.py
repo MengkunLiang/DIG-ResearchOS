@@ -54,11 +54,14 @@ def make_workspace() -> Path:
         for variant, series in values.items():
             runs.append({
                 "run_id": f"run-{variant}-{seed}", "iteration_id": "iter-1", "experiment_id": "EXP-abl", "claim_ids": ["C1"],
-                "method_id": "ours", "variant_id": variant, "run_type": "ablation", "analysis_role": "diagnostic", "status": "completed",
-                "module_states": states[variant], "intervention": {"type": "module_ablation", "controlled": True},
-                "setting": "default", "subset": "all", "dataset": "Data", "dataset_version": "v1", "split": "test",
+                "method_id": "ours", "method_role": "ours", "implementation_id": "IMPL-1", "variant_id": variant,
+                "reference_variant_id": "full", "pair_id": f"pair-{seed}", "target_module_ids": ["M1", "M2"],
+                "run_type": "ablation", "analysis_role": "diagnostic", "run_status": "completed",
+                "module_states": states[variant], "intervention": {"type": "module_ablation" if variant != "full" else "none", "controlled": True, "module_ids": ["M1", "M2"]},
+                "setting": "default", "subset": "all", "dataset": {"id": "Data", "version": "v1", "split": "test"},
                 "preprocessing_fingerprint": "prep-1", "protocol_fingerprint": "proto-1", "fairness_fingerprint": "fair-1",
-                "seed": seed, "repeat": seed, "metrics": {"accuracy": {"value": series[seed], "direction": "higher_is_better", "aggregation": "mean"}},
+                "seed": seed, "repeat_index": seed, "metric_directions": {"accuracy": "higher_is_better"},
+                "metrics": {"accuracy": {"value": series[seed], "aggregation": "mean"}},
                 "artifact_refs": [{"path": f"external_executor/logs/{variant}-{seed}.log"}],
             })
     diagnosis = {
@@ -70,8 +73,12 @@ def make_workspace() -> Path:
         "schema_version": "external_executor_result.v1",
         "context_alignment": {"status": "pass"},
         "claim_evidence_matrix": {"status": "complete", "items": [{"claim_id": "C1", "experiment_id": "EXP-abl"}]},
-        "experiment_plan": {"status": "complete", "protocol_fingerprint": "proto-1", "metrics": [{"name": "accuracy", "direction": "higher_is_better"}]},
-        "implementations": {"status": "complete", "items": [{"implementation_id": "IMPL-1", "module_mappings": {"items": [
+        "experiment_plan": {"status": "complete", "protocol_fingerprint": "proto-1", "experiments": [{"experiment_id": "EXP-abl", "metrics": ["accuracy"], "metric_directions": {"accuracy": "higher_is_better"}}]},
+        "implementations": {"status": "complete", "active_implementation_id": "IMPL-1", "items": [
+            {"implementation_id": "IMPL-old", "iteration_id": "iter-0", "module_mappings": {"items": [
+                {"module_id": "M1", "owner_method_id": "ours", "name": "stale alignment", "code_paths": ["src/old.py"], "config_keys": ["old_m1"], "ablation_switch": "old_m1", "mechanism_ids": ["MECH-align"]},
+            ]}},
+            {"implementation_id": "IMPL-1", "iteration_id": "iter-1", "module_mappings": {"items": [
             {"module_id": "M1", "owner_method_id": "ours", "name": "alignment", "code_paths": ["src/m1.py"], "config_keys": ["use_m1"], "ablation_switch": "use_m1", "mechanism_ids": ["MECH-align"]},
             {"module_id": "M2", "owner_method_id": "ours", "name": "regularizer", "code_paths": ["src/m2.py"], "config_keys": ["use_m2"], "ablation_switch": "use_m2", "mechanism_ids": ["MECH-stable"]},
         ]}}]},
@@ -89,17 +96,17 @@ def build_pipeline(ws: Path) -> None:
     ext = ws / "external_executor"
     run("preflight_attribution.py", "--workspace", str(ws))
     run("build_attribution_snapshot.py", "--workspace", str(ws), "--iteration-id", "iter-1")
-    work = ext / "workdir/module_attribution/iter-1"
+    work = ext / "report/module_attribution/iter-1"
     work.mkdir(parents=True, exist_ok=True)
     registry = work / "module_registry.json"
     obs = work / "intervention_observations.json"
     effects = work / "ablation_effects.json"
     interactions = work / "interaction_and_confounds.json"
-    run("inventory_modules.py", "--snapshot", str(ext / "module_attribution_snapshot.json"), "--output", str(registry))
-    run("normalize_attribution_evidence.py", "--snapshot", str(ext / "module_attribution_snapshot.json"), "--module-registry", str(registry), "--output", str(obs))
+    run("inventory_modules.py", "--snapshot", str(ext / "report/module_attribution_snapshot.json"), "--output", str(registry))
+    run("normalize_attribution_evidence.py", "--snapshot", str(ext / "report/module_attribution_snapshot.json"), "--module-registry", str(registry), "--output", str(obs))
     run("compute_ablation_effects.py", "--observations", str(obs), "--output", str(effects))
     run("analyze_interactions.py", "--observations", str(obs), "--ablation-effects", str(effects), "--output", str(interactions))
-    run("build_attribution_facts.py", "--snapshot", str(ext / "module_attribution_snapshot.json"), "--module-registry", str(registry), "--ablation-effects", str(effects), "--interaction-analysis", str(interactions), "--output", str(ext / "module_attribution_facts.json"))
+    run("build_attribution_facts.py", "--snapshot", str(ext / "report/module_attribution_snapshot.json"), "--module-registry", str(registry), "--ablation-effects", str(effects), "--interaction-analysis", str(interactions), "--output", str(ext / "report/module_attribution_facts.json"))
     run("initialize_attribution_report.py", "--workspace", str(ws))
 
 
@@ -121,23 +128,36 @@ class ModuleAttributionTests(unittest.TestCase):
 
     def test_effects_and_interaction(self) -> None:
         ext = self.base / "external_executor"
-        work = ext / "workdir/module_attribution/iter-1"
+        work = ext / "report/module_attribution/iter-1"
         effects = json.loads((work / "ablation_effects.json").read_text())
         by_module = {x["module_id"]: x for x in effects["items"]}
         self.assertGreater(by_module["M1"]["mean_effect"], by_module["M2"]["mean_effect"])
         self.assertEqual(by_module["M1"]["paired_n"], 3)
         interaction = json.loads((work / "interaction_and_confounds.json").read_text())
         self.assertEqual(len(interaction["interaction_effects"]["items"]), 1)
-        facts = json.loads((ext / "module_attribution_facts.json").read_text())
+        facts = json.loads((ext / "report/module_attribution_facts.json").read_text())
         facts_by_module = {x["module_id"]: x for x in facts["module_facts"]["items"]}
         self.assertEqual(facts_by_module["M1"]["empirical_status"], "beneficial")
+        snapshot = json.loads((ext / "report/module_attribution_snapshot.json").read_text())
+        self.assertEqual(snapshot["implementation_id"], "IMPL-1")
+        self.assertEqual(snapshot["runs"][0]["dataset"], "Data")
+        self.assertEqual(snapshot["runs"][0]["dataset_version"], "v1")
+        self.assertNotIn("src/old.py", {path for module in snapshot["modules"] for path in module.get("code_paths", [])})
+        self.assertTrue((ext / "report/module_attribution_preflight.json").is_file())
+        self.assertTrue((ext / "report/module_attribution_facts.json").is_file())
+        self.assertTrue((ext / "module_attribution_report.json").is_file())
+        self.assertTrue((ext / "result_pack.json").is_file())
+        self.assertFalse((ext / "module_attribution_preflight.json").exists())
+        self.assertFalse((ext / "module_attribution_snapshot.json").exists())
+        self.assertFalse((ext / "module_attribution_facts.json").exists())
+        self.assertFalse((ext / "module_attribution").exists())
 
     def test_report_gate_validation_and_apply(self) -> None:
         ws = self.clone()
         ext = ws / "external_executor"
         report_path = ext / "module_attribution_report.json"
         report = json.loads(report_path.read_text())
-        facts = json.loads((ext / "module_attribution_facts.json").read_text())
+        facts = json.loads((ext / "report/module_attribution_facts.json").read_text())
         module_items = []
         for fact in facts["module_facts"]["items"]:
             refs = fact["effect_ids"] or fact["evidence_refs"]

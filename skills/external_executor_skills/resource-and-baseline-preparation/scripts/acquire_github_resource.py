@@ -49,9 +49,9 @@ def run_git(cwd: Path, *args: str, timeout: int = 180) -> str:
 
 
 def load_policy(workspace: Path) -> dict:
-    preflight_path = workspace / "external_executor" / "resource_preflight.json"
+    preflight_path = workspace / "external_executor" / "report" / "resource_preflight.json"
     if not preflight_path.exists():
-        raise SystemExit("resource_preflight.json is required before acquisition")
+        raise SystemExit("external_executor/report/resource_preflight.json is required before acquisition")
     preflight = load_json(preflight_path)
     if preflight.get("status") == "blocked":
         raise SystemExit("resource preflight is blocked")
@@ -85,7 +85,7 @@ def main() -> int:
     if hostname.lower() not in GIT_RESOURCE_HOSTS:
         raise SystemExit(f"Domain {hostname} is allowed for search but not supported by this Git acquisition helper")
 
-    destination = workspace / "resource" / "Remote_acquisition" / args.candidate_id
+    destination = workspace / "resources" / "Remote_acquisition" / args.candidate_id
     assert_write_allowed(workspace, destination)
     if destination.exists():
         if not args.force:

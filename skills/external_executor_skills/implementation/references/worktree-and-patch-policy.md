@@ -26,6 +26,8 @@ The base source must be an authorized workspace-relative path. It may be:
 
 Do not use an unreviewed remote checkout or original resource directory directly.
 
+After the first method implementation, the only valid method base is the immediately preceding implementation package's `worktree/`, as recorded by the root iteration plan. Every debug or refinement receives a new implementation ID and a new `before/worktree` package; prior worktrees remain immutable historical evidence.
+
 ## Snapshot rules
 
 - copy regular files only;

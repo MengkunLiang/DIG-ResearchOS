@@ -22,11 +22,11 @@
 - `inventory_local_resources.py` — inventory local resource candidates.
 - `initialize_resource_report.py` — initialize/resume the report envelope.
 - `stage_local_resource.py` — controlled local staging with provenance.
-- `acquire_github_resource.py` — immutable public Git acquisition into `resource/Remote_acquisition/`.
+- `acquire_github_resource.py` — immutable public Git acquisition into `resources/Remote_acquisition/`.
 - `static_review_repository.py` — static repository risk review.
 - `scaffold_reimplementation.py` — provenance-first baseline reimplementation scaffold.
 - `validate_reimplementation_package.py` — reimplementation candidate validation.
-- `build_resource_source_report.py` — source classification report for `resources/` by-hand products and `resource/` acquired/reimplemented products.
+- `build_resource_source_report.py` — source classification report for products under `resources/`.
 - `compute_resource_readiness.py` — deterministic readiness gate.
 - `validate_resource_report.py` — report consistency validator.
 - `apply_resource_report.py` — narrow result-pack update.

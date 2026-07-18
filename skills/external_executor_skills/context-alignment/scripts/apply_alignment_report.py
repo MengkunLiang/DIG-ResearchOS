@@ -14,7 +14,7 @@ from validate_alignment_report import validate_report
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", required=True)
-    parser.add_argument("--report", default="external_executor/context_alignment_report.json")
+    parser.add_argument("--report", default="external_executor/report/context_alignment_report.json")
     parser.add_argument("--result-pack", default="external_executor/result_pack.json")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()

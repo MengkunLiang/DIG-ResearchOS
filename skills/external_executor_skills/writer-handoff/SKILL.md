@@ -1,311 +1,189 @@
 ---
 name: writer-handoff
-description: Compile and validate the final ResearchOS external-executor evidence snapshot into a machine-readable, pre-audit handoff for T7. Use when `research-execution` dispatches Phase F4-F5 after `evidence-packaging` has produced a stable realized method package, final framework figure, and figure/table inventory, including partial or blocked executions that still require an honest T7 handoff. Aggregate method, implementation, results, diagnoses, attributions, figures, tables, claim candidates, must-not-claim boundaries, limitations, risks, failed work, and recovery notes; verify artifact references and provenance; build a T7 ingest index; and write only `result_pack.writer_handoff`. Do not write manuscript prose, create final claims, mark evidence as audited, change upstream artifacts, repair experiments, approve scope changes, set executor completion status, or write T7/T8 outputs.
+description: Compile the final external-executor state into `executor_research_report.md` and validate the complete ResearchOS writing handoff. Use after evidence-packaging and all experiment skills finish, when final terminal `executor_status.json`, `result_pack.json`, `report/run_manifest.json`, and assets under `figure/` and `table/` are ready. Build a source-bound research fact file, produce the eight-section academic report consumed by ResearchOS T8, and verify the four core files plus every final figure and table. Do not run or reinterpret experiments, modify final executor state or result data, update the manifest, write manuscript sections, invent citations or values, hide negative results, or make final paper-claim decisions.
 ---
 
 # Writer Handoff
 
-Act as the final external-executor handoff compiler. Turn one pinned evidence-package snapshot into an honest, machine-readable package that T7 can ingest and audit without hidden conversation history. The output is always pre-audit: `ready_for_T7_audit` never means paper-ready, claim-approved, or T8-ready.
+Convert what actually happened in the external execution environment into one ResearchOS-auditable research fact package. The primary downstream document is `external_executor/executor_research_report.md`. `result_pack.json`, the manifest, raw artifacts, figures, and tables remain authoritative sources that T8 can inspect.
 
 <!-- PROJECT-SPECIFIC-GUIDANCE:BEGIN -->
 <!-- Filled during project Skill specialization. -->
 <!-- PROJECT-SPECIFIC-GUIDANCE:END -->
 
-## Establish paths and ownership
+## Establish the final boundary
 
-1. Locate the nearest directory containing both `project.yaml` and `external_executor/`; call it `<workspace>`.
-2. Treat the directory containing this file as `<skill-dir>`.
-3. Read before writing:
-   - `<workspace>/external_executor/AGENTS.md`;
-   - `<workspace>/external_executor/allowed_paths.txt`;
-   - `<workspace>/external_executor/handoff_pack.json#context_reboost.writer_handoff_contract`;
-   - `<workspace>/external_executor/expected_outputs_schema.json`;
-   - `<workspace>/external_executor/result_pack.json`;
-   - `<workspace>/external_executor/run_manifest.json`;
-   - the root-owned final iteration decision and evidence-package checkpoint;
-   - `<skill-dir>/references/handoff-policy.md`;
-   - `<skill-dir>/references/t7-consumer-contract.md`;
-   - `<skill-dir>/references/evidence-and-claim-boundary.md`;
-   - `<skill-dir>/references/output-contract.md`.
-4. Stop with `blocked` only when the workspace/control boundary is indeterminate, the result pack cannot be parsed, an unsupported major schema prevents safe interpretation, or the evidence-package identity cannot be resolved. Missing scientific evidence normally produces an honest partial handoff rather than no handoff.
+Locate the nearest directory containing `project.yaml` and `external_executor/`; call it `<workspace>`. Treat the directory containing this file as `<skill-dir>`.
+
+Read before writing:
+
+- `external_executor/AGENTS.md`;
+- `external_executor/allowed_paths.txt`;
+- `external_executor/handoff_pack.json`;
+- `external_executor/expected_outputs_schema.json`;
+- `external_executor/executor_status.json`;
+- `external_executor/result_pack.json`;
+- `external_executor/report/run_manifest.json`;
+- every file under `external_executor/figure/` and `external_executor/table/`;
+- `references/handoff-policy.md`;
+- `references/research-report-contract.md`;
+- `references/academic-writing-policy.md`;
+- `references/final-validation-contract.md`;
+- `references/output-contract.md`.
+
+The root must record its intended terminal outcome in both status files before dispatch. Writer Handoff validates that outcome but does not change it.
 
 Write only:
 
-- `external_executor/writer_handoff_preflight.json`;
-- `external_executor/writer_handoff_snapshot.json`;
-- `external_executor/writer_handoff_inventory.json`;
-- `external_executor/writer_handoff_claim_map.json`;
-- `external_executor/writer_handoff_t7_index.json`;
-- `external_executor/writer_handoff_integrity.json`;
-- `external_executor/writer_handoff_report.json`;
-- versioned artifacts under `external_executor/writer_handoff/`;
-- `result_pack.json#writer_handoff` through the narrow apply script.
-
-Do not modify upstream evidence, runs, diagnoses, attributions, packages, figures, tables, claim boundaries, iteration decisions, executor status, manifest, budgets, drafts, or submission files. Return control to `research-execution` after applying the report.
-
-## Run deterministic preflight
-
-```bash
-python <skill-dir>/scripts/preflight_handoff.py --workspace <workspace> \
-  --output external_executor/writer_handoff_preflight.json
+```text
+external_executor/executor_research_report.md
+external_executor/report/writer_handoff_preflight.json
+external_executor/report/writer_handoff_snapshot.json
+external_executor/report/writer_handoff_facts.json
+external_executor/report/writer_handoff_validation.json
 ```
 
-The preflight confirms:
+Do not write `result_pack.writer_handoff`, a T7 ingest index, a parallel claim-map file, manuscript drafts, or new experiment artifacts. The report is derived from the already-final result pack; it must not mutate that source after snapshotting.
 
-- control files and supported schema majors;
-- a final or currently selected evidence-package snapshot;
-- realized method, framework figure, and figure/table inventory status;
-- root iteration-stop or handoff authorization when represented;
-- T7-required sections and the writer handoff contract;
-- allowed write paths.
+## Check prerequisites
 
-A partial, blocked, or failed execution still proceeds when a trustworthy snapshot can be built. Do not fabricate missing sections to obtain a pass.
-
-## Pin one handoff snapshot
-
-Read `references/artifact-reference-and-integrity.md`, then run:
+Run:
 
 ```bash
-python <skill-dir>/scripts/build_handoff_snapshot.py --workspace <workspace> \
-  --output external_executor/writer_handoff_snapshot.json
+python <skill-dir>/scripts/preflight_handoff.py --workspace <workspace>
 ```
 
-The snapshot binds:
+Block when a core control or required JSON file is missing, malformed, outside the allowed write boundary, or has an unsupported major schema. Missing figures, tables, or scientific evidence may produce a constrained report, but the omission must remain explicit.
 
-- result-pack and manifest versions;
-- final iteration decision and claim boundary;
-- resource and baseline readiness;
-- experiment plan, reviews, runs, failures, diagnoses, and attributions;
-- realized method package;
-- final framework figure;
-- figure/table inventory;
-- open blockers, limitations, risks, approximations, replacements, and scope-change records;
-- writer handoff contract and expected output requirements;
-- one deterministic input fingerprint.
+## Pin the final inputs
 
-Do not mix artifacts produced from different evidence-package fingerprints. If upstream artifacts change, the handoff becomes stale and must be rebuilt.
-
-## Inventory handoff materials
+Run:
 
 ```bash
-python <skill-dir>/scripts/inventory_handoff_materials.py \
-  --snapshot <workspace>/external_executor/writer_handoff_snapshot.json \
-  --output <workspace>/external_executor/writer_handoff_inventory.json
+python <skill-dir>/scripts/build_handoff_snapshot.py --workspace <workspace>
 ```
 
-The inventory classifies material as:
+The snapshot binds the full values and checksums of:
+
+- `executor_status.json`;
+- `result_pack.json`;
+- `report/run_manifest.json`;
+- `handoff_pack.json` and `expected_outputs_schema.json`;
+- every final file recursively found under `figure/` and `table/`.
+
+Do not continue from a stale snapshot. A change to any bound input requires rebuilding facts and the report.
+
+## Build source-bound report facts
+
+Run:
+
+```bash
+python <skill-dir>/scripts/build_research_report_facts.py --workspace <workspace>
+```
+
+The facts file must organize, without inventing missing fields:
+
+1. the research question, formal hypotheses, expected contributions, completed work, and explicit plan changes;
+2. the realized method, modules, code entry points, configuration, environment, dependencies, data flow, design deltas, and incomplete work;
+3. every planned or executed experiment and its actual runs;
+4. every structured main, ablation, robustness, efficiency, and diagnostic result recovered from final result tables;
+5. preliminary claim-to-experiment/file mappings and their limitations;
+6. only executor-added literature records with a verifiable identifier and recorded support scope;
+7. limitations, failures, open risks, confounds, compute/data restrictions, and must-not-claim boundaries;
+8. a path and checksum index assembled from the manifest, result pack, figures, and tables.
+
+Use `external_executor/table/main_comparison.csv`, `ablation_results.csv`, and `other_experiments.csv` as the preferred numeric summaries. Preserve their raw source-file references. Do not manually transcribe a number from a plot, log screenshot, prose summary, or favorable subset.
+
+## Render the executor research report
+
+Run:
+
+```bash
+python <skill-dir>/scripts/render_executor_research_report.py --workspace <workspace>
+```
+
+The report must contain exactly these major sections:
 
 ```text
-method_definition
-implementation_evidence
-formal_result_candidate
-ablation_result_candidate
-diagnostic_result
-framework_figure
-result_figure
-result_table
-failed_or_unusable_run
-limitation
-open_risk
-must_not_claim
-recovery_note
+1. Project Summary
+2. Implementation Summary
+3. Experiment Inventory
+4. Comprehensive Results
+5. Claim Support Table
+6. Verified Literature Additions
+7. Limitations and Open Issues
+8. Artifact Index
 ```
 
-Every item must expose source IDs and artifact paths where applicable. A natural-language summary without source references is navigation, not evidence.
+The deterministic renderer supplies a complete source-bound draft. Inspect it against `writer_handoff_facts.json` and improve only prose clarity when needed. Do not add, remove, round, combine, or reinterpret values; do not replace paths; do not omit an unfavorable experiment; and do not add a citation that is absent from verified facts.
 
-## Verify artifact references and provenance
+The Experiment Inventory must retain all required columns from `research-report-contract.md`. Comprehensive Results must cover every structured completed result, not only favorable rows. Each result must state the values, comparator, setting, statistical-test status, raw source, figure/table source, supported scope, and unsupported scope.
+
+The Claim Support Table remains preliminary. Use `Supported candidate`, `Partially supported candidate`, or `Unsupported`; never write that the external executor finally accepted or proved a paper claim. T8 owns final claim adjudication.
+
+## Enforce academic language
+
+Follow `references/academic-writing-policy.md`.
+
+Use connected academic paragraphs for motivation, method, setup, interpretation, and boundaries. Use tables where exact repeated fields improve auditability. Avoid fragmented micro-sections, em-dash rhetoric, colon-driven prose, slogans, unsupported significance language, promotional adjectives, and formulae that cannot be verified from the realized method and code.
+
+Explain a technical term at first use. Define every symbol if a formula is necessary. Use concrete examples only to clarify a formal concept, never as evidence. Write `Not recorded` where a fact cannot be resolved.
+
+## Validate the complete handoff
+
+Run:
 
 ```bash
-python <skill-dir>/scripts/validate_artifact_refs.py --workspace <workspace> \
-  --snapshot external_executor/writer_handoff_snapshot.json \
-  --inventory external_executor/writer_handoff_inventory.json \
-  --output external_executor/writer_handoff_integrity.json
+python <skill-dir>/scripts/validate_writer_handoff.py --workspace <workspace>
 ```
 
-Verify:
+Writer Handoff itself must validate:
 
-- workspace-relative canonical paths;
-- no path escape or symlink escape;
-- referenced file existence;
-- checksum and size when declared;
-- formal-result links to config, raw log, metric output, split, seed/repeat, code/resource version, environment, and protocol fingerprint;
-- method-module links to code/config;
-- figure/table links to generating scripts or structured sources;
-- manifest consistency when entries exist.
+- `executor_status.json` is terminal and consistent with `result_pack.json`;
+- `result_pack.json` is parseable and contains the final scientific sections appropriate to its outcome;
+- every manifest path is workspace-contained, exists, and matches its declared hash and size;
+- every final figure and table is nonempty, unchanged since snapshot, and registered in the manifest;
+- `executor_research_report.md` is nonempty, contains all eight sections and required tables, includes every experiment/result/claim record, and preserves every source path;
+- all quantitative result records have raw-result paths;
+- every executor-added reference has a verifiable identifier and appears with its support/access boundary;
+- forbidden authority or promotional phrasing is absent;
+- all report paths resolve to real workspace artifacts;
+- snapshot, facts, report, core files, and assets remain mutually consistent.
 
-A missing optional presentation file may be partial. A broken formal-result, realized-method, or source-data reference is blocking for the affected item and must lower readiness.
+Validation statuses are:
 
-## Build the claim–evidence handoff map
+- `ready` when the terminal execution is completed and no defect remains;
+- `partial` when a non-completed terminal execution still yields a coherent, fully disclosed report, or only non-blocking coverage warnings remain;
+- `blocked` when core identity, status, path, checksum, report coverage, or factual traceability is invalid.
 
-Read `references/evidence-and-claim-boundary.md`, then run:
-
-```bash
-python <skill-dir>/scripts/build_claim_evidence_map.py \
-  --snapshot <workspace>/external_executor/writer_handoff_snapshot.json \
-  --inventory <workspace>/external_executor/writer_handoff_inventory.json \
-  --output <workspace>/external_executor/writer_handoff_claim_map.json
-```
-
-For each claim ID, preserve:
-
-- the upstream claim or reviewer question;
-- supporting formal candidates, diagnostics, method definitions, and figures/tables;
-- counterevidence and failed/unstable runs;
-- required baseline coverage;
-- evidence ceiling before T7 audit;
-- limitations, risks, and unresolved evidence requests;
-- explicit must-not-claim consequences.
-
-Allowed evidence ceilings are:
-
-```text
-formal_candidate
-diagnostic_only
-method_definition_only
-unsupported
-```
-
-Never mark a claim `audited`, `accepted`, `proven`, `paper_ready`, or final. T7 owns audit and claim closure.
-
-## Build the T7 ingest index
-
-```bash
-python <skill-dir>/scripts/build_t7_ingest_index.py \
-  --snapshot <workspace>/external_executor/writer_handoff_snapshot.json \
-  --inventory <workspace>/external_executor/writer_handoff_inventory.json \
-  --claim-map <workspace>/external_executor/writer_handoff_claim_map.json \
-  --integrity <workspace>/external_executor/writer_handoff_integrity.json \
-  --output <workspace>/external_executor/writer_handoff_t7_index.json
-```
-
-The index tells T7 where to find:
-
-- realized method and code/config mapping;
-- run records, raw logs, configs, metrics, environments, and failed trials;
-- diagnosis and attribution records;
-- framework and result figures/tables with source lineage;
-- claim candidates, counterevidence, limitations, risks, and must-not-claim boundaries;
-- schema versions and fingerprints.
-
-The index is a navigation layer, not a replacement for source artifacts.
-
-## Compose the pre-audit handoff
-
-Read:
-
-- `references/limitations-risks-and-negative-results.md`;
-- `references/storyline-and-summary-policy.md`;
-- `references/output-contract.md`.
-
-Initialize:
-
-```bash
-python <skill-dir>/scripts/initialize_writer_handoff.py --workspace <workspace> \
-  --snapshot external_executor/writer_handoff_snapshot.json \
-  --inventory external_executor/writer_handoff_inventory.json \
-  --claim-map external_executor/writer_handoff_claim_map.json \
-  --t7-index external_executor/writer_handoff_t7_index.json \
-  --integrity external_executor/writer_handoff_integrity.json \
-  --output external_executor/writer_handoff_report.json
-```
-
-Complete only evidence-bound summaries:
-
-- method and implementation summaries;
-- main, ablation, diagnostic, robustness, efficiency, failure, and negative-result summaries;
-- figure/table navigation;
-- claim candidates with support and counterevidence;
-- must-not-claim boundaries;
-- limitations, open risks, approximations, replacements, unavailable resources, and recovery notes;
-- a `recommended_storyline_update` labeled `pre_audit_suggestion`.
-
-Do not write paper sections, title/abstract claims, polished contribution statements, or final captions that erase uncertainty. Preserve negative and contradictory evidence.
-
-## Compute handoff readiness
-
-```bash
-python <skill-dir>/scripts/compute_handoff_gate.py \
-  --report <workspace>/external_executor/writer_handoff_report.json --write-back
-```
-
-Gate outcomes:
-
-- `ready_for_T7_audit`: required handoff sections exist, core references validate, risks and boundaries propagate, and the package is internally consistent;
-- `partial_for_T7_audit`: useful ingestible evidence exists but required baseline coverage, formal provenance, package completeness, figures/tables, repeats, or risk closure is incomplete;
-- `blocked_for_T7_audit`: T7 cannot safely identify the evidence snapshot or core artifacts due to schema, path, integrity, or authority failure.
-
-The gate does not set executor completion status and does not authorize T8.
-
-## Validate and apply narrowly
-
-```bash
-python <skill-dir>/scripts/validate_writer_handoff.py --workspace <workspace> \
-  --report external_executor/writer_handoff_report.json
-
-python <skill-dir>/scripts/apply_writer_handoff.py --workspace <workspace> \
-  --report external_executor/writer_handoff_report.json
-```
-
-Validation enforces:
-
-- report schema and status consistency;
-- pending/pre-audit semantics;
-- valid source IDs and artifact references;
-- upstream risk, limitation, failed-run, and must-not-claim propagation;
-- claim-support and counterevidence linkage;
-- method/code/config and figure/table/source linkage;
-- forbidden authority fields;
-- T7 index consistency;
-- narrow ownership.
-
-The apply script updates only `result_pack.writer_handoff`. Root scripts remain responsible for manifest registration, final result-pack validation, executor status, and T7 routing.
+Repair a blocked report from its authoritative source and rerun snapshot, fact compilation, rendering, and validation. Do not edit validation output to obtain a pass.
 
 ## Return to the root
 
-Return a compact child result:
+Return:
 
 ```text
 child_skill=writer-handoff
 status=complete|partial|blocked|failed
-audit_readiness=ready_for_T7_audit|partial_for_T7_audit|blocked_for_T7_audit
-handoff_id=<id>
-report=external_executor/writer_handoff_report.json
-t7_index=external_executor/writer_handoff_t7_index.json
+handoff_readiness=ready|partial|blocked
+report=external_executor/executor_research_report.md
+validation=external_executor/report/writer_handoff_validation.json
 input_fingerprint=<sha256>
 blocking_issues=<ids>
-recommended_next_action=return_to_root_for_final_validation|return_to_root_with_partial_handoff|repair_handoff|stop_and_report
+recommended_next_action=handoff_complete|handoff_complete_with_constraints|repair_writer_handoff
 ```
 
-The recommendation is advisory. `research-execution` owns final validation, executor status, manifest updates, and transition to T7.
-
-## Evidence and safety rules
-
-- Artifact files are authoritative; summaries are navigation aids.
-- Keep method definition, formal candidate, diagnostic, exploratory, failed, stale, and unsupported evidence distinct.
-- Preserve counterevidence, failed trials, approximations, unavailable baselines, and claim risks.
-- Every quantitative or mechanism-facing handoff item must point to source evidence.
-- Never write `audited=true`, `final_claim`, `paper_ready`, `T8_ready`, `accepted`, or equivalent authority claims.
-- Never create `drafts/` or `experiments/` T7/T8 outputs.
-- Never relax allowed paths, schema requirements, checksum failures, claim boundaries, or must-not-claim rules.
-- A complete-looking summary cannot compensate for missing provenance.
+The root records the child result and stops. It does not run a second final-output validator. ResearchOS runtime may still perform its independent ingestion gate after the external executor returns.
 
 ## Resource map
 
-- `references/handoff-policy.md`: ownership, pre-audit semantics, partial/blocked behavior, and resume.
-- `references/t7-consumer-contract.md`: what T7 needs to ingest, audit, method-check, novelty-check, and close claims.
-- `references/evidence-and-claim-boundary.md`: claim candidates, evidence ceilings, counterevidence, and forbidden promotion.
-- `references/artifact-reference-and-integrity.md`: reference form, path/checksum validation, manifest and fingerprint rules.
-- `references/limitations-risks-and-negative-results.md`: propagation of limitations, risks, failures, approximations, and recovery notes.
-- `references/storyline-and-summary-policy.md`: navigation summaries and pre-audit storyline suggestions.
-- `references/final-validation-checklist.md`: F5 handoff-level checks before root final validation.
-- `references/output-contract.md`: report, inventory, claim map, index, gate, and child-result schema.
-- `scripts/preflight_handoff.py`: verify controls and prerequisites.
-- `scripts/build_handoff_snapshot.py`: pin one final evidence snapshot.
-- `scripts/inventory_handoff_materials.py`: classify handoff materials.
-- `scripts/validate_artifact_refs.py`: verify paths, checksums, provenance, and manifest consistency.
-- `scripts/build_claim_evidence_map.py`: bind claim candidates to support, counterevidence, limits, and ceilings.
-- `scripts/build_t7_ingest_index.py`: produce machine-readable T7 navigation.
-- `scripts/initialize_writer_handoff.py`: create the evidence-bound report envelope.
-- `scripts/compute_handoff_gate.py`: derive audit readiness.
-- `scripts/validate_writer_handoff.py`: enforce structure, evidence, risk propagation, and authority boundaries.
-- `scripts/apply_writer_handoff.py`: atomically update only `result_pack.writer_handoff`.
+- `references/handoff-policy.md`: ownership, final-state semantics, staleness, and downstream authority.
+- `references/research-report-contract.md`: required report content and experiment/result/claim fields.
+- `references/academic-writing-policy.md`: language, structure, formula, terminology, and citation requirements.
+- `references/final-validation-contract.md`: the six-surface final validation rules.
+- `references/output-contract.md`: exact file ownership and schemas.
+- `scripts/preflight_handoff.py`: check controls, final inputs, directories, and writes.
+- `scripts/build_handoff_snapshot.py`: pin core files and all final figures/tables.
+- `scripts/build_research_report_facts.py`: normalize source-bound report facts.
+- `scripts/render_executor_research_report.py`: render the eight-section Markdown report.
+- `scripts/validate_writer_handoff.py`: validate the four final files plus figure/table assets.

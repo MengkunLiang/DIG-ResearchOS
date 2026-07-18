@@ -21,7 +21,7 @@ from _common import (
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate Phase C prerequisites without changing domain artifacts.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/experiment_design_preflight.json")
+    parser.add_argument("--output", default="external_executor/report/experiment_design_preflight.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)
@@ -106,11 +106,16 @@ def main() -> int:
     try:
         assert_write_allowed(ws, output)
         for rel in [
-            "external_executor/claim_evidence_matrix.json",
-            "external_executor/protocol_snapshot.json",
-            "external_executor/protocol_fingerprint.json",
+            "external_executor/report/claim_evidence_matrix.json",
+            "external_executor/report/protocol_snapshot.json",
+            "external_executor/report/protocol_fingerprint.json",
+            "external_executor/report/protocol_change_impact.json",
             "external_executor/experiment_plan.json",
-            "external_executor/experiment_design_report.json",
+            "external_executor/report/experiment_plan_validation.json",
+            "external_executor/report/experiment_plan_dag_validation.json",
+            "external_executor/report/experiment_design_gate.json",
+            "external_executor/report/experiment_design_report.json",
+            "external_executor/report/experiment_design_report_validation.json",
         ]:
             assert_write_allowed(ws, ws / rel)
     except Exception as exc:  # noqa: BLE001

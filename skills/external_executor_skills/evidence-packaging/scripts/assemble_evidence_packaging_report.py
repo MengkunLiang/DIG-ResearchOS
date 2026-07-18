@@ -9,19 +9,21 @@ from _common import canonical_json_hash, dump_json_atomic, file_ref, load_json, 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Assemble the durable evidence-packaging child report.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/evidence_packaging_report.json")
+    parser.add_argument("--output", default="external_executor/report/evidence_packaging_report.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     paths = {
-        "preflight": "external_executor/evidence_packaging_preflight.json",
-        "snapshot": "external_executor/final_evidence_snapshot.json",
-        "snapshot_validation": "external_executor/final_evidence_snapshot_validation.json",
+        "preflight": "external_executor/report/evidence_packaging_preflight.json",
+        "snapshot": "external_executor/report/final_evidence_snapshot.json",
+        "snapshot_validation": "external_executor/report/final_evidence_snapshot_validation.json",
         "realized_method_package": "external_executor/evidence_package/realized_method_package.json",
-        "framework_figure": "external_executor/evidence_package/framework_figure_spec.json",
-        "figure_table_inventory": "external_executor/evidence_package/figure_table_inventory.json",
-        "evidence_mapping": "external_executor/evidence_package/evidence_mapping.json",
-        "package_manifest": "external_executor/evidence_package/evidence_package_manifest.json",
-        "packaging_gate": "external_executor/evidence_packaging_gate.json",
+        "framework_figure": "external_executor/report/framework_figure_spec.json",
+        "result_tables": "external_executor/report/result_table_build_report.json",
+        "result_figures": "external_executor/report/result_figure_build_report.json",
+        "figure_table_inventory": "external_executor/report/figure_table_inventory.json",
+        "evidence_mapping": "external_executor/report/evidence_mapping.json",
+        "package_manifest": "external_executor/report/evidence_package_manifest.json",
+        "packaging_gate": "external_executor/report/evidence_packaging_gate.json",
     }
     data = {key: load_json(resolve_in_workspace(ws, path)) for key, path in paths.items()}
     gate = data["packaging_gate"]
@@ -36,6 +38,8 @@ def main() -> int:
         "snapshot_fingerprint": data["snapshot"].get("snapshot_fingerprint"),
         "realized_method_package": data["realized_method_package"],
         "framework_figure": data["framework_figure"],
+        "result_tables": data["result_tables"],
+        "result_figures": data["result_figures"],
         "figure_table_inventory": data["figure_table_inventory"],
         "evidence_mapping": data["evidence_mapping"],
         "package_manifest": data["package_manifest"],

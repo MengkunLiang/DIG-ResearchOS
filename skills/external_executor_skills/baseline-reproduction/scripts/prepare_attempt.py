@@ -29,7 +29,7 @@ def ignore(_dir: str, names: list[str]) -> set[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Prepare isolated baseline reproduction attempt.")
     ap.add_argument("--workspace")
-    ap.add_argument("--plan", default="external_executor/baseline_reproduction_plan.json")
+    ap.add_argument("--plan", default="external_executor/report/baseline_reproduction_plan.json")
     ap.add_argument("--reproduction-id", required=True)
     ap.add_argument("--attempt", type=int, required=True)
     ap.add_argument("--force", action="store_true")
@@ -47,22 +47,26 @@ def main() -> int:
     if not is_approved_resource_path(ws, source):
         raise SystemExit(
             "Baseline source must come from an approved resource root "
-            "(resources/ for by-hand local material or resource/ for acquired/reimplemented material): "
+            "(resources/): "
             f"{source}"
         )
     reject_symlinks(source)
     baseline_slug = slugify(item.get("baseline_id") or item.get("baseline_name"))
-    dest = ws / "external_executor" / "expr" / "baseline_reproduction" / baseline_slug / args.reproduction_id / f"attempt-{args.attempt}"
+    dest = ws / "external_executor" / "expr" / "baselines" / baseline_slug / args.reproduction_id / f"attempt-{args.attempt}"
     result_dir = ws / "external_executor" / "raw_results" / "baseline_reproduction" / baseline_slug / args.reproduction_id / f"attempt-{args.attempt}"
+    evidence_dir = ws / "external_executor" / "report" / "baseline_reproduction" / baseline_slug / args.reproduction_id / f"attempt-{args.attempt}"
     assert_write_allowed(ws, dest)
     assert_write_allowed(ws, result_dir)
-    if dest.exists() or result_dir.exists():
+    assert_write_allowed(ws, evidence_dir)
+    if dest.exists() or result_dir.exists() or evidence_dir.exists():
         if not args.force:
-            raise SystemExit(f"Attempt exists: {dest} or {result_dir}")
+            raise SystemExit(f"Attempt exists: {dest} or {result_dir} or {evidence_dir}")
         if dest.exists():
             shutil.rmtree(dest)
         if result_dir.exists():
             shutil.rmtree(result_dir)
+        if evidence_dir.exists():
+            shutil.rmtree(evidence_dir)
     (dest / "source").parent.mkdir(parents=True, exist_ok=True)
     if source.is_dir():
         shutil.copytree(source, dest / "source", symlinks=False, ignore=ignore)
@@ -72,6 +76,7 @@ def main() -> int:
     (dest / "patches").mkdir()
     (dest / "configs").mkdir()
     (result_dir / "outputs").mkdir(parents=True)
+    evidence_dir.mkdir(parents=True)
     config_records = []
     for config_value in item.get("config", {}).get("paths", []):
         config = resolve_in_workspace(ws, config_value)
@@ -86,6 +91,7 @@ def main() -> int:
     fragment["attempt_dir"] = relpath(ws, dest)
     fragment["deployment_dir"] = relpath(ws, dest)
     fragment["result_dir"] = relpath(ws, result_dir)
+    fragment["evidence_dir"] = relpath(ws, evidence_dir)
     fragment["prepared_at"] = utc_now()
     dump_json_atomic(dest / "plan_fragment.json", fragment)
     source_manifest = tree_manifest(dest / "source")
@@ -101,6 +107,7 @@ def main() -> int:
         "attempt_path": relpath(ws, dest),
         "deployment_path": relpath(ws, dest),
         "result_path": relpath(ws, result_dir),
+        "evidence_path": relpath(ws, evidence_dir),
         "source_manifest_sha256": source_manifest["manifest_sha256"],
         "config_manifest_sha256": config_manifest["manifest_sha256"],
         "config_records": config_records,
@@ -108,7 +115,7 @@ def main() -> int:
         "excluded_names": sorted(SKIP),
     }
     dump_json_atomic(dest / "attempt_provenance.json", provenance)
-    dump_json_atomic(result_dir / "attempt_provenance.json", provenance)
+    dump_json_atomic(evidence_dir / "attempt_provenance.json", provenance)
     print(relpath(ws, dest))
     return 0
 

@@ -10,7 +10,7 @@ All must hold:
 
 - policy mode is `github_and_reimplementation`;
 - `baseline_reimplementation_allowed=true`;
-- local resource search is complete and did not inspect `external_executor/expr`;
+- local resource search under `resources/` is complete;
 - authorized public remote search and acquisition attempts are complete;
 - search and rejection records exist;
 - paper/supplement/protocol sources are available;
@@ -22,7 +22,7 @@ All must hold:
 ## Package layout
 
 ```text
-resource/reproduction/<baseline>/
+resources/reproduction/<baseline>/
   README.md
   REIMPLEMENTATION_SPEC.md
   provenance.json
@@ -31,9 +31,9 @@ resource/reproduction/<baseline>/
   configs/
   src/
   tests/
-  static_review.json            # when applicable
-  validation_report.json
 ```
+
+Static review and validation reports are written under `external_executor/report/`.
 
 ## Specification content
 

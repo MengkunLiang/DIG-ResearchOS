@@ -108,9 +108,9 @@ def mermaid_for(spec: dict) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Render a conservative editable Mermaid source and standalone SVG from a validated framework spec.")
     parser.add_argument("--workspace")
-    parser.add_argument("--spec", default="external_executor/evidence_package/framework_figure_spec.json")
-    parser.add_argument("--svg", default="external_executor/evidence_package/framework_figure.svg")
-    parser.add_argument("--mermaid", default="external_executor/evidence_package/framework_figure.mmd")
+    parser.add_argument("--spec", default="external_executor/report/framework_figure_spec.json")
+    parser.add_argument("--svg", default="external_executor/figure/framework_figure.svg")
+    parser.add_argument("--mermaid", default="external_executor/report/framework_figure.mmd")
     parser.add_argument("--write-back", action="store_true")
     args = parser.parse_args()
 

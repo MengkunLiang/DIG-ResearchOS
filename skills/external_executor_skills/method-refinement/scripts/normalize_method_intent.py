@@ -63,13 +63,13 @@ def normalize_flow(raw: Any) -> list[dict[str, Any]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Normalize method_intent and confirmed scope into a stable contract.")
     parser.add_argument("--workspace")
-    parser.add_argument("--output", default="external_executor/method_intent_contract.json")
+    parser.add_argument("--output", default="external_executor/report/method_intent_contract.json")
     args = parser.parse_args()
     ws = resolve_workspace(args.workspace)
     ext = ws / "external_executor"
     handoff = load_json(ext / "handoff_pack.json")
     result = load_json(ext / "result_pack.json")
-    preflight = load_json(ext / "method_refinement_preflight.json", default={})
+    preflight = load_json(ext / "report" / "method_refinement_preflight.json", default={})
 
     intent = dictify(handoff.get("method_intent"))
     scope = dictify(get_nested(result, "context_alignment.confirmed_execution_scope", default={}))

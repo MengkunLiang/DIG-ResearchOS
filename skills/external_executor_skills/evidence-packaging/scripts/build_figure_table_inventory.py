@@ -170,18 +170,134 @@ def required_visuals(result: dict[str, Any], existing_claims: set[str]) -> list[
     return items
 
 
+def snapshot_result(snapshot: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: entry.get("value")
+        for key, entry in snapshot.get("section_digests", {}).items()
+        if isinstance(entry, dict) and "value" in entry
+    }
+
+
+def experiment_claims(result: dict[str, Any]) -> dict[str, list[str]]:
+    output: dict[str, list[str]] = {}
+    plan = result.get("experiment_plan", {})
+    experiments = plan.get("experiments", []) if isinstance(plan, dict) else []
+    for item in experiments:
+        if isinstance(item, dict) and item.get("experiment_id"):
+            output[str(item["experiment_id"])] = unique_strings(listify(item.get("claim_ids")))
+    for claim in (result.get("claim_evidence_matrix", {}).get("items", []) if isinstance(result.get("claim_evidence_matrix"), dict) else []):
+        if not isinstance(claim, dict) or not claim.get("claim_id"):
+            continue
+        for experiment_id in listify(claim.get("experiment_ids") or claim.get("planned_experiment_ids")):
+            output.setdefault(str(experiment_id), []).append(str(claim["claim_id"]))
+    return {key: unique_strings(value) for key, value in output.items()}
+
+
+def generated_items(
+    ws: Path,
+    result: dict[str, Any],
+    snapshot: dict[str, Any],
+    table_report: dict[str, Any],
+    figure_report: dict[str, Any],
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    claims_by_experiment = experiment_claims(result)
+    provenance = table_report.get("provenance", {})
+    table_items: dict[str, dict[str, Any]] = {}
+    for table in table_report.get("tables", []):
+        if not isinstance(table, dict) or not table.get("path"):
+            continue
+        path = resolve_in_workspace(ws, str(table["path"]))
+        source_files = unique_strings(table.get("source_files", []))
+        experiment_ids: list[str] = []
+        if path.is_file():
+            import csv
+            with path.open("r", encoding="utf-8-sig", newline="") as handle:
+                for row in csv.DictReader(handle):
+                    experiment_ids.extend(str(row.get("experiment_ids") or "").split(";"))
+        claim_ids = unique_strings(
+            claim for experiment_id in unique_strings(experiment_ids)
+            for claim in claims_by_experiment.get(experiment_id, [])
+        )
+        complete_lineage = bool(
+            source_files and provenance.get("config_refs") and provenance.get("log_refs")
+            and provenance.get("metric_output_refs") and provenance.get("table_generator_ref")
+        )
+        item = {
+            "artifact_id": table.get("artifact_id") or stable_id("TABLE", table["path"]),
+            "kind": "table",
+            "table_kind": table.get("kind"),
+            "title": str(table.get("kind") or "result").replace("_", " ").title(),
+            "status": "ready_for_T7_audit" if path.is_file() and complete_lineage else "partial" if path.is_file() else "missing",
+            "evidence_layer": "main" if table.get("kind") == "main" else "mechanism" if table.get("kind") == "ablation" else "diagnostic",
+            "claim_ids": claim_ids,
+            "source_result_refs": source_files,
+            "source_data_refs": source_files,
+            "config_refs": provenance.get("config_refs", []),
+            "log_refs": provenance.get("log_refs", []),
+            "metric_output_refs": provenance.get("metric_output_refs", []),
+            "plot_script_refs": [provenance.get("table_generator_ref")] if provenance.get("table_generator_ref") else [],
+            "protocol_fingerprint": snapshot.get("active_protocol_fingerprint"),
+            "evidence_level": "derived_table",
+            "numeric_traceability": complete_lineage,
+            "editable_source": file_ref(ws, path, evidence_level="derived_table") if path.is_file() else None,
+            "rendered_files": [file_ref(ws, path, evidence_level="derived_table")] if path.is_file() else [],
+            "missing_rendered_paths": [] if path.is_file() else [str(table["path"])],
+            "caption_draft": None,
+            "must_not_imply": [] if complete_lineage else ["full provenance until config, log, metric output, and raw source links are complete"],
+            "notes": [],
+        }
+        items.append(item)
+        table_items[str(table["path"])] = item
+    for figure in figure_report.get("figures", []):
+        if not isinstance(figure, dict) or not figure.get("path"):
+            continue
+        path = resolve_in_workspace(ws, str(figure["path"]))
+        table_item = table_items.get(str(figure.get("source_table_ref")), {})
+        complete_lineage = bool(path.is_file() and table_item.get("numeric_traceability") and figure.get("plot_script_ref"))
+        items.append({
+            "artifact_id": figure.get("figure_id") or stable_id("FIG", figure["path"]),
+            "kind": "figure",
+            "figure_kind": figure.get("kind"),
+            "title": f"{str(figure.get('kind') or 'result').replace('_', ' ').title()}: {figure.get('dataset')} / {figure.get('metric')}",
+            "status": "ready_for_T7_audit" if complete_lineage else "partial" if path.is_file() else "missing",
+            "evidence_layer": "main" if figure.get("kind") == "main" else "mechanism" if figure.get("kind") == "ablation" else "diagnostic",
+            "claim_ids": table_item.get("claim_ids", []),
+            "source_result_refs": table_item.get("source_result_refs", []),
+            "source_data_refs": [figure.get("source_table_ref")],
+            "config_refs": table_item.get("config_refs", []),
+            "log_refs": table_item.get("log_refs", []),
+            "metric_output_refs": table_item.get("metric_output_refs", []),
+            "plot_script_refs": [figure.get("plot_script_ref")],
+            "protocol_fingerprint": snapshot.get("active_protocol_fingerprint"),
+            "evidence_level": "derived_figure",
+            "numeric_traceability": complete_lineage,
+            "editable_source": figure.get("source_table_ref"),
+            "rendered_files": [file_ref(ws, path, evidence_level="derived_figure")] if path.is_file() else [],
+            "missing_rendered_paths": [] if path.is_file() else [str(figure["path"])],
+            "caption_draft": figure.get("caption_draft"),
+            "must_not_imply": [] if complete_lineage else ["full numeric provenance until the source table is ready for T7 audit"],
+            "notes": [],
+        })
+    return items
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Inventory traceable result figures and tables from the pinned evidence snapshot.")
     parser.add_argument("--workspace")
-    parser.add_argument("--snapshot", default="external_executor/final_evidence_snapshot.json")
-    parser.add_argument("--framework", default="external_executor/evidence_package/framework_figure_spec.json")
-    parser.add_argument("--output", default="external_executor/evidence_package/figure_table_inventory.json")
+    parser.add_argument("--snapshot", default="external_executor/report/final_evidence_snapshot.json")
+    parser.add_argument("--framework", default="external_executor/report/framework_figure_spec.json")
+    parser.add_argument("--tables-report", default="external_executor/report/result_table_build_report.json")
+    parser.add_argument("--figures-report", default="external_executor/report/result_figure_build_report.json")
+    parser.add_argument("--output", default="external_executor/report/figure_table_inventory.json")
     args = parser.parse_args()
 
     ws = resolve_workspace(args.workspace)
-    result = load_json(ws / "external_executor/result_pack.json")
     snapshot = load_json(resolve_in_workspace(ws, args.snapshot))
+    result = snapshot_result(snapshot)
     framework = load_json(resolve_in_workspace(ws, args.framework))
+    table_report = load_json(resolve_in_workspace(ws, args.tables_report))
+    figure_report = load_json(resolve_in_workspace(ws, args.figures_report))
     items: list[dict[str, Any]] = []
     seen_signatures: set[str] = set()
     for path, record in walk_dicts(result):
@@ -216,10 +332,11 @@ def main() -> int:
         "missing_rendered_paths": [],
         "caption_draft": framework.get("caption_draft"),
         "must_not_imply": [item.get("reason") for item in framework.get("must_not_show", [])],
-        "evidence_mapping_ref": "external_executor/evidence_package/framework_figure_spec.json#evidence_mapping",
+        "evidence_mapping_ref": "external_executor/report/framework_figure_spec.json#evidence_mapping",
         "notes": [],
     }
     items.insert(0, framework_item)
+    items[1:1] = generated_items(ws, result, snapshot, table_report, figure_report)
 
     existing_claims = {claim for item in items if item.get("status") != "missing" for claim in item.get("claim_ids", [])}
     items.extend(required_visuals(result, existing_claims))
