@@ -65,7 +65,7 @@ def render(facts: dict[str, Any]) -> str:
         "",
         "## 1. Project Summary",
         "",
-        sentence(f"The research question recorded for this execution is {text(project.get('research_question'))}"),
+        "The execution used the following research question. " + sentence(project.get("research_question")),
         "The external executor treated this question as fixed unless a change is listed below. It did not infer a new question from favorable results.",
         "",
     ]
