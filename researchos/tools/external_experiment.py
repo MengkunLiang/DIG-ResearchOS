@@ -3448,6 +3448,19 @@ def _write_external_executor_guides(
     scope_header = (
         "RESOURCE PREPARATION ONLY" if execution_scope == "resource_preparation" else "FULL EXECUTION"
     )
+    t8_launch_block = (
+        "## T5-to-T8 transition\n"
+        "After the project-specific `writer-handoff` Skill reports `status=ready` or `status=partial`, rerun the root routing helper. "
+        "When it returns `launch-t8`, execute its command exactly once from the workspace root, normally:\n\n"
+        "```bash\npython -m researchos.cli run-task T8 --workspace <workspace>\n```\n\n"
+        "This is the only normal T5-to-T8 handoff. ResearchOS independently validates the frozen Writer Handoff and creates "
+        "`drafts/t5_t8_handoff.json`, `drafts/experiment_evidence_pack.json`, and `drafts/result_to_claim.json` before it opens T8. "
+        "Do not tell the researcher to use `resume` as a substitute, and do not write manuscript files under `drafts/` yourself. "
+        "A nonzero command exit means T8 did not start; preserve the external package and repair the named Writer Handoff issue.\n\n"
+        if execution_scope != "resource_preparation"
+        else "## T5-to-T8 transition\n"
+        "This launch is resource preparation only. Do not run `run-task T8`; stop after the accepted Phase B report and return control to ResearchOS T5.\n\n"
+    )
     common_header = (
         "> EXECUTION MODE NOT YET SELECTED - see external_executor/report/executor_selection.json after T5-EXECUTOR-GATE\n\n"
         f"- execution_scope: {scope_header}\n- dry_run: UNSET\n- mock_only: UNSET\n- real_experiment_allowed: UNSET\n\n"
@@ -3501,7 +3514,8 @@ def _write_external_executor_guides(
         "Do not fabricate datasets, baselines, metrics, or results. Every metric must trace to a raw file, config, run id, log, and sha256.\n\n"
         "## Required outputs\n"
         f"{required_outputs}\n\n"
-        "Write external_executor/executor_research_report.md as the final T8 handoff report, then stop. Do not write paper text or final claims.\n"
+        "Write external_executor/executor_research_report.md as the final T8 handoff report. Do not write paper text or final claims.\n\n"
+        + t8_launch_block
     )
     claude = (
         f"# Claude Code External Execution Guide - project {project_id}\n\n"
@@ -3515,8 +3529,9 @@ def _write_external_executor_guides(
         "3. If mock_only=true, emit schema-valid mock artifacts with mock_only=true and dry_run=true.\n"
         "4. If real, keep Phase B resource materials under resources/; later build/run skills deploy runnable assets according to their own instructions.\n"
         f"5. Run required configs over seeds {seeds}.\n"
-        "6. Write all required outputs and stop after executor_research_report.md.\n\n"
-        "## Metrics\n"
+        "6. Write all required outputs, including the final Writer Handoff report and validation.\n\n"
+        + t8_launch_block
+        + "## Metrics\n"
         f"{metrics_block}\n\n"
         "## Required baselines\n"
         f"{baselines_block}\n\n"

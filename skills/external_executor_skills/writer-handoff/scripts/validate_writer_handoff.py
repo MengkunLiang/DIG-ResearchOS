@@ -71,6 +71,10 @@ def current_core_hashes(ws: Path) -> dict[str, str]:
         "result_pack": "external_executor/result_pack.json",
         "executor_status": "external_executor/executor_status.json",
         "run_manifest": "external_executor/report/run_manifest.json",
+        # T8 normalizes this structured facts file into its evidence and
+        # result-to-claim packs.  Bind it to the final validation so it cannot
+        # be edited after Writer Handoff validation without detection.
+        "writer_handoff_facts": "external_executor/report/phase_F/writer_handoff_facts.json",
         "handoff_pack": "external_executor/handoff_pack.json",
         "expected_outputs_schema": "external_executor/expected_outputs_schema.json",
     }

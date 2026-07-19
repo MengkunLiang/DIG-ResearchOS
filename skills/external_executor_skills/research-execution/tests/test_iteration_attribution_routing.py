@@ -221,7 +221,10 @@ class IterationAttributionRoutingTests(unittest.TestCase):
         result["executor_status"] = "blocked"
         (ext / "result_pack.json").write_text(json.dumps(result), encoding="utf-8")
         proc = run("route_next_skill.py", "--workspace", str(root))
-        self.assertEqual(json.loads(proc.stdout)["action"], "stop")
+        route = json.loads(proc.stdout)
+        self.assertEqual(route["action"], "human-review")
+        self.assertTrue(route["requires_human"])
+        self.assertIn("cannot launch T8", route["reason"])
 
 
 if __name__ == "__main__":

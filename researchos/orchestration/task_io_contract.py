@@ -1114,6 +1114,9 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         },
         "outputs": {
             "wait_acceptance_report": "external_executor/wait_acceptance_report.json",
+            "t5_t8_handoff": "drafts/t5_t8_handoff.json",
+            "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
+            "result_to_claim": "drafts/result_to_claim.json",
         },
         "required_inputs": ["executor_selection", "handoff_pack", "expected_outputs_schema", "allowed_paths"],
         "schemas": {},

@@ -325,7 +325,7 @@ The Protocol Confirmation page is not an error page. `ready` means that a full e
 | `protocol_decision_required`, or you have no resources | Choose “let the external executor prepare resources.” | Runs bounded Phase A/B to discover public resources, lock revisions, review license/security/protocol fit, and record provenance. It does not run formal experiments. | You do not need to manually search public datasets, repositories, or benchmarks first. |
 | You need a different task, mechanism, required baseline, benchmark scope, or claim boundary | Choose protocol recompilation or return to T4. | Preserves current material and makes the research-boundary change an explicit upstream decision. | Do not hand-edit the handoff or let an executor silently redefine the study. |
 | Executor selection is visible | Choose Codex CLI, Claude Code, or a human executor. | Preserves the handoff, allowed-path policy, output schema, and specialized Skills. | Do not treat a mock/dry-run as experimental evidence. |
-| “Waiting for external executor return” is visible | Finish the external execution in the same workspace. | T8 will verify real files, the manifest, and report references before writing. | Do not run `resume`, another executor, or `run-task T8` while the executor writes. |
+| “Waiting for external executor return” is visible | Finish the external execution in the same workspace. | The root executor Skill validates Writer Handoff, then automatically starts the ResearchOS T8 bridge. T8 independently verifies facts, hashes, the manifest, and claim boundaries before writing. | Do not run `resume`, another executor, or `run-task T8` while the executor writes. |
 
 ```bash
 # Targeted T5 diagnostics only. These do not run an experiment.
@@ -357,16 +357,18 @@ codex
 Please read external_executor/AGENTS.md and execute external_executor/skills/research-execution/SKILL.md.
 ```
 
-External execution must produce these four return files before it finishes:
+External execution must produce this validated modern Writer Handoff package before it finishes. The first file is the reader-facing report; the remaining files bind it to the actual execution state, provenance, and structured facts:
 
 ```text
 external_executor/executor_research_report.md
 external_executor/result_pack.json
 external_executor/executor_status.json
 external_executor/report/run_manifest.json
+external_executor/report/phase_F/writer_handoff_facts.json
+external_executor/report/phase_F/writer_handoff_validation.json
 ```
 
-When Writer Handoff has finished but did not automatically enter T8, and the external executor has stopped writing, accept the verified result with `python -m researchos.cli run-task T8 --workspace ./workspace/project-a`. Do not run `resume`, a second executor, or `run-task T8` in another terminal while the external executor is writing. See the [T5 External Executor Guide](docs/en/t5_external_executor.md) for the full A-F phase contract and artifact paths.
+The `research-execution` root Skill normally runs `python -m researchos.cli run-task T8 --workspace <workspace>` itself immediately after Writer Handoff succeeds. ResearchOS then rejects mock/dry-run, `blocked`, `failed`, stale, hash-mismatched, or result-less handoffs; for an accepted handoff it creates `drafts/t5_t8_handoff.json`, `drafts/experiment_evidence_pack.json`, and `drafts/result_to_claim.json` before T8 begins writing. Only when the root Skill explicitly reports that this bridge command could not start, and the executor has stopped writing, should you run that command once manually. Do not use `resume` as a substitute for the bridge while an executor is writing. See the [T5 External Executor Guide](docs/en/t5_external_executor.md) for the full A-F phase contract and artifact paths.
 
 ### Advanced Migration And Recovery Guarantees
 

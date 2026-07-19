@@ -72,6 +72,16 @@ project:
   venue_profile: {{ profile.id|default('ccf_generic_concise') }}
 ```
 
+{% if t5_t8_handoff_preview %}
+## T5 到 T8 的已验收交接回执
+
+以下回执、`experiment_evidence_pack.json` 与 `result_to_claim.json` 来自 ResearchOS 对外部 Writer Handoff 的独立验收。它们约束写作可使用的实验事实和措辞；回执标明 `accepted_with_constraints` 时，必须把对应限制保留在 Experiments、Analysis 与 Conclusion 的 Limitations 中。
+
+```json
+{{ t5_t8_handoff_preview }}
+```
+{% endif %}
+
 ## Venue-Aware Drafting Contract
 
 - Resolved internal profile: `{{ profile.id|default('ccf_generic_concise') }}` — {{ profile.label_zh|default('CCF-A/AI/CS 紧凑技术稿') }}

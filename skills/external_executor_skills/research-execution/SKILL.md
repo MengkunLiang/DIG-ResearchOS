@@ -228,10 +228,18 @@ When iteration stops:
 3. Dispatch `writer-handoff`. It creates `external_executor/executor_research_report.md` and validates the terminal status, result pack, run manifest, research report, and every final figure/table.
 4. Accept only `external_executor/report/phase_F/writer_handoff_validation.json` with `status=ready|partial`. A blocked result routes back to `writer-handoff` repair or the authoritative producer identified by the validation error.
 5. Record the child checkpoint, rerun `scripts/route_next_skill.py`, and require the root action `launch-t8`. Execute the returned command exactly once. The command performs an independent ResearchOS acceptance pass, creates T8 evidence inputs, safely enters or resumes the existing T8 state, and delegates writing to the normal ResearchOS pipeline runner.
-6. Do not exit the external executor merely to ask the user to run `resume`, and do not directly write `drafts/` or manuscript content. The `run-task T8` ResearchOS subprocess owns those writes and any T8 human Gates.
-7. If routing later returns `stop` because T8 was already delegated, do not invoke `run-task T8` again. Leave the external executor outputs frozen and let the active or resumable ResearchOS T8 state remain authoritative.
+6. `launch-t8` is an executor-owned final action, not an instruction for the researcher to guess or reproduce with `resume`. From the workspace root, run the routed command, normally:
 
-The external handoff is a validated downstream input package, never “paper-approved.” `executor_research_report.md` is the primary T8 input; the validated result pack, manifest, facts, raw results, realized method package, figures, and tables remain supporting provenance.
+```bash
+python -m researchos.cli run-task T8 --workspace <workspace>
+```
+
+This command must create and validate all three derived inputs before T8 writes: `drafts/t5_t8_handoff.json`, `drafts/experiment_evidence_pack.json`, and `drafts/result_to_claim.json`. A nonzero exit means T8 did **not** start; report the printed typed validation issue, preserve the frozen external artifacts, and repair the authoritative Writer Handoff producer rather than editing `drafts/` by hand.
+7. After a successful command, report a short handoff receipt to the researcher: Writer Handoff status, number of normalized metrics, number of preliminary claim mappings, whether constraints remain, and that the next normal interaction is the T8 writing-style Gate. Do not claim that the manuscript is written or that a proposed claim is accepted.
+8. Do not exit the external executor merely to ask the user to run `resume`, and do not directly write `drafts/` or manuscript content. The `run-task T8` ResearchOS subprocess owns those writes and any T8 human Gates.
+9. If routing later returns `stop` because T8 was already delegated, do not invoke `run-task T8` again. Leave the external executor outputs frozen and let the active or resumable ResearchOS T8 state remain authoritative.
+
+The external handoff is a validated downstream input package, never “paper-approved.” `executor_research_report.md` is the reader-facing entry point, but it is inseparable from the validated result pack, executor status, manifest, Writer Handoff facts, and Writer Handoff validation receipt. Raw results, realized method package, figures, and tables remain supporting provenance. T8 may write only after ResearchOS independently accepts that whole package and publishes its three normalized `drafts/` artifacts.
 
 ## Evidence rules
 

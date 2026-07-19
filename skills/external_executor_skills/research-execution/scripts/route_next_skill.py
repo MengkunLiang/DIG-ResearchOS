@@ -103,7 +103,7 @@ def main() -> int:
     )
     if executor_status in {"completed", "partial", "blocked", "failed"} and evidence_packaged and not handoff_ready:
         report.update(action="writer-handoff", child_skill="writer-handoff", reason="terminal core state requires Writer Handoff compilation and validation", requires_human=False)
-    elif executor_status in {"completed", "partial", "blocked", "failed"} and handoff_ready:
+    elif executor_status in {"completed", "partial"} and handoff_ready:
         if t8_already_delegated:
             report.update(action="stop", reason="Writer Handoff is complete and control has already been delegated to ResearchOS T8", requires_human=False)
         else:
@@ -114,8 +114,12 @@ def main() -> int:
                 command=[sys.executable, "-m", "researchos.cli", "run-task", "T8", "--workspace", str(root)],
                 primary_input="external_executor/executor_research_report.md",
             )
-    elif executor_status == "blocked":
-        report.update(action="human-review", reason="executor has active blocker", requires_human=True)
+    elif executor_status in {"blocked", "failed"}:
+        report.update(
+            action="human-review",
+            reason=f"executor terminal status is {executor_status}; it cannot launch T8",
+            requires_human=True,
+        )
     else:
         explicit = status.get("next_action")
         iteration_id = str(status.get("iteration_id") or "")
@@ -194,7 +198,9 @@ def main() -> int:
                     )
 
     emit_report(report, args.output)
-    return 0 if report["action"] != "human-review" or report["reason"] == "executor has active blocker" else 2
+    # A durable human-review route is an expected workflow result, not a
+    # command failure. Reserve non-zero exits for unreadable/corrupt state.
+    return 0
 
 
 if __name__ == "__main__":

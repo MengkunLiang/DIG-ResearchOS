@@ -101,7 +101,10 @@ from ..tools.workspace_policy import WorkspaceAccessPolicy
 from ..tools.external_experiment import (
     AuditPaperClaimsTool,
     CompileResearchReboostHandoffTool,
-    validate_external_executor_ready,
+)
+from ..orchestration.t5_t8_bridge import (
+    accept_and_ingest_t5_handoff,
+    validate_t8_ingest_artifacts,
 )
 from ..tools.human_gate import HumanInputUnavailable, HumanInterface
 from ..tools.paper_save_tools import SavePapersRawTool
@@ -5594,30 +5597,69 @@ class AgentRunner:
         return True
 
     async def _maybe_finalize_external_wait_before_llm(self, ctx: ExecutionContext) -> bool:
-        """T5-EXTERNAL-WAIT is a deterministic external handoff wait boundary."""
+        """Accept a final Writer Handoff before the state machine can enter T8."""
 
         if ctx.task_id != "T5-EXTERNAL-WAIT":
             return False
 
-        report = validate_external_executor_ready(
-            ctx.workspace_dir,
-            "external_executor/result_pack.json",
-            "external_executor/executor_status.json",
-        )
-        if not report.get("ok"):
-            raise RecoverableRuntimePause(str(report.get("message") or "WAITING_EXTERNAL: T8 handoff materials not ready"))
+        receipt = accept_and_ingest_t5_handoff(ctx.workspace_dir)
+        if not receipt.get("ok"):
+            issues = receipt.get("errors") if isinstance(receipt.get("errors"), list) else []
+            summary = "; ".join(
+                f"{item.get('code')}: {item.get('path')}"
+                for item in issues[:4]
+                if isinstance(item, dict)
+            )
+            raise RecoverableRuntimePause(
+                "WAITING_EXTERNAL_WRITER_HANDOFF: final Writer Handoff is not acceptable for T8"
+                + (f"; {summary}" if summary else "")
+            )
+        ingest = validate_t8_ingest_artifacts(ctx.workspace_dir, receipt)
+        if not ingest.get("ok"):
+            issues = ingest.get("errors") if isinstance(ingest.get("errors"), list) else []
+            summary = "; ".join(
+                f"{item.get('code')}: {item.get('path')}"
+                for item in issues[:4]
+                if isinstance(item, dict)
+            )
+            raise RecoverableRuntimePause(
+                "WAITING_EXTERNAL_WRITER_HANDOFF: T8 normalization is incomplete or stale"
+                + (f"; {summary}" if summary else "")
+            )
+
+        report = {
+            "version": "1.1",
+            "semantics": "external_executor_wait_acceptance_report",
+            "ok": True,
+            "acceptance_path": "drafts/t5_t8_handoff.json",
+            "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
+            "result_to_claim": "drafts/result_to_claim.json",
+            "handoff_id": receipt.get("handoff_id"),
+            "ingest_fingerprint": receipt.get("ingest_fingerprint"),
+            "metric_count": receipt.get("metric_count", 0),
+            "claim_mapping_count": receipt.get("claim_mapping_count", 0),
+            "status": receipt.get("status"),
+            "message": "Modern Writer Handoff and deterministic T5-to-T8 ingest are ready.",
+        }
 
         output_path = ctx.workspace_dir / "external_executor" / "wait_acceptance_report.json"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         self.progress.emit(
-            "[Experimenter Agent] T5-EXTERNAL-WAIT 检测到外部 T8 handoff 材料已就绪，跳过 LLM 并进入 T8",
+            "[Experimenter Agent] T5-EXTERNAL-WAIT 已验收 Writer Handoff，并生成 T8 事实包/claim 映射；跳过 LLM 进入 T8",
             important=True,
         )
         self._record_runtime_completion(
             ctx,
             "external_wait_prefinalize",
-            {"outputs": ["external_executor/wait_acceptance_report.json"]},
+            {
+                "outputs": [
+                    "external_executor/wait_acceptance_report.json",
+                    "drafts/t5_t8_handoff.json",
+                    "drafts/experiment_evidence_pack.json",
+                    "drafts/result_to_claim.json",
+                ],
+            },
             action_type="external_wait_prefinalize",
         )
         return True

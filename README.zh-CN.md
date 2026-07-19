@@ -323,7 +323,7 @@ T4.5 通过
 | `protocol_decision_required`，或手头没有资源 | “让外部执行器自动准备资源” | 受限 Phase A/B 检索公开资源、固定版本、做许可证/安全/协议审查并记录来源；不跑正式实验。 | 不需要先人工寻找公开数据、repo 或 benchmark。 |
 | 需要换研究问题、机制、必需 baseline、benchmark 范围或 claim 边界 | 选择协议重编译或返回 T4 重构 | 保留当前材料，并把真正的研究边界变更显式纳入上游决策。 | 不要让执行器或手工编辑 handoff 静默改变这些内容。 |
 | 已到执行器选择 | 选择 Codex CLI、Claude Code 或人工执行器 | 系统保留 handoff、allowed paths、输出 schema 和项目专属 Skill。 | 不要把 mock/dry-run 当作真实实验事实。 |
-| 显示“等待外部执行器回传” | 在同一 workspace 完成外部执行，写回要求的结果包。 | T8 会检查真实文件、manifest 和报告引用。 | 外部执行器写入时不要运行 `resume`、第二个执行器或 `run-task T8`。 |
+| 显示“等待外部执行器回传” | 在同一 workspace 完成外部执行，写回要求的结果包。 | 根执行器 Skill 会核验 Writer Handoff 后自动启动 ResearchOS T8 bridge；T8 写作前仍会独立检查事实、hash、manifest 与 claim 边界。 | 外部执行器写入时不要运行 `resume`、第二个执行器或 `run-task T8`。 |
 
 ```bash
 # 仅做 T5 定点诊断，不会启动真实实验。
@@ -355,16 +355,18 @@ codex
 请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research-execution/SKILL.md。
 ```
 
-外部执行完成前必须存在以下四个回传文件：
+外部执行完成前必须存在以下已核验的现代 Writer Handoff 包。第一项是供研究者阅读的报告，其余文件将报告与真实运行状态、来源和结构化事实绑定：
 
 ```text
 external_executor/executor_research_report.md
 external_executor/result_pack.json
 external_executor/executor_status.json
 external_executor/report/run_manifest.json
+external_executor/report/phase_F/writer_handoff_facts.json
+external_executor/report/phase_F/writer_handoff_validation.json
 ```
 
-Writer Handoff 已完成但没有自动进入 T8 时，且外部执行器已经停止写入，运行 `python -m researchos.cli run-task T8 --workspace ./workspace/project-a` 接收已核验的结果。外部执行器仍在写入时，不要在另一终端运行 `resume`、第二个执行器或 `run-task T8`。完整操作契约、A-F 阶段和产物路径见 [T5 外部执行器使用指南](docs/cn/t5_external_executor.md)。
+`research-execution` 根 Skill 会在 Writer Handoff 成功后自行运行 `python -m researchos.cli run-task T8 --workspace <workspace>`。ResearchOS 会拒绝 mock/dry-run、`blocked`、`failed`、过期、hash 不一致或没有实证结果的 handoff；接收成功才生成 `drafts/t5_t8_handoff.json`、`drafts/experiment_evidence_pack.json` 与 `drafts/result_to_claim.json`，随后 T8 才开始写作。只有根 Skill 明确报告 bridge 命令无法启动且外部执行器已经停止写入时，才手工运行这条命令一次。执行器仍在写入时，不要在另一终端运行 `resume`、第二个执行器或 `run-task T8`。完整操作契约、A-F 阶段和产物路径见 [T5 外部执行器使用指南](docs/cn/t5_external_executor.md)。
 
 ### 迁移与恢复的进阶保证
 

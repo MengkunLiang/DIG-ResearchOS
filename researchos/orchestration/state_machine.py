@@ -49,8 +49,8 @@ from .task_io_contract import get_task_io, task_io_contract_source
 from ..tools.external_experiment import (
     build_executor_selection_payload,
     patch_external_executor_files_with_selection,
-    validate_external_executor_ready,
 )
+from .t5_t8_bridge import validate_modern_t5_handoff, validate_t8_ingest_artifacts
 from ..ideation.config import load_t4_evolution_settings
 from ..ideation.prerun import (
     default_run_config,
@@ -4650,17 +4650,23 @@ class StateMachine:
             and workspace_dir is not None
             and next_task in {"T8-STYLE-GATE", "T8-RESOURCE"}
         ):
-            readiness = validate_external_executor_ready(
-                workspace_dir,
-                "external_executor/result_pack.json",
-                "external_executor/executor_status.json",
-            )
-            if not readiness.get("ok"):
+            acceptance = validate_modern_t5_handoff(workspace_dir)
+            ingest = validate_t8_ingest_artifacts(workspace_dir, acceptance)
+            if not acceptance.get("ok") or not ingest.get("ok"):
+                issues = acceptance.get("errors") if not acceptance.get("ok") else ingest.get("errors")
+                summary = "; ".join(
+                    f"{item.get('code')}: {item.get('path')}"
+                    for item in (issues or [])[:4]
+                    if isinstance(item, dict)
+                )
                 if state.pending_gate is not None:
-                    state.pending_gate.presentation["external_executor_wait_status"] = readiness.get("message")
+                    state.pending_gate.presentation["external_executor_wait_status"] = summary
                 state.status = "WAITING_HUMAN"
                 state.paused_at = _now_iso()
-                state.last_error = str(readiness.get("message") or "external executor T8 handoff materials are not ready")
+                state.last_error = (
+                    "external executor Writer Handoff or T8 ingest is not ready"
+                    + (f": {summary}" if summary else "")
+                )
                 return state
         state.pending_gate = None
         return self._transition_to_next(state, next_task, workspace_dir=workspace_dir)

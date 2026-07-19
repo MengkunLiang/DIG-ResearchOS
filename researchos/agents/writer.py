@@ -77,12 +77,21 @@ class WriterAgent(Agent):
                         "literature/",
                         "experiments/",
                         # T8 only needs the controlled evidence interface from
-                        # the external stage.  Do not make an arbitrary
-                        # executor working directory readable by default.
+                        # the external stage.  Final Writer Handoff facts,
+                        # manifested presentation assets, and the realized
+                        # method package are readable; arbitrary report roots
+                        # and executor mutation remain outside this boundary.
                         "external_executor/executor_research_report.md",
+                        "external_executor/result_pack.json",
+                        "external_executor/executor_status.json",
+                        "external_executor/report/run_manifest.json",
+                        "external_executor/report/phase_F/",
                         "external_executor/raw_results/",
                         "external_executor/expr/",
                         "external_executor/configs/",
+                        "external_executor/figure/",
+                        "external_executor/table/",
+                        "external_executor/evidence_package/",
                         "ideation/",
                         "novelty/",
                         "evaluation/",
@@ -156,6 +165,7 @@ class WriterAgent(Agent):
         paper_claim_audit = read_text_file(ws / "drafts" / "paper_claim_audit.md", default="")
         experiment_evidence_pack = read_text_file(ws / "drafts" / "experiment_evidence_pack.json", default="")
         result_to_claim = read_text_file(ws / "drafts" / "result_to_claim.json", default="")
+        t5_t8_handoff = read_text_file(ws / "drafts" / "t5_t8_handoff.json", default="")
         paper_state = read_text_file(ws / "drafts" / "paper_state.json", default="")
         alignment_matrix = read_text_file(ws / "drafts" / "alignment_matrix.json", default="")
         writing_style_text = read_text_file(ws / "drafts" / "writing_style.json", default="")
@@ -214,6 +224,7 @@ class WriterAgent(Agent):
             executor_research_report_preview=executor_research_report[:6000],
             experiment_evidence_pack_preview=experiment_evidence_pack[:4000],
             result_to_claim_preview=result_to_claim[:4000],
+            t5_t8_handoff_preview=t5_t8_handoff[:3000],
             paper_state_preview=paper_state[:5000],
             alignment_matrix_preview=alignment_matrix[:5000],
             writing_style=writing_style,
@@ -621,6 +632,24 @@ def _validate_resource_index_artifacts(ws: Path) -> tuple[bool, str | None]:
     alignment_matrix, err = _load_json_file(ws / "drafts" / "alignment_matrix.json")
     if err:
         return False, err
+
+    # A modern T5 external execution must be consumed through the immutable
+    # ResearchOS receipt and normalized evidence maps, not only through a
+    # free-form executor report.  Legacy T8 workspaces remain readable when
+    # no modern receipt exists at all.
+    t5_receipt = ws / "drafts" / "t5_t8_handoff.json"
+    if t5_receipt.exists():
+        from ..orchestration.t5_t8_bridge import validate_t8_ingest_artifacts
+
+        ingest = validate_t8_ingest_artifacts(ws)
+        if not ingest.get("ok"):
+            issues = ingest.get("errors") if isinstance(ingest.get("errors"), list) else []
+            detail = "; ".join(
+                f"{item.get('code')}: {item.get('path')}"
+                for item in issues[:3]
+                if isinstance(item, dict)
+            )
+            return False, "T5-to-T8 交接已过期或不完整" + (f": {detail}" if detail else "")
 
     if not isinstance(index.get("artifacts"), list):
         return False, "manuscript_resource_index.json 缺少 artifacts 列表"

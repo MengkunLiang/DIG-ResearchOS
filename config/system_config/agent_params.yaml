@@ -658,9 +658,16 @@ agents:
       # the Writer may inspect the declared report and indexed result material,
       # but it cannot write to or execute anything under external_executor/.
       - external_executor/executor_research_report.md
+      - external_executor/result_pack.json
+      - external_executor/executor_status.json
+      - external_executor/report/run_manifest.json
+      - external_executor/report/phase_F/
       - external_executor/raw_results/
       - external_executor/expr/
       - external_executor/configs/
+      - external_executor/figure/
+      - external_executor/table/
+      - external_executor/evidence_package/
       tool_names:
       - ask_human
       - read_file

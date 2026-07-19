@@ -112,7 +112,7 @@ resources/reproduction/       经过记录的 baseline 复现或重实现产物
 
 实验材料 Gate 只清点 `resources/` 的路径和文件大小，不在此时为大型数据集或权重计算全量 hash。资源身份、版本、许可、安全、协议匹配和完整性核验由 Phase B 完成。
 
-如果外部执行器已经完成、四项回传文件也已齐备，但其根 Skill 明确报告未能启动 T8，才在外部执行器停止写入后手动运行：
+如果外部执行器已经停止、下文完整的 Writer Handoff 包已经通过核验，且其根 Skill 明确报告未能启动 T8 bridge，才手动运行：
 
 ```bash
 python -m researchos.cli run-task T8 \
@@ -141,25 +141,18 @@ python -m researchos.cli run-task T8 \
 
 ### 传给 T8 的核心输出
 
-T8 的主输入是：
+T8 接收的是六份现代 Writer Handoff。研究报告供研究者阅读；facts 文件则是带来源约束的结构化事实，ResearchOS 会将其规范化为证据包与 claim 边界：
 
 ```text
 external_executor/executor_research_report.md
-```
-
-完整交接还必须保留以下三个文件：
-
-```text
 external_executor/result_pack.json
 external_executor/executor_status.json
 external_executor/report/run_manifest.json
+external_executor/report/phase_F/writer_handoff_facts.json
+external_executor/report/phase_F/writer_handoff_validation.json
 ```
 
-- `result_pack.json` 保存各阶段可消费的结构化状态和对真实 artifact 的引用。
-- `executor_status.json` 保存外部执行终态与接受状态。
-- `run_manifest.json` 登记实验资源、代码、原始结果、图表等文件的路径、大小和校验信息。
-
-`result_pack.json` 不替代真实文件。T8 会沿引用读取 `external_executor/raw_results/`、`external_executor/evidence_package/`、`external_executor/figure/`、`external_executor/table/` 与 `external_executor/expr/` 中的产物。
+`writer_handoff_validation.json` 会绑定研究报告、执行状态、manifest 与结构化事实的 hash。`result_pack.json` 保存各阶段可消费的结构化状态和对真实 artifact 的引用，但不替代真实文件。`completed` 和带实证结果的 `partial` 可以进入 T8；`blocked`、`failed`、mock/dry-run、过期、hash 不一致或没有实证结果的 handoff 均不能进入。T8 会沿引用读取 `external_executor/raw_results/`、`external_executor/evidence_package/`、`external_executor/figure/`、`external_executor/table/` 与 `external_executor/expr/` 中的产物。
 
 T8 接收成功后会生成：
 
@@ -253,8 +246,10 @@ external_executor/executor_research_report.md
 external_executor/result_pack.json
 external_executor/executor_status.json
 external_executor/report/run_manifest.json
+external_executor/report/phase_F/writer_handoff_facts.json
+external_executor/report/phase_F/writer_handoff_validation.json
 ```
 
-还必须确认报告引用的 `external_executor/expr/`、`external_executor/raw_results/`、`external_executor/evidence_package/`、`external_executor/figure/` 和 `external_executor/table/` 文件仍存在，并与 `run_manifest.json` 的校验信息一致。缺失、hash 不一致或 Writer Handoff 未通过时，修复外部执行产物后再运行 `run-task T8`。不要手工伪造终态、`result_pack.json` 或 manifest，也不要通过修改 `state.yaml` 跳过校验。
+还必须确认报告引用的 `external_executor/expr/`、`external_executor/raw_results/`、`external_executor/evidence_package/`、`external_executor/figure/` 和 `external_executor/table/` 文件仍存在，并与 `run_manifest.json` 的校验信息一致。正常情况下根 Skill 会把合格结果路由到 `launch-t8` 并自行运行 bridge。缺失、hash 不一致、Writer Handoff 未通过，或终态为 `blocked`/`failed` 时，应修复权威的外部执行产物后重新运行根路由；不要伪造 `drafts/` 文件或强行进入 T8。不要手工伪造终态、`result_pack.json` 或 manifest，也不要通过修改 `state.yaml` 跳过校验。
 
-在 `T5-EXTERNAL-WAIT` 期间，`resume` 的作用是检查四项回传文件是否齐备和合法，不会重跑 T4.5、REBOOST 或执行器。只有外部执行已经停止写入时才应使用它。
+在 `T5-EXTERNAL-WAIT` 期间，`resume` 会独立接收同一份现代 Writer Handoff，并核验或重新生成三份 ResearchOS 所有的 T8 摄取文件。它不会重跑 T4.5、REBOOST 或执行器，且只有外部执行已停止写入时才应使用。它不能把不合格的包变成 T8 启动。

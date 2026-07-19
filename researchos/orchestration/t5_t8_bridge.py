@@ -38,7 +38,11 @@ REQUIRED_REPORT_HEADINGS = (
     "## 7. Limitations and Open Issues",
     "## 8. Artifact Index",
 )
-TERMINAL_STATUSES = {"completed", "partial", "blocked", "failed"}
+# A Writer Handoff can honestly describe a constrained partial result, but a
+# failed or blocked executor has no empirical package that T8 may turn into a
+# manuscript.  Keeping those states out of the bridge avoids writing a paper
+# from an execution incident report.
+ACCEPTABLE_T8_STATUSES = {"completed", "partial"}
 _T8_RECEIPT = "drafts/t5_t8_handoff.json"
 _EVIDENCE_PACK = "drafts/experiment_evidence_pack.json"
 _RESULT_TO_CLAIM = "drafts/result_to_claim.json"
@@ -167,14 +171,16 @@ def validate_modern_t5_handoff(workspace: Path, *, allow_partial: bool = True) -
 
     result_status = _normalize_status(result.get("executor_status") or result.get("status"))
     executor_status = _normalize_status(status.get("executor_status") or status.get("status") or status.get("current_state"))
-    if result_status not in TERMINAL_STATUSES:
-        issue(errors, "result_pack_not_terminal", CORE_PATHS["result_pack"], repr(result_status))
-    if executor_status not in TERMINAL_STATUSES:
-        issue(errors, "executor_status_not_terminal", CORE_PATHS["executor_status"], repr(executor_status))
+    if result_status not in ACCEPTABLE_T8_STATUSES:
+        issue(errors, "result_pack_not_acceptable_for_t8", CORE_PATHS["result_pack"], repr(result_status))
+    if executor_status not in ACCEPTABLE_T8_STATUSES:
+        issue(errors, "executor_status_not_acceptable_for_t8", CORE_PATHS["executor_status"], repr(executor_status))
     if result_status and executor_status and result_status != executor_status:
         issue(errors, "terminal_status_mismatch", CORE_PATHS["executor_status"], f"{result_status} != {executor_status}")
     if status.get("accepted") is True:
         issue(errors, "external_executor_cannot_self_accept", CORE_PATHS["executor_status"], "accepted=true")
+    if any(bool(document.get(key)) for document in (result, status) for key in ("mock_only", "dry_run")):
+        issue(errors, "mock_or_dry_run_cannot_enter_t8", CORE_PATHS["result_pack"], "run must be real external execution")
 
     expected_hashes = validation.get("hashes") if isinstance(validation.get("hashes"), dict) else {}
     hash_paths = {
@@ -182,6 +188,7 @@ def validate_modern_t5_handoff(workspace: Path, *, allow_partial: bool = True) -
         "result_pack": CORE_PATHS["result_pack"],
         "executor_status": CORE_PATHS["executor_status"],
         "run_manifest": CORE_PATHS["run_manifest"],
+        "writer_handoff_facts": CORE_PATHS["writer_handoff_facts"],
     }
     actual_hashes: dict[str, str] = {}
     for name, relative in hash_paths.items():
@@ -200,6 +207,22 @@ def validate_modern_t5_handoff(workspace: Path, *, allow_partial: bool = True) -
             issue(errors, "facts_validation_fingerprint_mismatch", CORE_PATHS["writer_handoff_facts"], "input fingerprints differ")
         if facts.get("handoff_id") != validation.get("handoff_id"):
             issue(errors, "facts_validation_handoff_id_mismatch", CORE_PATHS["writer_handoff_facts"], "handoff ids differ")
+        if not facts.get("handoff_id") or not facts.get("input_fingerprint"):
+            issue(errors, "facts_missing_handoff_identity", CORE_PATHS["writer_handoff_facts"], "handoff_id and input_fingerprint are required")
+        facts_result_status = _normalize_status(facts.get("result_pack_status"))
+        facts_executor_status = _normalize_status(facts.get("executor_status"))
+        if facts_result_status and facts_result_status != result_status:
+            issue(errors, "facts_result_status_mismatch", CORE_PATHS["writer_handoff_facts"], f"{facts_result_status} != {result_status}")
+        if facts_executor_status and facts_executor_status != executor_status:
+            issue(errors, "facts_executor_status_mismatch", CORE_PATHS["writer_handoff_facts"], f"{facts_executor_status} != {executor_status}")
+        result_records = facts.get("comprehensive_results")
+        if not isinstance(result_records, list) or not any(isinstance(item, dict) for item in result_records):
+            issue(
+                errors,
+                "writer_handoff_has_no_empirical_results",
+                CORE_PATHS["writer_handoff_facts"],
+                "T8 requires at least one source-bound comprehensive result",
+            )
 
     indexed: dict[str, dict[str, Any]] = {}
     for item in _manifest_items(manifest):
@@ -379,6 +402,21 @@ def _must_not_claim(facts: dict[str, Any], result_pack: dict[str, Any]) -> list[
     return _unique_strings(values)
 
 
+def _ingest_fingerprint(
+    acceptance: dict[str, Any],
+    metrics: list[dict[str, Any]],
+    claim_mappings: list[dict[str, Any]],
+) -> str:
+    """Fingerprint the immutable external inputs and their T8 normalization."""
+
+    return _canonical_hash({
+        "core_hashes": acceptance.get("core_hashes"),
+        "assets": acceptance.get("assets"),
+        "metrics": metrics,
+        "claims": claim_mappings,
+    })
+
+
 def build_t8_ingest_artifacts(workspace: Path, acceptance: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Build T8-compatible evidence artifacts from a validated modern handoff."""
 
@@ -428,6 +466,7 @@ def build_t8_ingest_artifacts(workspace: Path, acceptance: dict[str, Any]) -> di
             "paper_sections": ["experiments", "analysis"],
         })
 
+    ingest_fingerprint = _ingest_fingerprint(acceptance, metrics, claim_mappings)
     evidence_pack = {
         "version": "1.0",
         "semantics": "normalized_experiment_evidence_pack",
@@ -459,12 +498,15 @@ def build_t8_ingest_artifacts(workspace: Path, acceptance: dict[str, Any]) -> di
             "report": CORE_PATHS["executor_research_report"],
             "validation": CORE_PATHS["writer_handoff_validation"],
             "handoff_id": acceptance.get("handoff_id"),
+            "ingest_fingerprint": ingest_fingerprint,
         },
         "must_not_claim": must_not_claim,
         "integrity": {
             "status": acceptance.get("status"),
             "issues": acceptance.get("errors", []) + acceptance.get("warnings", []),
             "source": _T8_RECEIPT,
+            "source_hashes": acceptance.get("core_hashes", {}),
+            "ingest_fingerprint": ingest_fingerprint,
         },
         "limitations": facts.get("limitations_and_open_issues", []),
     }
@@ -477,6 +519,7 @@ def build_t8_ingest_artifacts(workspace: Path, acceptance: dict[str, Any]) -> di
         "mock_only": bool(result_pack.get("mock_only")),
         "evidence_grade": evidence_pack["evidence_grade"],
         "integrity_audit": _T8_RECEIPT,
+        "ingest_fingerprint": ingest_fingerprint,
         "claim_mappings": claim_mappings,
         "claims": claims,
         "global_must_not_claim": must_not_claim,
@@ -501,15 +544,94 @@ def build_t8_ingest_artifacts(workspace: Path, acceptance: dict[str, Any]) -> di
         "normalized_outputs": [_EVIDENCE_PACK, _RESULT_TO_CLAIM],
         "metric_count": len(metrics),
         "claim_mapping_count": len(claim_mappings),
-        "ingest_fingerprint": _canonical_hash({
-            "core_hashes": acceptance.get("core_hashes"),
-            "assets": acceptance.get("assets"),
-            "metrics": metrics,
-            "claims": claim_mappings,
-        }),
+        "ingest_fingerprint": ingest_fingerprint,
         "ingested_at": _now_iso(),
     }
     return {_T8_RECEIPT: receipt, _EVIDENCE_PACK: evidence_pack, _RESULT_TO_CLAIM: result_to_claim}
+
+
+def validate_t8_ingest_artifacts(
+    workspace: Path,
+    acceptance: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Verify that the T8 files still match the accepted external handoff.
+
+    ``accept_and_ingest_t5_handoff`` is intentionally separate from this
+    validator: a state-machine transition must be able to prove that a prior
+    deterministic ingest remains current without rewriting its receipt.
+    """
+
+    workspace = workspace.resolve()
+    acceptance = acceptance or validate_modern_t5_handoff(workspace)
+    errors: list[dict[str, str]] = []
+
+    def issue(code: str, path: str, message: str) -> None:
+        errors.append({"code": code, "path": path, "message": message})
+
+    if not acceptance.get("ok"):
+        issue("external_handoff_not_accepted", _T8_RECEIPT, "modern Writer Handoff validation did not pass")
+        return {"ok": False, "errors": errors}
+
+    documents: dict[str, dict[str, Any]] = {}
+    for name, relative in (
+        ("receipt", _T8_RECEIPT),
+        ("evidence_pack", _EVIDENCE_PACK),
+        ("result_to_claim", _RESULT_TO_CLAIM),
+    ):
+        path = _workspace_file(workspace, relative)
+        if not path.is_file() or path.stat().st_size <= 0:
+            issue("missing_t8_ingest_artifact", relative, name)
+            continue
+        try:
+            documents[name] = _load_object(path)
+        except Exception as exc:  # noqa: BLE001 - report a typed handoff diagnostic
+            issue("invalid_t8_ingest_json", relative, str(exc))
+
+    receipt = documents.get("receipt", {})
+    evidence_pack = documents.get("evidence_pack", {})
+    result_to_claim = documents.get("result_to_claim", {})
+    expected_metrics = _result_metrics(
+        _load_object(workspace / CORE_PATHS["writer_handoff_facts"]),
+        _load_object(workspace / CORE_PATHS["result_pack"]),
+    )
+    expected_claim_mappings = (
+        list(result_to_claim.get("claim_mappings") or [])
+        if isinstance(result_to_claim.get("claim_mappings"), list)
+        else []
+    )
+    expected_fingerprint = _ingest_fingerprint(
+        acceptance,
+        expected_metrics,
+        expected_claim_mappings,
+    )
+    if receipt.get("schema_version") != "researchos_t5_t8_handoff.v1" or receipt.get("ok") is not True:
+        issue("invalid_t8_ingest_receipt", _T8_RECEIPT, "receipt must be an accepted researchos_t5_t8_handoff.v1")
+    if receipt.get("core_hashes") != acceptance.get("core_hashes"):
+        issue("t8_ingest_core_hash_mismatch", _T8_RECEIPT, "accepted external inputs changed")
+    if receipt.get("ingest_fingerprint") != expected_fingerprint:
+        issue("t8_ingest_fingerprint_mismatch", _T8_RECEIPT, "receipt does not match current normalized facts")
+    if evidence_pack.get("semantics") != "normalized_experiment_evidence_pack":
+        issue("invalid_experiment_evidence_pack", _EVIDENCE_PACK, "unexpected semantics")
+    if evidence_pack.get("source") != "modern_external_executor_writer_handoff":
+        issue("invalid_experiment_evidence_source", _EVIDENCE_PACK, "must originate from modern Writer Handoff")
+    if evidence_pack.get("integrity", {}).get("ingest_fingerprint") != expected_fingerprint:
+        issue("experiment_evidence_fingerprint_mismatch", _EVIDENCE_PACK, "evidence pack is stale or detached")
+    if evidence_pack.get("metrics") != expected_metrics:
+        issue("experiment_evidence_metrics_mismatch", _EVIDENCE_PACK, "metrics do not match accepted Writer Handoff facts")
+    if evidence_pack.get("claims") != expected_claim_mappings:
+        issue("experiment_evidence_claims_mismatch", _EVIDENCE_PACK, "claim mappings do not match result_to_claim")
+    if result_to_claim.get("semantics") != "mechanical_result_to_claim_map_not_final_scientific_judgment":
+        issue("invalid_result_to_claim", _RESULT_TO_CLAIM, "unexpected semantics")
+    if result_to_claim.get("integrity_audit") != _T8_RECEIPT:
+        issue("result_to_claim_missing_integrity_audit", _RESULT_TO_CLAIM, _T8_RECEIPT)
+    if result_to_claim.get("ingest_fingerprint") != expected_fingerprint:
+        issue("result_to_claim_fingerprint_mismatch", _RESULT_TO_CLAIM, "claim map is stale or detached")
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "receipt": _T8_RECEIPT,
+        "ingest_fingerprint": expected_fingerprint,
+    }
 
 
 def accept_and_ingest_t5_handoff(workspace: Path, *, allow_partial: bool = True) -> dict[str, Any]:

@@ -91,7 +91,7 @@ Calling `T5-EXECUTOR-GATE` directly while the handoff still requires protocol de
 
 The material gate inventories paths and sizes under `resources/` but does not hash large datasets or weights. Phase B owns identity, revision, license, security, protocol-fit, and integrity verification.
 
-If the executor has stopped, all four return artifacts are ready, and it explicitly reported that it could not start T8, run:
+If the executor has stopped, the full validated Writer Handoff package below is ready, and its root Skill explicitly reported that it could not start the T8 bridge, run:
 
 ```bash
 python -m researchos.cli run-task T8 \
@@ -102,21 +102,18 @@ python -m researchos.cli run-task T8 \
 
 T5 consumes `project.yaml`, the selected Candidate, `ideation/hypotheses.md`, `ideation/exp_plan.yaml`, contribution and validation maps, kill criteria, the novelty audit, the post-novelty formalization manifest, the full proposal and proposal manifest, literature synthesis/comparison artifacts, reading notes/manifests, and resource-catalog leads. The catalog is Phase B discovery context only. A link is not proof that a resource was downloaded, is runnable, has an acceptable license, or produced a result.
 
-T8 receives the primary fact report:
+T8 receives a six-file modern Writer Handoff. The research report is the reader-facing summary; the facts file is the source-bound structured material that ResearchOS normalizes into its evidence and claim-boundary artifacts:
 
 ```text
 external_executor/executor_research_report.md
-```
-
-It also requires these durable companions:
-
-```text
 external_executor/result_pack.json
 external_executor/executor_status.json
 external_executor/report/run_manifest.json
+external_executor/report/phase_F/writer_handoff_facts.json
+external_executor/report/phase_F/writer_handoff_validation.json
 ```
 
-`result_pack.json` is structured state and references. It never replaces the real files under `external_executor/raw_results/`, `evidence_package/`, `figure/`, `table/`, or `expr/`. Once accepted, T8 produces `drafts/t5_t8_handoff.json`, `drafts/experiment_evidence_pack.json`, and `drafts/result_to_claim.json`.
+`writer_handoff_validation.json` binds hashes for the report, execution state, manifest, and structured facts. `result_pack.json` is structured state and references; it never replaces the real files under `external_executor/raw_results/`, `evidence_package/`, `figure/`, `table/`, or `expr/`. `completed` and evidence-bearing `partial` handoffs may be accepted. `blocked`, `failed`, mock/dry-run, stale, mismatched, or result-less handoffs cannot enter T8. Once accepted, ResearchOS produces `drafts/t5_t8_handoff.json`, `drafts/experiment_evidence_pack.json`, and `drafts/result_to_claim.json`.
 
 ## Before Execution
 
@@ -169,8 +166,10 @@ external_executor/executor_research_report.md
 external_executor/result_pack.json
 external_executor/executor_status.json
 external_executor/report/run_manifest.json
+external_executor/report/phase_F/writer_handoff_facts.json
+external_executor/report/phase_F/writer_handoff_validation.json
 ```
 
-Also verify that the report's referenced files under `expr/`, `raw_results/`, `evidence_package/`, `figure/`, and `table/` still exist and agree with the manifest hashes. If an artifact is missing, a hash differs, or Writer Handoff failed, repair the external executor output and then run `run-task T8`. Never fabricate a terminal status, result pack, or manifest, and never bypass the checks by editing `state.yaml`.
+Also verify that the report's referenced files under `expr/`, `raw_results/`, `evidence_package/`, `figure/`, and `table/` still exist and agree with the manifest hashes. The root Skill normally routes a valid package to `launch-t8` and runs the bridge itself. If an artifact is missing, a hash differs, Writer Handoff failed, or the terminal state is `blocked`/`failed`, repair the authoritative external output and rerun the root route; do not manufacture `drafts/` files or force T8. Never fabricate a terminal status, result pack, or manifest, and never bypass the checks by editing `state.yaml`.
 
-While T5 is at `T5-EXTERNAL-WAIT`, `resume` only validates the four return artifacts. It does not rerun T4.5, REBOOST, or the external executor, and should be used only after the executor has stopped writing.
+While T5 is at `T5-EXTERNAL-WAIT`, `resume` independently accepts the same modern Writer Handoff and verifies or regenerates the three ResearchOS-owned T8 ingest artifacts. It does not rerun T4.5, REBOOST, or the external executor, and should be used only after the executor has stopped writing. It cannot turn a rejected package into a T8 start.

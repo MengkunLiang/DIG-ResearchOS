@@ -1292,9 +1292,9 @@ states:
     next_on_failure: failed
 
   # T5-EXTERNAL-WAIT 状态：等待外部执行器写回结果材料
-  # 用途：不启动 LLM；runtime 检查 executor_research_report.md、result_pack.json 和 executor_status.json。
-  # 外部执行阶段的 T8 核心交接材料为 external_executor/executor_research_report.md。
-  # 缺失执行状态时 PAUSED；现代外部 Skill 完成后由总控直接调用 run-task T8 接收材料并进入 T8。
+  # 用途：不启动 LLM；runtime 必须验收最终 Writer Handoff，并确定性生成 T8 事实包和 claim 映射。
+  # 外部执行阶段的 T8 核心交接材料为 executor_research_report.md + Phase F facts/validation + 受核验的原始 Artifact。
+  # 缺失/过期 Writer Handoff、mock、failed/blocked 或无实证结果时 PAUSED；不能只凭报告存在进入 T8。
   T5-EXTERNAL-WAIT:
     agent: experimenter
     mode: external_wait
@@ -1309,6 +1309,9 @@ states:
       external_executor_dir: external_executor
     outputs:
       wait_acceptance_report: external_executor/wait_acceptance_report.json
+      t5_t8_handoff: drafts/t5_t8_handoff.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      result_to_claim: drafts/result_to_claim.json
     next_on_success: T8-STYLE-GATE
     next_on_failure: failed
 

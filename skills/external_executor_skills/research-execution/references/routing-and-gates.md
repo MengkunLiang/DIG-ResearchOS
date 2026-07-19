@@ -46,7 +46,7 @@ Use this reference when selecting a child skill, recording an iteration decision
 | Attribution ready or constrained stop-and-report | Evidence snapshot can be pinned | `evidence-packaging` |
 | Evidence package valid | Handoff fields resolvable | `writer-handoff` |
 | Terminal outcome recorded, report absent or handoff validation blocked | Final core inputs and assets frozen | `writer-handoff` |
-| Writer Handoff `ready|partial` and T8 not delegated | ResearchOS CLI is available from the workspace root | `launch-t8` with `python -m researchos.cli run-task T8 --workspace <workspace>` |
+| Executor `completed|partial`, Writer Handoff `ready|partial`, and T8 not delegated | ResearchOS CLI is available from the workspace root | `launch-t8` with `python -m researchos.cli run-task T8 --workspace <workspace>` |
 | T8 receipt/state already exists | Prior delegation is durable | `stop`; do not launch T8 twice |
 
 ## Loop decision table
@@ -99,4 +99,4 @@ The request must contain the proposed change, reason, affected claims, affected 
 
 Always run Phase F as far as evidence permits. Missing work must be explicit, not omitted or invented.
 
-After Writer Handoff, `launch-t8` is the only normal continuation. The root invokes the command returned by `route_next_skill.py`; it does not edit ResearchOS `drafts/` itself. A `partial` handoff may continue so T8 can write within explicit evidence boundaries, while a blocked Writer Handoff validation must be repaired before launch.
+After Writer Handoff, `launch-t8` is the only normal continuation. The root invokes the command returned by `route_next_skill.py`; it does not edit ResearchOS `drafts/` itself. A `partial` handoff may continue so T8 can write within explicit evidence boundaries. A `blocked` or `failed` executor never launches T8, even when a diagnostic Writer Handoff file exists; repair or human review must resolve the terminal execution outcome first.

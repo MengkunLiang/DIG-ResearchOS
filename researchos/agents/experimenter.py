@@ -16,7 +16,8 @@
 - specialize-executor-skills: 同一确定性编译器的显式 CLI 入口；可选的 LLM 增强只可在 suite 已发布后运行
 - T5-HANDOFF: legacy 兼容入口，生成 handoff；其项目 Skill suite 也由专门的 specialization 节点发布
 - T5-EXECUTOR-GATE: external_executor/report/executor_selection.json
-- T5-EXTERNAL-WAIT: external_executor/wait_acceptance_report.json
+- T5-EXTERNAL-WAIT: external_executor/wait_acceptance_report.json plus the accepted
+  drafts/t5_t8_handoff.json, experiment_evidence_pack.json, and result_to_claim.json
 - T5-DRY-RUN: external_executor/result_pack.json、executor_status.json、external_executor/report/run_manifest.json、heartbeat.json、raw_results/configs/logs
 - T5-to-T8 handoff: external_executor/executor_research_report.md
 - Supporting context for T8: external_executor/ and optional legacy experiments/
@@ -82,6 +83,7 @@ from ..tools.external_experiment import (
     research_reboost_skill_prompt_excerpt,
     validate_context_reboost_handoff,
 )
+from ..orchestration.t5_t8_bridge import validate_modern_t5_handoff, validate_t8_ingest_artifacts
 from ._common import (
     generate_findings_summary,
     generate_manifest,
@@ -714,6 +716,24 @@ def _validate_external_wait(ws: Path) -> tuple[bool, str | None]:
         return False, err
     if report.get("semantics") != "external_executor_wait_acceptance_report" or report.get("ok") is not True:
         return False, "wait_acceptance_report.json 必须 ok=true"
+    acceptance = validate_modern_t5_handoff(ws)
+    if not acceptance.get("ok"):
+        issues = acceptance.get("errors") if isinstance(acceptance.get("errors"), list) else []
+        detail = "; ".join(
+            f"{item.get('code')}: {item.get('path')}"
+            for item in issues[:3]
+            if isinstance(item, dict)
+        )
+        return False, "现代 Writer Handoff 未通过 T8 接收校验" + (f": {detail}" if detail else "")
+    ingest = validate_t8_ingest_artifacts(ws, acceptance)
+    if not ingest.get("ok"):
+        issues = ingest.get("errors") if isinstance(ingest.get("errors"), list) else []
+        detail = "; ".join(
+            f"{item.get('code')}: {item.get('path')}"
+            for item in issues[:3]
+            if isinstance(item, dict)
+        )
+        return False, "T8 规范化交接文件缺失或过期" + (f": {detail}" if detail else "")
     return True, None
 
 
@@ -1274,10 +1294,11 @@ class ExperimenterAgent(Agent):
             return prepend_resume_prefix(
                 ctx,
                 (
-                    "T5-EXTERNAL-WAIT 是确定性等待节点，runtime 会在 LLM 前检查 "
-                    "external_executor/result_pack.json 和 executor_status.json。"
-                    "如果直接进入本 prompt，请调用 wait_for_external_executor_result；缺结果时不要伪造，"
-                    "应暂停等待外部执行器写回。"
+                    "T5-EXTERNAL-WAIT 是确定性等待节点。runtime 会在 LLM 前独立验收最终 Writer Handoff，"
+                    "并生成 drafts/t5_t8_handoff.json、experiment_evidence_pack.json 与 result_to_claim.json。"
+                    "它不会仅凭 result_pack/status 或自然语言报告放行 T8。若 Writer Handoff、事实 hash、"
+                    "实证结果、mock/failed/blocked 状态或 T8 规范化文件不合格，应暂停等待外部执行器修复，"
+                    "不得调用旧 wait 工具伪造通过。"
                 ),
             )
         if mode == "resource_prepare_wait":
