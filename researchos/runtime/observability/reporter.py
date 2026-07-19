@@ -18,6 +18,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from ...ui.tables import lightweight_ruled_table
 from .artifacts import ArtifactInfo, compare_artifact, inspect_artifact, relative_path, snapshot_artifacts
 from .events import EventStore, ObservabilityEvent
 from .extractors import extract_stage_insights
@@ -819,7 +820,7 @@ class StageReporter:
         return path
 
     def _artifact_table(self, title: str, values: dict[str, ArtifactInfo], *, include_consumers: bool) -> Table:
-        table = Table(title=title, box=box.SIMPLE_HEAVY, show_header=True, header_style="bold cyan", expand=False)
+        table = lightweight_ruled_table(title=title, header_style="bold cyan", expand=False)
         table.add_column("文件", max_width=34, overflow="fold")
         table.add_column("用途", max_width=38, overflow="fold")
         table.add_column("状态", max_width=16)
@@ -848,7 +849,7 @@ class StageReporter:
         return self._artifact_table("完成后会生成", values, include_consumers=True)
 
     def _artifact_manifest(self, values: dict[str, ArtifactInfo], statuses: dict[str, str]) -> Table:
-        table = Table(title="本次生成文件", box=box.SIMPLE_HEAVY, show_header=True, header_style="bold green", expand=False)
+        table = lightweight_ruled_table(title="本次生成文件", header_style="bold green", expand=False)
         table.add_column("文件", max_width=34, overflow="fold")
         table.add_column("用途", max_width=38, overflow="fold")
         table.add_column("状态", max_width=16)
@@ -927,11 +928,8 @@ class StageReporter:
         rows = [row for row in candidates if (self.workspace / row[1]).is_file()]
         if not rows:
             return None
-        table = Table(
+        table = lightweight_ruled_table(
             expand=True,
-            show_header=True,
-            show_lines=True,
-            box=box.SQUARE,
             header_style="bold bright_cyan",
             border_style="bright_cyan",
         )

@@ -31,6 +31,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from .ui.tables import lightweight_ruled_table
 from .agents.registry import AGENT_REGISTRY
 from .cli_runners import CompletePipelineRunner, SingleTaskRunner
 from .orchestration.task_aliases import resolve_public_stage_alias
@@ -1401,7 +1402,7 @@ def _render_selftest_summary(
 ) -> None:
     """Render connection and local prerequisites without raw YAML diagnostics."""
 
-    table = Table(box=box.SIMPLE_HEAVY, header_style="bold cyan", expand=True)
+    table = lightweight_ruled_table(header_style="bold cyan", expand=True)
     table.add_column("状态", width=10)
     table.add_column("检查项", min_width=20, max_width=34, overflow="fold")
     table.add_column("结果", min_width=34, max_width=88, overflow="fold")
@@ -3524,9 +3525,8 @@ def workspace_status_command(args: argparse.Namespace) -> int:
     no_color = bool(getattr(args, "_effective_no_color", getattr(args, "no_color", False)))
     terminal_width = max(80, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
     compact = terminal_width < 118
-    table = Table(
+    table = lightweight_ruled_table(
         title=f"ResearchOS · Workspace Status ({workspace_root})",
-        box=box.SIMPLE_HEAVY,
         header_style="bold cyan",
         expand=False,
     )

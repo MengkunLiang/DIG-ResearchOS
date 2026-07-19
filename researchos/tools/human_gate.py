@@ -17,6 +17,7 @@ from rich.table import Table
 from rich.text import Text
 
 from ..latex_templates import ccf_template_ids, ccf_template_option_id, normalize_ccf_template_id
+from ..ui.tables import lightweight_ruled_table
 from ..ui.candidate_cards import CandidateCardRenderer, CandidateViewModel
 
 
@@ -988,11 +989,8 @@ class CLIHumanInterface(HumanInterface):
             highlight=False,
             _environ={"COLUMNS": str(width), "LINES": "48"},
         )
-        table = Table(
+        table = lightweight_ruled_table(
             expand=True,
-            show_header=True,
-            show_lines=True,
-            box=box.SQUARE,
             header_style="bold bright_yellow",
             border_style="bright_yellow",
         )
@@ -1031,11 +1029,8 @@ class CLIHumanInterface(HumanInterface):
             highlight=False,
             _environ={"COLUMNS": str(width), "LINES": "48"},
         )
-        table = Table(
+        table = lightweight_ruled_table(
             expand=True,
-            show_header=True,
-            show_lines=True,
-            box=box.SQUARE,
             header_style="bold bright_cyan",
             border_style="bright_cyan",
         )
@@ -1140,7 +1135,7 @@ class CLIHumanInterface(HumanInterface):
         decisions = value.get("required_decisions") if isinstance(value.get("required_decisions"), list) else []
         requirements = value.get("missing_requirements") if isinstance(value.get("missing_requirements"), list) else []
         if status == "protocol_decision_required" and decisions:
-            table = Table(expand=True, show_header=True, show_lines=True, box=box.SQUARE, header_style="bold bright_yellow", border_style="bright_yellow")
+            table = lightweight_ruled_table(expand=True, header_style="bold bright_yellow", border_style="bright_yellow")
             table.add_column("待核对的执行设置", width=24, overflow="fold")
             table.add_column("为什么需要留痕", ratio=2, overflow="fold")
             table.add_column("系统如何处理", ratio=2, overflow="fold")
@@ -1181,7 +1176,7 @@ class CLIHumanInterface(HumanInterface):
                     raw_fields = record.get("affected_fields")
                     if isinstance(raw_fields, list):
                         fields.extend(raw_fields)
-            table = Table(expand=True, show_header=True, show_lines=True, box=box.SQUARE, header_style="bold red", border_style="red")
+            table = lightweight_ruled_table(expand=True, header_style="bold red", border_style="red")
             table.add_column("需要补齐", width=28, overflow="fold")
             table.add_column("为什么需要它", ratio=2, overflow="fold")
             table.add_column("修复位置", ratio=2, overflow="fold")
@@ -1190,7 +1185,7 @@ class CLIHumanInterface(HumanInterface):
                 table.add_row(label, why, destination)
             renderables.append(table)
 
-        next_steps = Table(expand=True, show_header=True, show_lines=True, box=box.SQUARE, header_style="bold cyan", border_style="cyan")
+        next_steps = lightweight_ruled_table(expand=True, header_style="bold cyan", border_style="cyan")
         next_steps.add_column("你的情况", width=28, overflow="fold")
         next_steps.add_column("应选择", width=20, overflow="fold")
         next_steps.add_column("系统接下来会做什么", ratio=2, overflow="fold")

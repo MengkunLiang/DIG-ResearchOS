@@ -6,11 +6,11 @@ from typing import TextIO
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 from rich.text import Text
 
 from ..ideation.models import T4RunConfig
 from ..ideation.prerun import T4InputInspection
+from .tables import lightweight_ruled_table
 
 
 def render_t4_prerun(
@@ -41,7 +41,7 @@ def render_t4_prerun(
         )
     )
     materials = inspection.materials
-    table = Table(title="本轮可用材料", expand=True, show_header=True, header_style="bold cyan")
+    table = lightweight_ruled_table(title="本轮可用材料", expand=True, header_style="bold cyan")
     table.add_column("材料", ratio=2)
     table.add_column("状态", ratio=1)
     for label, key in (

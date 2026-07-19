@@ -10,13 +10,13 @@ import re
 import shutil
 from typing import Any, Iterable
 
-from rich import box
 from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
 from ..runtime.errors import ConfigurationError
+from ..ui.tables import lightweight_ruled_table
 from .contracts import SkillInteraction, SkillReadiness, readiness_as_dict
 from .presentation import brief_skill_copy, humanize_skill_copy, summarize_tool_capabilities
 from .workflow import SkillWorkflow, workflow_as_session_payload
@@ -557,7 +557,7 @@ def render_readiness_panel_rich(
         if readiness.scanned_roots:
             body.append(Text("已扫描：" + "、".join(f"`{path}`" for path in readiness.scanned_roots), style="dim"))
         if readiness.discovered_files:
-            discoveries = Table(title="发现的候选文件", box=box.SIMPLE_HEAVY, header_style="bold blue", expand=True)
+            discoveries = lightweight_ruled_table(title="发现的候选文件", header_style="bold blue", expand=True)
             discoveries.add_column("文件", min_width=24, max_width=72, overflow="fold")
             discoveries.add_column("大小", width=12, justify="right")
             discoveries.add_column("是否会使用", min_width=20, max_width=42, overflow="fold")
@@ -568,7 +568,7 @@ def render_readiness_panel_rich(
             body.append(discoveries)
         else:
             body.append(Text("已检查的目录中没有发现可直接使用的材料。", style="yellow"))
-        table = Table(title="需要的材料", box=box.SIMPLE_HEAVY, header_style="bold cyan", expand=True)
+        table = lightweight_ruled_table(title="需要的材料", header_style="bold cyan", expand=True)
         table.add_column("状态", width=14)
         table.add_column("材料", min_width=16, max_width=28, overflow="fold")
         table.add_column("用途", min_width=24, max_width=46, overflow="fold")
@@ -594,7 +594,7 @@ def render_readiness_panel_rich(
             )
         body.append(table)
         if interaction.outputs:
-            outputs = Table(title="完成后会得到", box=box.SIMPLE_HEAVY, header_style="bold magenta", expand=True)
+            outputs = lightweight_ruled_table(title="完成后会得到", header_style="bold magenta", expand=True)
             outputs.add_column("产物", min_width=22, max_width=38, overflow="fold")
             outputs.add_column("用途", min_width=32, max_width=72, overflow="fold")
             for output in interaction.outputs:
@@ -731,7 +731,7 @@ def render_skill_description_rich(
         overview.append(Text(f"技术说明：{humanize_skill_copy(description)}", style="dim"))
     if interaction.example_request:
         overview.append(Text(f"示例请求：{humanize_skill_copy(interaction.example_request)}", style="dim"))
-    inputs = Table(title="开始前需要提供", box=box.SIMPLE_HEAVY, header_style="bold cyan", expand=True)
+    inputs = lightweight_ruled_table(title="开始前需要提供", header_style="bold cyan", expand=True)
     inputs.add_column("是否必需", width=10)
     inputs.add_column("材料", min_width=18, max_width=28, overflow="fold")
     inputs.add_column("用途", min_width=26, max_width=48, overflow="fold")
@@ -743,7 +743,7 @@ def render_skill_description_rich(
             brief_skill_copy(requirement.description),
             " 或 ".join(_wrap_skill_path(path) for path in requirement.paths),
         )
-    outputs = Table(title="完成后会得到", box=box.SIMPLE_HEAVY, header_style="bold magenta", expand=True)
+    outputs = lightweight_ruled_table(title="完成后会得到", header_style="bold magenta", expand=True)
     outputs.add_column("产物", min_width=26, max_width=42, overflow="fold")
     outputs.add_column("用途", min_width=32, max_width=78, overflow="fold")
     for output in interaction.outputs:
@@ -890,7 +890,7 @@ def render_skill_completion_panel_rich(*, workspace: Path, session_id: str, no_c
     body: list[Any] = [Group(*header)]
     outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}
     if outputs:
-        table = Table(title="完成文件检查", box=box.SIMPLE_HEAVY, header_style="bold magenta", expand=True)
+        table = lightweight_ruled_table(title="完成文件检查", header_style="bold magenta", expand=True)
         table.add_column("状态", width=10)
         table.add_column("产物", min_width=22, max_width=42, overflow="fold")
         table.add_column("用途", min_width=32, max_width=75, overflow="fold")
@@ -1048,7 +1048,7 @@ def render_skill_status_panel_rich(
         "COMPLETED": ("已完成", "green"),
         "FAILED": ("执行失败", "bright_red"),
     }
-    table = Table(title=f"Skill 会话状态 · {workspace}", box=box.SIMPLE_HEAVY, header_style="bold cyan", expand=True)
+    table = lightweight_ruled_table(title=f"Skill 会话状态 · {workspace}", header_style="bold cyan", expand=True)
     table.add_column("能力 / 会话", min_width=22, max_width=42, overflow="fold")
     table.add_column("状态", min_width=15, max_width=19)
     table.add_column("进度", min_width=18, max_width=34, overflow="fold")
@@ -1199,7 +1199,7 @@ def _workflow_plain_lines(workflow: dict[str, Any], *, width: int) -> list[str]:
 
 
 def _workflow_rich_table(workflow: dict[str, Any]) -> Table:
-    table = Table(title="执行路径", box=box.SIMPLE_HEAVY, header_style="bold green", expand=True)
+    table = lightweight_ruled_table(title="执行路径", header_style="bold green", expand=True)
     table.add_column("状态", width=14)
     table.add_column("步骤", min_width=20, max_width=34, overflow="fold")
     table.add_column("目标与当前结果", min_width=34, max_width=76, overflow="fold")
