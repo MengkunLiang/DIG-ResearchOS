@@ -6639,7 +6639,7 @@ class StateMachine:
         }
 
     def _t5_protocol_gate_summary(self, workspace_dir: Path) -> dict[str, Any]:
-        """Render a focused, researcher-readable view of T5 readiness."""
+        """Build the compact data model for the researcher-facing T5 Gate."""
 
         handoff = self._read_json_dict(workspace_dir / "external_executor" / "handoff_pack.json") or {}
         context = handoff.get("context_reboost") if isinstance(handoff.get("context_reboost"), dict) else {}
@@ -6647,6 +6647,14 @@ class StateMachine:
         baselines = handoff.get("baseline_matrix") if isinstance(handoff.get("baseline_matrix"), list) else []
         unresolved = handoff.get("unresolved_items") if isinstance(handoff.get("unresolved_items"), list) else []
         readiness = self._t5_execution_readiness(workspace_dir)
+        unresolved_records = [
+            {
+                "affected_fields": item.get("affected_fields") or [],
+                "required_action": item.get("required_action"),
+            }
+            for item in unresolved
+            if isinstance(item, dict)
+        ]
         return {
             "status": readiness.get("status"),
             "formal_execution_allowed": readiness.get("formal_execution_allowed"),
@@ -6662,22 +6670,9 @@ class StateMachine:
                 "claim_count": len(handoff.get("claim_evidence_matrix") or []),
             },
             "required_decisions": readiness.get("required_decisions") or [],
-            "allowed_now": readiness.get("allowed_stages") or [],
-            "blocked_until_confirmed": readiness.get("blocked_stages") or [],
-            "unresolved_records": [
-                {
-                    "question": item.get("question"),
-                    "required_action": item.get("required_action"),
-                }
-                for item in unresolved
-                if isinstance(item, dict)
-            ],
-            "source_files": {
-                "handoff": "external_executor/handoff_pack.json",
-                "report": "external_executor/report/reboost_report.json",
-                "experiment_plan": "ideation/exp_plan.yaml",
-                "proposal": "ideation/proposal/research_proposal.md",
-            },
+            "missing_requirements": unresolved_records,
+            "settings_file": "ideation/exp_plan.yaml",
+            "proposal_file": "ideation/proposal/research_proposal.md",
         }
 
     def _parse_t5_expr_material_decision(self, workspace_dir: Path) -> str:

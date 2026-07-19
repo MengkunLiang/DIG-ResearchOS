@@ -742,21 +742,11 @@ gates:
   # T5 协议就绪门：handoff 已编译并不等于授权实现或运行。
   t5_protocol_gate:
     title: "T5 实验协议就绪确认"
-    description: "研究交接、指标和 baseline 已被保留到 T5。若仍有仿真环境、backbone、样本规模、种子或预算等显式未决项，请先确认或补充它们；系统不会把这一正常研究决策显示为运行时错误，也不会让执行器擅自补造设置。"
-    presentation:
-      handoff_pack:
-        from_file: external_executor/handoff_pack.json
-        max_chars: 5000
-      reboost_report:
-        from_file: external_executor/report/reboost_report.json
-        max_chars: 4000
-      experiment_plan:
-        from_file: ideation/exp_plan.yaml
-        max_chars: 4000
-      protocol_boundary:
-        literal: |
-          当前 Gate 只决定何时进入真实执行。协议未就绪时，已生成的 handoff、研究方案、指标、baseline 与资源线索都会保留；外部执行器不得自行选择仿真框架、agent backbone、种子、样本规模或预算，也不得实现方法、运行实验或写入 T8 结果交接。
-          在确认前可以先把已有源材料放入 resources/。材料准备完成后会回到这里再次核对协议状态，而不是直接进入执行器选择。
+    description: "这里不是报错页。T5 已保存 T4.5 的研究方案；此处只确认哪些实验设置已经由研究者明确，哪些仍需决定。系统会说明现在能做什么以及应选择哪个选项。"
+    # protocol_readiness is added dynamically by the state machine and rendered
+    # as a researcher-facing Rich decision page. Do not dump the handoff or
+    # report JSON here: they are durable audit files, not a human decision UI.
+    presentation: {}
     options:
       - id: protocol_ready
         label: "协议已补充，重新编译"

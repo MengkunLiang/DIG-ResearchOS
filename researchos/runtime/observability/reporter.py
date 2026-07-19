@@ -506,6 +506,10 @@ class StageReporter:
             visible_insights = insights if self.detailed else insights[:1]
             for insight in visible_insights:
                 renderables.append(self._insight_panel(insight))
+        if task_id == "T4.5" and ok:
+            file_guide = self._t45_file_guide()
+            if file_guide is not None:
+                renderables.append(file_guide)
         if task_id == "T2" and run and run.source_health and self.detailed:
             rows = []
             for item in sorted(run.source_health.values(), key=lambda row: str(row.get("source") or "")):
@@ -845,6 +849,83 @@ class StageReporter:
         if rows:
             group.append(self._rows_table(rows))
         return Panel(Group(*group), title=str(insight.get("title") or "阶段统计"), border_style="magenta", expand=False)
+
+    def _t45_file_guide(self) -> Panel | None:
+        """Point researchers to formal T4.5 outputs before T5 consumes them."""
+
+        candidates = (
+            (
+                "完整研究方案",
+                "ideation/proposal/research_proposal.md",
+                "问题、机制、贡献、现实意义、风险和完整实验逻辑。",
+                "优先阅读；T5 会把它作为执行边界。",
+            ),
+            (
+                "正式假设",
+                "ideation/hypotheses.md",
+                "核心假设、可观察预测和可证伪边界。",
+                "核对主张；T5 会保留其验证约束。",
+            ),
+            (
+                "实验计划",
+                "ideation/exp_plan.yaml",
+                "数据/benchmark、指标、baseline、实验设置与停止条件。",
+                "补充协议设置；T5 据此授权真实实验。",
+            ),
+            (
+                "贡献-假设映射",
+                "ideation/contribution_hypothesis_map.yaml",
+                "每项拟议贡献由哪条假设支撑。",
+                "T5/T8 用于主张对齐。",
+            ),
+            (
+                "验证映射",
+                "ideation/validation_map.yaml",
+                "每条假设应由哪些观察和实验验证。",
+                "T5 用于实验设计。",
+            ),
+            (
+                "停止条件",
+                "ideation/kill_criteria.yaml",
+                "哪些结果要求收缩、修正或放弃主张。",
+                "T5 用于实验诊断和风险控制。",
+            ),
+            (
+                "新颖性审计",
+                "ideation/novelty_audit.md",
+                "相似工作、机制差异、必需 baseline 与审计结论。",
+                "T5/T8 用于比较边界和 Related Work。",
+            ),
+            (
+                "方案追溯记录",
+                "ideation/proposal_manifest.json",
+                "proposal 的来源、审计状态与交接边界。",
+                "恢复或追溯时查看。",
+            ),
+        )
+        rows = [row for row in candidates if (self.workspace / row[1]).is_file()]
+        if not rows:
+            return None
+        table = Table(
+            expand=True,
+            show_header=True,
+            show_lines=True,
+            box=box.SQUARE,
+            header_style="bold bright_cyan",
+            border_style="bright_cyan",
+        )
+        table.add_column("重点文件", width=17, overflow="fold")
+        table.add_column("保存位置", width=42, overflow="fold")
+        table.add_column("包含什么", ratio=2, overflow="fold")
+        table.add_column("何时使用", ratio=2, overflow="fold")
+        for label, path, contents, when in rows:
+            table.add_row(label, Text(path, style="cyan", overflow="fold"), contents, when)
+        note = Text(
+            "这些文件均已在当前 workspace 保存；T5 会读取其中的正式研究约束，不会把 T4/T4.5 的关键信息丢失。",
+            style="dim",
+            overflow="fold",
+        )
+        return Panel(Group(table, note), title="T4.5 完成后 · 重点研究文件", border_style="bright_cyan", expand=True)
 
     def _rows_table(self, rows: list[tuple[str, str]]) -> Table:
         table = Table(box=box.SIMPLE, show_header=False, expand=False, pad_edge=False)

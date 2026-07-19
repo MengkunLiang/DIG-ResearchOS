@@ -812,6 +812,9 @@ class CLIHumanInterface(HumanInterface):
                 continue
             if not self._should_render_presentation_field(gate_id, key):
                 continue
+            if gate_id == "t5_protocol_gate" and key == "protocol_readiness":
+                self._render_t5_protocol_readiness(value)
+                continue
             if gate_id == "t4_gate1_selection_gate" and key == "candidate_overview":
                 self._render_section(_humanize_presentation_key(key))
                 self._render_t4_candidate_overview(value)
@@ -1051,6 +1054,140 @@ class CLIHumanInterface(HumanInterface):
             return
         note = Text("所有位置均相对当前 workspace 根目录；这些文件已保存，可在暂停或 resume 后继续查看。", style="dim", overflow="fold")
         console.print(Panel(Group(table, note), title="本轮已保存的研究材料", border_style="bright_cyan", expand=True))
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            print(rendered)
+
+    def _render_t5_protocol_readiness(self, value: Any) -> None:
+        """Render a T5 research decision, never the internal handoff JSON."""
+
+        if not isinstance(value, dict):
+            print("暂时无法读取 T5 协议状态；请重新编译 T5 交接后再继续。")
+            return
+
+        status = str(value.get("status") or "blocked").strip().lower()
+        status_copy = {
+            "ready": (
+                "协议已完整，可进入材料确认",
+                "T5 已获得足以约束真实实验的研究设置。下一步只需确认数据、代码、benchmark 或权重等材料。",
+                "green",
+            ),
+            "protocol_decision_required": (
+                "研究方案已整理，仍需明确实验设置",
+                "这不是运行错误。T4.5 有意保留了部分实验决定，外部执行器不能替研究者猜测这些条件。",
+                "bright_yellow",
+            ),
+            "blocked": (
+                "尚缺最小实验定义",
+                "T5 已保留现有研究材料，但数据/benchmark、指标、baseline 或主张验证关系中至少有一项尚未被正式定义。",
+                "red",
+            ),
+        }
+        status_label, summary, border_style = status_copy.get(
+            status,
+            ("T5 状态需要检查", "无法识别当前协议状态；请重新编译 T5 交接后再继续。", "red"),
+        )
+        compiled = value.get("already_compiled") if isinstance(value.get("already_compiled"), dict) else {}
+        datasets = [" ".join(str(item).split()) for item in compiled.get("settings_or_datasets") or [] if str(item).strip()]
+        metrics = [" ".join(str(item).split()) for item in compiled.get("metrics") or [] if str(item).strip()]
+        baselines = [" ".join(str(item).split()) for item in compiled.get("required_baselines") or [] if str(item).strip()]
+        claim_count = compiled.get("claim_count")
+
+        def compact(items: list[str], *, empty: str = "尚未记录") -> str:
+            if not items:
+                return empty
+            visible = items[:3]
+            suffix = f"；另有 {len(items) - len(visible)} 项" if len(items) > len(visible) else ""
+            return "；".join(visible) + suffix
+
+        def decision_detail(raw: Any) -> tuple[str, str, str]:
+            text = " ".join(str(raw or "").replace("_", " ").split())
+            lowered = text.casefold()
+            if "seed" in lowered or "随机种子" in text:
+                return ("随机种子策略", "保证不同方法在同一可复现条件下比较", "在实验计划中写明固定种子或 seed ensemble")
+            if any(token in lowered for token in ("framework", "simulat", "environment")) or "仿真" in text:
+                return ("仿真环境或实验框架", "决定研究对象、可观测变量和结论边界", "在实验计划中写明环境、版本和配置来源")
+            if "benchmark" in lowered or "数据集" in text:
+                return ("benchmark 或数据集", "决定比较对象和结论能外推到哪里", "在实验计划中写明名称、版本、划分和获取来源")
+            if any(token in lowered for token in ("backbone", "model", "agent")) or "骨干" in text:
+                return ("模型或 agent backbone", "执行器不能自行决定要使用的基础模型", "在实验计划中写明模型、版本和许可/访问条件")
+            if any(token in lowered for token in ("scale", "sample", "episode", "rollout", "budget")) or any(token in text for token in ("规模", "预算", "样本")):
+                return ("样本规模、轮次或预算", "决定统计解释范围、资源消耗和停止条件", "在实验计划中写明规模、重复次数和资源上限")
+            return (text or "待定实验设置", "该设置会改变实验条件或结论范围，不能由执行器自行推定", "在实验计划或来源明确的项目材料中补充决定")
+
+        width = max(88, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        buffer = io.StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=not self._no_color,
+            color_system=None if self._no_color else "truecolor",
+            no_color=self._no_color,
+            width=width,
+            highlight=False,
+            _environ={"COLUMNS": str(width), "LINES": "48"},
+        )
+        overview = Table.grid(expand=True, padding=(0, 1))
+        overview.add_column(style="bold", width=15, no_wrap=True)
+        overview.add_column(ratio=1, overflow="fold")
+        overview.add_row("当前状态", Text(status_label, style="bold"))
+        overview.add_row("这意味着", Text(summary, overflow="fold"))
+        overview.add_row("已确定的数据/设置", Text(compact(datasets), overflow="fold"))
+        overview.add_row("已确定的指标", Text(compact(metrics), overflow="fold"))
+        overview.add_row("已确定的 baseline", Text(compact(baselines), overflow="fold"))
+        overview.add_row("已绑定的主张", Text(f"{claim_count if claim_count not in (None, '') else 0} 条主张已有验证关系", overflow="fold"))
+        renderables: list[Any] = [overview]
+
+        decisions = value.get("required_decisions") if isinstance(value.get("required_decisions"), list) else []
+        requirements = value.get("missing_requirements") if isinstance(value.get("missing_requirements"), list) else []
+        if status == "protocol_decision_required" and decisions:
+            table = Table(expand=True, show_header=True, show_lines=True, box=box.SQUARE, header_style="bold bright_yellow", border_style="bright_yellow")
+            table.add_column("仍需决定什么", width=24, overflow="fold")
+            table.add_column("为什么必须决定", ratio=2, overflow="fold")
+            table.add_column("应补充到哪里", ratio=2, overflow="fold")
+            for decision in decisions:
+                label, why, destination = decision_detail(decision)
+                table.add_row(label, why, destination)
+            renderables.append(table)
+        elif status == "blocked":
+            fields: list[Any] = []
+            for record in requirements:
+                if isinstance(record, dict):
+                    raw_fields = record.get("affected_fields")
+                    if isinstance(raw_fields, list):
+                        fields.extend(raw_fields)
+            table = Table(expand=True, show_header=True, show_lines=True, box=box.SQUARE, header_style="bold red", border_style="red")
+            table.add_column("需要补齐", width=28, overflow="fold")
+            table.add_column("为什么需要它", ratio=2, overflow="fold")
+            table.add_column("修复位置", ratio=2, overflow="fold")
+            for field in list(dict.fromkeys(str(item) for item in fields if str(item).strip())) or ["最低实验协议"]:
+                label, why, destination = decision_detail(field)
+                table.add_row(label, why, destination)
+            renderables.append(table)
+
+        next_steps = Table(expand=True, show_header=True, show_lines=True, box=box.SQUARE, header_style="bold cyan", border_style="cyan")
+        next_steps.add_column("你的情况", width=28, overflow="fold")
+        next_steps.add_column("应选择", width=20, overflow="fold")
+        next_steps.add_column("系统接下来会做什么", ratio=2, overflow="fold")
+        if status == "ready":
+            next_steps.add_row("协议已经完整", "先准备实验材料", "进入资源确认页；核对数据、代码、benchmark 和权重，再选择外部执行器。")
+        elif status == "protocol_decision_required":
+            next_steps.add_row("已经补完上表设置", "协议已补充，重新编译", "只重新整理和校验 T5 交接，不会重做 T4/T4.5。")
+            next_steps.add_row("已有数据、代码或权重可先放入", "先准备实验材料", "允许准备资源；正式运行仍会回到这里核对协议。")
+            next_steps.add_row("暂时不准备决定", "暂停协议确认", "保存全部材料；下次 resume 仍从这里开始。")
+        else:
+            next_steps.add_row("实验计划缺少必要字段", "协议已补充，重新编译", "补充实验计划后重新编译 T5；不会丢失 proposal 或文献材料。")
+            next_steps.add_row("研究问题、机制或贡献本身需要改变", "回到 T4 重构", "返回研究方向阶段，保留现有版本供对照。")
+        renderables.append(next_steps)
+        settings_file = str(value.get("settings_file") or "ideation/exp_plan.yaml")
+        proposal_file = str(value.get("proposal_file") or "ideation/proposal/research_proposal.md")
+        renderables.append(
+            Text(
+                f"补充实验设置：{settings_file}  |  查看完整研究方案：{proposal_file}。所有路径均相对当前 workspace 根目录。",
+                style="dim",
+                overflow="fold",
+            )
+        )
+        console.print(Panel(Group(*renderables), title="T5 研究方案状态", border_style=border_style, expand=True))
         rendered = buffer.getvalue().rstrip()
         if rendered:
             print(rendered)
@@ -1909,6 +2046,12 @@ class CLIHumanInterface(HumanInterface):
             return key in {"candidate_overview", "t4_artifact_guide", "t4_directive_result", "t4_directive_confirmation"}
         if gate_id == "t2_literature_param_gate":
             return key == "current_parameter_preview"
+        if gate_id == "t5_protocol_gate":
+            # Old paused workspaces may still persist full handoff/report
+            # previews. Resume refreshes ``protocol_readiness`` from current
+            # artifacts; every other field is internal audit detail and must
+            # not bury the actual research decision under JSON.
+            return key == "protocol_readiness"
         return True
 
     async def _collect_t2_customization_line(self, options: list[dict]) -> dict[str, str]:
