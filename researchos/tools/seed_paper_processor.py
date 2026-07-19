@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+from html import unescape as html_unescape
 from pathlib import Path
 from typing import Any
 
@@ -718,8 +719,8 @@ class ProcessSeedPaperTool(Tool):
 
         步骤：
         1. 验证 arXiv ID 格式
-        2. 从 arXiv API 获取元数据
-        3. 返回标准格式的论文信息
+        2. 按顺序从 Atom API、arXiv 摘要页和 OpenAlex 获取元数据
+        3. 暂时无法取回元数据时，保留用户确认的 ID 供 T2 补全
         """
         arxiv_id = params.value.strip()
 
@@ -735,71 +736,136 @@ class ProcessSeedPaperTool(Tool):
                 error="invalid_arxiv_id",
             )
 
-        # 从 arXiv API 获取元数据
-        try:
-            import httpx
-            url = f"https://export.arxiv.org/api/query?id_list={arxiv_id}"
-            async with httpx.AsyncClient(follow_redirects=True) as client:
-                response = await client.get(url, timeout=10.0)
-                response.raise_for_status()
-
-                # 解析 XML
-                import xml.etree.ElementTree as ET
-                root = ET.fromstring(response.text)
-
-                # 提取信息
-                ns = {"atom": "http://www.w3.org/2005/Atom"}
-                entry = root.find("atom:entry", ns)
-
-                if entry is None:
-                    return ToolResult(
-                        ok=False,
-                        content=f"未找到 arXiv 论文: {arxiv_id}",
-                        error="arxiv_not_found",
-                    )
-
-                title = entry.find("atom:title", ns).text.strip()
-                authors = [
-                    author.find("atom:name", ns).text
-                    for author in entry.findall("atom:author", ns)
-                ]
-                published = entry.find("atom:published", ns).text
-                year = int(published[:4])
-
-                paper_info = {
-                    "title": title,
-                    "authors": authors,
-                    "year": year,
-                    "role": params.role,
-                    "why_relevant": params.why_relevant,
-                    "arxiv_id": arxiv_id,
-                    "url": f"https://arxiv.org/abs/{arxiv_id}",
-                }
-
-                # 写入 seed_papers.jsonl
-                sync_action, persisted_paper_info = await self._append_to_seed_papers(paper_info)
-
-                return ToolResult(
-                    ok=True,
-                    content=(
-                        f"✅ 成功从 arXiv 获取论文信息\n"
-                        f"arXiv ID: {arxiv_id}\n"
-                        f"标题: {persisted_paper_info.get('title', title)}\n"
-                        f"作者: {', '.join((persisted_paper_info.get('authors') or authors)[:3])}{'...' if len(persisted_paper_info.get('authors') or authors) > 3 else ''}\n"
-                        f"年份: {persisted_paper_info.get('year', year)}\n"
-                        f"角色: {params.role}\n"
-                        f"URL: https://arxiv.org/abs/{arxiv_id}\n"
-                        f"seed_papers.jsonl: {sync_action}"
-                    ),
-                    data={"paper": persisted_paper_info},
-                )
-        except Exception as e:
-            _LOG.error("arxiv_fetch_failed", arxiv_id=arxiv_id, error=str(e))
+        metadata, source, attempts = await self._fetch_arxiv_metadata(arxiv_id)
+        if metadata:
+            title = str(metadata["title"])
+            authors = [str(author) for author in metadata.get("authors", []) if str(author).strip()]
+            paper_info = {
+                "title": title,
+                "authors": authors,
+                "year": metadata.get("year"),
+                "role": params.role,
+                "why_relevant": params.why_relevant,
+                "arxiv_id": arxiv_id,
+                "doi": f"10.48550/arXiv.{arxiv_id}",
+                "url": f"https://arxiv.org/abs/{arxiv_id}",
+                "metadata_source": source,
+                "metadata_status": "resolved",
+            }
+            sync_action, persisted_paper_info = await self._append_to_seed_papers(paper_info)
+            used_fallback = source != "arxiv_atom_api"
+            source_note = "；Atom API 暂不可用，已自动切换后备来源" if used_fallback else ""
             return ToolResult(
-                ok=False,
-                content=f"获取 arXiv 元数据失败: {e}",
-                error="arxiv_fetch_failed",
+                ok=True,
+                content=(
+                    f"已获取 arXiv 论文信息{source_note}\n"
+                    f"arXiv ID: {arxiv_id}\n"
+                    f"标题: {persisted_paper_info.get('title', title)}\n"
+                    f"作者: {', '.join((persisted_paper_info.get('authors') or authors)[:3])}"
+                    f"{'...' if len(persisted_paper_info.get('authors') or authors) > 3 else ''}\n"
+                    f"年份: {persisted_paper_info.get('year', metadata.get('year'))}\n"
+                    f"元数据来源: {source}\n"
+                    f"seed_papers.jsonl: {sync_action}"
+                ),
+                data={
+                    "paper": persisted_paper_info,
+                    "metadata_source": source,
+                    "fallback_used": used_fallback,
+                    "attempts": attempts,
+                },
             )
+
+        # A researcher-supplied arXiv identifier remains a useful seed even
+        # while public metadata services are unavailable. Preserve the exact
+        # identifier without inventing bibliographic facts; T2 enrichment can
+        # retry it later using its independent retrieval stack.
+        pending_info = {
+            "title": f"arXiv:{arxiv_id} (metadata pending)",
+            "authors": [],
+            "year": None,
+            "role": params.role,
+            "why_relevant": params.why_relevant,
+            "arxiv_id": arxiv_id,
+            "doi": f"10.48550/arXiv.{arxiv_id}",
+            "url": f"https://arxiv.org/abs/{arxiv_id}",
+            "metadata_source": "pending_retry",
+            "metadata_status": "pending",
+            "metadata_review_required": True,
+            "metadata_attempts": attempts,
+        }
+        sync_action, persisted_paper_info = await self._append_to_seed_papers(pending_info)
+        _LOG.warning("arxiv_metadata_deferred", arxiv_id=arxiv_id, attempts=attempts)
+        return ToolResult(
+            ok=True,
+            content=(
+                "arXiv 元数据服务暂时不可用；已保留你提供的 arXiv ID，T2 会自动重试补全。\n"
+                f"arXiv ID: {arxiv_id}\n"
+                f"seed_papers.jsonl: {sync_action}"
+            ),
+            data={
+                "paper": persisted_paper_info,
+                "metadata_status": "pending",
+                "fallback_used": True,
+                "attempts": attempts,
+                "repair_scope": "deferred_arxiv_metadata_enrichment",
+            },
+        )
+
+    async def _fetch_arxiv_metadata(
+        self,
+        arxiv_id: str,
+    ) -> tuple[dict[str, Any] | None, str, list[dict[str, str]]]:
+        """Resolve arXiv metadata through independent public representations.
+
+        ``export.arxiv.org`` is useful when healthy but has occasional long
+        read stalls. The public abstract page exposes standard citation meta
+        tags, while OpenAlex gives an independent DOI-indexed fallback.
+        """
+
+        import httpx
+
+        attempts: list[dict[str, str]] = []
+        timeout = httpx.Timeout(8.0, connect=4.0)
+        sources = (
+            (
+                "arxiv_atom_api",
+                f"https://export.arxiv.org/api/query?id_list={arxiv_id}",
+                _parse_arxiv_atom_metadata,
+            ),
+            (
+                "arxiv_abstract_page",
+                f"https://arxiv.org/abs/{arxiv_id}",
+                _parse_arxiv_html_metadata,
+            ),
+            (
+                "openalex_doi",
+                f"https://api.openalex.org/works/https://doi.org/10.48550/arXiv.{arxiv_id}",
+                _parse_openalex_metadata,
+            ),
+        )
+        headers = {"User-Agent": "ResearchOS/0.1 (+https://github.com/MengkunLiang/DIG-ResearchOS)"}
+        async with httpx.AsyncClient(follow_redirects=True, headers=headers, timeout=timeout) as client:
+            for source, url, parser in sources:
+                try:
+                    response = await client.get(url)
+                    if response.status_code == 404:
+                        attempts.append({"source": source, "outcome": "not_found"})
+                        continue
+                    response.raise_for_status()
+                    metadata = parser(response.text)
+                    if metadata is not None:
+                        attempts.append({"source": source, "outcome": "resolved"})
+                        return metadata, source, attempts
+                    attempts.append({"source": source, "outcome": "metadata_missing"})
+                except Exception as exc:  # each source is an independent fallback
+                    attempts.append({"source": source, "outcome": _metadata_failure_kind(exc)})
+                    _LOG.info(
+                        "arxiv_metadata_source_unavailable",
+                        arxiv_id=arxiv_id,
+                        source=source,
+                        failure=attempts[-1]["outcome"],
+                    )
+        return None, "", attempts
 
     async def _process_doi(self, params: ProcessSeedPaperParams) -> ToolResult:
         """处理 DOI。
@@ -932,6 +998,121 @@ class ProcessSeedPaperTool(Tool):
         _write_seed_paper_records(seed_papers_path, records)
         _LOG.info("seed_paper_appended", title=paper_info.get("title", "unknown"))
         return "已追加新记录", paper_info
+
+
+def _parse_arxiv_atom_metadata(payload: str) -> dict[str, Any] | None:
+    """Parse the narrow Atom subset exposed by the arXiv export endpoint."""
+
+    try:
+        import xml.etree.ElementTree as ET
+
+        root = ET.fromstring(payload)
+    except Exception:
+        return None
+    namespace = {"atom": "http://www.w3.org/2005/Atom"}
+    entry = root.find("atom:entry", namespace)
+    if entry is None:
+        return None
+    title = _metadata_text(entry.findtext("atom:title", default="", namespaces=namespace))
+    if not title:
+        return None
+    authors = [
+        _metadata_text(author.findtext("atom:name", default="", namespaces=namespace))
+        for author in entry.findall("atom:author", namespace)
+    ]
+    published = _metadata_text(entry.findtext("atom:published", default="", namespaces=namespace))
+    return {
+        "title": title,
+        "authors": [author for author in authors if author],
+        "year": _metadata_year(published),
+    }
+
+
+def _parse_arxiv_html_metadata(payload: str) -> dict[str, Any] | None:
+    """Read citation meta tags from an arXiv abstract page without an HTML dependency."""
+
+    title = _first_metadata_value(payload, "citation_title")
+    if not title:
+        return None
+    authors = _metadata_values(payload, "citation_author")
+    published = (
+        _first_metadata_value(payload, "citation_date")
+        or _first_metadata_value(payload, "citation_publication_date")
+        or _first_metadata_value(payload, "dc.date")
+    )
+    return {
+        "title": title,
+        "authors": authors,
+        "year": _metadata_year(published),
+    }
+
+
+def _parse_openalex_metadata(payload: str) -> dict[str, Any] | None:
+    """Read a minimal bibliographic record from the OpenAlex work endpoint."""
+
+    try:
+        record = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(record, dict):
+        return None
+    title = _metadata_text(record.get("title"))
+    if not title:
+        return None
+    authorships = record.get("authorships") if isinstance(record.get("authorships"), list) else []
+    authors = [
+        _metadata_text(item.get("author", {}).get("display_name"))
+        for item in authorships
+        if isinstance(item, dict) and isinstance(item.get("author"), dict)
+    ]
+    return {
+        "title": title,
+        "authors": [author for author in authors if author],
+        "year": _metadata_year(record.get("publication_year") or record.get("publication_date")),
+    }
+
+
+def _metadata_values(payload: str, target_name: str) -> list[str]:
+    values: list[str] = []
+    for tag in re.findall(r"<meta\b[^>]*>", payload, flags=re.IGNORECASE | re.DOTALL):
+        attributes = {
+            match.group(1).casefold(): _metadata_text(html_unescape(match.group(3)))
+            for match in re.finditer(r"([:\w-]+)\s*=\s*(['\"])(.*?)\2", tag, flags=re.DOTALL)
+        }
+        if attributes.get("name", "").casefold() == target_name.casefold():
+            value = attributes.get("content", "")
+            if value:
+                values.append(value)
+    return list(dict.fromkeys(values))
+
+
+def _first_metadata_value(payload: str, target_name: str) -> str:
+    values = _metadata_values(payload, target_name)
+    return values[0] if values else ""
+
+
+def _metadata_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _metadata_year(value: Any) -> int | None:
+    match = re.search(r"(?:19|20)\d{2}", _metadata_text(value))
+    return int(match.group(0)) if match else None
+
+
+def _metadata_failure_kind(exc: Exception) -> str:
+    """Return a stable, non-secret source failure class for runtime diagnostics."""
+
+    name = type(exc).__name__.casefold()
+    if "timeout" in name:
+        return "timeout"
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int):
+        return f"http_{status_code}"
+    if "request" in name or "network" in name or "connect" in name:
+        return "network_error"
+    return "invalid_response"
 
 
 def _load_seed_paper_records(path: Path) -> list[dict[str, Any]]:
