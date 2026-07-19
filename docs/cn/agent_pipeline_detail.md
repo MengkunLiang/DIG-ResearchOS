@@ -2792,7 +2792,7 @@ T6 不应该从零重跑一次 T4.5，这个逻辑现在已经明确分开了。
 | `external_executor/CLAUDE.md` | Claude Code 窗口执行说明；执行模式在 T5-EXECUTOR-GATE 前保持 `UNSET` |
 | `external_executor/report/reboost_llm_candidate_handoff_pack.json` / `external_executor/report/reboost_llm_candidate_validation_report.json` | 当模型把 handoff candidate 交给发布工具时写出的诊断文件；不是声明的下游输入 |
 
-`external_executor/expr/` 在 workspace 初始化时创建，后续由材料门和外部执行阶段使用。T5-REBOOST 不创建 `expr/` 目录，也不写 `expr/MATERIALS_CHECKLIST.json` / `expr/README.md`。
+`resources/` 是 Phase B 的源资源根，研究者提供的数据集、baseline、benchmark、代码与权重应先进入该目录；`external_executor/expr/` 在 workspace 初始化时创建，后续只由材料门展示并由外部执行阶段保存已部署、可运行的 baseline 和方法资产。T5-REBOOST 不创建 `expr/MATERIALS_CHECKLIST.json` / `expr/README.md`。具体操作、目录流向与恢复边界见 [T5 外部执行器使用指南](t5_external_executor.md)。
 
 `T5-REBOOST-GATE` 不会写 `external_executor/report/executor_selection.json`、`external_executor/report/executor_capabilities.json`、`input_manifest.json`、`job_state.json`、`executor_events.jsonl`、`executor_prompt.md`、`codex_prompt.md`、`claude_code_prompt.md`、`manual_instructions.md` 或 `external_executor/skills/`。执行器专属 prompt 文件不再生成；外部执行器直接读取 `external_executor/AGENTS.md` / `external_executor/CLAUDE.md` 以及其中引用的 JSON/text 控制文件。项目专属 Skill Suite 由 `T5-SPECIALIZE-EXECUTOR-SKILLS` 发布。
 

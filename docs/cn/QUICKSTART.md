@@ -152,7 +152,7 @@ ResearchOS Task
 python -m researchos.cli run-task T5-REBOOST --workspace ./workspace/project-a
 ```
 
-`T5-REBOOST` 会把后续需要消费的语义 handoff 与控制文件保持在稳定根路径：`external_executor/handoff_pack.json`、`paper_card_evidence_index.json`、`expected_outputs_schema.json`、`allowed_paths.txt`、`AGENTS.md` 和 `CLAUDE.md`。它的过程报告写入 `external_executor/report/`：`reboost_report.json`、`reboost_validation_report.json`，以及模型提交 handoff candidate 时的 `reboost_llm_candidate_handoff_pack.json` 和 `reboost_llm_candidate_validation_report.json`。`external_executor/expr/` 由 workspace 初始化创建，后续用于材料放置以及 our method/baseline 的部署资产；T5-REBOOST 不再创建 `expr/MATERIALS_CHECKLIST.json` 或 `expr/README.md`。`T5-EXECUTOR-GATE` 会把 executor 控制回执写入 `external_executor/report/`；执行器专属 prompt 文件不再生成。
+`T5-REBOOST` 会把后续需要消费的语义 handoff 与控制文件保持在稳定根路径：`external_executor/handoff_pack.json`、`paper_card_evidence_index.json`、`expected_outputs_schema.json`、`allowed_paths.txt`、`AGENTS.md` 和 `CLAUDE.md`。它的过程报告写入 `external_executor/report/`：`reboost_report.json`、`reboost_validation_report.json`，以及模型提交 handoff candidate 时的 `reboost_llm_candidate_handoff_pack.json` 和 `reboost_llm_candidate_validation_report.json`。Phase B 的源材料应放在 `resources/`，`external_executor/expr/` 仅用于后续部署的可运行 method/baseline 资产；T5-REBOOST 不创建 `expr/MATERIALS_CHECKLIST.json` 或 `expr/README.md`。`T5-EXECUTOR-GATE` 会把 executor 控制回执写入 `external_executor/report/`；执行器专属 prompt 文件不再生成。完整操作见 [T5 外部执行器使用指南](t5_external_executor.md)。
 
 只运行项目 Skill 专属化任务而不推进完整流水线时，使用：
 

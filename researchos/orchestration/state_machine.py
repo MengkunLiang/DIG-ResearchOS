@@ -6158,31 +6158,47 @@ class StateMachine:
         if node.task_id == "T5-EXPR-MATERIAL-GATE":
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "pause_for_materials")
             captured = gate_result.get("captured") or {}
+            resources_dir = workspace_dir / "resources"
             expr_dir = workspace_dir / "external_executor" / "expr"
+            resources_dir.mkdir(parents=True, exist_ok=True)
             expr_dir.mkdir(parents=True, exist_ok=True)
-            files = []
-            for path in sorted(expr_dir.rglob("*")):
-                if not path.is_file():
-                    continue
-                rel = path.relative_to(workspace_dir).as_posix()
-                files.append(
-                    {
-                        "path": rel,
+
+            def snapshot_files(root: Path, *, with_sha256: bool) -> list[dict[str, object]]:
+                files: list[dict[str, object]] = []
+                for path in sorted(root.rglob("*")):
+                    if not path.is_file():
+                        continue
+                    item: dict[str, object] = {
+                        "path": path.relative_to(workspace_dir).as_posix(),
                         "bytes": path.stat().st_size,
-                        "sha256": _sha256_file(path),
                     }
-                )
+                    if with_sha256:
+                        item["sha256"] = _sha256_file(path)
+                    files.append(item)
+                return files
+
+            # Datasets and checkpoints can be large. The material gate only
+            # inventories their paths and sizes; Phase B owns source review,
+            # immutable revisions, and costly integrity verification.
+            resource_files = snapshot_files(resources_dir, with_sha256=False)
+            expr_files = snapshot_files(expr_dir, with_sha256=True)
             payload = {
-                "version": "1.0",
-                "semantics": "external_executor_expr_materials_gate_decision",
+                "version": "1.1",
+                "semantics": "external_executor_materials_gate_decision",
                 "task_id": node.task_id,
                 "gate_id": self._gate_id_for_node(node),
                 "selected_option": option_id,
                 "materials_ready": option_id == "materials_ready",
                 "captured": captured if isinstance(captured, dict) else {},
                 "next_task": next_task,
+                "resource_material_root": "resources",
+                "resource_snapshot": resource_files,
+                "resource_snapshot_hash_policy": "deferred_to_phase_b",
+                "deployment_asset_root": "external_executor/expr",
+                "deployment_asset_snapshot": expr_files,
+                # Preserve legacy readers that only know the old expr fields.
                 "expr_dir": "external_executor/expr",
-                "expr_snapshot": files,
+                "expr_snapshot": expr_files,
                 "decided_at": _now_iso(),
                 "resume_instruction": "After placing materials, run: python -m researchos.cli resume --workspace <workspace>",
             }

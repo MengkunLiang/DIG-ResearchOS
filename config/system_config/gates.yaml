@@ -740,11 +740,18 @@ gates:
         next: done
 
   # T5 实验材料放置门：
-  # 真实实验启动前，用户把 baseline/dataset/weights 等材料放进 external_executor/expr/。
+  # 真实实验启动前，用户把源材料放进 resources/；只有已经可直接运行的部署资产才放入
+  # external_executor/expr/。
   t5_expr_material_gate:
     title: "T5 实验材料放置确认"
-    description: "T5 已完成 re-boost、handoff 和项目专属 skill suite 生成。请先把 baseline model、dataset、外部代码、权重和材料说明放入 external_executor/expr/，再选择执行器。"
+    description: "T5 已完成 re-boost、handoff 和项目专属 skill suite 生成。请将数据集、baseline、benchmark、外部代码、权重和材料说明放入 resources/；仅将已整理为可直接运行的部署资产放入 external_executor/expr/，再选择执行器。"
     presentation:
+      resources_path:
+        literal: "resources/"
+      resources_files:
+        from_dir: resources
+        glob: "*"
+        max_items: 50
       expr_path:
         literal: "external_executor/expr/"
       expr_files:
@@ -756,6 +763,7 @@ gates:
         max_chars: 4000
       launch_after_gate:
         literal: |
+          `resources/` 是 Phase B 的源资源根。外部执行器会在其中将人工提供、远程获取和复现资源分别整理为 byhand、Remote_acquisition 和 reproduction；`external_executor/expr/` 仅用于已部署、可运行的 baseline 和方法资产。
           材料就绪后，下一步会进入外部执行器选择 gate。
           如果选择 Codex CLI，系统会提示你在 workspace 根目录启动 Codex CLI，让它读取 external_executor/AGENTS.md 并执行 external_executor/skills/research-execution/SKILL.md。
           Codex 完成后应写回并通过 Writer Handoff 核验 external_executor/executor_research_report.md、external_executor/result_pack.json、external_executor/executor_status.json 和 external_executor/report/run_manifest.json；总控 Skill 随后直接执行 python -m researchos.cli run-task T8 --workspace <workspace>，无需退出执行器再手工 resume。

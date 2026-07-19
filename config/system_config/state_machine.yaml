@@ -1182,8 +1182,9 @@ states:
     next_on_failure: failed
 
   # T5-EXPR-MATERIAL-GATE 状态：实验材料放置确认
-  # 用途：T5 re-boost 与 skill 编译完成后，暂停等待用户把 baseline model、dataset、
-  # 外部代码、权重等实验材料放入 external_executor/expr/。
+  # 用途：T5 re-boost 与 skill 编译完成后，暂停等待用户把 dataset、baseline、
+  # benchmark、repo 和权重等源材料放入 resources/；已可运行的部署资产可放在
+  # external_executor/expr/。节点 ID 和决策路径保留，避免打断旧 workspace 的恢复。
   T5-EXPR-MATERIAL-GATE:
     agent: experimenter
     mode: executor_gate

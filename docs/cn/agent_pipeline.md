@@ -71,7 +71,7 @@ Gate1 首先展示 1–3 个 Portfolio Candidates，但会保留 6–8 个 Activ
 
 ## T5 到 T8 外部证据路径
 
-ResearchOS 先准备执行器 handoff，然后运行 `T5-SPECIALIZE-EXECUTOR-SKILLS`：LLM 消费仓库级 `project-skill-specialization` Skill，调用确定性 wrapper，ResearchOS 再独立校验已发布的 context/report/13-Skill suite，之后才进入 executor 选择。外部执行必须把 T8 核心交接文件留在 `external_executor/executor_research_report.md`；其他文件作为追溯材料。Evidence Packaging 完成后，`writer-handoff` 形成并核验报告、最终 status、result pack、manifest、figure 和 table。总控随后在同一执行器会话中执行路由返回的 `run-task T8` 命令，由 ResearchOS 独立接收冻结 handoff、生成 T8 evidence/claim 索引并委托现有完整 T8 pipeline。模拟空运行仅验证协议链，不生成经验性 claim。
+ResearchOS 先准备执行器 handoff，然后运行 `T5-SPECIALIZE-EXECUTOR-SKILLS`：LLM 消费仓库级 `project-skill-specialization` Skill，调用确定性 wrapper，ResearchOS 再独立校验已发布的 context/report/13-Skill suite，之后才进入 executor 选择。Phase B 的源资源根是 `resources/`，而 `external_executor/expr/` 只保存已经部署为可运行 baseline 或方法的资产。外部执行必须把 T8 核心交接文件留在 `external_executor/executor_research_report.md`；其他文件作为追溯材料。Evidence Packaging 完成后，`writer-handoff` 形成并核验报告、最终 status、result pack、manifest、figure 和 table。总控随后在同一执行器会话中执行路由返回的 `run-task T8` 命令，由 ResearchOS 独立接收冻结 handoff、生成 T8 evidence/claim 索引并委托现有完整 T8 pipeline。模拟空运行仅验证协议链，不生成经验性 claim。具体命令、材料 Gate 和 A-F artifact 路径见 [T5 外部执行器使用指南](t5_external_executor.md)。
 
 ## T8-T9 撰写与提交
 

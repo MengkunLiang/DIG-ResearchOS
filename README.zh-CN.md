@@ -122,6 +122,7 @@ T3 的强证据阅读仍逐篇处理，因为页码覆盖、section 证据和阅
 | 只跑一个 task | `python -m researchos.cli run-task T3.6-SEC-INTRO --workspace ./workspace/project-a` |
 | 单独运行 T5 的研究再激发 | `python -m researchos.cli run-task T5-REBOOST --workspace ./workspace/project-a` |
 | 在 T5 专项 Skill 后进入执行器选择 Gate | `python -m researchos.cli run-task T5-EXECUTOR-GATE --workspace ./workspace/project-a` |
+| 接收完成的 T5 外部交接并进入完整 T8 | `python -m researchos.cli run-task T8 --workspace ./workspace/project-a` |
 | 校验一个 task 的产物 | `python -m researchos.cli validate --task T3.6-SEC-INTRO --workspace ./workspace/project-a` |
 | 无模型重跑 Survey 覆盖审计 | `python -m researchos.cli audit-survey --workspace ./workspace/project-a` |
 | 查看已记录 run | `python -m researchos.cli trace <run-id> --workspace ./workspace/project-a` |
@@ -134,6 +135,8 @@ T3 的强证据阅读仍逐篇处理，因为页码覆盖、section 证据和阅
 | 查看某个 Skill 的输入、输出与恢复契约 | `python -m researchos.cli describe-skill pdf-note-card --workspace ./workspace/project-a` |
 | 启动或恢复一个引导式 Skill | `python -m researchos.cli run-skill pdf-note-card --workspace ./workspace/project-a --session-id reading-01` |
 | 查看可恢复的 Skill 会话 | `python -m researchos.cli skill-status --workspace ./workspace/project-a` |
+
+T5 的资源放置、Codex/Claude 启动、外部 A-F 阶段和 T8 交接契约见 [T5 外部执行器使用指南](docs/cn/t5_external_executor.md)。
 
 跨项目复用已验证上游材料时，创建新的目标 workspace 后使用 `run --from <source-workspace> --start-task <task>`。它不是两个项目的合并操作。恢复细节见 [快速开始](docs/cn/QUICKSTART.md)。
 
