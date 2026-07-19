@@ -111,7 +111,17 @@ class ToolOutcome:
     important: bool
 
 
-def classify_tool_outcome(*, ok: bool, data: dict[str, Any] | None, error: str | None = None) -> ToolOutcome:
+_EXPLORATORY_WORKSPACE_TOOLS = frozenset({"read_file", "list_files", "glob_files", "grep_search"})
+_EXPLORATORY_MISS_ERRORS = frozenset({"access_denied", "not_found", "file_not_found"})
+
+
+def classify_tool_outcome(
+    *,
+    ok: bool,
+    data: dict[str, Any] | None,
+    error: str | None = None,
+    tool_name: str | None = None,
+) -> ToolOutcome:
     """Classify degraded scholarly-source outcomes without concealing failures.
 
     ``ok`` remains authoritative for the agent/runtime.  This function only
@@ -123,6 +133,11 @@ def classify_tool_outcome(*, ok: bool, data: dict[str, Any] | None, error: str |
     failure_class = str(payload.get("failure_class") or error or "").casefold()
     if ok:
         return ToolOutcome("DONE", "green", False)
+    # Agents occasionally probe for an optional/generated path before the
+    # owning deterministic step has published it. This is useful context for
+    # the agent and trace, but a normal run should not render it as a failure.
+    if str(tool_name or "").casefold() in _EXPLORATORY_WORKSPACE_TOOLS and failure_class in _EXPLORATORY_MISS_ERRORS:
+        return ToolOutcome("EXPLORATORY_MISS", "dim", False)
     if disposition == "skipped" or payload.get("optional_input") is True:
         return ToolOutcome("SKIPPED", "yellow", False)
     if disposition in {"auto_repair", "repairing"} and payload.get("repairable", True):
@@ -591,6 +606,7 @@ class CliProgressEmitter:
         next_step: str | None = None,
         duration_ms: int | None = None,
         data: dict[str, Any] | None = None,
+        error: str | None = None,
     ) -> None:
         suppressed = self._suppressed_t4_tool_results.get(tool_name, 0)
         if suppressed:
@@ -599,7 +615,7 @@ class CliProgressEmitter:
             else:
                 self._suppressed_t4_tool_results[tool_name] = suppressed - 1
             return
-        outcome = classify_tool_outcome(ok=ok, data=data)
+        outcome = classify_tool_outcome(ok=ok, data=data, error=error, tool_name=tool_name)
         important = outcome.important
         active_task = self._active_task_id
         structured_run = self._structured_runs.get(active_task or "")
@@ -628,6 +644,7 @@ class CliProgressEmitter:
                 summary=summary,
                 output_path=output_path,
                 data=data,
+                error=error,
             )
             return
         if self._active_task_id in self._structured_runs and self._active_task_id != "T4" and ok and not self.verbose:
@@ -635,7 +652,7 @@ class CliProgressEmitter:
         # These outcomes have an established local repair, fallback, or
         # optional-input path. Keep their full diagnostics for the Agent and
         # trace, but do not interrupt ordinary researcher-facing progress.
-        if outcome.status in {"SKIPPED", "AUTO_REPAIR", "AUTO_FALLBACK", "DEGRADED"} and not self.verbose:
+        if outcome.status in {"SKIPPED", "AUTO_REPAIR", "AUTO_FALLBACK", "DEGRADED", "EXPLORATORY_MISS"} and not self.verbose:
             return
         if self.quiet and not important:
             return
@@ -644,6 +661,7 @@ class CliProgressEmitter:
             "AUTO_REPAIR": "正在自动修补",
             "AUTO_FALLBACK": "已自动降级",
             "DEGRADED": "降级继续",
+            "EXPLORATORY_MISS": "探索性检查未命中，已继续",
             "FAILED": "失败",
         }[outcome.status]
         if self._active_task_id == "T4":
@@ -1327,7 +1345,9 @@ def summarize_tool_result(
     data = data if isinstance(data, dict) else {}
     metadata = metadata if isinstance(metadata, dict) else {}
     if not ok:
-        outcome = classify_tool_outcome(ok=ok, data=data, error=error)
+        outcome = classify_tool_outcome(ok=ok, data=data, error=error, tool_name=tool_name)
+        if outcome.status == "EXPLORATORY_MISS":
+            return "探索性检查未命中，系统已继续。", _extract_output_path(tool_name, data)
         if outcome.status == "SKIPPED":
             path = _extract_output_path(tool_name, data)
             label = str(data.get("optional_input_label") or path or "可选输入")

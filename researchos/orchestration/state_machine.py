@@ -2578,6 +2578,16 @@ class StateMachine:
             # Reopen it as the dedicated external-executor handoff panel before
             # any agent or model can run again.
             return True
+        # Older configurations incorrectly routed a completed protocol-only
+        # dry-run into T8. A mock result has no writer handoff and must never
+        # become manuscript evidence, so reopen executor selection before a
+        # T8 style gate can be shown.
+        if (
+            state.current_task == "T8-STYLE-GATE"
+            and workspace_dir is not None
+            and self._mock_dry_run_requires_real_executor(workspace_dir)
+        ):
+            return True
         if state.status == "PAUSED" and self._runtime_recovery_payload_from_error(state.last_error) is not None:
             return True
         node = self.nodes[state.current_task]
@@ -2590,6 +2600,30 @@ class StateMachine:
         workspace_dir: Path | None = None,
     ) -> StateYaml:
         """Present a gate-only node directly and pause without starting an agent run."""
+
+        if (
+            state.current_task == "T8-STYLE-GATE"
+            and workspace_dir is not None
+            and self._mock_dry_run_requires_real_executor(workspace_dir)
+        ):
+            state.current_task = "T5-EXECUTOR-GATE"
+            state.pending_gate = None
+            state.status = "RUNNING"
+            state.paused_at = None
+            state.last_error = None
+            receipts = state.task_context.get("state_migrations")
+            history = list(receipts) if isinstance(receipts, list) else []
+            history.append(
+                {
+                    "migration": "redirect_mock_dry_run_from_t8",
+                    "from_task": "T8-STYLE-GATE",
+                    "to_task": "T5-EXECUTOR-GATE",
+                    "reason": "mock_only protocol outputs do not satisfy the T5-to-T8 writer handoff contract",
+                    "migrated_at": _now_iso(),
+                }
+            )
+            state.task_context["state_migrations"] = history[-20:]
+            return self.pause_for_immediate_gate(state, workspace_dir=workspace_dir)
 
         if (
             state.current_task == "T3.6-ASSEMBLE"
@@ -3808,6 +3842,49 @@ class StateMachine:
             presentation["_title"] = gate_spec["title"]
         if gate_spec.get("description"):
             presentation["_description"] = gate_spec["description"]
+        # T5 material/executor gates formerly required an unprompted ``notes``
+        # line. Pending gates persist their options by design, so a workspace
+        # paused before this fix would otherwise keep requesting a field that
+        # no longer participates in the decision. This migration is limited
+        # to removing that obsolete input requirement; it preserves every
+        # option ID, branch, presentation, and user artifact.
+        if state.pending_gate.gate_id in {"t5_expr_material_gate", "t5_executor_gate"}:
+            configured_options = {
+                str(item.get("id") or item.get("key") or ""): item
+                for item in gate_spec.get("options", [])
+                if isinstance(item, dict)
+            }
+            migrated_option_ids: list[str] = []
+            for option in options:
+                if not isinstance(option, dict):
+                    continue
+                option_id = str(option.get("id") or option.get("key") or "")
+                configured = configured_options.get(option_id, {})
+                configured_inputs = configured.get("collect_input", []) if isinstance(configured, dict) else []
+                legacy_inputs = option.get("collect_input", [])
+                if (
+                    isinstance(legacy_inputs, list)
+                    and "notes" in legacy_inputs
+                    and "notes" not in configured_inputs
+                ):
+                    remaining_inputs = [field for field in legacy_inputs if field != "notes"]
+                    if remaining_inputs:
+                        option["collect_input"] = remaining_inputs
+                    else:
+                        option.pop("collect_input", None)
+                    migrated_option_ids.append(option_id)
+            if migrated_option_ids:
+                receipts = state.task_context.get("pending_gate_migrations")
+                history = list(receipts) if isinstance(receipts, list) else []
+                history.append(
+                    {
+                        "gate_id": state.pending_gate.gate_id,
+                        "migration": "remove_obsolete_notes_input",
+                        "option_ids": migrated_option_ids,
+                        "migrated_at": _now_iso(),
+                    }
+                )
+                state.task_context["pending_gate_migrations"] = history[-20:]
         if state.pending_gate.gate_id == "t4_prerun_gate" and workspace_dir is not None:
             return self._pause_for_t4_prerun_gate(state, workspace_dir)
         if node.task_id == "T2-PARAM-GATE":
@@ -4422,8 +4499,9 @@ class StateMachine:
             state.status = "PAUSED"
             state.paused_at = _now_iso()
             state.last_error = (
-                "WAITING_MATERIALS: place baseline models, datasets, repositories, weights, "
-                "and notes under external_executor/expr/, then resume."
+                "WAITING_MATERIALS: place source datasets, repositories, baselines, benchmarks, weights, "
+                "and material notes under resources/; place only deployed runnable assets under "
+                "external_executor/expr/, then resume."
             )
             return state
         if (
@@ -6489,6 +6567,17 @@ class StateMachine:
         if selected in {"stop_project", "stop", "done"}:
             return "done" if "done" in self.nodes else "failed"
         return "T5-EXPR-MATERIAL-GATE"
+
+    def _mock_dry_run_requires_real_executor(self, workspace_dir: Path) -> bool:
+        """Return whether a protocol-only result must be kept outside T8."""
+
+        selection = self._read_json_dict(workspace_dir / "external_executor" / "report" / "executor_selection.json")
+        if not isinstance(selection, dict) or str(selection.get("selected_executor") or "") != "mock_dry_run":
+            return False
+        result_pack = self._read_json_dict(workspace_dir / "external_executor" / "result_pack.json")
+        return isinstance(result_pack, dict) and (
+            result_pack.get("mock_only") is True or result_pack.get("dry_run") is True
+        )
 
     @staticmethod
     def _read_json_dict(path: Path) -> dict[str, Any] | None:

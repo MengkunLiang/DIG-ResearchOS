@@ -772,14 +772,10 @@ gates:
         label: "材料已放置，继续"
         aliases: ["ready", "continue", "done"]
         next: T5-EXECUTOR-GATE
-        collect_input:
-          - notes
       - id: pause_for_materials
         label: "暂停等待放置材料"
         aliases: ["pause", "wait"]
         next: T5-EXPR-MATERIAL-GATE
-        collect_input:
-          - notes
       - id: back_to_t4
         label: "回到 T4 重构实验设想"
         aliases: ["t4", "rethink"]
@@ -791,7 +787,7 @@ gates:
 
   t5_executor_gate:
     title: "T5 外部实验执行器选择"
-    description: "ResearchOS 已生成 handoff 协议和项目专属 skill suite。默认使用 Codex CLI 真实执行；mock 只用于协议联调，不是论文实验证据。"
+    description: "ResearchOS 已生成 handoff 协议和项目专属 skill suite。默认使用 Codex CLI 真实执行；mock 只用于协议联调，不是论文实验证据，完成后会回到这里选择真实执行器。"
     presentation:
       handoff_summary:
         from_file: external_executor/handoff_pack.json
@@ -815,8 +811,6 @@ gates:
         label: "Codex CLI 真实执行"
         aliases: ["codex"]
         next: T5-EXTERNAL-WAIT
-        collect_input:
-          - notes
       - id: claude_code_window
         label: "Claude Code 窗口执行"
         aliases: ["claude", "cc"]

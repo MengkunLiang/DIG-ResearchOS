@@ -24,7 +24,7 @@ After REBOOST and project-Skill specialization, T5 stops at the experiment-mater
 
 1. Put source datasets, baselines, benchmarks, model weights, and repositories under `workspace/project-a/resources/`. `datasets/`, `baselines/`, `benchmarks/`, and `repos/` are recommended organizing directories.
 2. Put only already runnable deployment assets under `workspace/project-a/external_executor/expr/`.
-3. Select “materials ready”, then choose Codex CLI, Claude Code, or a manual executor.
+3. Select “materials ready”, then choose Codex CLI, Claude Code, or a manual executor. `mock dry-run` only validates the local file protocol; it returns to the executor Gate and cannot enter T8 or support paper claims.
 4. For Codex CLI, start Codex from the workspace root:
 
 ```bash

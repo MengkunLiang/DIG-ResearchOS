@@ -24,7 +24,7 @@ T5 完成 REBOOST 与项目专属 Skill Suite 后，终端会停在实验材料 
 
 1. 将数据集、baseline、benchmark、模型权重和仓库等**源资源**放入 `workspace/project-a/resources/`。推荐按 `datasets/`、`baselines/`、`benchmarks/`、`repos/` 分类，但 Phase B 会以实际资源清单和许可审查为准。
 2. 仅将已经整理为可直接运行的部署资产放入 `workspace/project-a/external_executor/expr/`。不要把未经审查的下载仓库或原始数据混入该目录。
-3. 在终端选择“材料已放置，继续”，再选择 Codex CLI、Claude Code 或人工执行器。
+3. 在终端选择“材料已放置，继续”，再选择 Codex CLI、Claude Code 或人工执行器。`mock dry-run` 仅用于验证本地文件协议；它完成后会回到执行器 Gate，不能进入 T8 或形成论文实验结论。
 4. 选择 Codex CLI 时，在 workspace 根目录启动 Codex：
 
 ```bash

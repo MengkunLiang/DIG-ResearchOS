@@ -208,7 +208,7 @@ class StageReporter:
         run = self._runs.get(run_id)
         if run is not None and task_id == "T2" and _is_retrieval_tool(tool_name):
             source = str(payload.get("source") or tool_name.removesuffix("_search")).replace("_", " ")
-            disposition = _tool_disposition(ok=ok, data=payload, error=error)
+            disposition = _tool_disposition(ok=ok, data=payload, error=error, tool_name=tool_name)
             previous = run.source_health.get(source, {})
             run.source_health[source] = {
                 "source": source,
@@ -218,7 +218,16 @@ class StageReporter:
                 "failure_class": payload.get("failure_class"),
             }
         if not ok:
-            disposition = _tool_disposition(ok=ok, data=payload, error=error)
+            disposition = _tool_disposition(ok=ok, data=payload, error=error, tool_name=tool_name)
+            if _is_exploratory_probe_miss(tool_name, error=error, data=payload):
+                self._event(
+                    "exploratory_probe_miss",
+                    task_id=task_id,
+                    run_id=run_id,
+                    severity="info",
+                    payload={"tool": tool_name, "error": error or payload.get("failure_class")},
+                )
+                return False
             if disposition in {"AUTO_REPAIR", "AUTO_FALLBACK"}:
                 self._event(
                     "repair_in_progress" if disposition == "AUTO_REPAIR" else "fallback_applied",
@@ -331,6 +340,7 @@ class StageReporter:
         summary: str,
         output_path: str | None,
         data: dict[str, Any] | None = None,
+        error: str | None = None,
     ) -> None:
         """Render a colored bounded tool outcome when no richer metric panel exists."""
 
@@ -338,7 +348,9 @@ class StageReporter:
             return
         if self.verbosity != "detailed" and ok and tool_name in {"read_file", "list_files", "glob_files", "grep_search"}:
             return
-        status = _tool_disposition(ok=ok, data=data, error=None)
+        if _is_exploratory_probe_miss(tool_name, error=error, data=data) and self.verbosity != "detailed":
+            return
+        status = _tool_disposition(ok=ok, data=data, error=error, tool_name=tool_name)
         if status in {"SKIPPED", "AUTO_REPAIR", "AUTO_FALLBACK", "DEGRADED"} and self.verbosity != "detailed":
             return
         style = _tool_style(tool_name, ok=ok, disposition=status)
@@ -349,13 +361,14 @@ class StageReporter:
             "AUTO_REPAIR": "正在自动修补",
             "AUTO_FALLBACK": "已自动降级",
             "DEGRADED": "已降级继续",
+            "EXPLORATORY_MISS": "探索性检查未命中，已继续",
             "FAILED": "未完成",
         }.get(status, status)
         segments = [
             (
                 "✓ "
                 if status == "DONE"
-                else ("· " if status == "SKIPPED" else ("◐ " if status in {"AUTO_REPAIR", "AUTO_FALLBACK", "DEGRADED"} else "! ")),
+                else ("· " if status in {"SKIPPED", "EXPLORATORY_MISS"} else ("◐ " if status in {"AUTO_REPAIR", "AUTO_FALLBACK", "DEGRADED"} else "! ")),
                 f"bold {style}",
             ),
             (_tool_label(tool_name), "bold"),
@@ -370,7 +383,7 @@ class StageReporter:
                     else (
                         "cyan"
                         if status in {"AUTO_REPAIR", "AUTO_FALLBACK"}
-                        else ("yellow" if status in {"SKIPPED", "DEGRADED"} else "red")
+                        else ("yellow" if status in {"SKIPPED", "DEGRADED"} else ("dim" if status == "EXPLORATORY_MISS" else "red"))
                     ),
                 )
             )
@@ -1144,11 +1157,19 @@ def _humanize_runtime_label(value: object) -> str:
     return text
 
 
-def _tool_disposition(*, ok: bool, data: dict[str, Any] | None, error: str | None) -> str:
+def _tool_disposition(
+    *,
+    ok: bool,
+    data: dict[str, Any] | None,
+    error: str | None,
+    tool_name: str | None = None,
+) -> str:
     payload = data if isinstance(data, dict) else {}
     failure = str(payload.get("failure_class") or error or "").casefold()
     if ok:
         return "DONE"
+    if _is_exploratory_probe_miss(str(tool_name or ""), error=error, data=payload):
+        return "EXPLORATORY_MISS"
     if payload.get("optional_input") is True or str(payload.get("display_disposition") or "").casefold() == "skipped":
         return "SKIPPED"
     if str(payload.get("display_disposition") or "").casefold() in {"auto_repair", "repairing"} and payload.get("repairable", True):
@@ -1162,6 +1183,23 @@ def _tool_disposition(*, ok: bool, data: dict[str, Any] | None, error: str | Non
     return "FAILED"
 
 
+def _is_exploratory_probe_miss(
+    tool_name: str,
+    *,
+    error: str | None,
+    data: dict[str, Any] | None,
+) -> bool:
+    """Identify harmless workspace probes while retaining their trace events."""
+
+    payload = data if isinstance(data, dict) else {}
+    failure = str(payload.get("failure_class") or error or "").casefold()
+    return str(tool_name or "").casefold() in {"read_file", "list_files", "glob_files", "grep_search"} and failure in {
+        "access_denied",
+        "not_found",
+        "file_not_found",
+    }
+
+
 def _tool_style(tool_name: str, ok: bool | None, disposition: str | None = None) -> str:
     """Use stable colors by tool category, with outcome taking precedence."""
 
@@ -1169,6 +1207,8 @@ def _tool_style(tool_name: str, ok: bool | None, disposition: str | None = None)
         return "green"
     if disposition in {"SKIPPED", "DEGRADED"}:
         return "yellow"
+    if disposition == "EXPLORATORY_MISS":
+        return "dim"
     if disposition == "AUTO_REPAIR":
         return "cyan"
     if disposition == "AUTO_FALLBACK":

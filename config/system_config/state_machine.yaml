@@ -1250,6 +1250,7 @@ states:
 
   # T5-DRY-RUN 状态：mock 外部执行器协议 dry-run
   # 用途：不跑真实实验，只验证 handoff/result_pack/status 文件协议可端到端通过。
+  # 成功后必须回到执行器选择；mock 产物不能作为 T8 的研究证据。
   T5-DRY-RUN:
     agent: experimenter
     mode: dry_run
@@ -1265,7 +1266,7 @@ states:
       raw_results_dir: external_executor/raw_results
       configs_dir: external_executor/configs
       logs_dir: external_executor/logs
-    next_on_success: T8-STYLE-GATE
+    next_on_success: T5-EXECUTOR-GATE
     next_on_failure: failed
 
   # T5 状态：legacy 试点实验（仅兼容显式 run-task，不在主链自动使用）

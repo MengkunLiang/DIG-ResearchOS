@@ -36,7 +36,7 @@ T1 Project initialization
  -> T5-REBOOST-GATE research-reboost handoff compilation
  -> T5-SPECIALIZE-EXECUTOR-SKILLS project-Skill publication and validation
  -> T5-EXECUTOR-GATE external executor selection
-    -> mock_dry_run: T5-DRY-RUN external-executor protocol dry run
+    -> mock_dry_run: T5-DRY-RUN external-executor protocol dry run -> T5-EXECUTOR-GATE
     -> codex_cli / claude_code_window / manual: T5-EXTERNAL-WAIT waits for external results
  -> T8-STYLE-GATE after `external_executor/executor_research_report.md` is available
  -> T8 resource indexing, section writing, assembly audit, review, and revision
@@ -83,7 +83,7 @@ T1
     -> reframe/drop/reject/collision: T4.5-HUMAN-REVIEW -> user chooses T5-REBOOST-GATE/T4/done
  -> T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS
  -> T5-EXECUTOR-GATE
-    -> mock_dry_run: T5-DRY-RUN
+    -> mock_dry_run: T5-DRY-RUN -> T5-EXECUTOR-GATE
     -> claude_code_window/codex_cli/manual: T5-EXTERNAL-WAIT
  -> T8-STYLE-GATE
  -> T8-RESOURCE
@@ -143,7 +143,7 @@ Its characteristics:
 - advances the entire state machine
 - enters and resumes from human gates
 - automatically jumps from one task to the next
-- fully embodies the chain `T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-EXECUTOR-GATE -> T5-DRY-RUN/T5-EXTERNAL-WAIT -> T8-STYLE-GATE -> T8`
+- fully embodies the chain `T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-EXECUTOR-GATE -> T5-DRY-RUN -> T5-EXECUTOR-GATE` for protocol tests, or `T5-EXTERNAL-WAIT -> T8-STYLE-GATE -> T8` after a real external writer handoff
 
 ### 3.2 Resume Full Pipeline
 
@@ -2690,7 +2690,7 @@ During auditing, it aligns the search results, synthesis, comparison table, and 
 
 T4.5 no longer automatically falls back/fails on `return_to_T4_reframe` or `drop_due_to_collision`. The branch semantics are now:
 
-- `pass_to_experiment` / `pass_with_required_baselines`: enters `T5-REBOOST-GATE`, where `research-reboost` compiles and validates the experimental handoff, publishes the Skill Suite, and then reaches executor selection; the mock dry-run and real Codex/Claude/manual paths now continue directly to `T8-STYLE-GATE` after the external execution boundary.
+- `pass_to_experiment` / `pass_with_required_baselines`: enters `T5-REBOOST-GATE`, where `research-reboost` compiles and validates the experimental handoff, publishes the Skill Suite, and then reaches executor selection. Only a real Codex/Claude/manual executor that completes writer handoff can enter `T8-STYLE-GATE`; a mock dry run returns to executor selection and never supports paper evidence.
 - `return_to_T4_reframe`, `drop_due_to_collision`, `reject`, `collision`, `fail`: enters `T4.5-HUMAN-REVIEW`.
 
 `T4.5-HUMAN-REVIEW` is a gate-only node; the `state_machine` directly enters `WAITING_HUMAN` and does not start `NoveltyAuditorAgent` again. The gate displays:
@@ -2846,7 +2846,7 @@ Interaction details: When the CLI runs interactively, pressing Enter directly in
 
 ### Semantics
 
-`T5-DRY-RUN` is a protocol verification node, not a real experiment. It proves that the external executor handoff, result pack, status, run manifest, raw result, config, log, heartbeat file protocol can run end-to-end. All outputs must carry `dry_run=true` / `mock_only=true`; subsequent claim audit will prevent them from being written as empirical claims in a paper.
+`T5-DRY-RUN` is a protocol verification node, not a real experiment. It proves that the external executor handoff, result pack, status, run manifest, raw result, config, log, heartbeat file protocol can run end-to-end. All outputs must carry `dry_run=true` / `mock_only=true`; subsequent claim audit will prevent them from being written as empirical claims in a paper. A successful dry run returns to `T5-EXECUTOR-GATE` and cannot enter T8.
 
 ### Output Files
 
@@ -2870,7 +2870,7 @@ T7 result ingestion, integrity audit, post-experiment novelty review, and the T7
 
 ```text
 T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-EXECUTOR-GATE
- -> mock_dry_run: T5-DRY-RUN
+ -> mock_dry_run: T5-DRY-RUN -> T5-EXECUTOR-GATE (select a real executor after protocol verification)
  -> external: T5-EXTERNAL-WAIT
  -> root launch-t8: python -m researchos.cli run-task T8 --workspace <workspace>
  -> T8-STYLE-GATE -> T8-RESOURCE

@@ -2960,6 +2960,7 @@ def validate_command(args: argparse.Namespace) -> int:
     if task_id is None:
         state = StateYaml.load_yaml((workspace / "state.yaml").resolve())
         task_id = state.current_task
+    task_id = resolve_public_stage_alias(str(task_id))
 
     scope = str(getattr(args, "scope", "outputs") or "outputs").strip().lower()
     checks: dict[str, dict[str, Any]] = {}

@@ -1453,6 +1453,7 @@ class AgentRunner:
                         next_step=next_step_for_task(ctx.task_id, ok=tool_ok) if not tool_ok else None,
                         duration_ms=tool_msg.duration_ms,
                         data=tool_data,
+                        error=str(tool_error) if tool_error else None,
                     )
                     self._record_skill_progress(
                         ctx,
