@@ -10,6 +10,19 @@ T1 scope -> T2 discover -> T3 read -> T3.5 synthesize
   -> T5 external execution -> T8 manuscript -> T9 submission bundle
 ```
 
+## Start Here
+
+Choose the path that matches the state of your work. Do not edit `state.yaml` to jump between stages, and do not run `run` again inside a directory that already has a `state.yaml`.
+
+| Your situation | First command | What happens next | Do not do this |
+| --- | --- | --- | --- |
+| Start a research project from zero | `init-workspace`, then `run` | Creates an independent workspace and begins at T1. Research scope and literature-coverage Gates will ask for your decisions. | Do not create or edit `state.yaml` first. |
+| Continue the same project after Ctrl+C, a Gate, or a transient service interruption | `resume --workspace <directory>` | Continues from durable state. At T2/T3, a light decision lets you keep the current scope or adjust it. | Do not call `run` again or write from a second terminal. |
+| Deliberately revisit T2, T3, or T4 in the same project | `resume --workspace <directory> --from-task T2` | Re-enters the chosen research decision surface after prerequisite checks. T2 opens full parameter selection; T3 reviews retrieval coverage first. | Do not substitute `run-task` for a normal workflow restart. |
+| Create a new project from another project's materials | `run --workspace <new-dir> --from <source-dir> --start-task T2` | Copies declared upstream material into a new workspace. The imported project gets its own T2/T3 parameter or coverage decision. | It does not merge the source `state.yaml`, history, or runtime logs. |
+| Do one focused job, such as a PDF note card or a field synthesis | `browse-skills`, then `run-skill` | Creates a standalone, resumable Skill session with its own declared inputs, outputs, and recovery command. | Do not start pipeline-owned or T5 executor Skills with `run-skill`. |
+| T5 is waiting for an external executor | Select the executor at the Gate, then follow `external_executor/AGENTS.md` | The executor works in the same workspace and returns auditable resources, code, results, figures, and evidence. | Do not run `resume`, a second executor, or T8 while that executor is writing. |
+
 ## Understand The Flow Before Internal Names
 
 `T` is a workflow-stage label, not a command you need to type every day. In normal use, start a new project with `run` and continue a paused one with `resume`. ResearchOS stops at a `Gate` only when a research decision needs your input and explains the next action. `T3.5` is the synthesis after T3 reading, `T3.6` is the optional Survey branch, and `T4.5` is the novelty audit after T4 ideation, not a separate “half task” to run manually.
@@ -24,7 +37,7 @@ Longer names such as `T5-REBOOST-GATE`, `T5-PROTOCOL-GATE`, and `T3.6-SEC-INTRO`
 | T3.5 synthesis | Turn the literature into mechanisms, method differences, tensions, and research gaps. | Decide whether to take the optional Survey branch. | `literature/synthesis.md` |
 | T3.6 optional Survey | Write a field Survey only when the current evidence justifies it; otherwise it is skipped. | Skip, write from the present corpus, or request one targeted supplement. | `drafts/survey/` |
 | T4 research ideas | Generate, compare, and evolve multiple research directions. | Proceed, optimize, explore again, or inspect a Candidate only. | Candidate Cards, scores, evidence, and lineage under `ideation/` |
-| T4.5 novelty audit | Check similar work and mechanism differences; turn the selected direction into a formal research package. | Review the novelty verdict and required baselines. | `ideation/proposal/research_proposal.md`, `hypotheses.md`, `exp_plan.yaml` |
+| T4.5 novelty audit | Check similar work and mechanism differences; turn the selected direction into a formal research package. | Review the novelty verdict and required baselines. | `ideation/proposal/research_proposal.md`, `ideation/hypotheses.md`, `ideation/exp_plan.yaml` |
 | T5 external-execution preparation | Compile the T4.5 package into an executor handoff whose research constraints cannot be silently changed. | Resolve only settings that affect research boundaries; place existing resources or let the executor prepare public ones. | `external_executor/handoff_pack.json`, `resources/` |
 | T8 writing | Write, review, and revise using verified experimental facts. | Choose a writing style or template. | `drafts/` and experiment claim/evidence files |
 | T9 submission | Review, genuinely compile, and package the submission. | Only when an environment or compilation recovery is needed. | `submission/`, final PDF, and compile report |
@@ -32,6 +45,36 @@ Longer names such as `T5-REBOOST-GATE`, `T5-PROTOCOL-GATE`, and `T3.6-SEC-INTRO`
 The two most important boundaries are these: T4.5 turns an interesting idea into a research plan with hypotheses, an experiment plan, and risk boundaries. T5 is not an experiment runner: it prepares and verifies an execution contract; an external Codex, Claude, or human executor then performs the real work in the same workspace.
 
 When T4.5 succeeds, the terminal displays a “key research files” table that points directly to the proposal, hypotheses, experiment plan, contribution/validation maps, stopping criteria, and novelty audit, with their next use. T5 consumes those files; you do not need to find them from memory.
+
+When reviewing a T4.5 result yourself, read these files in this order. They are a plan and a falsification contract, not experimental findings.
+
+| Read first | Why it matters | T5 use |
+| --- | --- | --- |
+| `ideation/proposal/research_proposal.md` | The complete research story: problem, mechanism, theoretical and practical implications, contribution, study design, risks, and limitations. | Preserves the research intent and boundaries behind the structured controls. |
+| `ideation/hypotheses.md` | Falsifiable central and supporting hypotheses, assumptions, expected observations, and alternatives. | Prevents an executor from turning a hypothesis into a reported result. |
+| `ideation/exp_plan.yaml` | Planned tasks, metrics, required baselines, datasets/benchmarks when known, and evaluation rules. | Becomes the core experimental constraint. |
+| `ideation/contribution_hypothesis_map.yaml` and `ideation/validation_map.yaml` | Which contribution depends on which hypothesis and what evidence could validate or refute it. | Becomes the claim/evidence boundary for implementation and T8. |
+| `ideation/kill_criteria.yaml` | Conditions that narrow, stop, or reject a claim. | Keeps negative results and invalidation paths visible. |
+| `ideation/novelty_audit.md` | Similar-work collisions, mechanism distinctions, required baselines, and unresolved gaps. | Defines the comparison and novelty boundary; unresolved gaps remain visible. |
+
+## The Workspace Is The Project Record
+
+Each project runs in one independent workspace. Terminal scrollback, chat history, and model memory are not project facts: recovery, downstream stages, and audits read the durable files in this directory. The locations below are the ones a researcher most often needs to inspect or populate.
+
+| Location | Who writes / reads it | When you should use it |
+| --- | --- | --- |
+| `project.yaml` | T1 writes; every stage reads | Inspect the research question, scope, venue, and initial constraints. Do not edit it to skip a stage. |
+| `user_seeds/` | You provide; T1/T2/T3 read | Add seed PDFs, DOIs, ideas, and explicit constraints before or during early project setup. |
+| `literature/` | T2/T3 and literature Skills write; T3.5-T5 read | Inspect search records, reading queues, deep/shallow notes, synthesis, and discovered resource leads. |
+| `ideation/` | T4/T4.5 write; T5 reads | Inspect Candidate Cards, the proposal, formal hypotheses, experiment plan, novelty audit, and stopping criteria. |
+| `resources/` | You or T5 Phase B add; external executor reads | Add source datasets, code, benchmarks, baselines, or weights you already possess. |
+| `external_executor/` | T5 and the external executor write; T8 reads | Holds the handoff, specialized Skills, runnable code, raw results, figures, evidence package, and return report. |
+| `drafts/` | T3.6/T8 write | Inspect Survey/manuscript drafts, writing handoffs, and result-to-claim mappings. |
+| `submission/` | T9 writes | Inspect final compilation, review, and submission package. |
+| `user_inputs/<skill>/` | A standalone Skill stages material you provide | Use only when `describe-skill` asks for material for that Skill. |
+| `_runtime/` | ResearchOS writes | Stores state, events, traces, logs, Skill sessions, and recovery records. Read it for diagnosis; do not edit it during ordinary research. |
+
+One workspace has one writer at a time. A second terminal may run read-only `status`, `trace`, or inspect files, but must not run another `run`, `resume`, `run-skill`, or external executor against the same workspace.
 
 ## Before You Run
 
@@ -138,11 +181,11 @@ Most projects repeatedly use only `status`, `run`, and `resume`. Do not edit `st
 | --- | --- | --- |
 | See where the project stopped and whether it needs a choice | `status --workspace <project-dir>` | Shows the current stage, Gate, latest actionable message, and next command. |
 | Create a research project from scratch | `init-workspace`, then `run` | Creates a new workspace and starts the complete workflow. |
-| Continue the same paused project | `resume --workspace <project-dir>` | Reuses confirmed choices and valid files; it does not repeat completed model calls. |
-| Intentionally restart at T2/T3/T4 | `resume --from-task T4` | Checks the selected stage's prerequisites before safe re-entry. |
+| Continue the same paused project | `resume --workspace <project-dir>` | Reuses confirmed choices and valid files. A T2/T3 "continue" choice does not repeat retrieval. |
+| Intentionally restart at T2/T3/T4 | `resume --from-task T4` | Checks the selected stage's prerequisites before safe re-entry; T2/T3 first reopen their research-scope decision. |
 | Start a new project with another project's material | `run --from <source-dir> --start-task T4` | Creates a separate target workspace and copies declared upstream inputs without merging histories. |
-| Diagnose one stage only | `run-task T4` | Runs that task only; it does not advance the complete main path. |
-| Browse or run a focused capability | `browse-skills` / `run-skill` | Works in an independent, resumable Skill session. |
+| Diagnose one stage only | `run-task T4` | Runs that task only and does not advance the main path, except that public T8 accepts a verified external-executor handoff. |
+| Browse or run a focused capability | `browse-skills` / `run-skill` | Uses an independent, resumable Skill session. Read its input/output contract first. |
 
 ### 1. System Status And Diagnostics
 
@@ -186,30 +229,75 @@ python -m researchos.cli resume --workspace ./workspace/project-a
 python -m researchos.cli resume --workspace ./workspace/project-a --from-task T3
 python -m researchos.cli resume --workspace ./workspace/project-a --from-task T4
 
-# Reopening T2 always shows the saved coverage/language parameters once more.
+# Explicit T2 re-entry: choose full coverage parameters for this new pass.
 python -m researchos.cli resume --workspace ./workspace/project-a --from-task T2
 
 # Create a separate target from another project's validated upstream files.
+# Migration to T2 opens full parameter selection; migration to T3 reviews the queue and coverage.
 python -m researchos.cli run --workspace ./workspace/project-b \
-  --from ./workspace/project-a --start-task T4
+  --from ./workspace/project-a --start-task T2
+
+python -m researchos.cli run --workspace ./workspace/project-c \
+  --from ./workspace/project-a --start-task T3
 
 # Fill only missing declared inputs from another workspace before re-entry.
 python -m researchos.cli resume --workspace ./workspace/t4-debug \
   --from ./workspace/project-a --from-task T4
 ```
 
-`resume --from-task` never merges histories or asks you to edit `state.yaml`. `T3.6` is the optional Survey decision; `T8` is the writing entry gate. Ordinary `resume` returning to T2/T3 first shows a lightweight continue-or-adjust Gate; confirming continuation does not start a new search. An explicit T2 re-entry opens the full parameter chooser so a new search cannot silently use stale scope settings. An explicit T3 re-entry first opens the retrieval-coverage decision; as long as the reading queue remains, missing historical summaries such as `search_log.md` do not suppress that choice.
+`resume --from-task` never merges histories or asks you to edit `state.yaml`. `T3.6` is the optional Survey decision; `T8` is the writing entry gate. Ordinary `resume` returning to T2/T3 first shows a light continue-or-adjust Gate; confirming continuation does not start a new search. Explicit T2 re-entry or `--from` migration opens the full parameter chooser, so a new search cannot silently use stale scope. Explicit T3 re-entry or migration opens the retrieval-coverage decision first; as long as the reading queue remains, missing historical summaries such as `search_log.md` do not suppress that choice.
+
+| Entry | First decision when the target is T2 | First decision when the target is T3 | Are current papers and notes retained? |
+| --- | --- | --- | --- |
+| `resume --workspace <same-project>` | Parameter confirmation: continue or adjust | Coverage confirmation: continue, supplement retrieval, or adjust | Yes |
+| `resume --from-task T2/T3` | Full parameter selection | Coverage review when a queue exists; parameter selection otherwise | Yes |
+| `run --from <source> --start-task T2/T3` | Full parameter selection | Coverage review when a queue exists; parameter selection otherwise | Declared source material is copied into a new project; source remains unchanged |
+| `resume --from <source> --from-task T2/T3` | Full parameter selection | Coverage review when a queue exists; parameter selection otherwise | Target remains; only missing declared inputs are added |
 
 ### 4. Skills: Focused, Resumable Workflows
 
+Skills are not alternate names for T1-T9. A Skill is a separately started capability with a declared read/write boundary and persistent session, for example making a paper note card, comparing papers, synthesizing a field, or repairing evidence in a draft. The complete pipeline remains owned by `run` and `resume`. T5's project-specific executor Skills are owned by the state machine and external executor, so `run-skill` deliberately refuses to start them.
+
+| Command | What to do first | Where the result lives | Use it when |
+| --- | --- | --- | --- |
+| `list-skills` | List only user-launchable standalone Skills. | Read-only terminal catalog. | You do not know the Skill name or available capabilities. |
+| `browse-skills` | Browse by category or keyword and inspect a card. | Read-only terminal catalog. | You want to select a tool by research goal. |
+| `describe-skill <name>` | Read purpose, required/optional inputs, permitted paths, outputs, examples, and recovery behavior. | Read-only terminal contract. | **Before first using any Skill.** |
+| `run-skill <name> "request"` | Create or continue a session; interactively collect only missing material. | `user_inputs/<skill>/`, the Skill's declared output paths, and `_runtime/skill_sessions/<id>.json`. | The Skill contract matches the focused job. |
+| `skill-status` | Inspect a session's phase state, checked files, and printed recovery command. | Read-only session state. | After interruption, while waiting for input, or to verify completion. |
+
 ```bash
+# Discover capabilities and inspect the contract. list-skills excludes pipeline-owned Skills.
 python -m researchos.cli list-skills --workspace ./workspace/project-a
 python -m researchos.cli browse-skills --workspace ./workspace/project-a
 python -m researchos.cli describe-skill pdf-note-card --workspace ./workspace/project-a
+
+# A session ID makes the work recoverable. Use distinct IDs for distinct papers.
 python -m researchos.cli run-skill pdf-note-card --workspace ./workspace/project-a \
-  --session-id reading-01
+  --session-id reading-01 "Create a traceable reading card for this paper"
+
+# Resume the same session after an interruption, a missing-input pause, or a confirmation pause.
+python -m researchos.cli run-skill pdf-note-card --workspace ./workspace/project-a \
+  --session-id reading-01 --resume
+
+# Inspect the actual files and next action recorded for every session.
 python -m researchos.cli skill-status --workspace ./workspace/project-a
 ```
+
+The interactive lifecycle is: **request -> input check -> missing-material intake -> explicit Run confirmation -> declared outputs -> recoverable `skill-status` record**. If required input is missing, ResearchOS stages only the material you provide under `user_inputs/<skill>/` and records the session; it never fabricates a paper, citation, experiment, or completion status. `--non-interactive` is for scripts: missing inputs produce `WAITING_INPUT` without constructing a provider client. Add material, then resume with the same `--session-id ... --resume`.
+
+Use `describe-skill` as the source of truth for each Skill's live paths and outputs. Typical starting points are:
+
+| What you need | Start with | Typical input | Typical output and boundary |
+| --- | --- | --- | --- |
+| Read one paper with traceable evidence | `pdf-note-card` | A PDF, DOI, arXiv/OpenAlex ID, direct URL, or exact title. | `literature/skill_pdf_note_cards/`; it does not replace T3's canonical deep-read queue. |
+| Compare methods, findings, and limitations across papers | `literature-comparison-studio` | A set of DOI/PDFs or exact paper titles. | Comparison matrix and evidence boundary; an abstract is not silently upgraded to full-text evidence. |
+| Understand a field before choosing a research path | `domain-synthesis-studio` | Field question, scope, and intended use. | Domain report, mechanism/tension map, and next-step handoff; scoped retrieval requires authorization. |
+| Build a review evidence package | `literature-review-studio` or `survey-evidence-package` | Review scope, language, period, and current corpus. | Taxonomy/coverage/Survey handoff; it does not substitute for formal T3.6 writing and TeX compilation. |
+| Read a corpus and ask cross-paper questions | `paper-reading-workbench` | Paper identifiers/PDFs, questions, or a bounded topic. | Prioritized cards and cross-paper learning records; it does not mutate pipeline state. |
+| Build or repair writing evidence | `related-work-builder` or `draft-evidence-repair` | Draft text, claims, citations, or existing notes. | Traceable writing package; it cannot invent citations or experimental results. |
+
+For integrated workflows, source-resolution input, permission boundaries, and every available Skill, see [Skills](docs/en/skills.md).
 
 ### 5. T5 External Execution: From Research Plan To Real Experiments
 
@@ -229,10 +317,21 @@ T4.5 passes
 
 The Protocol Confirmation page is not an error page. `ready` means that a full executor can be selected. `protocol_decision_required` does **not** mean that you must manually find data, code, a baseline, a benchmark, or weights: choose “let the external executor prepare resources.” It runs Phase A/B only, searches authorized public sources, locks revisions, performs license/security/protocol review, and records provenance; then it stops and T5 recompiles on `resume`. For a setting that stays inside the existing T4.5 scope, Phase B records the exact selected package/version/model/scale in its operational-settings receipt, so the full executor can consume it without a new human form. An undeclared seed policy uses a stable auditable default ensemble. Only `blocked` means that a minimum experiment definition is genuinely missing. A human decision is reserved for changing the T4.5-defined task, core mechanism, required-baseline set, benchmark scope, or claim/contribution boundary—not for ordinary public-resource retrieval.
 
+`proposed_not_verified` is a claim-verification label, not a resource or T5 failure. It means the central hypothesis or contribution is intentionally proposed and still needs the external experiment to test it. Background evidence may be `source_supported`, while a discovered resource may be only a lead. These labels stay separate so a planned result is never written as an observed result.
+
+| What you see at T5 | What you should choose or do | What ResearchOS does | Do not do this |
+| --- | --- | --- | --- |
+| `ready`, and you have local data/code/weights | Choose the local-material inventory. | Inventories `resources/` and already deployed `external_executor/expr/` assets, then returns to executor selection. | Do not put raw downloads into `expr/`. |
+| `protocol_decision_required`, or you have no resources | Choose “let the external executor prepare resources.” | Runs bounded Phase A/B to discover public resources, lock revisions, review license/security/protocol fit, and record provenance. It does not run formal experiments. | You do not need to manually search public datasets, repositories, or benchmarks first. |
+| You need a different task, mechanism, required baseline, benchmark scope, or claim boundary | Choose protocol recompilation or return to T4. | Preserves current material and makes the research-boundary change an explicit upstream decision. | Do not hand-edit the handoff or let an executor silently redefine the study. |
+| Executor selection is visible | Choose Codex CLI, Claude Code, or a human executor. | Preserves the handoff, allowed-path policy, output schema, and specialized Skills. | Do not treat a mock/dry-run as experimental evidence. |
+| “Waiting for external executor return” is visible | Finish the external execution in the same workspace. | T8 will verify real files, the manifest, and report references before writing. | Do not run `resume`, another executor, or `run-task T8` while the executor writes. |
+
 ```bash
 # Targeted T5 diagnostics only. These do not run an experiment.
 python -m researchos.cli run-task T5-REBOOST --workspace ./workspace/project-a
-python -m researchos.cli run-task T5-SPECIALIZE --workspace ./workspace/project-a
+# Canonical status-machine name. The short alias T5-SPECIALIZE is also accepted.
+python -m researchos.cli run-task T5-SPECIALIZE-EXECUTOR-SKILLS --workspace ./workspace/project-a
 python -m researchos.cli run-task T5-PROTOCOL-GATE --workspace ./workspace/project-a
 ```
 
@@ -269,22 +368,18 @@ external_executor/report/run_manifest.json
 
 When Writer Handoff has finished but did not automatically enter T8, and the external executor has stopped writing, accept the verified result with `python -m researchos.cli run-task T8 --workspace ./workspace/project-a`. Do not run `resume`, a second executor, or `run-task T8` in another terminal while the external executor is writing. See the [T5 External Executor Guide](docs/en/t5_external_executor.md) for the full A-F phase contract and artifact paths.
 
-Use `run --from <source-workspace> --start-task <task>` only to initialize a new target workspace from another project's validated upstream artifacts. `run-task <task> --from <source-workspace>` performs the same declared-input copy but executes only that task. For every literature-dependent downstream stage (`T3.5`, `T3.6`, `T4`, `T5`, and `T8`), the import closure includes the complete `literature/` tree, so initialized empty note directories cannot suppress real source paper cards. `bridge_notes/` remains the paper-note root; `cross_domain_catalogs/` is the independent retrieval catalog and is imported alongside it. The import happens before the model connection check, so a provider outage does not discard the prepared debugging workspace. Neither command is a state merge. The recovery guide is in [Quick Start](docs/en/QUICKSTART.md).
+### Advanced Migration And Recovery Guarantees
 
-`resume --from-task <task>` is the deliberate same-workspace recovery command. It validates the target task's prerequisites, clears the old pending gate, and records the re-entry in `state.yaml`. T2/T3 are researcher-facing exceptions: explicit re-entry or `--from` migration opens the parameter or coverage decision first, and the coverage Gate can use a saved reading queue to repair missing historical summaries. Add `--from <source-workspace>` when an existing target needs missing declared inputs before it resumes; source state/history are never merged. Public names are accepted: `T3.6` means `T3.6-GATE-SURVEY`, the "write a Survey?" decision; `T8` means the writing-style Gate. After an optional Survey has finished, `resume --from-task T4` is the supported way to proceed without revisiting its post-Survey gate; it still refuses to run if T4 inputs are incomplete.
+The recovery matrix above is the normal decision guide. The following rules explain the less common cases without changing that guide:
 
-| Workspace situation | Use | Behaviour |
-| --- | --- | --- |
-| New directory, no `state.yaml` | `run` | Creates and starts a new pipeline. |
-| Paused after Ctrl+C, a provider outage, or a gate | `resume` | Continues the same workspace from durable artifacts. |
-| Existing workspace, restart a validated later stage | `resume --from-task T4` | Re-enters only after the selected task's prerequisites pass. |
-| Another project's upstream artifacts | `run --from <source> --start-task T4` | Creates a distinct target workspace and copies only declared prerequisites. |
-| Isolated debugging with another project's materials | `run-task T4 --from <source>` | Copies the task's declared inputs first, then runs only T4; source state and artifacts are untouched. |
-| Existing `state.yaml`, but `run` was entered again | Do not continue | The command refuses to overwrite or implicitly resume; use `resume`. |
-| No `state.yaml`, but `resume` was entered | Do not create | The command refuses to manufacture a project; use `run`. |
-| `COMPLETED` workspace | Start a new workspace | `resume` is refused so completed artifacts are not silently rewritten. |
+- `run --from <source-workspace> --start-task <task>` initializes a **new** target workspace from another project's declared, validated upstream artifacts. It never merges state or history. `run-task <task> --from <source-workspace>` copies the same declared inputs but runs only that one diagnostic task.
+- For literature-dependent downstream stages (`T3.5`, `T3.6`, `T4`, `T5`, `T8`), the import closure contains the complete `literature/` tree. Empty imported directories therefore cannot hide real note cards; `bridge_notes/` and `cross_domain_catalogs/` are both retained when declared.
+- Import happens before the model connection check, so a provider outage does not discard a prepared diagnostic workspace. `resume --from <source>` adds only missing declared inputs to an existing target; it also never merges source state/history.
+- A workspace with `state.yaml` must use `resume`; a directory without it must use `run`; a `COMPLETED` workspace is intentionally not resumed because its artifacts must not be silently rewritten.
+- Public aliases are accepted: `T3.6` opens the Survey decision, `T5-SPECIALIZE` resolves to `T5-SPECIALIZE-EXECUTOR-SKILLS`, and `T8` opens the writing-style Gate. After a finished optional Survey, `resume --from-task T4` proceeds to Idea work only if T4 prerequisites still pass.
+- For an interrupted Survey section, validate the section before resuming. A valid `T3.6-SEC-*` output advances without rewriting its completed `.tex` file or its matching survey-state entry.
 
-For an interrupted survey section, validate before resuming. A valid `T3.6-SEC-*` output advances without rewriting the completed section; the section worker is restricted to that file and its matching survey state entry.
+See [Quick Start](docs/en/QUICKSTART.md) for recovery examples and [Logging and Troubleshooting](docs/en/logging.md) for trace-based diagnosis.
 
 ## Complete CLI Command Reference
 
@@ -324,9 +419,9 @@ The table below is intentionally complete and is checked against the live CLI pa
 
 The effective capacity reserves room for the system prompt/history/tool calls and allocates 70% of the remainder to a file result. It reads the whole file only when it fits the automatic full-read share, then uses a context-sized page. The public `read_file` schema deliberately exposes only `path` and `offset`; it does not accept a manual `max_chars` budget, so a model cannot issue `max_chars=200` and force repeated tiny reads. For a known local section, use `grep_search` to find the offset and call `read_file` again with that offset. Result metadata records the applied capacity source and page budget. For a large T2 `literature/papers_raw.jsonl`, reading remains available, but checkpoint-safe pages begin before the raw pool can consume the working retrieval plan, preserve JSONL record boundaries, and carry completed queries, source coverage, raw count, and the authoritative `next_offset`.
 
-## Guided Skills
+## Advanced Skill Boundaries And Integrated Workflows
 
-ResearchOS exposes both atomic Skills and composed, resumable research workflows. Atomic Skills cover paper intake, DOI/title resolution, note cards, evidence matrices, ideation, writing, review, polishing, compilation, and submission checks. Integrated Skills add explicit subphases, evidence gates, artifact manifests, and durable recovery for multi-step work:
+The [Skills](docs/en/skills.md) guide is the complete contract reference. This section records the advanced behavior that matters when choosing an integrated workflow or interpreting its evidence. Atomic Skills cover paper intake, DOI/title resolution, note cards, evidence matrices, ideation, writing, review, polishing, compilation, and submission checks. Integrated Skills add explicit subphases, evidence gates, artifact manifests, and durable recovery for multi-step work:
 
 | Need | Integrated Skill | What it does |
 | --- | --- | --- |
@@ -339,37 +434,9 @@ ResearchOS exposes both atomic Skills and composed, resumable research workflows
 | Read several papers together | `paper-reading-workbench` | DOI/PDF intake -> prioritized cards -> question answers -> cross-paper learning |
 | Build or repair writing evidence | `related-work-builder`, `draft-evidence-repair` | Traceable Related Work or manuscript claim/citation repair package |
 
-```bash
-python -m researchos.cli list-skills --workspace ./workspace/project-a
-python -m researchos.cli browse-skills --workspace ./workspace/project-a
-python -m researchos.cli describe-skill pdf-note-card --workspace ./workspace/project-a
-python -m researchos.cli run-skill pdf-note-card --workspace ./workspace/project-a
+An integrated session records `pending`, `running`, `completed`, `waiting_input`, `waiting_evidence`, or `skipped` for each declared phase in the same session file. It can use source-returning search only after the researcher authorizes the scope. Search leads, metadata, and abstracts remain weaker than section-level or full-text evidence, and cannot by themselves upgrade a scholarly mechanism or result claim.
 
-python -m researchos.cli run-skill domain-synthesis-studio \
-  "Synthesize this field and decide whether a Survey is justified" \
-  --workspace ./workspace/project-a --session-id field-review
-
-python -m researchos.cli run-skill literature-review-studio \
-  "Prepare an English review of trustworthy LLM agent memory methods" \
-  --workspace ./workspace/project-a --session-id agent-memory-survey
-```
-
-In a TTY, `run-skill` collects missing material through a restricted multi-turn intake, stages only human-supplied material under `user_inputs/<skill>/`, rechecks readiness, then asks for an explicit `执行` / `暂停` decision. It does not generate research, manuscript, experiment, or citation deliverables while required input is missing. The constrained intake Agent may use the provider to ask for one fact at a time and encode only human-provided material into the declared input files. Automation should use `--non-interactive`; missing inputs then create a resumable `WAITING_INPUT` session without constructing a provider client.
-
-An integrated Skill records `pending`, `running`, `completed`, `waiting_input`, `waiting_evidence`, or `skipped` for each declared research phase in the same session file. It may use source-returning search tools to try to supplement missing literature after the researcher authorizes that scope. Search leads, metadata, and abstracts remain visibly weaker than section-level or full-text evidence; a workflow may not advance a strong scholarly claim merely because it successfully found more records.
-
-The catalog's input/output paths are checked against each Skill's workspace permissions at discovery time. A listed public Skill therefore cannot advertise a path which will later be rejected as `access_denied`.
-
-For `pdf-note-card`, `paper-comparison`, and `literature-comparison-studio`, guided intake can also use a DOI, arXiv/OpenAlex ID, direct PDF URL, exact title, or an explicitly scoped topic-plus-count request. It records the identifier/query and retrieval result under `user_inputs/<skill>/_source_resolution.md`, downloads only to that Skill's declared input area, and preserves metadata/search hits as weaker-than-PDF evidence. Entering menu option `2` or `暂停` at the missing-input control immediately persists the session as `WAITING_INPUT`; it does not start another intake round.
-
-```bash
-python -m researchos.cli run-skill pdf-note-card \
-  --workspace ./workspace/project-a \
-  --session-id reading-01 \
-  --resume
-```
-
-See [Skills](docs/en/skills.md) for the capability map and input contract.
+For `pdf-note-card`, `paper-comparison`, and `literature-comparison-studio`, guided intake accepts an uploaded PDF, DOI, arXiv/OpenAlex ID, direct PDF URL, exact title, or an explicitly scoped topic-plus-count request. It records the identifier/query and retrieval outcome in `user_inputs/<skill>/_source_resolution.md`, downloads only into that Skill's declared input area, and leaves metadata/search hits visibly weaker than a read PDF. The catalog validates declared input/output paths against workspace permissions before public display, so a listed standalone Skill cannot later advertise a path that becomes `access_denied`.
 
 ## Evidence Boundary
 
