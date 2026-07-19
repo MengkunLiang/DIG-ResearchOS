@@ -828,6 +828,12 @@ class AgentRunner:
                 if t5_reboost_pre_finalized:
                     deterministic_pre_finalized = True
 
+            t5_specialization_pre_finalized = False
+            if not deterministic_pre_finalized:
+                t5_specialization_pre_finalized = await self._maybe_finalize_project_skill_specialization_before_llm(ctx)
+                if t5_specialization_pre_finalized:
+                    deterministic_pre_finalized = True
+
             t2_pre_finalized = False
             if not deterministic_pre_finalized:
                 t2_pre_finalized = await self._maybe_finalize_t2_before_llm(ctx)
@@ -2780,6 +2786,132 @@ class AgentRunner:
         )
         self.progress.emit(
             "[Research Reboost] 已从 T4.5 正式材料生成并校验 handoff，进入项目专属执行 Skill 发布。",
+            important=True,
+        )
+        return True
+
+    async def _maybe_finalize_project_skill_specialization_before_llm(
+        self,
+        ctx: ExecutionContext,
+    ) -> bool:
+        """Publish the T5 executor Skill Suite without an LLM shell-control loop.
+
+        Project Skill specialization is a deterministic projection of the
+        already-approved handoff and repository templates.  Earlier versions
+        asked an LLM to invoke the wrapper scripts.  A schema mismatch then
+        made the model probe files and rerun shell commands, even though the
+        compiler had already produced the precise error report.  This path
+        calls that same compiler directly, preserves the report, and turns a
+        real compiler failure into one targeted recovery pause.
+        """
+
+        if ctx.task_id != "T5-SPECIALIZE-EXECUTOR-SKILLS":
+            return False
+
+        from ..skills.project_specialization.compiler import specialize_project_skills
+        from ..skills.project_specialization.task_adapter import (
+            _format_error_summary,
+            _repo_root_from_ctx,
+            build_project_skill_specialization_fingerprint,
+            validate_project_skill_specialization_outputs,
+            write_deterministic_project_skill_specialization_execution,
+        )
+
+        repo_root = _repo_root_from_ctx(ctx)
+        fingerprint = build_project_skill_specialization_fingerprint(
+            workspace=ctx.workspace_dir,
+            repo_root=repo_root,
+        )
+        ctx.extra["project_skill_specialization_input_fingerprint"] = fingerprint
+
+        existing = validate_project_skill_specialization_outputs(
+            workspace=ctx.workspace_dir,
+            repo_root=repo_root,
+        )
+        if existing.ok:
+            ctx.extra["project_skill_specialization_reused"] = True
+            ctx.extra["project_skill_specialization_validation"] = existing.to_record()
+            ctx.extra["project_skill_specialization_report_status"] = existing.report_status
+            self.progress.emit(
+                "[Project Skill Specialization] 检测到已校验的项目专属 Skill Suite，跳过重复发布。",
+                important=True,
+            )
+            self._record_runtime_completion(
+                ctx,
+                "t5_skill_specialization_resume_prefinalize",
+                {
+                    "outputs": [
+                        str(path.relative_to(ctx.workspace_dir))
+                        for path in ctx.outputs_expected.values()
+                        if path.exists()
+                    ]
+                },
+                action_type="t5_skill_specialization_prefinalize",
+            )
+            return True
+
+        self.progress.emit(
+            "[Project Skill Specialization] 正在从已校验 handoff 确定性发布项目专属 Skill Suite，不调用模型或 shell 诊断。",
+            important=True,
+        )
+        build = specialize_project_skills(
+            workspace=ctx.workspace_dir,
+            repo_root=repo_root,
+            dry_run=False,
+            validate_only=False,
+        )
+        validation = validate_project_skill_specialization_outputs(
+            workspace=ctx.workspace_dir,
+            repo_root=repo_root,
+        )
+        try:
+            execution = write_deterministic_project_skill_specialization_execution(
+                workspace=ctx.workspace_dir,
+                repo_root=repo_root,
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve the compiler result below
+            execution = {"execution_record_error": str(exc)}
+
+        ctx.extra["project_skill_specialization_validation"] = validation.to_record()
+        ctx.extra["project_skill_specialization_report_status"] = validation.report_status
+        if build.status == "failed" or not validation.ok:
+            detail = _format_error_summary(list(build.errors) + list(validation.errors))
+            ctx.extra["project_skill_specialization_compile_failure"] = {
+                "detail": detail,
+                "report": "external_executor/report/skill_specialization_report.json",
+                "execution": "external_executor/report/skill_specialization_execution.json",
+                "execution_record": execution,
+            }
+            raise RecoverableRuntimePause(
+                "T5 项目专属 Skill Suite 未能发布，系统没有让模型重复 shell 诊断。"
+                f"具体原因：{detail[:1200]}。"
+                "请查看 external_executor/report/skill_specialization_report.json 和 "
+                "external_executor/report/skill_specialization_execution.json；"
+                "修复报告中指出的 schema、模板或上游输入后再 resume。"
+            )
+
+        unresolved_count = len(validation.required_uncertain_fields)
+        status_note = (
+            "全部执行设置已明确。"
+            if validation.report_status == "ready"
+            else f"已保留 {unresolved_count} 项待确认字段；它们会在 T5 协议确认中显示，且不会授权正式实验。"
+        )
+        self._record_runtime_completion(
+            ctx,
+            "t5_skill_specialization_deterministic_publish",
+            {
+                "outputs": [
+                    str(path.relative_to(ctx.workspace_dir))
+                    for path in ctx.outputs_expected.values()
+                    if path.exists()
+                ],
+                "report_status": validation.report_status,
+                "required_uncertain_count": unresolved_count,
+            },
+            action_type="t5_skill_specialization_deterministic_publish",
+        )
+        self.progress.emit(
+            "[Project Skill Specialization] 已发布并校验 13/13 个项目专属 Skill。" + status_note,
             important=True,
         )
         return True

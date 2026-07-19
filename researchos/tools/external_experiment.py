@@ -1278,16 +1278,34 @@ def _external_binding_fingerprint_issues(workspace: Path, payload: dict[str, Any
 
 
 def _extract_exp_plan_metrics(exp_plan: dict[str, Any]) -> list[str]:
+    """Normalize the T4.5 metric spellings into the T5 execution contract.
+
+    T4.5 plans legitimately use a compact top-level ``metrics`` list and the
+    researcher-facing ``measurements`` alias inside an experiment.  Dropping
+    either one made an otherwise usable plan look as though it had no metrics.
+    """
+
     metrics: list[str] = []
+
+    def append_metrics(values: Any) -> None:
+        if not isinstance(values, list):
+            return
+        for metric in values:
+            if isinstance(metric, dict):
+                value = metric.get("name") or metric.get("metric") or metric.get("metric_id")
+            else:
+                value = metric
+            text = str(value or "").strip()
+            if text and text.casefold() not in {"unknown", "tbd"}:
+                metrics.append(text)
+
+    append_metrics(exp_plan.get("metrics") if isinstance(exp_plan, dict) else [])
     for exp in exp_plan.get("experiments", []) or []:
         if not isinstance(exp, dict):
             continue
-        for metric in exp.get("metrics", []) or []:
-            if isinstance(metric, dict) and metric.get("name"):
-                metrics.append(str(metric["name"]))
-            elif isinstance(metric, str):
-                metrics.append(metric)
-    return list(dict.fromkeys(metric for metric in metrics if metric.strip()))
+        append_metrics(exp.get("metrics"))
+        append_metrics(exp.get("measurements"))
+    return list(dict.fromkeys(metrics))
 
 
 def _extract_exp_plan_seeds(project: dict[str, Any]) -> list[int]:
@@ -1770,7 +1788,12 @@ def _extract_datasets(exp_plan: dict[str, Any]) -> list[str]:
         # benchmark dataset. Their declared population and design still form a
         # concrete execution setting. Preserve those explicit fields rather
         # than inventing a dataset or declaring the protocol empty.
-        design = exp.get("design") if isinstance(exp.get("design"), dict) else {}
+        raw_design = exp.get("design")
+        if isinstance(raw_design, str):
+            design_text = raw_design.strip()
+            if design_text and design_text.casefold() not in {"unknown", "tbd"}:
+                names.append("declared experimental setting: " + design_text)
+        design = raw_design if isinstance(raw_design, dict) else {}
         for key in ("dataset", "datasets", "benchmark", "evaluation", "evaluation_setting", "setting"):
             value = design.get(key)
             if isinstance(value, list):
@@ -1814,6 +1837,65 @@ def _exp_plan_seed_policy(project: dict[str, Any]) -> str:
     return "unknown; a source-backed seed policy or explicit human decision is required before formal execution"
 
 
+def _protocol_decisions_from_plan(exp_plan: dict[str, Any], project: dict[str, Any]) -> list[str]:
+    """Return explicit T4.5 protocol decisions without inventing a resolution."""
+
+    decisions: list[str] = []
+    raw_unknowns = exp_plan.get("unknown_fields") if isinstance(exp_plan, dict) else []
+    if isinstance(raw_unknowns, list):
+        decisions.extend(str(item).strip() for item in raw_unknowns if str(item).strip())
+    elif isinstance(raw_unknowns, str) and raw_unknowns.strip():
+        decisions.append(raw_unknowns.strip())
+    if not _extract_exp_plan_seeds(project):
+        decisions.append("source-backed seed policy")
+    return list(dict.fromkeys(decisions))
+
+
+def _execution_readiness(
+    *,
+    missing_required_sources: list[str],
+    protocol_missing: list[str],
+    protocol_decisions: list[str],
+) -> dict[str, Any]:
+    """Separate handoff compilation from authorization to run an experiment."""
+
+    all_stages = [
+        "context_alignment",
+        "resource_and_baseline_preparation",
+        "experiment_design",
+        "implementation",
+        "experiment_run",
+        "result_diagnosis",
+        "writer_handoff",
+    ]
+    if missing_required_sources or protocol_missing:
+        return {
+            "status": "blocked",
+            "allowed_stages": [],
+            "blocked_stages": all_stages,
+            "required_decisions": [],
+            "formal_execution_allowed": False,
+            "reason": "Required source material or the minimum experiment contract is absent.",
+        }
+    if protocol_decisions:
+        return {
+            "status": "protocol_decision_required",
+            "allowed_stages": ["context_alignment", "resource_and_baseline_preparation"],
+            "blocked_stages": [stage for stage in all_stages if stage not in {"context_alignment", "resource_and_baseline_preparation"}],
+            "required_decisions": protocol_decisions,
+            "formal_execution_allowed": False,
+            "reason": "The research contract is compiled, but explicit T4.5 protocol decisions remain before implementation or formal runs.",
+        }
+    return {
+        "status": "ready",
+        "allowed_stages": all_stages,
+        "blocked_stages": [],
+        "required_decisions": [],
+        "formal_execution_allowed": True,
+        "reason": "The compiled experiment contract has no unresolved protocol decision recorded by T4.5.",
+    }
+
+
 def _exp_baseline_records(exp_plan: dict[str, Any], workspace: Path) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -1831,19 +1913,12 @@ def _exp_baseline_records(exp_plan: dict[str, Any], workspace: Path) -> list[dic
                     "role": "nearest_work",
                 }
             )
-    for exp in _experiments_from_plan(exp_plan):
-        baseline_items: list[Any] = []
-        for key in ("required_baselines", "baselines", "baseline_methods"):
-            value = exp.get(key)
-            if isinstance(value, list):
-                baseline_items.extend(value)
-            elif value:
-                baseline_items.append(value)
+    def add_plan_baselines(baseline_items: list[Any]) -> None:
         for item in baseline_items:
             if isinstance(item, dict):
                 name = str(item.get("name") or item.get("baseline_name") or "").strip()
                 source = str(item.get("source") or "ideation/exp_plan.yaml")
-                why = str(item.get("why") or item.get("rationale") or "Listed in experiment plan")
+                why = str(item.get("why") or item.get("rationale") or item.get("purpose") or "Listed in experiment plan")
             else:
                 name = str(item or "").strip()
                 source = "ideation/exp_plan.yaml"
@@ -1862,6 +1937,25 @@ def _exp_baseline_records(exp_plan: dict[str, Any], workspace: Path) -> list[dic
             elif "m1-" in lowered:
                 role = "component_source"
             records.append({"name": name, "source": source, "why": why, "requirement": "required", "role": role})
+
+    root_baselines: list[Any] = []
+    for key in ("required_baselines", "baselines", "baseline_methods"):
+        value = exp_plan.get(key) if isinstance(exp_plan, dict) else None
+        if isinstance(value, list):
+            root_baselines.extend(value)
+        elif value:
+            root_baselines.append(value)
+    add_plan_baselines(root_baselines)
+
+    for exp in _experiments_from_plan(exp_plan):
+        baseline_items: list[Any] = []
+        for key in ("required_baselines", "baselines", "baseline_methods"):
+            value = exp.get(key)
+            if isinstance(value, list):
+                baseline_items.extend(value)
+            elif value:
+                baseline_items.append(value)
+        add_plan_baselines(baseline_items)
     return records
 
 
@@ -2140,6 +2234,8 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
         protocol_missing.append("dataset_or_benchmark")
     if not metrics:
         protocol_missing.append("metrics")
+    if not baselines:
+        protocol_missing.append("required_baselines")
     if not claims:
         protocol_missing.append("claim_evidence_mapping")
     if protocol_missing:
@@ -2148,12 +2244,12 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
             {
                 "item_id": f"U{len(unresolved_items) + 1}",
                 "severity": "blocking",
-                "question": "The experiment protocol is incomplete; no default dataset, baseline, metric, seed, or claim mapping was inferred.",
-                "why_unresolved": "ResearchOS may preserve the handoff draft, but external execution cannot start from unspecified protocol fields.",
+                "question": "The minimum experiment contract is incomplete in the fields listed below.",
+                "why_unresolved": "ResearchOS may preserve the handoff draft, but it cannot invent the missing experiment protocol fields or authorize formal execution without them.",
                 "affected_fields": protocol_missing,
                 "blocking": True,
                 "owner": "human",
-                "required_action": "Provide or approve source-backed experiment entries, datasets/benchmarks, metrics, and claim mappings in ideation/exp_plan.yaml, then rerun T5-REBOOST.",
+                "required_action": "Provide or approve the listed source-backed experiment fields in ideation/exp_plan.yaml, then rerun T5-REBOOST.",
                 "source_refs": [_source_ref("SRC_EXP_PLAN", "experiments", "Deterministic protocol completeness check")],
             }
         )
@@ -2167,10 +2263,31 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
         for baseline in baselines:
             baseline["linked_claim_ids"] = []
 
-    # A blocked handoff is a durable record of what is missing, not an
-    # incomplete formal experiment with invented dataset/metric placeholders.
-    # The reboost validator requires reproduction and formal entries only once
-    # the protocol is complete.
+    protocol_decisions = _protocol_decisions_from_plan(exp_plan, project)
+    execution_readiness = _execution_readiness(
+        missing_required_sources=missing_required,
+        protocol_missing=protocol_missing,
+        protocol_decisions=protocol_decisions,
+    )
+    if execution_readiness["status"] == "protocol_decision_required":
+        unresolved_items.append(
+            {
+                "item_id": f"U{len(unresolved_items) + 1}",
+                "severity": "material",
+                "question": "The handoff is compiled, but formal execution still requires the recorded protocol decisions.",
+                "why_unresolved": "T4.5 explicitly retained these decisions as unknown. T5 may prepare context and resources, but it must not select a framework, seed policy, scale, or budget by convention.",
+                "affected_fields": protocol_decisions,
+                "blocking": False,
+                "owner": "human",
+                "required_action": "Review the T5 protocol-readiness Gate, record approved decisions in ideation/exp_plan.yaml or a source-backed project input, then recompile T5-REBOOST before formal execution.",
+                "source_refs": [_source_ref("SRC_EXP_PLAN", "unknown_fields", "T4.5 explicitly retained protocol decisions for later confirmation")],
+            }
+        )
+
+    # A blocked handoff is a durable record of genuinely missing required
+    # fields. A compiled setting with bounded unknowns is different: T5 may
+    # prepare its context and resources, while the protocol Gate prevents
+    # implementation or formal runs until those choices are approved.
     required_experiments: list[dict[str, Any]] = []
     if not protocol_missing:
         required_experiments = [
@@ -2582,6 +2699,7 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
             ],
             "root_skill_path": "external_executor/skills/research-execution/SKILL.md",
             "expected_outputs_schema_path": "external_executor/expected_outputs_schema.json",
+            "execution_readiness": execution_readiness,
         },
         "resource_acquisition_policy": default_resource_acquisition_policy(),
         "unresolved_items": unresolved_items,
@@ -2594,6 +2712,11 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 {"check_id": "CHK_SCHEMA", "status": "pass" if status == "completed" else "not_run", "message": "research-reboost schema contract assembled"},
                 {"check_id": "CHK_SOURCES", "status": "pass" if not missing_required else "fail", "message": "required source coverage checked"},
                 {"check_id": "CHK_METHOD_INTENT", "status": "pass", "message": "method_intent is draft_intent_only and not a final Method source"},
+                {
+                    "check_id": "CHK_EXECUTION_READINESS",
+                    "status": "pass" if execution_readiness["status"] == "ready" else ("warning" if execution_readiness["status"] == "protocol_decision_required" else "fail"),
+                    "message": execution_readiness["reason"],
+                },
             ],
         },
     }
@@ -2604,6 +2727,9 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
         "skill_sha256": _sha256(_research_reboost_skill_dir() / "SKILL.md"),
         "handoff_pack": "external_executor/handoff_pack.json",
         "generation_status": status,
+        "execution_readiness": execution_readiness,
+        "protocol_missing_fields": protocol_missing,
+        "protocol_decisions": protocol_decisions,
         "source_files_used": [item.get("path") for item in source_manifest if item.get("used")],
         "missing_required_sources": missing_required,
         "missing_optional_sources": [
@@ -2678,6 +2804,13 @@ def _guide_view_from_reboost_pack(pack: dict[str, Any], project: dict[str, Any],
         for item in pack.get("baseline_matrix", [])
         if isinstance(item, dict)
     ]
+    execution_contract = pack.get("execution_contract") if isinstance(pack.get("execution_contract"), dict) else {}
+    readiness = execution_contract.get("execution_readiness") if isinstance(execution_contract.get("execution_readiness"), dict) else {}
+    effective_metrics = metrics or [
+        str(item).strip()
+        for item in ((pack.get("context_reboost") or {}).get("study_scope") or {}).get("metrics", [])
+        if str(item).strip()
+    ]
     return {
         "project_id": (pack.get("project") or {}).get("project_id") or project.get("project_id") or "unknown",
         "project": pack.get("project") or {},
@@ -2688,8 +2821,9 @@ def _guide_view_from_reboost_pack(pack: dict[str, Any], project: dict[str, Any],
         "baseline_matrix": pack.get("baseline_matrix"),
         "claim_evidence_matrix": pack.get("claim_evidence_matrix"),
         "required_baselines": baselines,
-        "metrics": [{"metric_id": f"metric_{idx}", "name": name, "direction": "unknown", "primary": idx == 1} for idx, name in enumerate(metrics, start=1)],
+        "metrics": [{"metric_id": f"metric_{idx}", "name": name, "direction": "unknown", "primary": idx == 1} for idx, name in enumerate(effective_metrics, start=1)],
         "seeds": _extract_exp_plan_seeds(project),
+        "execution_readiness": readiness,
         "allowed_paths": _allowed_path_rules_for_external_executor(),
         "executor_outputs_contract": {
             "must_write": [
@@ -3060,6 +3194,25 @@ def _write_external_executor_guides(
     resource_policy_block = json.dumps(resource_policy, ensure_ascii=False, indent=2)
     required_outputs = "\n".join(f"- `{path}`" for path in (handoff.get("executor_outputs_contract") or {}).get("must_write", []))
     seeds = ", ".join(str(seed) for seed in handoff.get("seeds", []) or []) or "unknown; require a declared seed policy"
+    readiness = handoff.get("execution_readiness") if isinstance(handoff.get("execution_readiness"), dict) else {}
+    readiness_status = str(readiness.get("status") or "ready")
+    pending_decisions = readiness.get("required_decisions") if isinstance(readiness.get("required_decisions"), list) else []
+    if readiness_status == "protocol_decision_required":
+        readiness_block = (
+            "## Protocol Readiness\n"
+            "The research handoff is compiled, but formal execution is not authorized yet. You may inspect context and prepare or verify resource/baseline candidates only. "
+            "Do not implement the method, run experiments, emit result_pack, or write a T8 handoff until the ResearchOS T5 protocol Gate has recorded and recompiled the required decisions.\n\n"
+            "Required decisions:\n"
+            + "\n".join(f"- {item}" for item in pending_decisions)
+            + "\n\n"
+        )
+    elif readiness_status == "blocked":
+        readiness_block = (
+            "## Protocol Readiness\n"
+            "The handoff is missing required source or protocol fields. Do not perform resource acquisition, implementation, or execution; return to ResearchOS for the reported repair.\n\n"
+        )
+    else:
+        readiness_block = "## Protocol Readiness\nThe handoff is ready for the declared preparation and execution stages, subject to executor selection and all remaining evidence boundaries.\n\n"
     common_header = (
         "> EXECUTION MODE NOT YET SELECTED - see external_executor/report/executor_selection.json after T5-EXECUTOR-GATE\n\n"
         f"- dry_run: UNSET\n- mock_only: UNSET\n- real_experiment_allowed: UNSET\n\n"
@@ -3073,7 +3226,8 @@ def _write_external_executor_guides(
         "Read this file, then execute `external_executor/skills/research-execution/SKILL.md`.\n\n"
         "## This experiment in one line\n"
         f"{handoff.get('experiment_intent_oneliner')}\n\n"
-        "## Read first\n"
+        + readiness_block
+        + "## Read first\n"
         "1. external_executor/handoff_pack.json\n"
         "2. external_executor/expected_outputs_schema.json\n"
         "3. external_executor/allowed_paths.txt\n"
@@ -3115,6 +3269,7 @@ def _write_external_executor_guides(
     claude = (
         f"# Claude Code External Execution Guide - project {project_id}\n\n"
         + common_header
+        + readiness_block
         + "You are used as an external coding executor for ResearchOS via a Claude Code window.\n\n"
         "## Steps\n"
         "1. Read handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt.\n"

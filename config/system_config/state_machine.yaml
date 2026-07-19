@@ -1178,7 +1178,28 @@ states:
       skills_dir: external_executor/skills
       skill_specialization_report: external_executor/report/skill_specialization_report.json
       skill_specialization_execution: external_executor/report/skill_specialization_execution.json
-    next_on_success: T5-EXPR-MATERIAL-GATE
+    next_on_success: T5-PROTOCOL-GATE
+    next_on_failure: failed
+
+  # T5-PROTOCOL-GATE 状态：区分“handoff 已编译”与“已经授权真实运行”。
+  # 当 T4.5 明确保留仿真环境、backbone、样本规模、seed 或预算等未决项时，
+  # 此 Gate 呈现它们并阻止直接选择真实执行器；它不是运行时错误或重试循环。
+  T5-PROTOCOL-GATE:
+    agent: experimenter
+    mode: executor_gate
+    extra:
+      immediate_gate: true
+    inputs:
+      handoff_pack: external_executor/handoff_pack.json
+      reboost_report: external_executor/report/reboost_report.json
+      research_proposal: ideation/proposal/research_proposal.md
+      exp_plan: ideation/exp_plan.yaml
+      agents_md: external_executor/AGENTS.md
+    outputs:
+      protocol_gate_decision: external_executor/report/protocol_gate_decision.json
+    gate:
+      type: t5_protocol_gate
+    next_on_success: T5-PROTOCOL-GATE
     next_on_failure: failed
 
   # T5-EXPR-MATERIAL-GATE 状态：实验材料放置确认

@@ -10,6 +10,25 @@ T1 scope -> T2 discover -> T3 read -> T3.5 synthesize
   -> T5 external execution -> T8 manuscript -> T9 submission bundle
 ```
 
+## Pipeline At A Glance
+
+The `T` labels are stable workflow stages, not commands that a researcher needs to memorize. `Gate` means ResearchOS pauses for a consequential human choice; it preserves all completed workspace files and tells you what will happen next.
+
+| Stage | Plain-language purpose | Main researcher-visible outputs |
+| --- | --- | --- |
+| T1 | Define the question, boundaries, target venue, and seed materials. | `project.yaml`, seed indexes, bridge-domain plan |
+| T2 | Search, deduplicate, verify, and prioritize the literature pool. | paper pool, search log, citation edges, reading queue |
+| T3 | Read papers and record page/section-aware notes. | deep/shallow notes, comparison table, literature manifest |
+| T3.5 | Synthesize the evidence, methods, mechanisms, and gaps. | synthesis, workbench, domain map |
+| T3.6 (optional) | Decide whether a Survey is justified and prepare/write it when selected. | survey plan, sections, audit, PDF |
+| T4 | Generate, test, score, and compare research directions. | Candidate cards, evidence/score/lineage records, Portfolio |
+| T4.5 | Audit novelty and similar work; formalize the selected direction. | novelty audit, hypotheses, experiment plan, full proposal |
+| T5 | Compile the approved research package for an external executor. | handoff, protocol decision, project-specific Skills, resource contract |
+| T8 | Turn verified external-execution evidence into a manuscript. | drafts, claim-evidence mapping, figures/tables integration |
+| T9 | Review, compile, and package the submission. | final PDF, review records, submission bundle |
+
+T4.5 is the boundary between an interesting direction and a formal, evidence-bounded research package. T5 is not an experiment runner: it prepares and verifies the executor contract, then an external Codex/Claude/manual executor performs the actual work in the same workspace.
+
 ## Before You Run
 
 - Use one writer per workspace. Do not run native and Docker commands against the same project concurrently.
@@ -109,37 +128,98 @@ To pause a live command, press `Ctrl+C` once. ResearchOS persists the workspace 
 
 ## Daily Commands
 
-| Goal | Command |
-| --- | --- |
-| Initialize an empty project | `python -m researchos.cli init-workspace --workspace ./workspace/project-a --project-id project-a --topic "research topic"` |
-| Start a complete pipeline in a new workspace | `python -m researchos.cli run --workspace ./workspace/project-a` |
-| Inspect current stage and pause reason | `python -m researchos.cli status --workspace ./workspace/project-a` |
-| Scan all local workspaces, active processes, gates, and stale states | `python -m researchos.cli workspace-status --workspace-root ./workspace` |
-| Continue a paused project | `python -m researchos.cli resume --workspace ./workspace/project-a` |
-| Revalidate T3 and fill only missing reading coverage | `python -m researchos.cli resume --workspace ./workspace/project-a --from-task T3` |
-| Re-enter this workspace at T4 after validating T4 prerequisites | `python -m researchos.cli resume --workspace ./workspace/project-a --from-task T4` |
-| Add missing T4 inputs from another workspace, then resume this project | `python -m researchos.cli resume --workspace ./workspace/t4-debug --from ./workspace/project-a --from-task T4` |
-| Return to the optional Survey decision | `python -m researchos.cli resume --workspace ./workspace/project-a --from-task T3.6` |
-| Start a new full pipeline at T4 using validated upstream artifacts from another workspace | `python -m researchos.cli run --workspace ./workspace/project-b --from ./workspace/project-a --start-task T4` |
-| Debug only T4 in a fresh workspace copied from another project | `python -m researchos.cli run-task T4 --workspace ./workspace/t4-debug --from ./workspace/project-a` |
-| Run T5 research reboost only | `python -m researchos.cli run-task T5-REBOOST --workspace ./workspace/project-a` |
-| Run the T5 executor-selection gate after T5 specialization | `python -m researchos.cli run-task T5-EXECUTOR-GATE --workspace <workspace>` |
-| Accept the completed external T5 handoff and run the full T8 chain | `python -m researchos.cli run-task T8 --workspace <workspace>` |
-| Run one task without advancing the full pipeline | `python -m researchos.cli run-task T3.6-SEC-INTRO --workspace ./workspace/project-a` |
-| Validate one task's artifacts | `python -m researchos.cli validate --task T3.6-SEC-INTRO --workspace ./workspace/project-a` |
-| Regenerate the deterministic Survey audit without an LLM | `python -m researchos.cli audit-survey --workspace ./workspace/project-a` |
-| Inspect a recorded run | `python -m researchos.cli trace <run-id> --workspace ./workspace/project-a` |
-| Configure and verify the shared LLM connection | `python -m researchos.cli configure-llm` |
-| Check the configured LLM connection only | `python -m researchos.cli selftest` |
-| Check Python, PDF, and TeX prerequisites | `python -m researchos.cli doctor --workspace ./workspace/project-a` |
-| Check state-machine and runtime configuration | `python -m researchos.cli validate-config` |
-| List independently runnable Skills | `python -m researchos.cli list-skills --workspace ./workspace/project-a` |
-| Browse Skills and their readiness conditions | `python -m researchos.cli browse-skills --workspace ./workspace/project-a` |
-| Inspect a Skill's input/output/recovery contract | `python -m researchos.cli describe-skill pdf-note-card --workspace ./workspace/project-a` |
-| Start or resume a guided Skill | `python -m researchos.cli run-skill pdf-note-card --workspace ./workspace/project-a --session-id reading-01` |
-| Inspect resumable Skill sessions | `python -m researchos.cli skill-status --workspace ./workspace/project-a` |
+Use `run` for a new project and `resume` for the same project. `run-task` is a focused diagnostic tool; it does not advance the complete pipeline.
 
-For the T5 material gate, Codex/Claude launch, external A-F phases, and T8 handoff contract, see [T5 External Executor Guide](docs/en/t5_external_executor.md).
+### System Status And Diagnostics
+
+```bash
+# Where is this project paused and what action is needed?
+python -m researchos.cli status --workspace ./workspace/project-a
+
+# Which local workspaces are active, paused, or stale?
+python -m researchos.cli workspace-status --workspace-root ./workspace
+
+# Check the provider, local PDF/TeX prerequisites, and state-machine configuration.
+python -m researchos.cli selftest
+python -m researchos.cli doctor --workspace ./workspace/project-a
+python -m researchos.cli validate-config
+
+# Inspect one recorded execution or validate one stage's saved outputs.
+python -m researchos.cli trace <run-id> --workspace ./workspace/project-a
+python -m researchos.cli validate --task T4 --workspace ./workspace/project-a
+```
+
+### Run A Project
+
+```bash
+# Create and start a new complete project.
+python -m researchos.cli init-workspace \
+  --workspace ./workspace/project-a --project-id project-a --topic "research topic"
+python -m researchos.cli run --workspace ./workspace/project-a
+
+# Run one isolated stage for diagnosis. It keeps the rest of the pipeline still.
+python -m researchos.cli run-task T4 --workspace ./workspace/t4-debug \
+  --from ./workspace/project-a
+```
+
+### Resume, Re-enter, Or Migrate
+
+```bash
+# Normal continuation: reuse prior confirmed choices and completed artifacts.
+python -m researchos.cli resume --workspace ./workspace/project-a
+
+# Deliberately reopen a validated stage in the same workspace.
+python -m researchos.cli resume --workspace ./workspace/project-a --from-task T3
+python -m researchos.cli resume --workspace ./workspace/project-a --from-task T4
+
+# Reopening T2 always shows the saved coverage/language parameters once more.
+python -m researchos.cli resume --workspace ./workspace/project-a --from-task T2
+
+# Create a separate target from another project's validated upstream files.
+python -m researchos.cli run --workspace ./workspace/project-b \
+  --from ./workspace/project-a --start-task T4
+
+# Fill only missing declared inputs from another workspace before re-entry.
+python -m researchos.cli resume --workspace ./workspace/t4-debug \
+  --from ./workspace/project-a --from-task T4
+```
+
+`resume --from-task` never merges histories or asks you to edit `state.yaml`. `T3.6` is the optional Survey decision; `T8` is the writing entry gate. An explicit T2 re-entry is the one exception to normal resume reuse: it opens the existing parameter confirmation page so a new search cannot silently use stale scope settings.
+
+### Skills
+
+```bash
+python -m researchos.cli list-skills --workspace ./workspace/project-a
+python -m researchos.cli browse-skills --workspace ./workspace/project-a
+python -m researchos.cli describe-skill pdf-note-card --workspace ./workspace/project-a
+python -m researchos.cli run-skill pdf-note-card --workspace ./workspace/project-a \
+  --session-id reading-01
+python -m researchos.cli skill-status --workspace ./workspace/project-a
+```
+
+### T5 External Execution
+
+The normal pipeline reaches T5 automatically after T4.5. T5 deterministically compiles the handoff and publishes the 13 project-specific executor Skills; it does not ask a model to reconstruct these control files. It then pauses at Protocol Readiness, Materials, and Executor gates in that order.
+
+```bash
+# Targeted T5 diagnostics only. These do not run an experiment.
+python -m researchos.cli run-task T5-REBOOST --workspace ./workspace/project-a
+python -m researchos.cli run-task T5-SPECIALIZE --workspace ./workspace/project-a
+python -m researchos.cli run-task T5-PROTOCOL-GATE --workspace ./workspace/project-a
+```
+
+When protocol and materials are ready, choose Codex CLI at the executor Gate, then start it from the workspace root:
+
+```bash
+cd workspace/project-a
+codex
+```
+
+```text
+Please read external_executor/AGENTS.md and execute external_executor/skills/research-execution/SKILL.md.
+```
+
+After Writer Handoff produces `external_executor/executor_research_report.md`, `result_pack.json`, `executor_status.json`, and `report/run_manifest.json`, accept the verified result with `python -m researchos.cli run-task T8 --workspace ./workspace/project-a`. Do not run `resume` or a second executor while the first executor is writing. The complete operational contract is in [T5 External Executor Guide](docs/en/t5_external_executor.md).
 
 Use `run --from <source-workspace> --start-task <task>` only to initialize a new target workspace from another project's validated upstream artifacts. `run-task <task> --from <source-workspace>` performs the same declared-input copy but executes only that task. For every literature-dependent downstream stage (`T3.5`, `T3.6`, `T4`, `T5`, and `T8`), the import closure includes the complete `literature/` tree, so initialized empty note directories cannot suppress real source paper cards. `bridge_notes/` remains the paper-note root; `cross_domain_catalogs/` is the independent retrieval catalog and is imported alongside it. The import happens before the model connection check, so a provider outage does not discard the prepared debugging workspace. Neither command is a state merge. The recovery guide is in [Quick Start](docs/en/QUICKSTART.md).
 

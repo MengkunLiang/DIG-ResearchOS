@@ -205,6 +205,12 @@ class StageReporter:
         """Record a semantic progress event; return whether it was rendered."""
 
         payload = data if isinstance(data, dict) else {}
+        # Shell output is useful to the Agent and trace, but a successful
+        # command panel is implementation noise in normal researcher-facing
+        # output. ``render_tool_result`` still provides a compact detailed
+        # trace when requested, and failures retain their actionable summary.
+        if ok and tool_name in {"bash_run", "docker_exec"} and self.verbosity != "detailed":
+            return False
         run = self._runs.get(run_id)
         if run is not None and task_id == "T2" and _is_retrieval_tool(tool_name):
             source = str(payload.get("source") or tool_name.removesuffix("_search")).replace("_", " ")
@@ -956,7 +962,11 @@ def normalize_cli_markdown(content: str) -> str:
 def _compact_cli_text(value: object, limit: int = 220) -> str:
     """Normalize a public message and end only on a natural textual boundary."""
 
-    text = " ".join(normalize_cli_markdown(str(value or "")).split())
+    # ``0`` (a successful exit status) and ``False`` (for example an
+    # untruncated command result) are informative values.  Treating either as
+    # falsy produced empty rows in otherwise useful status cards.
+    raw = "" if value is None else str(value)
+    text = " ".join(normalize_cli_markdown(raw).split())
     if len(text) <= limit:
         return text
     boundaries = [match.end() for match in re.finditer(r"[。！？；;](?:\s|$)|\.\s", text) if match.end() <= limit]

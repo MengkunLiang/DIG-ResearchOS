@@ -242,6 +242,10 @@ def _apply_handoff(context: MutableMapping[str, Any], handoff: Mapping[str, Any]
             _string_list(context_reboost.get("human_review_triggers")),
             _human_review_triggers(execution_contract, claim_boundaries),
         ),
+        "execution.readiness": _execution_readiness_summary(
+            execution_contract,
+            generation_status=str(handoff.get("generation_status") or ""),
+        ),
         "execution.isolation_requirements": _isolation_requirements(execution_contract),
         "execution.allowed_run_levels": _allowed_run_levels(execution_contract),
         "execution.resume_policy": _resume_policy(iteration_budget, execution_contract),
@@ -960,6 +964,18 @@ def _isolation_requirements(execution_contract: Mapping[str, Any]) -> list[str]:
 
 
 def _allowed_run_levels(execution_contract: Mapping[str, Any]) -> list[str]:
+    readiness = _mapping(execution_contract.get("execution_readiness"))
+    readiness_status = str(readiness.get("status") or "ready")
+    if readiness_status == "protocol_decision_required":
+        decisions = _string_list(readiness.get("required_decisions"))
+        decision_text = "; ".join(decisions) if decisions else "the recorded protocol decisions"
+        return [
+            "Only context alignment and resource/baseline preparation are allowed before protocol confirmation.",
+            "Implementation, experiment runs, result packaging, and writer handoff are forbidden until T5 recompiles an execution-ready handoff.",
+            f"Protocol confirmation remains required for: {decision_text}.",
+        ]
+    if readiness_status == "blocked":
+        return ["No external execution stage is allowed while required T5 source or protocol fields remain blocked."]
     items: list[str] = []
     write_paths = _string_list(execution_contract.get("write_paths"))
     if write_paths:
@@ -970,6 +986,75 @@ def _allowed_run_levels(execution_contract: Mapping[str, Any]) -> list[str]:
     if policy.get("authenticated_resources_allowed") is False:
         items.append("Authenticated-resource runs are not allowed.")
     return _dedupe_strings(items)
+
+
+def _execution_readiness_summary(
+    execution_contract: Mapping[str, Any],
+    *,
+    generation_status: str = "",
+) -> dict[str, Any]:
+    """Normalize current and legacy execution authorization into one schema shape.
+
+    The project Skill Context schema deliberately requires the full boundary,
+    not merely a status label.  Older handoffs predate ``execution_readiness``
+    and otherwise leave the publisher with a structurally invalid context even
+    though their status can be interpreted safely.  Defaults here restrict
+    rather than expand authority: only a completed legacy handoff is treated
+    as ready; every other legacy state remains blocked.
+    """
+
+    readiness = _mapping(execution_contract.get("execution_readiness"))
+    status = str(readiness.get("status") or "").strip().lower()
+    if not status:
+        status = "ready" if str(generation_status or "").strip().lower() == "completed" else "blocked"
+
+    default_allowed = (
+        [
+            "context_alignment",
+            "resource_and_baseline_preparation",
+            "experiment_design",
+            "implementation",
+            "experiment_run",
+            "result_diagnosis",
+            "module_attribution",
+            "evidence_packaging",
+            "writer_handoff",
+        ]
+        if status == "ready"
+        else ["context_alignment", "resource_and_baseline_preparation"]
+        if status == "protocol_decision_required"
+        else []
+    )
+    default_blocked = (
+        []
+        if status == "ready"
+        else [
+            "experiment_design",
+            "implementation",
+            "experiment_run",
+            "result_diagnosis",
+            "module_attribution",
+            "evidence_packaging",
+            "writer_handoff",
+        ]
+    )
+    default_reason = (
+        "Legacy completed handoff without an explicit readiness object; treat the validated contract as execution-ready."
+        if status == "ready"
+        else "Legacy handoff does not provide an execution-ready authorization boundary. Recompile T5 from the formal T4.5 materials."
+    )
+    return {
+        "status": status,
+        "allowed_stages": _string_list(readiness.get("allowed_stages")) or default_allowed,
+        "blocked_stages": _string_list(readiness.get("blocked_stages")) or default_blocked,
+        "required_decisions": _string_list(readiness.get("required_decisions")),
+        "formal_execution_allowed": (
+            readiness.get("formal_execution_allowed")
+            if isinstance(readiness.get("formal_execution_allowed"), bool)
+            else status == "ready"
+        ),
+        "reason": str(readiness.get("reason") or default_reason),
+    }
 
 
 def _resume_policy(iteration_budget: Mapping[str, Any], execution_contract: Mapping[str, Any]) -> list[str]:

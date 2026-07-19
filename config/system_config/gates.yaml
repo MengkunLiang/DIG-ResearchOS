@@ -739,12 +739,52 @@ gates:
         label: "结束当前项目"
         next: done
 
+  # T5 协议就绪门：handoff 已编译并不等于授权实现或运行。
+  t5_protocol_gate:
+    title: "T5 实验协议就绪确认"
+    description: "研究交接、指标和 baseline 已被保留到 T5。若仍有仿真环境、backbone、样本规模、种子或预算等显式未决项，请先确认或补充它们；系统不会把这一正常研究决策显示为运行时错误，也不会让执行器擅自补造设置。"
+    presentation:
+      handoff_pack:
+        from_file: external_executor/handoff_pack.json
+        max_chars: 5000
+      reboost_report:
+        from_file: external_executor/report/reboost_report.json
+        max_chars: 4000
+      experiment_plan:
+        from_file: ideation/exp_plan.yaml
+        max_chars: 4000
+      protocol_boundary:
+        literal: |
+          当前 Gate 只决定何时进入真实执行。协议未就绪时，已生成的 handoff、研究方案、指标、baseline 与资源线索都会保留；外部执行器不得自行选择仿真框架、agent backbone、种子、样本规模或预算，也不得实现方法、运行实验或写入 T8 结果交接。
+          在确认前可以先把已有源材料放入 resources/。材料准备完成后会回到这里再次核对协议状态，而不是直接进入执行器选择。
+    options:
+      - id: protocol_ready
+        label: "协议已补充，重新编译"
+        description: "已在 T4.5 的实验计划或来源明确的项目材料中补充未决设置；重新编译 handoff 并独立校验。"
+        next: T5-REBOOST-GATE
+      - id: prepare_materials
+        label: "先准备实验材料"
+        description: "先放置已有数据、代码、benchmark 或权重；仍不会启动实现或正式运行。"
+        next: T5-EXPR-MATERIAL-GATE
+      - id: pause_protocol
+        label: "暂停协议确认"
+        description: "保留当前诊断、handoff 与 Skill Suite；下次 resume 回到本 Gate。"
+        next: T5-PROTOCOL-GATE
+      - id: back_to_t4
+        label: "回到 T4 重构"
+        description: "研究设计需要改变机制、任务、benchmark 范围或贡献类型时返回 T4。"
+        next: T4
+      - id: stop_project
+        label: "结束当前项目"
+        description: "停止本次流程，不删除已保存的研究材料或 T5 交接。"
+        next: done
+
   # T5 实验材料放置门：
   # 真实实验启动前，用户把源材料放进 resources/；只有已经可直接运行的部署资产才放入
   # external_executor/expr/。
   t5_expr_material_gate:
     title: "T5 实验材料放置确认"
-    description: "T5 已完成 re-boost、handoff 和项目专属 skill suite 生成。请将数据集、baseline、benchmark、外部代码、权重和材料说明放入 resources/；仅将已整理为可直接运行的部署资产放入 external_executor/expr/，再选择执行器。"
+    description: "T5 已完成 re-boost、handoff 和项目专属 skill suite 生成。请将数据集、baseline、benchmark、外部代码、权重和材料说明放入 resources/；仅将已整理为可直接运行的部署资产放入 external_executor/expr/。若当前协议仍有未决 setting，材料完成后会回到协议确认 Gate，而不会直接选择执行器。"
     presentation:
       resources_path:
         literal: "resources/"
@@ -764,7 +804,7 @@ gates:
       launch_after_gate:
         literal: |
           `resources/` 是 Phase B 的源资源根。外部执行器会在其中将人工提供、远程获取和复现资源分别整理为 byhand、Remote_acquisition 和 reproduction；`external_executor/expr/` 仅用于已部署、可运行的 baseline 和方法资产。
-          材料就绪后，下一步会进入外部执行器选择 gate。
+          材料就绪后，若实验协议已完整，将进入外部执行器选择 Gate；若 handoff 仍记录未决协议，将返回 T5 协议确认 Gate。
           如果选择 Codex CLI，系统会提示你在 workspace 根目录启动 Codex CLI，让它读取 external_executor/AGENTS.md 并执行 external_executor/skills/research-execution/SKILL.md。
           Codex 完成后应写回并通过 Writer Handoff 核验 external_executor/executor_research_report.md、external_executor/result_pack.json、external_executor/executor_status.json 和 external_executor/report/run_manifest.json；总控 Skill 随后直接执行 python -m researchos.cli run-task T8 --workspace <workspace>，无需退出执行器再手工 resume。
     options:

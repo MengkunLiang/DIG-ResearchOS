@@ -2713,6 +2713,8 @@ class StateMachine:
             options = _ccf_template_gate_options(task_id=node.task_id)
         elif node.task_id == "T3.6-GATE-CORPUS" and workspace_dir is not None:
             presentation["supplement_recommendation"] = _t36_supplement_recommendation(workspace_dir)
+        elif node.task_id == "T5-PROTOCOL-GATE" and workspace_dir is not None:
+            presentation["protocol_readiness"] = self._t5_protocol_gate_summary(workspace_dir)
         if node.task_id == "T4-GATE1" and workspace_dir is not None:
             presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
             presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
@@ -3892,6 +3894,8 @@ class StateMachine:
             options = enrich_literature_param_gate_options(options, workspace_dir)
         elif node.task_id in _CCF_TEMPLATE_GATE_TASKS:
             options = _ccf_template_gate_options(task_id=node.task_id)
+        elif node.task_id == "T5-PROTOCOL-GATE" and workspace_dir is not None:
+            presentation["protocol_readiness"] = self._t5_protocol_gate_summary(workspace_dir)
         elif node.task_id == "T4-GATE1" and workspace_dir is not None:
             resumed = self._resume_confirmed_native_t4_directive(state, workspace_dir)
             if resumed is not None:
@@ -4492,7 +4496,32 @@ class StateMachine:
                 return state
             if self._has_native_t4_population(workspace_dir):
                 return self._resolve_native_t4_gate1(state, gate_result, workspace_dir)
+        if node.task_id == "T5-EXECUTOR-GATE" and workspace_dir is not None:
+            readiness = self._t5_execution_readiness(workspace_dir)
+            if readiness["status"] != "ready":
+                protocol_task = "T5-PROTOCOL-GATE" if "T5-PROTOCOL-GATE" in self.nodes else "T5-REBOOST-GATE"
+                state.pending_gate = None
+                state.current_task = protocol_task
+                state.status = "RUNNING"
+                state.paused_at = None
+                state.last_error = (
+                    "T5 executor selection was deferred because the handoff still requires protocol confirmation; "
+                    "no executor selection artifact was written."
+                )
+                return self.pause_for_immediate_gate(state, workspace_dir=workspace_dir)
+
         next_task = self._resolve_branch(node, gate_result, state, workspace_dir=workspace_dir)
+        # ``_resolve_branch`` runs before the material receipt is persisted,
+        # so its ``__parse_from_output__`` route can only see the previous
+        # decision file. Resolve the current affirmative material choice here
+        # from the already-compiled handoff rather than briefly exposing an
+        # executor choice that is not authorized by the protocol.
+        if node.task_id == "T5-EXPR-MATERIAL-GATE" and workspace_dir is not None:
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "").strip().lower()
+            if option_id in {"materials_ready", "ready", "continue", "done"}:
+                readiness = self._t5_execution_readiness(workspace_dir)
+                if readiness.get("status") != "ready":
+                    next_task = "T5-PROTOCOL-GATE" if "T5-PROTOCOL-GATE" in self.nodes else "T5-REBOOST-GATE"
         self._persist_immediate_gate_result(node, gate_result, next_task, workspace_dir)
         if node.task_id == "T5-EXPR-MATERIAL-GATE" and next_task == "T5-EXPR-MATERIAL-GATE":
             state.pending_gate = None
@@ -4502,6 +4531,15 @@ class StateMachine:
                 "WAITING_MATERIALS: place source datasets, repositories, baselines, benchmarks, weights, "
                 "and material notes under resources/; place only deployed runnable assets under "
                 "external_executor/expr/, then resume."
+            )
+            return state
+        if node.task_id == "T5-PROTOCOL-GATE" and next_task == "T5-PROTOCOL-GATE":
+            state.pending_gate = None
+            state.status = "PAUSED"
+            state.paused_at = _now_iso()
+            state.last_error = (
+                "WAITING_PROTOCOL: T5 handoff is preserved. Confirm the recorded simulation/benchmark, backbone, "
+                "seed, scale, and resource decisions before formal execution."
             )
             return state
         if (
@@ -6233,6 +6271,28 @@ class StateMachine:
             path.write_text(json.dumps(selection, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             patch_external_executor_files_with_selection(workspace_dir, selection)
             return
+        if node.task_id == "T5-PROTOCOL-GATE":
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "pause_protocol")
+            captured = gate_result.get("captured") or {}
+            readiness = self._t5_execution_readiness(workspace_dir)
+            payload = {
+                "version": "1.0",
+                "semantics": "external_executor_protocol_gate_decision",
+                "task_id": node.task_id,
+                "gate_id": self._gate_id_for_node(node),
+                "selected_option": option_id,
+                "captured": captured if isinstance(captured, dict) else {},
+                "next_task": next_task,
+                "execution_readiness": readiness,
+                "decision_boundary": (
+                    "This decision does not authorize implementation, formal experiments, results, or T8 handoff until a recompiled handoff reports execution readiness."
+                ),
+                "decided_at": _now_iso(),
+            }
+            path = workspace_dir / "external_executor" / "report" / "protocol_gate_decision.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return
         if node.task_id == "T5-EXPR-MATERIAL-GATE":
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "pause_for_materials")
             captured = gate_result.get("captured") or {}
@@ -6552,6 +6612,74 @@ class StateMachine:
             return "T2-PARAM-GATE" if "T2-PARAM-GATE" in self.nodes else "T2"
         return "done" if "done" in self.nodes else "failed"
 
+    def _t5_execution_readiness(self, workspace_dir: Path) -> dict[str, Any]:
+        """Read the handoff's explicit authorization boundary without mutating it."""
+
+        handoff = self._read_json_dict(workspace_dir / "external_executor" / "handoff_pack.json") or {}
+        contract = handoff.get("execution_contract") if isinstance(handoff.get("execution_contract"), dict) else {}
+        readiness = contract.get("execution_readiness") if isinstance(contract.get("execution_readiness"), dict) else {}
+        if readiness:
+            return dict(readiness)
+        if str(handoff.get("generation_status") or "") == "completed":
+            return {
+                "status": "ready",
+                "allowed_stages": [],
+                "blocked_stages": [],
+                "required_decisions": [],
+                "formal_execution_allowed": True,
+                "reason": "Legacy completed handoff without an explicit readiness object.",
+            }
+        return {
+            "status": "blocked",
+            "allowed_stages": [],
+            "blocked_stages": [],
+            "required_decisions": [],
+            "formal_execution_allowed": False,
+            "reason": "No completed T5 handoff is available.",
+        }
+
+    def _t5_protocol_gate_summary(self, workspace_dir: Path) -> dict[str, Any]:
+        """Render a focused, researcher-readable view of T5 readiness."""
+
+        handoff = self._read_json_dict(workspace_dir / "external_executor" / "handoff_pack.json") or {}
+        context = handoff.get("context_reboost") if isinstance(handoff.get("context_reboost"), dict) else {}
+        scope = context.get("study_scope") if isinstance(context.get("study_scope"), dict) else {}
+        baselines = handoff.get("baseline_matrix") if isinstance(handoff.get("baseline_matrix"), list) else []
+        unresolved = handoff.get("unresolved_items") if isinstance(handoff.get("unresolved_items"), list) else []
+        readiness = self._t5_execution_readiness(workspace_dir)
+        return {
+            "status": readiness.get("status"),
+            "formal_execution_allowed": readiness.get("formal_execution_allowed"),
+            "reason": readiness.get("reason"),
+            "already_compiled": {
+                "settings_or_datasets": scope.get("datasets") or [],
+                "metrics": scope.get("metrics") or [],
+                "required_baselines": [
+                    str(item.get("name") or item.get("baseline_id") or "")
+                    for item in baselines
+                    if isinstance(item, dict) and str(item.get("name") or item.get("baseline_id") or "")
+                ],
+                "claim_count": len(handoff.get("claim_evidence_matrix") or []),
+            },
+            "required_decisions": readiness.get("required_decisions") or [],
+            "allowed_now": readiness.get("allowed_stages") or [],
+            "blocked_until_confirmed": readiness.get("blocked_stages") or [],
+            "unresolved_records": [
+                {
+                    "question": item.get("question"),
+                    "required_action": item.get("required_action"),
+                }
+                for item in unresolved
+                if isinstance(item, dict)
+            ],
+            "source_files": {
+                "handoff": "external_executor/handoff_pack.json",
+                "report": "external_executor/report/reboost_report.json",
+                "experiment_plan": "ideation/exp_plan.yaml",
+                "proposal": "ideation/proposal/research_proposal.md",
+            },
+        }
+
     def _parse_t5_expr_material_decision(self, workspace_dir: Path) -> str:
         """Route the T5 experiment-material gate from its explicit decision file."""
 
@@ -6561,6 +6689,9 @@ class StateMachine:
             return "T5-EXPR-MATERIAL-GATE"
         selected = str(data.get("selected_option") or "").strip().lower()
         if data.get("materials_ready") is True or selected in {"materials_ready", "ready", "continue", "done"}:
+            readiness = self._t5_execution_readiness(workspace_dir)
+            if readiness.get("status") != "ready":
+                return "T5-PROTOCOL-GATE" if "T5-PROTOCOL-GATE" in self.nodes else "T5-REBOOST-GATE"
             return "T5-EXECUTOR-GATE"
         if selected in {"back_to_t4", "t4", "rethink"}:
             return "T4"

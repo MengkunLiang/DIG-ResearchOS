@@ -1554,6 +1554,38 @@
         },
         "expected_outputs_schema_path": {
           "$ref": "#/$defs/relative_path"
+        },
+        "execution_readiness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "allowed_stages",
+            "blocked_stages",
+            "required_decisions",
+            "formal_execution_allowed",
+            "reason"
+          ],
+          "properties": {
+            "status": {
+              "enum": ["ready", "protocol_decision_required", "blocked"]
+            },
+            "allowed_stages": {
+              "$ref": "#/$defs/string_list"
+            },
+            "blocked_stages": {
+              "$ref": "#/$defs/string_list"
+            },
+            "required_decisions": {
+              "$ref": "#/$defs/string_list"
+            },
+            "formal_execution_allowed": {
+              "type": "boolean"
+            },
+            "reason": {
+              "$ref": "#/$defs/non_empty_string"
+            }
+          }
         }
       }
     },

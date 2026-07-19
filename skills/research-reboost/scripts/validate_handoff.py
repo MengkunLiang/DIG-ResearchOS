@@ -542,6 +542,13 @@ class SemanticValidator:
         summary_status = self.pack["validation_summary"]["status"]
         mismatches = self.pack["context_reboost"]["known_context_mismatches"]
         unresolved = self.pack["unresolved_items"]
+        execution_contract = self.pack.get("execution_contract") if isinstance(self.pack.get("execution_contract"), dict) else {}
+        readiness = execution_contract.get("execution_readiness") if isinstance(execution_contract.get("execution_readiness"), dict) else {}
+        # Handoffs created before protocol readiness was split from compilation
+        # remain valid as fully-ready legacy contracts. New packs always carry
+        # the structured object and receive stricter checks below.
+        readiness_status = str(readiness.get("status") or "ready")
+        protocol_decision_required = readiness_status == "protocol_decision_required"
         has_blocker = any(item["blocking"] for item in unresolved) or any(item["severity"] == "blocking" for item in mismatches)
         needs_review = any(item["requires_human_review"] for item in mismatches) or any(item["severity"] == "material" for item in unresolved)
         validation_checks = self.pack["validation_summary"]["checks"]
@@ -554,7 +561,7 @@ class SemanticValidator:
         if status == "completed":
             if not required_sources_ready:
                 self.error("status.completed_missing_source", "/generation_status", "completed pack requires every required source to be available and used")
-            if has_blocker or needs_review:
+            if has_blocker or (needs_review and not protocol_decision_required):
                 self.error("status.completed_with_open_issue", "/generation_status", "completed pack cannot contain blocking or human-review issues")
             if summary_status != "pass":
                 self.error("status.summary_mismatch", "/validation_summary/status", "completed pack requires validation_summary.status=pass")
@@ -584,6 +591,22 @@ class SemanticValidator:
             artifact_types = {item["artifact_type"] for item in self.pack["writer_handoff_contract"]["required_artifacts"]}
             for missing in sorted(REQUIRED_WRITER_ARTIFACTS - artifact_types):
                 self.error("writer.artifact_missing", "/writer_handoff_contract/required_artifacts", f"missing required writer artifact: {missing}")
+            if readiness_status == "blocked":
+                self.error("execution.readiness_mismatch", "/execution_contract/execution_readiness", "completed pack cannot have blocked execution readiness")
+            elif protocol_decision_required:
+                if readiness.get("formal_execution_allowed") is not False:
+                    self.error("execution.protocol_gate_missing", "/execution_contract/execution_readiness/formal_execution_allowed", "protocol-decision handoff must forbid formal execution")
+                decisions = readiness.get("required_decisions")
+                if not isinstance(decisions, list) or not decisions:
+                    self.error("execution.protocol_decisions_missing", "/execution_contract/execution_readiness/required_decisions", "protocol-decision handoff must list explicit decisions")
+                allowed_stages = set(readiness.get("allowed_stages") or [])
+                forbidden_stages = set(readiness.get("blocked_stages") or [])
+                if not {"context_alignment", "resource_and_baseline_preparation"}.issubset(allowed_stages):
+                    self.error("execution.protocol_stage_missing", "/execution_contract/execution_readiness/allowed_stages", "protocol-decision handoff may permit only preparatory context/resource stages")
+                if not {"implementation", "experiment_run", "writer_handoff"}.issubset(forbidden_stages):
+                    self.error("execution.protocol_stage_not_blocked", "/execution_contract/execution_readiness/blocked_stages", "protocol-decision handoff must block implementation, formal runs, and writer handoff")
+            elif readiness_status == "ready" and readiness and readiness.get("formal_execution_allowed") is not True:
+                self.error("execution.readiness_mismatch", "/execution_contract/execution_readiness/formal_execution_allowed", "ready handoff must allow formal execution")
         elif status == "blocked" and summary_status not in {"blocked", "not_validated"}:
             self.error("status.summary_mismatch", "/validation_summary/status", "blocked pack requires blocked or not_validated summary")
         elif status == "needs_review" and summary_status not in {"needs_review", "not_validated"}:

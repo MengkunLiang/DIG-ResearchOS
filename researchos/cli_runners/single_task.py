@@ -205,6 +205,12 @@ class SingleTaskRunner:
 
         outputs_expected = resolve_outputs(self.workspace, self.task_id)
         # 所有 task 都统一生成恢复快照；T3/T5/T8 会在这个入口里叠加专项恢复信息。
+        if self.task_id == "T3" and extra.get("resume_mode"):
+            self.progress.emit(
+                "[Reader Agent] T3 正在核对已保存的阅读笔记、PDF 可得性与剩余队列；"
+                "这一步只做本地恢复检查，尚未提交模型请求。",
+                important=True,
+            )
         recovery_info = prepare_task_resume_artifacts(
             self.workspace,
             task_id=self.task_id,

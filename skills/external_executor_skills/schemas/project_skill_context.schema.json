@@ -422,6 +422,7 @@
         "stop_conditions",
         "allowed_paths",
         "forbidden_paths",
+        "readiness",
         "isolation_requirements",
         "allowed_run_levels",
         "timeout_policy",
@@ -447,6 +448,38 @@
         },
         "forbidden_paths": {
           "$ref": "#/$defs/stringList"
+        },
+        "readiness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "allowed_stages",
+            "blocked_stages",
+            "required_decisions",
+            "formal_execution_allowed",
+            "reason"
+          ],
+          "properties": {
+            "status": {
+              "type": "string"
+            },
+            "allowed_stages": {
+              "$ref": "#/$defs/stringList"
+            },
+            "blocked_stages": {
+              "$ref": "#/$defs/stringList"
+            },
+            "required_decisions": {
+              "$ref": "#/$defs/stringList"
+            },
+            "formal_execution_allowed": {
+              "type": "boolean"
+            },
+            "reason": {
+              "$ref": "#/$defs/stringOrNull"
+            }
+          }
         },
         "isolation_requirements": {
           "$ref": "#/$defs/stringList"

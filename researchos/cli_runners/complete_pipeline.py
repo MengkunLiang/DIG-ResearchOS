@@ -490,6 +490,12 @@ class CompletePipelineRunner:
                 continue
             break
 
+        if state.current_task == "T3":
+            self.progress.emit(
+                "[Reader Agent] 正在核对已保存的阅读笔记、PDF 可得性与剩余阅读队列；"
+                "这一步只做本地恢复/准备检查，尚未提交模型请求。",
+                important=True,
+            )
         try:
             ctx = self.state_machine.build_execution_context(self.workspace, state)
         except Exception as exc:
@@ -515,6 +521,14 @@ class CompletePipelineRunner:
             if state.status == "WAITING_HUMAN" and state.pending_gate is not None:
                 return await self._present_pending_gate(state, state_path)
             return state
+        if ctx.task_id == "T3" and ctx.extra.get("resume_queue_count") is not None:
+            self.progress.emit(
+                "[Reader Agent] T3 队列已准备："
+                f"待处理 {ctx.extra.get('resume_queue_count', 0)} 篇，"
+                f"已完成 {ctx.extra.get('existing_note_count', 0)} 篇，"
+                f"来源={ctx.extra.get('resume_queue_source', 'unknown')}。",
+                important=True,
+            )
         if ctx.task_id in _LATEX_PREFLIGHT_TASKS:
             readiness = latex_backend_preflight(self.runtime_settings.latex)
             ctx.extra["latex_backend_preflight"] = readiness

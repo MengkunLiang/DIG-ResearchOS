@@ -2077,9 +2077,19 @@ def _prepare_resume_from_task(
     gate was deliberately bypassed.
     """
 
-    start_task = resolve_public_stage_alias(start_task)
+    requested_task = resolve_public_stage_alias(start_task)
+    # A normal ``resume`` deliberately reuses its already confirmed Literature
+    # Contract.  An explicit ``--from-task T2`` is different: the researcher
+    # is intentionally reopening retrieval, so show the workspace-local
+    # coverage/language settings once more before any new search request.
+    # They can confirm unchanged settings or return to the parameter chooser.
+    start_task = (
+        "T2-PARAM-CONFIRM-GATE"
+        if requested_task == "T2" and "T2-PARAM-CONFIRM-GATE" in state_machine.nodes
+        else requested_task
+    )
     if start_task not in state_machine.nodes:
-        print(f"Unknown --from-task: {start_task}")
+        print(f"Unknown --from-task: {requested_task}")
         return 2
     if state_machine.nodes[start_task].terminal:
         print(f"--from-task cannot target a terminal state: {start_task}")
@@ -2102,6 +2112,7 @@ def _prepare_resume_from_task(
     reentry = {
         "from_task": prior_task,
         "to_task": start_task,
+        "requested_task": requested_task,
         "requested_at": datetime.now(timezone.utc).isoformat(),
         "reason": "explicit_cli_resume_from_task",
         "cleared_pending_gate": state.pending_gate.gate_id if state.pending_gate else None,
@@ -2116,7 +2127,13 @@ def _prepare_resume_from_task(
     state.paused_at = datetime.now(timezone.utc).isoformat()
     state.last_error = None
     state.dump_yaml(state_path)
-    message = f"[进度] 已受校验地从 {prior_task} 重入 {start_task}；下一步将按该节点正常执行。"
+    if requested_task == "T2" and start_task == "T2-PARAM-CONFIRM-GATE":
+        message = (
+            f"[进度] 已受校验地从 {prior_task} 重入 T2；"
+            "下一步会先展示现有文献覆盖参数供你确认或返回重选，不会立即提交新的检索请求。"
+        )
+    else:
+        message = f"[进度] 已受校验地从 {prior_task} 重入 {start_task}；下一步将按该节点正常执行。"
     print(f"[Pipeline] resume_from_task={start_task}" if quiet else message, flush=True)
     return 0
 

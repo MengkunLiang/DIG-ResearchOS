@@ -10,6 +10,25 @@ T1 研究范围 -> T2 文献 -> T3 阅读 -> T3.5 综合
   -> T5 外部执行 -> T8 论文 -> T9 投稿包
 ```
 
+## 流程一览
+
+`T` 是稳定的流程阶段编号，不要求用户记住或直接调用。`Gate` 表示系统需要你对有实质影响的选择作确认；已完成的 workspace 文件会保留，终端会说明下一步会发生什么。
+
+| 阶段 | 用通俗语言说 | 用户可查看的主要产物 |
+| --- | --- | --- |
+| T1 | 明确研究问题、边界、投稿取向与种子材料。 | `project.yaml`、种子索引、跨领域检索计划 |
+| T2 | 检索、去重、核验并排定文献阅读优先级。 | 文献池、检索日志、引用边、阅读队列 |
+| T3 | 阅读论文并记录可回查的页码/部分证据。 | 深读/浅读笔记、比较表、文献清单 |
+| T3.5 | 综合证据、方法、机制差异与研究缺口。 | 综合报告、工作台、领域图谱 |
+| T3.6（可选） | 判断是否值得写综述；选中时准备并撰写综述。 | 综述计划、章节、审计、PDF |
+| T4 | 生成、核验、评分并比较研究方向。 | Candidate 卡、证据/评分/谱系记录、Portfolio |
+| T4.5 | 审计新颖性和相似工作，把已选方向正式化。 | 新颖性审计、假设、实验计划、完整 proposal |
+| T5 | 把已批准的研究包编译成外部执行器可审计的交接。 | handoff、协议决策、项目专属 Skill、资源契约 |
+| T8 | 将已核验的外部实验材料写成论文。 | 草稿、claim-证据映射、图表整合 |
+| T9 | 审阅、编译并生成投稿包。 | 最终 PDF、审阅记录、投稿文件 |
+
+T4.5 是“有潜力的方向”与“正式、受证据约束的研究包”的边界。T5 不自行跑实验；它准备和核验执行契约，随后由同一 workspace 中的 Codex、Claude 或人工执行器完成真实工作。
+
 ## 运行前须知
 
 - 同一个 workspace 同一时刻只允许一个写入者。不要同时用本地和 Docker 写同一项目。
@@ -107,36 +126,98 @@ T3 的强证据阅读仍逐篇处理，因为页码覆盖、section 证据和阅
 
 ## 日常命令
 
-| 目标 | 命令 |
-| --- | --- |
-| 初始化一个空项目 | `python -m researchos.cli init-workspace --workspace ./workspace/project-a --project-id project-a --topic "研究主题"` |
-| 从新 workspace 启动完整流程 | `python -m researchos.cli run --workspace ./workspace/project-a` |
-| 查看当前阶段与暂停原因 | `python -m researchos.cli status --workspace ./workspace/project-a` |
-| 总览全部本机 workspace、活跃进程、Gate 与疑似失联状态 | `python -m researchos.cli workspace-status --workspace-root ./workspace` |
-| 继续暂停项目 | `python -m researchos.cli resume --workspace ./workspace/project-a` |
-| 从 T3 重新核验并只补阅读缺口 | `python -m researchos.cli resume --workspace ./workspace/project-a --from-task T3` |
-| 回到是否撰写综述的决策 | `python -m researchos.cli resume --workspace ./workspace/project-a --from-task T3.6` |
-| 在当前 workspace 校验前置产物后从 T4 重入 | `python -m researchos.cli resume --workspace ./workspace/project-a --from-task T4` |
-| 从另一项目的已验证上游产物新建完整 T4 流程 | `python -m researchos.cli run --workspace ./workspace/project-b --from ./workspace/project-a --start-task T4` |
-| 从另一项目复制前置材料，只调试 T4 | `python -m researchos.cli run-task T4 --workspace ./workspace/t4-debug --from ./workspace/project-a` |
-| 只跑一个 task | `python -m researchos.cli run-task T3.6-SEC-INTRO --workspace ./workspace/project-a` |
-| 单独运行 T5 的研究再激发 | `python -m researchos.cli run-task T5-REBOOST --workspace ./workspace/project-a` |
-| 在 T5 专项 Skill 后进入执行器选择 Gate | `python -m researchos.cli run-task T5-EXECUTOR-GATE --workspace ./workspace/project-a` |
-| 接收完成的 T5 外部交接并进入完整 T8 | `python -m researchos.cli run-task T8 --workspace ./workspace/project-a` |
-| 校验一个 task 的产物 | `python -m researchos.cli validate --task T3.6-SEC-INTRO --workspace ./workspace/project-a` |
-| 无模型重跑 Survey 覆盖审计 | `python -m researchos.cli audit-survey --workspace ./workspace/project-a` |
-| 查看已记录 run | `python -m researchos.cli trace <run-id> --workspace ./workspace/project-a` |
-| 配置并验证统一 LLM 连接 | `python -m researchos.cli configure-llm` |
-| 只检查已配置 LLM 连通性 | `python -m researchos.cli selftest` |
-| 检查 Python、PDF、TeX 等运行环境 | `python -m researchos.cli doctor --workspace ./workspace/project-a` |
-| 检查系统配置 | `python -m researchos.cli validate-config` |
-| 列出可独立运行的 Skill | `python -m researchos.cli list-skills --workspace ./workspace/project-a` |
-| 浏览 Skill 与其输入条件 | `python -m researchos.cli browse-skills --workspace ./workspace/project-a` |
-| 查看某个 Skill 的输入、输出与恢复契约 | `python -m researchos.cli describe-skill pdf-note-card --workspace ./workspace/project-a` |
-| 启动或恢复一个引导式 Skill | `python -m researchos.cli run-skill pdf-note-card --workspace ./workspace/project-a --session-id reading-01` |
-| 查看可恢复的 Skill 会话 | `python -m researchos.cli skill-status --workspace ./workspace/project-a` |
+新项目使用 `run`，同一项目继续使用 `resume`。`run-task` 用于定点诊断一个阶段，不会推进完整主流程。
 
-T5 的资源放置、Codex/Claude 启动、外部 A-F 阶段和 T8 交接契约见 [T5 外部执行器使用指南](docs/cn/t5_external_executor.md)。
+### 系统状态与诊断
+
+```bash
+# 当前项目停在哪里、为什么暂停、下一步是什么？
+python -m researchos.cli status --workspace ./workspace/project-a
+
+# 本机有哪些 workspace 正在运行、暂停或疑似失联？
+python -m researchos.cli workspace-status --workspace-root ./workspace
+
+# 检查模型连接、本地 PDF/TeX 环境与状态机配置。
+python -m researchos.cli selftest
+python -m researchos.cli doctor --workspace ./workspace/project-a
+python -m researchos.cli validate-config
+
+# 查看一条运行记录，或校验某阶段已经保存的产物。
+python -m researchos.cli trace <run-id> --workspace ./workspace/project-a
+python -m researchos.cli validate --task T4 --workspace ./workspace/project-a
+```
+
+### 运行项目
+
+```bash
+# 新建并启动完整项目。
+python -m researchos.cli init-workspace \
+  --workspace ./workspace/project-a --project-id project-a --topic "研究主题"
+python -m researchos.cli run --workspace ./workspace/project-a
+
+# 单独诊断一个阶段；不会推动后续主流程。
+python -m researchos.cli run-task T4 --workspace ./workspace/t4-debug \
+  --from ./workspace/project-a
+```
+
+### 恢复、重入与迁移
+
+```bash
+# 正常继续：复用已确认选择和已完成产物。
+python -m researchos.cli resume --workspace ./workspace/project-a
+
+# 有意从已通过前置校验的阶段重新进入。
+python -m researchos.cli resume --workspace ./workspace/project-a --from-task T3
+python -m researchos.cli resume --workspace ./workspace/project-a --from-task T4
+
+# 明确重开 T2 时，会先展示现有检索范围/语言参数供确认。
+python -m researchos.cli resume --workspace ./workspace/project-a --from-task T2
+
+# 用另一项目的已验证上游材料创建独立的新 workspace。
+python -m researchos.cli run --workspace ./workspace/project-b \
+  --from ./workspace/project-a --start-task T4
+
+# 在当前 workspace 缺少声明输入时，从另一 workspace 补齐后再重入。
+python -m researchos.cli resume --workspace ./workspace/t4-debug \
+  --from ./workspace/project-a --from-task T4
+```
+
+`resume --from-task` 不会合并历史记录，也不要求你修改 `state.yaml`。`T3.6` 是可选综述决策，`T8` 是写作入口。显式重开 T2 是普通 resume 的例外：它会重新展示当前参数，避免新检索静默沿用过期范围。
+
+### Skill
+
+```bash
+python -m researchos.cli list-skills --workspace ./workspace/project-a
+python -m researchos.cli browse-skills --workspace ./workspace/project-a
+python -m researchos.cli describe-skill pdf-note-card --workspace ./workspace/project-a
+python -m researchos.cli run-skill pdf-note-card --workspace ./workspace/project-a \
+  --session-id reading-01
+python -m researchos.cli skill-status --workspace ./workspace/project-a
+```
+
+### T5 外部执行
+
+完整流程在 T4.5 通过后会自动进入 T5。T5 会确定性编译 handoff 并发布 13 个项目专属执行 Skill，不让模型重写这些控制文件；之后依次停在“协议就绪”“材料准备”“选择执行器”三个 Gate。
+
+```bash
+# 仅做 T5 定点诊断，不会启动真实实验。
+python -m researchos.cli run-task T5-REBOOST --workspace ./workspace/project-a
+python -m researchos.cli run-task T5-SPECIALIZE --workspace ./workspace/project-a
+python -m researchos.cli run-task T5-PROTOCOL-GATE --workspace ./workspace/project-a
+```
+
+协议和材料均就绪后，在执行器 Gate 选择 Codex CLI，再从 workspace 根目录启动：
+
+```bash
+cd workspace/project-a
+codex
+```
+
+```text
+请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research-execution/SKILL.md。
+```
+
+Writer Handoff 生成 `external_executor/executor_research_report.md`、`result_pack.json`、`executor_status.json` 与 `report/run_manifest.json` 后，用 `python -m researchos.cli run-task T8 --workspace ./workspace/project-a` 接收已核验的结果。外部执行器仍在写入时，不要在另一终端运行 `resume` 或第二个执行器。完整操作契约见 [T5 外部执行器使用指南](docs/cn/t5_external_executor.md)。
 
 跨项目复用已验证上游材料时，创建新的目标 workspace 后使用 `run --from <source-workspace> --start-task <task>`。它不是两个项目的合并操作。恢复细节见 [快速开始](docs/cn/QUICKSTART.md)。
 

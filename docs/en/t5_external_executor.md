@@ -20,12 +20,13 @@ Resume an existing project with:
 python -m researchos.cli resume --workspace ./workspace/project-a
 ```
 
-After REBOOST and project-Skill specialization, T5 stops at the experiment-material gate.
+After REBOOST and project-Skill specialization, T5 first stops at the **protocol-readiness gate**. This separates a compiled research handoff from authorization to run a real experiment.
 
-1. Put source datasets, baselines, benchmarks, model weights, and repositories under `workspace/project-a/resources/`. `datasets/`, `baselines/`, `benchmarks/`, and `repos/` are recommended organizing directories.
-2. Put only already runnable deployment assets under `workspace/project-a/external_executor/expr/`.
-3. Select “materials ready”, then choose Codex CLI, Claude Code, or a manual executor. `mock dry-run` only validates the local file protocol; it returns to the executor Gate and cannot enter T8 or support paper claims.
-4. For Codex CLI, start Codex from the workspace root:
+1. If the handoff reports `execution_readiness=ready`, continue to the material gate. If it reports `protocol_decision_required`, inspect and resolve the recorded setting decisions before executor selection or any real run. Typical decisions include the simulation/benchmark, agent backbone, scale, seed policy, budget, and compute resources.
+2. Put source datasets, baselines, benchmarks, model weights, and repositories under `workspace/project-a/resources/`. `datasets/`, `baselines/`, `benchmarks/`, and `repos/` are recommended organizing directories.
+3. Put only already runnable deployment assets under `workspace/project-a/external_executor/expr/`. When the protocol is still pending, material confirmation returns to the protocol Gate instead of bypassing it into executor selection.
+4. Choose Codex CLI, Claude Code, or a manual executor only after the protocol is ready and materials are confirmed. `mock dry-run` only validates the local file protocol; it returns to the executor Gate and cannot enter T8 or support paper claims.
+5. For Codex CLI, start Codex from the workspace root:
 
 ```bash
 cd workspace/project-a
@@ -63,12 +64,30 @@ python -m researchos.cli run-task T5-REBOOST \
 python -m researchos.cli run-task T5-SPECIALIZE \
   --workspace ./workspace/project-a
 
-# Show the executor-selection gate after specialization is complete.
+# Inspect the compiled protocol, pending settings, and authorization boundary.
+python -m researchos.cli run-task T5-PROTOCOL-GATE \
+  --workspace ./workspace/project-a
+
+# Show executor selection only when the protocol is ready.
 python -m researchos.cli run-task T5-EXECUTOR-GATE \
   --workspace ./workspace/project-a
 ```
 
 Resources may be added as soon as the workspace exists and should be ready before executor selection. Phase B classifies reviewed resources under `resources/byhand/`, `resources/Remote_acquisition/`, or `resources/reproduction/`; those labels describe provenance, not completed reproduction or experimental evidence.
+
+Calling `T5-EXECUTOR-GATE` directly while the handoff still requires protocol decisions redirects to `T5-PROTOCOL-GATE` and does not write an executor-selection artifact.
+
+## Protocol Readiness
+
+`external_executor/handoff_pack.json#execution_contract.execution_readiness` is the sole authorization boundary for real external execution. It is not a global judgment about whether the literature or hypotheses are credible.
+
+| Status | Already completed | Allowed next work | Explicitly forbidden |
+| --- | --- | --- | --- |
+| `ready` | Setting, metrics, baselines, claim graph, and execution decisions have source-bound records | Confirm materials, select an executor, and perform the declared contract | Treating plans or resource leads as experimental results |
+| `protocol_decision_required` | The handoff, metrics, baselines, and claim graph are compiled; pending decisions are retained explicitly | Inspect the protocol, add source-bound decisions, and prepare existing materials | Letting an executor choose framework/backbone/seed/scale/budget; implementation, formal runs, or a T8 result handoff |
+| `blocked` | The compiler retains a diagnostic record | Restore the genuinely missing source or minimum protocol field named in the report | Manually changing `generation_status` or retrying to hide the gap |
+
+`proposed_not_verified` is the **claim-verification status** for the central thesis, contributions, and hypotheses. It prevents an expected result from being written as an established finding, but does not by itself block a source-complete T5 handoff. Literature background can be `source_supported` and a resource catalog can be `discovered`; those statuses remain distinct from a proposed research claim.
 
 The material gate inventories paths and sizes under `resources/` but does not hash large datasets or weights. Phase B owns identity, revision, license, security, protocol-fit, and integrity verification.
 
@@ -106,13 +125,14 @@ external_executor/report/run_manifest.json
 | Artifact | Purpose |
 | --- | --- |
 | `external_executor/handoff_pack.json` | Research scope, claim boundary, experiment constraints, and source manifest |
+| `external_executor/handoff_pack.json#execution_contract.execution_readiness` | Distinguishes a compiled handoff, pending protocol decisions, and authorization for real execution |
 | `external_executor/paper_card_evidence_index.json` | Paper-note evidence index |
 | `external_executor/expected_outputs_schema.json` | Executor output contract |
 | `external_executor/allowed_paths.txt` | Authoritative writable-path policy |
 | `external_executor/AGENTS.md`, `external_executor/CLAUDE.md` | Executor instructions |
 | `external_executor/report/reboost_report.json`, `external_executor/report/reboost_validation_report.json` | Compilation and independent validation receipts |
 
-`T5-SPECIALIZE-EXECUTOR-SKILLS` then publishes `external_executor/project_skill_context.yaml`, its schema, `external_executor/skills/`, and specialization report/execution records. Do not edit the project-specific blocks by hand. Rebuild from REBOOST if upstream formal artifacts change.
+`T5-SPECIALIZE-EXECUTOR-SKILLS` then deterministically publishes `external_executor/project_skill_context.yaml`, its schema, `external_executor/skills/`, and specialization report/execution records. It does not call a model or ask one to repeatedly diagnose shell scripts; a schema, template, or genuine upstream-input failure writes its precise report and creates one targeted recovery pause. Do not edit the project-specific blocks by hand. Rebuild from REBOOST if upstream formal artifacts change.
 
 ## External Execution A to F
 

@@ -1000,6 +1000,20 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         ],
         "schemas": {},
     },
+    "T5-PROTOCOL-GATE": {
+        "inputs": {
+            "handoff_pack": "external_executor/handoff_pack.json",
+            "reboost_report": "external_executor/report/reboost_report.json",
+            "research_proposal": "ideation/proposal/research_proposal.md",
+            "exp_plan": "ideation/exp_plan.yaml",
+            "agents_md": "external_executor/AGENTS.md",
+        },
+        "outputs": {
+            "protocol_gate_decision": "external_executor/report/protocol_gate_decision.json",
+        },
+        "required_inputs": ["handoff_pack", "reboost_report", "exp_plan", "agents_md"],
+        "schemas": {},
+    },
     "T5-EXPR-MATERIAL-GATE": {
         "inputs": {
             "handoff_pack": "external_executor/handoff_pack.json",
