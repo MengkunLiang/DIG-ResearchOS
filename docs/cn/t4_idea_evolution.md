@@ -347,7 +347,7 @@ ideation/evolution/diagnostics/enrichment_<candidate-id>_attempt_<n>.json
 
 ### 4.7 Candidate Genome、Creative Context 与 Family
 
-完整 `CandidateDossier` 的科学核心在 `IdeaGenome` 中：
+完整 `CandidateDossier` 的科学核心在 `IdeaGenome` 中。Genome 是 Candidate 可演化、可审计的科研骨架，不是 Gate1 展示卡片，也不是可以任意拼接的文本模块。除 `candidate_id`、版本、创建代际、成熟度、Route 和 Parent IDs 等谱系元数据外，它有且只有以下 11 个科研 Gene：
 
 ```text
 problem, opportunity, challenged_assumption, core_thesis, mechanism,
@@ -355,9 +355,25 @@ design_or_artifact, contribution_package, hypothesis_bundle,
 validation_logic, boundary_conditions, risks
 ```
 
-`CreativeContext` 与 Genome 并存，保存不会因为表单压缩而丢掉的 LLM 科研表达：`conceptual_leap`、`competing_explanations`、`surprising_prediction`、`research_program_potential`、知识来源、证据状态与 reading/validation upgrade。它们描述的是 proposal，不是认证结论。
+| Gene | 要固定回答的科研问题 |
+| --- | --- |
+| `problem` | 研究要解释、预测、识别或改变的现实与理论问题是什么。 |
+| `opportunity` | 现有证据、理论或设计中为什么存在值得研究的张力、缺口或失败边界。 |
+| `challenged_assumption` | 哪个默认理论、机制或设计前提可能不成立。 |
+| `core_thesis` | Candidate 希望建立的中心论点是什么。 |
+| `mechanism` | 结果通过什么可解释、可反驳的因果或行为链条发生。 |
+| `design_or_artifact` | 将形成什么研究设计、测量、模型、数据构造或方法性产物。 |
+| `contribution_package` | 理论、机制、测量、设计或方法层面的潜在增量是什么。 |
+| `hypothesis_bundle` | 哪些可证伪命题构成研究计划的核心。 |
+| `validation_logic` | 如何用反事实、比较或判别试验区分主机制与竞争解释。 |
+| `boundary_conditions` | 结论适用于什么对象和条件，又不应外推到什么条件。 |
+| `risks` | 什么证据、替代解释、识别问题或可行性约束可能推翻该方向。 |
 
-Family 是候选组织和比较工具。代码可从 Genome 的透明相似度召回相近候选，便于 diversity 与交互分析；但词面相似度不是“这两个 Idea 等价”、更不是删除其中一个的科学结论。机制 DNA、依赖关系、是否应并行保留及是否应组合，必须由 LLM reviewer 和研究者解释。
+每个 Gene 都是 `IdeaGene(value, provenance)`。`provenance` 保存 `source_routes`、可回查的 `source_refs`、`reading_levels`、`evidence_role`、`confidence` 与 `upgrade_required`。因此当前 schema **没有**一个独立名为 `evidence_map` 的第 12 个 Gene。证据映射由逐 Gene provenance 和 Dossier 级的 `evidence_composition` 共同承担。摘要级、元数据级、综合推断或模型知识可以形成机会、猜想和阅读升级任务，但不能作为机制锚点或直接支持；若 Gene 依赖这类材料，必须保持相应证据角色并标记升级要求。
+
+`CandidateDossier` 还把 Genome 中的贡献和假设规范化为可被下游读取的 `contributions` 与 `hypotheses`。成熟 Candidate 必须有 2 至 4 条贡献和 2 至 4 条暂定假设；每条假设都包含机制、可观测预测和区分性检验。`CreativeContext` 则保存不会因为表单压缩而丢掉的 LLM 科研表达，例如 `conceptual_leap`、`competing_explanations`、`surprising_prediction`、`research_program_potential`、知识来源、证据状态与 reading/validation upgrade。它们描述的是 proposal，不是认证结论。
+
+Family 是候选组织和比较工具。代码只从 `problem`、`mechanism`、`contribution_package`、`hypothesis_bundle` 和 `validation_logic` 的透明词面重叠召回值得审查的候选对。它服务于 diversity 与交互分析，不是科学评分，更不是“这两个 Idea 等价”或删除其中一个的结论。机制关系、依赖关系、是否应并行保留及是否应组合，仍由 LLM reviewer 和研究者解释。
 
 ### 4.8 Independent Scoring：三个正式数值维度
 
@@ -413,7 +429,7 @@ Interaction Graph 的建议 pair（或有界 fallback pair）
   → Evolver 生成 Child
 ```
 
-Compatibility Reviewer 检查的是 problem compatibility、bottleneck complementarity、单一机制链、一致的假设、证据安全、assumption conflict、complexity risk 和完整 donor map，不是关键词是否相似。
+Compatibility Reviewer 检查的是 problem compatibility、bottleneck complementarity、单一机制链、一致的假设、证据安全、assumption conflict、complexity risk 和完整 donor map，不是关键词是否相似。获批的 `GeneDonorMap` 采用 `donors: {<gene_name>: <parent_candidate_id>}` 的显式映射；只有确实需要统一重写的字段才列入 `synthesized_genes`。这要求 Crossover 明确说明每个移植 Gene 的来源，并合成为一个 Thesis 与一条 Mechanism Chain，不能将多个 Parent 的段落或组件直接堆叠。
 
 持久化 enum 包括 `approved`、`rejected`、`uncertain` 和 `parallel`。其中只有 `approved` 能够授权编译 Gene Donor Map / Crossover Plan；`parallel` 是一等的、语义明确的“并行保留而不生成 Child”结论，不是错误或被降格的 rejection。模型常见但语义正确的“不要合并”输出会被无损处理：
 
@@ -427,7 +443,7 @@ Compatibility Reviewer 检查的是 problem compatibility、bottleneck complemen
 
 ### 4.11 Offspring、显式 Deferral 与 Parent Preservation
 
-Evolver 对每个 Plan 生成一个具有新 ID、正确 lineage、Gene Delta、复杂度变化和完整成熟 Candidate 的 Child；它不能自己换 Parent、换 Plan、打分或做 Survival。对于单 Plan，以下是正常的科研结果：
+Evolver 对每个 Plan 生成一个具有新 ID、正确 lineage、Gene Delta、复杂度变化和完整成熟 Candidate 的 Child；它不能自己换 Parent、换 Plan、打分或做 Survival。`GeneDelta` 会记录 `changed_genes`、`preserved_genes`、违反保留约束的字段以及文字增长比例，`ComplexityReport` 单独记录新增组件、数据需求和实验阶段。复杂度是需要解释和管理的演化诊断，不是自动淘汰理由。对于单 Plan，以下是正常的科研结果：
 
 - `no_improvement`：无法在不制造 cosmetic 改写的情况下得到实质改善；
 - `incompatible`：Crossover 无法形成单一 coherent thesis；
@@ -498,7 +514,7 @@ Planner 明确允许 LLM 使用通用学术知识、反事实重构和结构性 
 
 ### 5.3 Generator 的最小 Seed 契约
 
-Generator 的 prompt 明确要求：优先提出问题、thesis、机制、一个贡献、一个可证伪预测、一个风险与 Route origin；完整 presentation、多个 hypothesis、完整 evidence map、implication 和最终 experiment plan 可以留给 Enricher、Mutation 或 Card Compiler。Route 的 quota 是成本预算；若只会重复已存在的因果逻辑，少生成或 `unsupported` 比机械凑数更正确。
+Generator 的 prompt 明确要求：优先提出问题、thesis、机制、一个贡献、一个可证伪预测、一个风险与 Route origin；完整 presentation、多个 hypothesis、逐 Gene evidence provenance、implication 和最终 experiment plan 可以留给 Enricher、Mutation 或 Card Compiler。Route 的 quota 是成本预算；若只会重复已存在的因果逻辑，少生成或 `unsupported` 比机械凑数更正确。
 
 对 `cross_domain_bridge`，桥域名称、理由和查询本身是合法的创意语境，不需要先假装存在深读论文。模型必须把结构迁移写成 conjectural，说明风险和阅读/验证升级，不得只返回 bridge review 而不返回 Idea Seed。
 

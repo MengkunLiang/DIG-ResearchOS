@@ -296,9 +296,13 @@ After one normal attempt and one structural repair attempt, an unavailable enric
 
 ### 4.7 Genome, Creative Context, and Family
 
-The `IdeaGenome` includes problem, opportunity, challenged assumption, core thesis, mechanism, design/artifact, contribution package, hypothesis bundle, validation logic, boundaries, and risks. `CreativeContext` preserves the LLM-authored conceptual leap, competing explanations, surprising prediction, research-program potential, knowledge origin, evidence status, and required reading/validation upgrades.
+`IdeaGenome` is the Candidate's evolvable, auditable scientific backbone. It is not a Gate1 display card or a collection of freely composable text fragments. In addition to identity, version, generation, maturity, Route, and Parent metadata, it has exactly these 11 scientific genes: `problem`, `opportunity`, `challenged_assumption`, `core_thesis`, `mechanism`, `design_or_artifact`, `contribution_package`, `hypothesis_bundle`, `validation_logic`, `boundary_conditions`, and `risks`.
 
-Family is a comparison and organization mechanism. Deterministic similarity can surface potential siblings for diversity and interaction review, but lexical similarity is neither a scientific equivalence verdict nor a deletion rule. Mechanism DNA, dependencies, and whether candidates should remain parallel or be combined require LLM/researcher interpretation.
+Each gene is an `IdeaGene(value, provenance)`. Its provenance records source routes, traceable source references, reading levels, evidence role, confidence, and whether a reading or validation upgrade is required. The current schema therefore does **not** have a twelfth standalone `evidence_map` gene. Evidence mapping is distributed across per-gene provenance and the Dossier-level `evidence_composition`. Abstract-only, metadata-only, synthesis-inference, and model-derived material may motivate an opportunity, a conjecture, or an upgrade request, but cannot become a mechanism anchor or direct support.
+
+`CandidateDossier` additionally normalizes the Genome's scientific package into `contributions` and `hypotheses` for downstream use. An evolved Candidate has two to four contributions and two to four provisional hypotheses, each hypothesis carrying its mechanism, observable prediction, and discriminating test. `CreativeContext` preserves the LLM-authored conceptual leap, competing explanations, surprising prediction, research-program potential, knowledge origin, evidence status, and required reading/validation upgrades.
+
+Family is a comparison and organization mechanism. The deterministic interaction shortlist uses only `problem`, `mechanism`, `contribution_package`, `hypothesis_bundle`, and `validation_logic` to surface candidates worth review. It is neither a scientific equivalence verdict nor a deletion rule. Mechanism relationships, dependencies, and whether candidates should remain parallel or be combined require LLM/researcher interpretation.
 
 ### 4.8 Independent scoring with exactly three numerical dimensions
 
