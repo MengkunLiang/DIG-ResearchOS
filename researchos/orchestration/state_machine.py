@@ -1805,6 +1805,31 @@ def _coverage_gate_summary(workspace_dir: Path) -> dict[str, Any]:
     return summary
 
 
+def _t2_coverage_resume_context(workspace_dir: Path) -> str | None:
+    """Explain legacy T2 omissions without suppressing a usable coverage Gate."""
+
+    queue_paths = (
+        workspace_dir / "literature" / "deep_read_queue.jsonl",
+        workspace_dir / "literature" / "deep_read_queue_pending.jsonl",
+    )
+    if not any(path.is_file() for path in queue_paths):
+        return None
+    optional_history = (
+        ("检索日志", "literature/search_log.md"),
+        ("可读性审计", "literature/access_audit.md"),
+        ("覆盖提示", "literature/missing_areas.md"),
+        ("领域图", "literature/domain_map.json"),
+    )
+    missing = [label for label, rel_path in optional_history if not (workspace_dir / rel_path).is_file()]
+    if not missing:
+        return None
+    return (
+        "已从保存的阅读队列恢复覆盖决策。旧 workspace 未保留："
+        + "、".join(missing)
+        + "。这不会阻止你选择继续、定向补检或调整参数；若需要完整摘要，可选择回到 T2 定向补检来重建。"
+    )
+
+
 def _detect_literature_profile_hint(workspace_dir: Path) -> str:
     texts: list[str] = []
     for rel in ("project.yaml", "user_seeds/seed_outline_profile.json"):
@@ -2709,6 +2734,10 @@ class StateMachine:
         if node.task_id == "T2-PARAM-GATE":
             presentation["current_parameter_preview"] = build_literature_param_gate_preview(workspace_dir)
             options = enrich_literature_param_gate_options(options, workspace_dir)
+        elif node.task_id == "T2-COVERAGE-GATE" and workspace_dir is not None:
+            context = _t2_coverage_resume_context(workspace_dir)
+            if context:
+                presentation["recovery_context"] = context
         elif node.task_id in _CCF_TEMPLATE_GATE_TASKS:
             options = _ccf_template_gate_options(task_id=node.task_id)
         elif node.task_id == "T3.6-GATE-CORPUS" and workspace_dir is not None:
@@ -4351,6 +4380,10 @@ class StateMachine:
             if state.current_task == "T2-PARAM-GATE":
                 presentation["current_parameter_preview"] = build_literature_param_gate_preview(workspace_dir)
                 options = enrich_literature_param_gate_options(options, workspace_dir)
+            elif state.current_task == "T2-COVERAGE-GATE" and workspace_dir is not None:
+                context = _t2_coverage_resume_context(workspace_dir)
+                if context:
+                    presentation["recovery_context"] = context
             elif state.current_task in _CCF_TEMPLATE_GATE_TASKS:
                 options = _ccf_template_gate_options(task_id=state.current_task)
             if state.current_task == "T4-GATE1" and workspace_dir is not None:

@@ -2087,15 +2087,11 @@ def _prepare_resume_from_task(
     """
 
     requested_task = resolve_public_stage_alias(start_task)
-    # T2/T3 are researcher-facing literature re-entry points. Before either
-    # one resumes work, restore the decision surface that determines the
-    # corpus and reading scope.
-    if requested_task == "T2" and "T2-PARAM-CONFIRM-GATE" in state_machine.nodes:
-        start_task = "T2-PARAM-CONFIRM-GATE"
-    elif requested_task == "T3" and "T2-COVERAGE-GATE" in state_machine.nodes:
-        start_task = "T2-COVERAGE-GATE"
-    else:
-        start_task = requested_task
+    literature_target = _literature_resume_target(workspace_dir, requested_task)
+    # T2/T3 are researcher-facing literature re-entry points. Reopen their
+    # scope decision before doing work, including legacy workspaces that lack
+    # a previously persisted parameter record or an old search summary.
+    start_task = literature_target[0] if literature_target is not None else requested_task
     if start_task not in state_machine.nodes:
         print(f"Unknown --from-task: {requested_task}")
         return 2
@@ -2106,10 +2102,14 @@ def _prepare_resume_from_task(
     if not state_path.exists():
         print("--from-task requires an existing workspace state.yaml; use run --start-task for a new workspace.")
         return 2
-    ok, err = validate_prerequisites(workspace_dir, start_task)
-    if not ok:
-        print(f"Prerequisites not met for --from-task {start_task}: {err}")
-        return 3
+    # The coverage Gate is itself the recovery surface for older T2 outputs.
+    # Requiring every historical summary before it can be shown would hide the
+    # decision a researcher needs to repair or expand the corpus.
+    if start_task != "T2-COVERAGE-GATE":
+        ok, err = validate_prerequisites(workspace_dir, start_task)
+        if not ok:
+            print(f"Prerequisites not met for --from-task {start_task}: {err}")
+            return 3
     try:
         state = StateYaml.load_yaml(state_path)
     except Exception as exc:
@@ -2135,20 +2135,74 @@ def _prepare_resume_from_task(
     state.paused_at = datetime.now(timezone.utc).isoformat()
     state.last_error = None
     state.dump_yaml(state_path)
-    if requested_task == "T2" and start_task == "T2-PARAM-CONFIRM-GATE":
-        message = (
-            f"[进度] 已受校验地从 {prior_task} 重入 T2；"
-            "下一步会先展示现有文献覆盖参数供你确认或重新选择，不会立即提交新的检索请求。"
-        )
-    elif requested_task == "T3" and start_task == "T2-COVERAGE-GATE":
-        message = (
-            f"[进度] 已受校验地从 {prior_task} 重入 T3；"
-            "下一步会先复查 T2 检索覆盖，可继续当前阅读队列、定向补检，或返回调整阅读参数。"
-        )
+    if literature_target is not None:
+        message = f"[进度] 已受校验地从 {prior_task} 重入 {requested_task}；{literature_target[1]}"
     else:
         message = f"[进度] 已受校验地从 {prior_task} 重入 {start_task}；下一步将按该节点正常执行。"
     print(f"[Pipeline] resume_from_task={start_task}" if quiet else message, flush=True)
     return 0
+
+
+def _valid_literature_parameter_record(path: Path) -> bool:
+    """Return whether a saved T2 parameter choice can be shown for confirmation."""
+
+    if not path.is_file():
+        return False
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(value, dict) and bool(str(value.get("selected_option") or "").strip())
+
+
+def _literature_resume_target(workspace_dir: Path, current_task: str) -> tuple[str, str] | None:
+    """Choose the first human decision for a public T2/T3 re-entry.
+
+    These Gate choices are deliberately tolerant of older workspaces. A
+    missing parameter receipt must reopen the parameter chooser, not cause a
+    silent T2 continuation. A missing historical search report must not hide
+    T3's coverage decision when the actual reading queue remains available.
+    """
+
+    if current_task not in {"T2", "T3"}:
+        return None
+    if not (workspace_dir / "project.yaml").is_file():
+        return None
+
+    params_available = _valid_literature_parameter_record(
+        workspace_dir / "literature" / "literature_params.json"
+    )
+    parameter_target = "T2-PARAM-CONFIRM-GATE" if params_available else "T2-PARAM-GATE"
+
+    if current_task == "T2":
+        if params_available:
+            return (
+                parameter_target,
+                "下一步会先展示已保存的文献/阅读参数，供你确认不变继续或重新选择；不会立即提交新的检索请求。",
+            )
+        return (
+            parameter_target,
+            "当前 workspace 没有可确认的旧参数记录；下一步会先完整选择 T2/T3 参数，再开始或定向补充检索。",
+        )
+
+    queue_paths = (
+        workspace_dir / "literature" / "deep_read_queue.jsonl",
+        workspace_dir / "literature" / "deep_read_queue_pending.jsonl",
+    )
+    if any(path.is_file() for path in queue_paths):
+        return (
+            "T2-COVERAGE-GATE",
+            "下一步会先复查 T2 检索覆盖，可继续当前精读队列、定向补检，或返回调整 T2/T3 阅读参数。",
+        )
+    if params_available:
+        return (
+            parameter_target,
+            "当前 T3 阅读队列未保留；下一步会先确认已保存的参数并安全重建 T2 检索范围。",
+        )
+    return (
+        parameter_target,
+        "当前 T3 阅读队列和旧参数记录均未保留；下一步会先完整选择 T2/T3 参数并安全重建检索范围。",
+    )
 
 
 def _prepare_literature_resume_checkpoint(
@@ -2176,16 +2230,14 @@ def _prepare_literature_resume_checkpoint(
         return 2
 
     current_task = resolve_public_stage_alias(str(state.current_task or ""))
-    target_task = {"T2": "T2-PARAM-CONFIRM-GATE", "T3": "T2-COVERAGE-GATE"}.get(current_task)
-    if target_task is None or target_task not in state_machine.nodes:
+    literature_target = _literature_resume_target(workspace_dir, current_task)
+    if literature_target is None:
+        return 0
+    target_task, message = literature_target
+    if target_task not in state_machine.nodes:
         return 0
     pending_gate_id = state.pending_gate.gate_id if state.pending_gate is not None else ""
     if pending_gate_id and pending_gate_id != "runtime_recovery_gate":
-        return 0
-    ok, _error = validate_prerequisites(workspace_dir, target_task)
-    if not ok:
-        # The task's recovery route remains responsible for explaining missing
-        # inputs. Do not replace it with a decision that cannot be answered.
         return 0
 
     record = {
@@ -2193,6 +2245,7 @@ def _prepare_literature_resume_checkpoint(
         "to_task": target_task,
         "requested_at": datetime.now(timezone.utc).isoformat(),
         "reason": "ordinary_resume_literature_scope_checkpoint",
+        "decision_reason": message,
         "cleared_pending_gate": pending_gate_id or None,
         "prior_error": str(state.last_error or ""),
     }
@@ -2207,17 +2260,12 @@ def _prepare_literature_resume_checkpoint(
     state.last_error = None
     state.dump_yaml(state_path)
 
-    if current_task == "T2":
-        message = (
-            "[进度] T2 恢复前先展示已保存的文献/阅读参数；"
-            "可确认不变继续，或选择重新配置参数后再进行定向补检。"
-        )
-    else:
-        message = (
-            "[进度] T3 恢复前先复查 T2 检索覆盖；"
-            "可继续当前精读队列、定向补检，或返回调整阅读参数。"
-        )
-    print(f"[Pipeline] literature_resume_checkpoint={target_task}" if quiet else message, flush=True)
+    print(
+        f"[Pipeline] literature_resume_checkpoint={target_task}"
+        if quiet
+        else f"[进度] {current_task} 恢复决策：{message}",
+        flush=True,
+    )
     return 0
 
 

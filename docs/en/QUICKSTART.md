@@ -72,7 +72,7 @@ python -m researchos.cli workspace-status --workspace-root ./workspace
 
 `status` shows a compact project summary by default: current step, state, pending decision, latest actionable message, and the next command. Use `status --detail` only when you need the complete raw `state.yaml` for debugging.
 
-When ordinary `resume` returns to T2, ResearchOS first shows the saved T2/T3 coverage parameters. When it returns to T3, it first reopens the T2 coverage decision: continue the saved deep-read queue, run a targeted T2 supplement, or revise the T2/T3 parameters. Use `resume --from-task T2` or `resume --from-task T3` to deliberately reopen the same decision surfaces from a later stage; neither command deletes papers, notes, or previous diagnostics.
+When ordinary `resume` returns to T2, ResearchOS first shows the saved T2/T3 coverage parameters; a missing or invalid legacy parameter record instead opens the full parameter chooser. When it returns to T3, it first reopens the T2 coverage decision whenever the current or remaining deep-read queue is preserved: continue the queue, run a targeted T2 supplement, or revise T2/T3 parameters. A missing historical `search_log.md` or similar summary is explained in the Gate and does not suppress that decision. If no reading queue remains, ResearchOS returns to parameter selection so T2 can be rebuilt safely. Use `resume --from-task T2` or `resume --from-task T3` to deliberately reopen the same decision surfaces from a later stage; neither command deletes papers, notes, or previous diagnostics.
 
 ### Safe interruption
 
