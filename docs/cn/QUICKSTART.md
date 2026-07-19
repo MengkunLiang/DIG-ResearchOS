@@ -39,7 +39,7 @@ python -m researchos.cli run --workspace ./workspace/project-a
 候选 30 篇，精读 15 篇，摘要轻读 15 篇；英文稿，不搜索中文文献。
 ```
 
-确认面板会写入 `literature/literature_params.json`。英文稿件语言本身并不排除中文文献；当此事项重要时，应明确声明收录策略。普通 `resume` 恢复到 T2 时会先重新展示这份确认：可保持当前参数继续，或返回选择页修改。若是历史 workspace 且这份参数记录不存在或损坏，系统会直接打开完整参数选择，而不会静默跳过。修改参数不会丢弃论文和笔记，而是在保留现有语料的基础上开始一轮定向补检。
+确认面板会写入 `literature/literature_params.json`。英文稿件语言本身并不排除中文文献；当此事项重要时，应明确声明收录策略。普通 `resume` 回到 T2 时会显示轻量确认：选择确认继续不会新检索，只有选择修改才会回到完整参数选择。使用 `run --from <source> --start-task T2`、`resume --from <source> --from-task T2`，或显式 `resume --from-task T2` 时，系统会直接打开完整参数选择：这是一轮新的重入边界，不能静默沿用来源或旧运行的范围。修改参数不会丢弃论文和笔记，而是在保留现有语料的基础上开始一轮定向补检。
 
 ## 4. 综述分支
 
@@ -75,7 +75,7 @@ python -m researchos.cli workspace-status --workspace-root ./workspace
 
 `status` 默认显示简洁的项目摘要：当前步骤、状态、待定决策、最新可操作消息和下一个命令。仅在调试需要完整的原始 `state.yaml` 时使用 `status --detail`。
 
-普通 `resume` 恢复到 T2 时，ResearchOS 会先展示已保存的 T2/T3 覆盖参数；缺少旧参数记录时会改为完整参数选择。恢复到 T3 时，只要保留了当前或剩余精读队列，就会先重新打开 T2 检索覆盖决策：继续已保存的精读队列、执行一次定向 T2 补检，或返回调整 T2/T3 参数。历史 `search_log.md` 等摘要文件缺失只会在 Gate 中说明，不会吞掉这个选择；若连阅读队列也未保留，系统会先回到参数选择以安全重建 T2 范围。若要从更后阶段主动回到这些决策面，可用 `resume --from-task T2` 重看参数，或用 `resume --from-task T3` 重看检索覆盖；两者都不会删除论文、笔记或旧诊断。
+普通 `resume` 回到 T2/T3 时会先显示轻量 Gate：T2 可确认当前参数继续或选择修改；T3 可按当前队列继续、定向补检或调整参数。选择继续不会新增检索或改变范围。迁移或显式重入会先展示完整决策面：`run --from <source> --start-task T2`、`resume --from <source> --from-task T2` 和 `resume --from-task T2` 会进入完整参数选择；对应的 T3 命令会在保留阅读队列时进入检索覆盖决策。历史 `search_log.md` 等摘要缺失只会在覆盖 Gate 中说明，不会吞掉该选择；若连阅读队列也未保留，系统会先回到参数选择以安全重建 T2 范围。这些路径都不会删除论文、笔记或旧诊断。
 
 ### 安全暂停
 

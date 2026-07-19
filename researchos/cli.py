@@ -1614,6 +1614,7 @@ async def run_command(args: argparse.Namespace) -> int:
         checkpoint_code = _prepare_literature_resume_checkpoint(
             workspace_dir=workspace_dir,
             state_machine=state_machine,
+            source_import=bool(getattr(args, "from_workspace", None)),
             quiet=_is_quiet_args(args, runtime_settings),
         )
         if checkpoint_code != 0:
@@ -2012,12 +2013,12 @@ def _prepare_pipeline_start_workspace(
 ) -> int:
     """Prepare a full pipeline workspace that starts from an intermediate task."""
 
-    start_task = resolve_public_stage_alias(start_task)
-    if start_task not in state_machine.nodes:
-        print(f"Unknown --start-task: {start_task}")
+    requested_start_task = resolve_public_stage_alias(start_task)
+    if requested_start_task not in state_machine.nodes:
+        print(f"Unknown --start-task: {requested_start_task}")
         return 2
-    if state_machine.nodes[start_task].terminal:
-        print(f"--start-task cannot be terminal state: {start_task}")
+    if state_machine.nodes[requested_start_task].terminal:
+        print(f"--start-task cannot be terminal state: {requested_start_task}")
         return 2
 
     state_path = workspace_dir / "state.yaml"
@@ -2038,7 +2039,7 @@ def _prepare_pipeline_start_workspace(
             print("--from 不能指向当前 --workspace；请使用不同的新 workspace。")
             return 2
         _copy_task_inputs_from_workspace(
-            task_id=start_task,
+            task_id=requested_start_task,
             from_workspace=from_workspace,
             workspace_dir=workspace_dir,
             quiet=quiet,
@@ -2048,25 +2049,48 @@ def _prepare_pipeline_start_workspace(
             try:
                 source_state = StateYaml.load_yaml(source_state_path)
             except Exception as exc:
-                print(f"[warning] 无法读取来源 state.yaml，仍会从 {start_task} 初始化状态: {exc}")
+                print(f"[warning] 无法读取来源 state.yaml，仍会从 {requested_start_task} 初始化状态: {exc}")
 
-    ok, err = validate_prerequisites(workspace_dir, start_task)
-    if not ok:
-        print(f"Prerequisites not met for {start_task}: {err}")
-        if from_workspace is None:
-            print("Hint: use --from <other-workspace> to copy upstream artifacts.")
-        return 3
+    migration_target = (
+        _migration_literature_start_target(workspace_dir, requested_start_task)
+        if from_workspace is not None
+        else None
+    )
+    start_task = migration_target[0] if migration_target is not None else requested_start_task
+
+    # Imported T3 may have a usable reading queue but lack a historical
+    # search summary. The coverage Gate is where that researcher decision is
+    # made, so do not hide it behind old report prerequisites.
+    if start_task != "T2-COVERAGE-GATE":
+        ok, err = validate_prerequisites(workspace_dir, start_task)
+        if not ok:
+            print(f"Prerequisites not met for {start_task}: {err}")
+            if from_workspace is None:
+                print("Hint: use --from <other-workspace> to copy upstream artifacts.")
+            return 3
 
     state = _build_start_task_state(
         start_task=start_task,
         project_id=project_id,
         source_state=source_state,
+        source_history_boundary_task=requested_start_task,
     )
+    if migration_target is not None:
+        state.task_context["workspace_import_decision"] = {
+            "requested_task": requested_start_task,
+            "decision_task": start_task,
+            "reason": migration_target[1],
+            "source_workspace": str(from_workspace),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
     state.dump_yaml(state_path)
     if quiet:
         print(f"[Pipeline] state={start_task}", flush=True)
     else:
-        print(f"[进度] 已初始化 pipeline state: current_task={start_task}", flush=True)
+        if migration_target is not None:
+            print(f"[进度] 已导入来源材料；{migration_target[1]}", flush=True)
+        else:
+            print(f"[进度] 已初始化 pipeline state: current_task={start_task}", flush=True)
     return 0
 
 
@@ -2087,7 +2111,7 @@ def _prepare_resume_from_task(
     """
 
     requested_task = resolve_public_stage_alias(start_task)
-    literature_target = _literature_resume_target(workspace_dir, requested_task)
+    literature_target = _migration_literature_start_target(workspace_dir, requested_task)
     # T2/T3 are researcher-facing literature re-entry points. Reopen their
     # scope decision before doing work, including legacy workspaces that lack
     # a previously persisted parameter record or an old search summary.
@@ -2143,8 +2167,37 @@ def _prepare_resume_from_task(
     return 0
 
 
+def _migration_literature_start_target(workspace_dir: Path, current_task: str) -> tuple[str, str] | None:
+    """Choose the first scope decision when importing or explicitly re-entering T2/T3."""
+
+    if current_task not in {"T2", "T3"}:
+        return None
+    if not (workspace_dir / "project.yaml").is_file():
+        return None
+
+    if current_task == "T2":
+        return (
+            "T2-PARAM-GATE",
+            "这是导入或显式重入 T2；下一步会先完整选择本次 T2/T3 参数，不会沿用来源 workspace 的参数直接检索。",
+        )
+
+    queue_paths = (
+        workspace_dir / "literature" / "deep_read_queue.jsonl",
+        workspace_dir / "literature" / "deep_read_queue_pending.jsonl",
+    )
+    if any(path.is_file() for path in queue_paths):
+        return (
+            "T2-COVERAGE-GATE",
+            "这是导入或显式重入 T3；下一步会先复查检索覆盖，可继续当前精读队列、定向补检，或返回调整 T2/T3 参数。",
+        )
+    return (
+        "T2-PARAM-GATE",
+        "导入的 T3 材料没有保留阅读队列；下一步会先完整选择 T2/T3 参数并安全重建 T2 检索范围。",
+    )
+
+
 def _valid_literature_parameter_record(path: Path) -> bool:
-    """Return whether a saved T2 parameter choice can be shown for confirmation."""
+    """Return whether an existing workspace can show its saved T2 choice."""
 
     if not path.is_file():
         return False
@@ -2155,34 +2208,23 @@ def _valid_literature_parameter_record(path: Path) -> bool:
     return isinstance(value, dict) and bool(str(value.get("selected_option") or "").strip())
 
 
-def _literature_resume_target(workspace_dir: Path, current_task: str) -> tuple[str, str] | None:
-    """Choose the first human decision for a public T2/T3 re-entry.
+def _ordinary_literature_resume_target(workspace_dir: Path, current_task: str) -> tuple[str, str] | None:
+    """Offer a lightweight continue-or-adjust decision for the same workspace."""
 
-    These Gate choices are deliberately tolerant of older workspaces. A
-    missing parameter receipt must reopen the parameter chooser, not cause a
-    silent T2 continuation. A missing historical search report must not hide
-    T3's coverage decision when the actual reading queue remains available.
-    """
-
-    if current_task not in {"T2", "T3"}:
+    if current_task not in {"T2", "T3"} or not (workspace_dir / "project.yaml").is_file():
         return None
-    if not (workspace_dir / "project.yaml").is_file():
-        return None
-
     params_available = _valid_literature_parameter_record(
         workspace_dir / "literature" / "literature_params.json"
     )
-    parameter_target = "T2-PARAM-CONFIRM-GATE" if params_available else "T2-PARAM-GATE"
-
     if current_task == "T2":
         if params_available:
             return (
-                parameter_target,
-                "下一步会先展示已保存的文献/阅读参数，供你确认不变继续或重新选择；不会立即提交新的检索请求。",
+                "T2-PARAM-CONFIRM-GATE",
+                "下一步会显示当前 T2/T3 参数；确认继续不会新检索，只有选择重新配置才会改变范围。",
             )
         return (
-            parameter_target,
-            "当前 workspace 没有可确认的旧参数记录；下一步会先完整选择 T2/T3 参数，再开始或定向补充检索。",
+            "T2-PARAM-GATE",
+            "当前 workspace 没有可确认的参数记录；下一步会先完整选择 T2/T3 参数。",
         )
 
     queue_paths = (
@@ -2192,16 +2234,16 @@ def _literature_resume_target(workspace_dir: Path, current_task: str) -> tuple[s
     if any(path.is_file() for path in queue_paths):
         return (
             "T2-COVERAGE-GATE",
-            "下一步会先复查 T2 检索覆盖，可继续当前精读队列、定向补检，或返回调整 T2/T3 阅读参数。",
+            "下一步会确认继续当前阅读队列，或按你的选择补检/调整参数；选择继续不会新增检索。",
         )
     if params_available:
         return (
-            parameter_target,
-            "当前 T3 阅读队列未保留；下一步会先确认已保存的参数并安全重建 T2 检索范围。",
+            "T2-PARAM-CONFIRM-GATE",
+            "当前阅读队列未保留；下一步会确认参数后安全重建 T2 范围。",
         )
     return (
-        parameter_target,
-        "当前 T3 阅读队列和旧参数记录均未保留；下一步会先完整选择 T2/T3 参数并安全重建检索范围。",
+        "T2-PARAM-GATE",
+        "当前阅读队列和参数记录均未保留；下一步会先完整选择 T2/T3 参数。",
     )
 
 
@@ -2209,16 +2251,10 @@ def _prepare_literature_resume_checkpoint(
     *,
     workspace_dir: Path,
     state_machine: StateMachine,
+    source_import: bool = False,
     quiet: bool = False,
 ) -> int:
-    """Restore T2/T3 scope decisions before an ordinary literature resume.
-
-    Literature coverage is a researcher decision rather than a transient
-    runtime detail. A plain ``resume`` at T2 exposes the saved parameter
-    confirmation; a plain ``resume`` at T3 exposes the T2 coverage review.
-    Both paths preserve durable papers, notes, and diagnostics. Only an
-    explicit Gate choice can request a new retrieval round.
-    """
+    """Restore T2/T3's continue-or-adjust decision before a resume."""
 
     state_path = workspace_dir / "state.yaml"
     if not state_path.is_file():
@@ -2230,7 +2266,11 @@ def _prepare_literature_resume_checkpoint(
         return 2
 
     current_task = resolve_public_stage_alias(str(state.current_task or ""))
-    literature_target = _literature_resume_target(workspace_dir, current_task)
+    literature_target = (
+        _migration_literature_start_target(workspace_dir, current_task)
+        if source_import
+        else _ordinary_literature_resume_target(workspace_dir, current_task)
+    )
     if literature_target is None:
         return 0
     target_task, message = literature_target
@@ -2244,7 +2284,11 @@ def _prepare_literature_resume_checkpoint(
         "from_task": current_task,
         "to_task": target_task,
         "requested_at": datetime.now(timezone.utc).isoformat(),
-        "reason": "ordinary_resume_literature_scope_checkpoint",
+        "reason": (
+            "resume_from_workspace_literature_scope_checkpoint"
+            if source_import
+            else "ordinary_resume_literature_scope_checkpoint"
+        ),
         "decision_reason": message,
         "cleared_pending_gate": pending_gate_id or None,
         "prior_error": str(state.last_error or ""),
@@ -2263,7 +2307,11 @@ def _prepare_literature_resume_checkpoint(
     print(
         f"[Pipeline] literature_resume_checkpoint={target_task}"
         if quiet
-        else f"[进度] {current_task} 恢复决策：{message}",
+        else (
+            f"[进度] 从来源 workspace 导入后重入 {current_task}：{message}"
+            if source_import
+            else f"[进度] {current_task} 恢复决策：{message}"
+        ),
         flush=True,
     )
     return 0
@@ -2414,6 +2462,7 @@ def _build_start_task_state(
     start_task: str,
     project_id: str,
     source_state: StateYaml | None,
+    source_history_boundary_task: str | None = None,
 ) -> StateYaml:
     if source_state is None:
         return StateYaml(project_id=project_id, current_task=start_task, status="RUNNING")
@@ -2426,8 +2475,9 @@ def _build_start_task_state(
         task_context={},
     )
     kept_tasks: set[str] = set()
+    history_boundary = source_history_boundary_task or start_task
     for entry in source_state.history:
-        if entry.task == start_task:
+        if entry.task == history_boundary:
             break
         state.history.append(entry)
         kept_tasks.add(entry.task)

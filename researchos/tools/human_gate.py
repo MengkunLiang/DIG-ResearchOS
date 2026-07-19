@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 import io
 import json
+from pathlib import Path
 import re
 import shutil
 import unicodedata
@@ -296,6 +297,23 @@ def _compact_text(value: Any, limit: int = 220) -> str:
 
     del limit
     return " ".join(str(value or "").split())
+
+
+def _gate_excerpt(value: Any, *, max_chars: int) -> str:
+    """Return a visibly abbreviated, sentence-aware preview for a Gate."""
+
+    text = " ".join(str(value or "").split())
+    if len(text) <= max_chars:
+        return text
+    cutoff = max_chars
+    sentence_endings = [match.end() for match in re.finditer(r"[.!?。！？](?:\s|$)", text) if match.end() <= max_chars]
+    if sentence_endings:
+        cutoff = sentence_endings[-1]
+    else:
+        word_break = text.rfind(" ", 0, max_chars)
+        if word_break > max_chars // 2:
+            cutoff = word_break
+    return text[:cutoff].rstrip() + "..."
 
 
 def _t4_card_excerpt(value: Any, *, max_chars: int, max_sentences: int = 2) -> str:
@@ -2203,8 +2221,10 @@ class CLIHumanInterface(HumanInterface):
             rendered = _format_t36_survey_gate_field(key, value)
             if rendered is not None:
                 return rendered
-        if gate_id == "t36_corpus_gate" and key == "supplement_recommendation":
-            return _format_t36_supplement_recommendation(value)
+        if gate_id == "t36_corpus_gate":
+            rendered = _format_t36_corpus_gate_field(key, value)
+            if rendered is not None:
+                return rendered
         if gate_id == "t2_literature_param_confirm_gate" and key == "selected_parameters":
             if isinstance(value, str):
                 return _format_t2_selected_parameters_summary(
@@ -3415,6 +3435,56 @@ def _format_t36_survey_gate_field(key: str, value: Any) -> str | None:
     if key == "weak_evidence_preview":
         return _format_t36_weak_evidence_preview(value)
     return None
+
+
+def _format_t36_corpus_gate_field(key: str, value: Any) -> str | None:
+    """Keep the corpus choice focused on scope rather than a raw Survey plan."""
+
+    if key == "survey_plan":
+        return _format_t36_corpus_survey_plan(value)
+    if key == "current_notes":
+        return _format_t36_note_inventory(value, directory="literature/deep_read_notes", label="全文/部分阅读笔记")
+    if key == "shallow_read_notes":
+        return _format_t36_note_inventory(value, directory="literature/shallow_read_notes", label="摘要级阅读笔记")
+    if key == "supplement_recommendation":
+        return _format_t36_supplement_recommendation(value)
+    return None
+
+
+def _survey_plan_string_field(text: str, key: str) -> str:
+    match = re.search(rf'"{re.escape(key)}"\s*:\s*"((?:\\.|[^"\\])*)"', text, flags=re.DOTALL)
+    if match is None:
+        return ""
+    try:
+        return str(json.loads(f'"{match.group(1)}"'))
+    except json.JSONDecodeError:
+        return match.group(1).replace("\\n", " ").replace("\\\"", '"')
+
+
+def _format_t36_corpus_survey_plan(value: Any) -> str:
+    path, raw_text = _path_summary_text(value, default_path="drafts/survey/survey_plan.json")
+    title = _survey_plan_string_field(raw_text, "survey_title")
+    question = _survey_plan_string_field(raw_text, "central_question")
+    contribution = _survey_plan_string_field(raw_text, "review_contribution")
+    lines = [f"文件: {path}", "这里仅决定综述使用当前语料，还是先做一次定向补检；不会在 Gate 中展开完整计划 JSON。"]
+    if title:
+        lines.append("拟定题目: " + _gate_excerpt(title, max_chars=150))
+    if question:
+        lines.append("核心问题: " + _gate_excerpt(question, max_chars=220))
+    if contribution:
+        lines.append("综述定位: " + _gate_excerpt(contribution, max_chars=180))
+    lines.append("完整 taxonomy、范围、证据边界和章节计划见该文件；选择补检只会扩展语料，不会改变已保存的综述问题。")
+    return "\n".join(lines)
+
+
+def _format_t36_note_inventory(value: Any, *, directory: str, label: str) -> str:
+    paths = [str(item) for item in value if isinstance(item, str) and not Path(item).name.startswith("_")] if isinstance(value, list) else []
+    examples = [Path(path).name for path in paths[:4]]
+    lines = [f"{label}: {len(paths)} 份", f"位置: {directory}/"]
+    if examples:
+        lines.append("示例: " + "、".join(examples))
+    lines.append("完整清单保存在上述目录；本 Gate 只显示数量和少量示例。")
+    return "\n".join(lines)
 
 
 def _format_t36_supplement_recommendation(value: Any) -> str:
