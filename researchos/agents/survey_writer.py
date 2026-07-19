@@ -99,7 +99,7 @@ class SurveyWriterAgent(Agent):
             # actual builder.
             self.spec.tool_names = ["build_survey_figures", "finish_task"]
             self.spec.allowed_read_prefixes = ["drafts/survey/", "literature/"]
-            self.spec.allowed_write_prefixes = ["drafts/survey/figures/", "literature/"]
+            self.spec.allowed_write_prefixes = ["drafts/survey/figures/"]
         elif mode == "survey_expand":
             # Corpus expansion is one deterministic action after the human
             # already chose its scope.  Do not expose ask_human here: the old
@@ -274,7 +274,8 @@ class SurveyWriterAgent(Agent):
                 "本阶段不要调用 read_file，也不要自行枚举或猜测 literature 目录；工具会通过统一 literature_manifest 和 link audit "
                 "解析已验证的具体论文文件。"
                 "严禁生成性能/基线/相对提升图、跨研究指标比较、T2 筛选分数图、风险或安全热图，以及装饰图。"
-                "taxonomy 信息不足时，manifest 必须记录 skipped。写完 manifest 后 finish_task；不要在本阶段改写正文或调用 LaTeX。"
+                "taxonomy 信息不足时，manifest 必须记录 skipped。直接 paper ID 的可追溯性是固定事实约束，"
+                "不得通过工具参数放松。写完 manifest 后 finish_task；不要在本阶段改写正文或调用 LaTeX。"
             )
         elif phase == "survey_section":
             section_id = self._section_id(ctx)
@@ -480,13 +481,18 @@ class SurveyWriterAgent(Agent):
                 return False, "survey visual manifest 未证明实际可读文献输入；literature_manifest.note_cards 必须大于 0"
             link_audit = source.get("paper_link_audit") if isinstance(source.get("paper_link_audit"), dict) else {}
             unresolved = link_audit.get("unresolved_direct_paper_ids") if isinstance(link_audit.get("unresolved_direct_paper_ids"), list) else []
-            if unresolved:
-                return False, "survey visual manifest 包含未解析到本地笔记卡的 paper ID: " + ", ".join(str(item) for item in unresolved[:8])
             figures = manifest.get("figures") if isinstance(manifest.get("figures"), list) else []
             if status == "skipped":
                 if figures:
                     return False, "survey visual manifest 为 skipped 时不得包含图像"
+                # A skipped manifest intentionally records unresolved taxonomy
+                # IDs as a coverage diagnostic, but renders none of them.
+                # Requiring those IDs to resolve here contradicts the visual
+                # tool's documented skipped path and turns a normal resume
+                # into a false validation failure.
                 return True, None
+            if unresolved:
+                return False, "survey visual manifest 包含未解析到本地笔记卡的 paper ID: " + ", ".join(str(item) for item in unresolved[:8])
             if len(figures) != 1:
                 return False, "survey visual manifest 只能包含一张 taxonomy overview 图"
             if int(link_audit.get("direct_link_records") or 0) <= 0 or int(link_audit.get("resolved_direct_paper_ids") or 0) <= 0:

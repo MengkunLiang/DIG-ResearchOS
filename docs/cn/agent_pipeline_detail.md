@@ -2152,7 +2152,7 @@ audit_survey_coverage(...)
 
 审计只检查可确定化的结构质量，不替代 LLM 学术审稿；taxonomy 是否真正有解释力、公允性和理论贡献仍在 REVIEW 里审。
 
-双栏版式的规则是明确的：ICML、NeurIPS、ICLR、KDD 等 CCF 内置模板中，使用 `width=\textwidth` 的 taxonomy 总览必须放在 `\begin{figure*}...\end{figure*}` 内；普通 `figure` 只能使用 `\columnwidth`、`\linewidth` 或明显更小的宽度。普通 `figure` 搭配 `\textwidth` 往往不会让 LaTeX 编译报错，却会绘制到右侧文字栏，因此现在在 review 和 compile 之前由审计直接阻断。单栏 venue 不受这条双栏规则限制，但仍必须满足仅允许一张 taxonomy 图、所有直接论文链接可解析、不得伪造跨论文性能图的 visual manifest。
+双栏版式的规则是明确的：ICML、NeurIPS、ICLR、KDD 等 CCF 内置模板中，使用 `width=\textwidth` 的 taxonomy 总览必须放在 `\begin{figure*}...\end{figure*}` 内；普通 `figure` 只能使用 `\columnwidth`、`\linewidth` 或明显更小的宽度。普通 `figure` 搭配 `\textwidth` 往往不会让 LaTeX 编译报错，却会绘制到右侧文字栏，因此现在在 review 和 compile 之前由审计直接阻断。单栏 venue 不受这条双栏规则限制。T3.6-VISUALS 是确定性派生产物：运行时直接读取 taxonomy，并通过 citation map 将 citation/BibTeX key、DOI、OpenAlex ID 或笔记别名解析到 canonical 本地笔记卡，不把是否严格解析的选择交给模型。若实际生成 taxonomy 图，visual manifest 必须只含一张图、每个显示的直接论文链接都能解析到本地笔记卡，且不得伪造跨论文性能图；若链接不足，manifest 会诚实标为 `skipped`、不生成图，并保留未解析 ID 作为覆盖诊断，这不是 T3.6 的失败。resume 会无模型地重新核验历史 `skipped` manifest，以便新的 citation 映射能够使其转为可生成图。
 
 #### `T3.6-REVIEW`
 

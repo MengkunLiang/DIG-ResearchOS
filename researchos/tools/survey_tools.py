@@ -29,9 +29,11 @@ from ..runtime.bridge_catalog import load_bridge_catalog_summaries
 from ..runtime.literature_contract import (
     build_literature_manifest,
     build_note_card_lookup,
+    iter_literature_note_cards,
     normalize_paper_note_alias,
     paper_note_card_aliases,
 )
+from ..literature_citations import citation_entry_for_id, citation_map_key_lookup, refresh_literature_citation_maps
 from ..runtime.pdf_acquisition import acquire_retained_pdfs, attach_pdf_acquisition
 from ..literature_identity import record_note_id
 from ..literature_resources import format_resource_discovery_notice, refresh_resource_catalog
@@ -479,10 +481,6 @@ class BuildSurveyFiguresParams(BaseModel):
         le=20,
         description="Minimum explicit top-level taxonomy classes required for the one permitted overview figure.",
     )
-    require_resolved_note_cards: bool = Field(
-        default=True,
-        description="Require every direct paper ID in the taxonomy plan to resolve to a local structured note-card file.",
-    )
 
 
 class BuildSurveyFiguresTool(Tool):
@@ -512,7 +510,7 @@ class BuildSurveyFiguresTool(Tool):
         params = BuildSurveyFiguresParams(**kwargs)
         try:
             survey_plan_path = self.policy.resolve_read(params.survey_plan_path)
-            self.policy.resolve_write(params.literature_manifest_path)
+            self.policy.resolve_read(params.literature_manifest_path)
             deep_read_notes_dir = self.policy.resolve_read(params.deep_read_notes_dir)
             bridge_notes_dir = self.policy.resolve_read(params.bridge_notes_dir)
             output_dir = self.policy.resolve_write(params.output_dir)
@@ -536,25 +534,19 @@ class BuildSurveyFiguresTool(Tool):
                 content="survey note root is not a directory: " + ", ".join(str(path) for path in invalid_note_roots),
                 error="invalid_survey_note_root",
             )
-        literature_manifest = build_literature_manifest(self.policy.workspace_dir, write=True)
-        literature_counts = (
-            literature_manifest.get("counts") if isinstance(literature_manifest.get("counts"), dict) else {}
-        )
-        note_card_count = int(literature_counts.get("note_cards") or 0)
-        if note_card_count <= 0:
-            return ToolResult(
-                ok=False,
-                content=(
-                    "T3.6-VISUALS blocked: literature/literature_manifest.json contains zero readable "
-                    "paper-note cards. Run or resume T3/T3.5 literature preparation, or migrate legacy "
-                    "paper_notes/deep_read_notes/bridge_notes before generating survey visuals."
-                ),
-                error="literature_corpus_empty",
-                data={
-                    "manifest_path": params.literature_manifest_path,
-                    "counts": literature_counts,
-                },
-            )
+        note_cards = iter_literature_note_cards(self.policy.workspace_dir, include_shallow=True)
+        literature_counts = {
+            "note_cards": len(note_cards),
+            "full_or_partial_note_cards": sum(
+                1 for card in note_cards if card.evidence_level == "FULL_OR_PARTIAL_TEXT"
+            ),
+            "abstract_note_cards": sum(
+                1 for card in note_cards if card.evidence_level == "ABSTRACT_ONLY"
+            ),
+            "bridge_note_cards": sum(1 for card in note_cards if card.root_type == "bridge_notes"),
+            "cross_domain_catalog_files": 0,
+        }
+        note_card_count = int(literature_counts["note_cards"])
         try:
             import matplotlib
             matplotlib.use("Agg", force=True)
@@ -618,7 +610,7 @@ class BuildSurveyFiguresTool(Tool):
             len(top_level) >= params.min_top_level_classes
             and direct_link_count > 0
             and resolved_link_count > 0
-            and (not params.require_resolved_note_cards or not unresolved_ids)
+            and not unresolved_ids
         ):
             _render_survey_taxonomy_overview(
                 plt,
@@ -671,7 +663,7 @@ class BuildSurveyFiguresTool(Tool):
                 "only_one_figure": True,
                 "allowed_figure_ids": ["taxonomy_overview"],
                 "only_taxonomy_structure_and_explicit_paper_links": True,
-                "all_direct_paper_ids_must_resolve_to_note_cards": params.require_resolved_note_cards,
+                "all_direct_paper_ids_must_resolve_to_note_cards": True,
                 "performance_comparisons_forbidden": True,
                 "cross_study_relative_gains_forbidden": True,
                 "screening_scores_forbidden": True,
@@ -1023,6 +1015,9 @@ def _audit_taxonomy_paper_links(
 
     del deep_read_notes_dir, shallow_read_notes_dir, bridge_notes_dir
     card_paths = build_note_card_lookup(workspace, include_shallow=True)
+    cards_by_path = {card.rel_path: card for card in card_paths.values()}
+    citation_map = refresh_literature_citation_maps(workspace, write=False).get("citation_map", {})
+    citation_lookup = citation_map_key_lookup(citation_map if isinstance(citation_map, dict) else {})
 
     nodes = taxonomy.get("nodes") if isinstance(taxonomy.get("nodes"), list) else []
     direct_records: list[dict[str, str]] = []
@@ -1041,6 +1036,15 @@ def _audit_taxonomy_paper_links(
                 seen_ids.add(normalized)
                 unique_ids.append(normalized)
             resolved = card_paths.get(normalized) or card_paths.get(_normalize_paper_note_alias(normalized))
+            resolution_source = "note_card_alias" if resolved is not None else ""
+            if resolved is None:
+                citation_entry = citation_entry_for_id(normalized, lookup=citation_lookup)
+                source_file = str(citation_entry.get("source_file") or "") if citation_entry else ""
+                source_file = source_file.replace("\\", "/").lstrip("/")
+                if source_file:
+                    resolved = cards_by_path.get(f"literature/{source_file}")
+                    if resolved is not None:
+                        resolution_source = "citation_map"
             if resolved is not None:
                 consumed = consumed_by_path.setdefault(
                     resolved.rel_path,
@@ -1065,6 +1069,7 @@ def _audit_taxonomy_paper_links(
                     "paper_id": normalized,
                     "note_card": resolved.rel_path if resolved else "",
                     "status": "resolved_note_card" if resolved else "unresolved_note_card",
+                    "resolution_source": resolution_source,
                     "evidence_level": resolved.evidence_level if resolved else "UNKNOWN",
                     "root_type": resolved.root_type if resolved else "",
                     "sha256": resolved.sha256 if resolved else "",

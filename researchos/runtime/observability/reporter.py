@@ -266,6 +266,27 @@ class StageReporter:
             return False
         event_type = "ranking_generated" if tool_name in {"score_papers", "build_deep_read_queue", "analyze_idea_concentration"} else "calculation_summary"
         self._event(event_type, task_id=task_id, run_id=run_id, payload={"tool": tool_name, **summary})
+        if task_id == "T3.6-VISUALS" and tool_name == "build_survey_figures":
+            if not self.quiet and self.verbosity != "concise":
+                status = str(payload.get("status") or "").strip().casefold()
+                skipped = payload.get("skipped") if isinstance(payload.get("skipped"), list) else []
+                reason = ""
+                if skipped and isinstance(skipped[0], dict):
+                    reason = _compact_cli_text(skipped[0].get("reason") or "当前分类结构不足以生成可审计概览图", 180)
+                if status == "skipped":
+                    suffix = f"：{reason}" if reason else ""
+                    message = f"· 综述分类图 · 本轮不生成图{suffix}"
+                    style = "dim"
+                elif status == "generated":
+                    figure_paths = payload.get("figure_paths") if isinstance(payload.get("figure_paths"), list) else []
+                    path = _compact_cli_text(figure_paths[0], 120) if figure_paths else "taxonomy overview"
+                    message = f"· 综述分类图 · 已生成 {path}"
+                    style = "green"
+                else:
+                    message = f"· 综述分类图 · 状态 {status or 'unknown'}"
+                    style = "yellow"
+                self._render(Text(message, style=style, overflow="fold"))
+            return True
         if self.quiet or self.verbosity == "concise":
             return False
         title = str(summary.get("title") or tool_name)

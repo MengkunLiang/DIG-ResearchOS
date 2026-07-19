@@ -856,7 +856,10 @@ class AgentRunner:
                 or t3_pre_finalized
                 or t36_section_pre_finalized
             ):
-                t36_visuals_pre_finalized = await self._maybe_finalize_t36_visuals_before_llm(ctx)
+                t36_visuals_pre_finalized = await self._maybe_finalize_t36_visuals_before_llm(
+                    ctx,
+                    tool_map=tool_map,
+                )
             t36_compile_pre_finalized = False
             if not (
                 deterministic_pre_finalized
@@ -3705,35 +3708,74 @@ class AgentRunner:
         )
         return True
 
-    async def _maybe_finalize_t36_visuals_before_llm(self, ctx: ExecutionContext) -> bool:
-        """Reuse a valid deterministic taxonomy visual after a recoverable pause.
+    async def _maybe_finalize_t36_visuals_before_llm(
+        self,
+        ctx: ExecutionContext,
+        *,
+        tool_map: dict[str, Tool],
+    ) -> bool:
+        """Build or reuse the deterministic T3.6 taxonomy visual without an LLM loop.
 
-        T3.6-VISUALS has no scholarly generation step: the restricted tool
-        renders the taxonomy map and the validator checks its factual policy.
-        Once that manifest/PDF pair is valid, an LLM retry would add cost and
-        could not improve the artifact.  Resume should therefore continue from
-        the durable result without asking a provider to repeat the tool call.
+        T3.6-VISUALS has no remaining scholarly-writing decision.  The survey
+        plan is already authored and the only allowed output is a factual
+        taxonomy rendering.  Running it through an LLM lets a retry toggle
+        validation parameters, creating incompatible manifests.  Rebuild a
+        stale or invalid derived manifest directly instead; a legitimate
+        ``skipped`` manifest is a completed result, not a repair prompt.
         """
 
-        if ctx.task_id != "T3.6-VISUALS" or not self._is_resume_run(ctx):
+        if ctx.task_id != "T3.6-VISUALS":
             return False
         manifest_path = ctx.workspace_dir / "drafts" / "survey" / "figures" / "survey_visual_manifest.json"
         pdf_path = ctx.workspace_dir / "drafts" / "survey" / "figures" / "fig_taxonomy_overview.pdf"
-        if not manifest_path.exists() or manifest_path.stat().st_size <= 0:
-            return False
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, json.JSONDecodeError):
-            return False
-        status = str(manifest.get("status") or "").strip().lower() if isinstance(manifest, dict) else ""
-        if status == "generated" and (not pdf_path.exists() or pdf_path.stat().st_size <= 0):
-            return False
-        ok, err = self.agent.validate_outputs(ctx)
-        if not ok:
-            self.log.info("t36_visuals_resume_prefinalize_skipped", reason=err)
-            return False
+        reused = False
+        status = ""
+        if manifest_path.exists() and manifest_path.stat().st_size > 0:
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                manifest = None
+            status = str(manifest.get("status") or "").strip().lower() if isinstance(manifest, dict) else ""
+            # Re-evaluate a historical skipped manifest.  Citation-key
+            # resolution may have improved after a resume migration, while a
+            # valid generated PDF remains safe and inexpensive to reuse.
+            if status == "generated" and pdf_path.exists() and pdf_path.stat().st_size > 0:
+                reused, _err = self.agent.validate_outputs(ctx)
+
+        if not reused:
+            builder = tool_map.get("build_survey_figures")
+            if builder is None:
+                return False
+            self.progress.emit(
+                "[Survey Writer Agent] T3.6-VISUALS 正在确定性重建 taxonomy visual manifest；不会调用模型或改变综述正文。",
+                important=True,
+            )
+            result = await builder.execute()
+            if not result.ok:
+                detail = " ".join(str(result.content or result.error or "unknown visual build failure").split())[:1200]
+                raise RecoverableRuntimePause(
+                    "T3.6-VISUALS 的确定性图表编译未完成。"
+                    f"原因：{detail}。已保留 survey plan、文献笔记与既有图表产物；"
+                    "请修复实际输入后 resume，不会进入模型重试循环。"
+                )
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                raise RecoverableRuntimePause(
+                    "T3.6-VISUALS 已调用图表工具，但未写出可读取的 visual manifest。"
+                    f"原因：{exc}。"
+                ) from exc
+            status = str(manifest.get("status") or "").strip().lower() if isinstance(manifest, dict) else ""
+            ok, err = self.agent.validate_outputs(ctx)
+            if not ok:
+                raise RecoverableRuntimePause(
+                    "T3.6-VISUALS 已确定性编译，但 visual manifest 未通过完整性校验。"
+                    f"原因：{str(err or 'unknown validation error')[:1200]}。"
+                )
         self.progress.emit(
-            "[Survey Writer Agent] T3.6-VISUALS 检测到已通过 taxonomy-only 契约的 visual manifest，跳过重复 LLM 与图生成",
+            "[Survey Writer Agent] T3.6-VISUALS 已复用通过校验的 taxonomy visual manifest，跳过重复生成"
+            if reused
+            else "[Survey Writer Agent] T3.6-VISUALS 已确定性编译并验证 taxonomy visual manifest",
             important=True,
         )
         outputs = ["drafts/survey/figures/survey_visual_manifest.json"]
@@ -3741,9 +3783,9 @@ class AgentRunner:
             outputs.insert(0, "drafts/survey/figures/fig_taxonomy_overview.pdf")
         self._record_runtime_completion(
             ctx,
-            "t36_visuals_resume_prefinalize",
-            {"outputs": outputs},
-            action_type="t36_visuals_resume_prefinalize",
+            "t36_visuals_resume_prefinalize" if reused else "t36_visuals_deterministic",
+            {"outputs": outputs, "status": status},
+            action_type="t36_visuals_resume_prefinalize" if reused else "t36_visuals_deterministic",
         )
         return True
 
@@ -7956,6 +7998,8 @@ class AgentRunner:
             message = "Agent 成功完成（T3 resume 确定性收尾）"
         elif ok and metadata.get("completion_mode") == "t36_visuals_resume_prefinalize":
             message = "Agent 成功完成（T3.6 taxonomy visual 已验证，跳过重复生成）"
+        elif ok and metadata.get("completion_mode") == "t36_visuals_deterministic":
+            message = "Agent 成功完成（T3.6 taxonomy visual 已确定性编译并验证）"
         elif ok and metadata.get("completion_mode") == "t36_compile_resume_prefinalize":
             message = "Agent 成功完成（T3.6 survey PDF 已验证，跳过重复编译）"
         elif ok and metadata.get("completion_mode") == "t36_compile_deterministic":
