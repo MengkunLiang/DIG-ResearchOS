@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 import os
+import re
 from typing import Any, Literal
 from urllib.parse import quote, quote_plus
 import xml.etree.ElementTree as ET
@@ -445,11 +446,13 @@ class FetchPaperMetadataTool(Tool):
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         params = FetchPaperMetadataParams(**kwargs)
+        use_arxiv = params.source == "arxiv" or (
+            params.source == "auto" and _looks_like_arxiv_id(params.id)
+        )
+        canonical_arxiv_id = _normalize_arxiv_id(params.id) if use_arxiv else ""
         try:
-            if params.source == "arxiv" or (
-                params.source == "auto" and _looks_like_arxiv_id(params.id)
-            ):
-                paper = await self._fetch_arxiv(params.id)
+            if use_arxiv:
+                paper = await self._fetch_arxiv(canonical_arxiv_id)
             else:
                 paper = await self._fetch_s2(params.id)
         except ModuleNotFoundError:
@@ -460,10 +463,26 @@ class FetchPaperMetadataTool(Tool):
             )
         except Exception as exc:
             if httpx is not None and isinstance(exc, httpx.HTTPStatusError):
+                source_label = "arXiv" if use_arxiv else "论文元数据服务"
+                fallback_detail = (
+                    "已规范化 arXiv 标识后仍未返回条目；保留已有检索候选和本地阅读材料（如有），"
+                    "不将其视为论文不存在，也不升级证据等级。"
+                    if use_arxiv
+                    else "保留已有检索候选和本地阅读材料（如有），不将其视为论文不存在，也不升级证据等级。"
+                )
                 return ToolResult(
                     ok=False,
-                    content=f"Paper not found: {params.id} ({exc.response.status_code})",
+                    content=f"{source_label} 补充元数据未命中：{fallback_detail}",
                     error="not_found",
+                    data={
+                        "display_disposition": "auto_fallback",
+                        "fallback_available": True,
+                        "fallback_action": "retain_existing_search_candidate_without_metadata_enrichment",
+                        "source": source_label,
+                        "requested_identifier": params.id,
+                        "canonical_identifier": canonical_arxiv_id or params.id,
+                        "failure_class": "metadata_not_found",
+                    },
                 )
             if httpx is not None and isinstance(exc, httpx.RequestError):
                 from .http_outcomes import scholarly_http_failure
@@ -527,9 +546,23 @@ class FetchPaperMetadataTool(Tool):
         return paper
 
 
+_ARXIV_IDENTIFIER_RE = re.compile(
+    r"(?:https?://(?:export\.)?arxiv\.org/(?:abs|pdf)/|arxiv:\s*)?(\d{4}\.\d{4,5}(?:v\d+)?)(?:\.pdf)?/?$",
+    re.IGNORECASE,
+)
+
+
+def _normalize_arxiv_id(identifier: str) -> str:
+    """Return the bare arXiv identifier required by the Atom API."""
+
+    raw = str(identifier or "").strip()
+    match = _ARXIV_IDENTIFIER_RE.fullmatch(raw)
+    return match.group(1) if match else raw
+
+
 def _looks_like_arxiv_id(identifier: str) -> bool:
-    normalized = identifier.replace("arXiv:", "")
-    return "." in normalized and normalized.replace(".", "").replace("v", "").isdigit()
+    normalized = _normalize_arxiv_id(identifier)
+    return bool(re.fullmatch(r"\d{4}\.\d{4,5}(?:v\d+)?", normalized))
 
 
 def _require_httpx():

@@ -1371,6 +1371,14 @@ def summarize_tool_result(
                 attempt_text = f"已尝试 {candidate_count} 个候选 URL" if candidate_count else "已完成可用来源尝试"
                 reason_text = f"，最后原因：{last_error}" if last_error else ""
                 return f"PDF 未获取（{attempt_text}{reason_text}）；已自动转为摘要级阅读，不计为全文阅读。", path
+            if tool_name == "fetch_paper_metadata":
+                source = str(data.get("source") or "论文元数据服务")
+                identifier = str(data.get("canonical_identifier") or data.get("requested_identifier") or "该候选")
+                return (
+                    f"{source} 未返回 {identifier} 的补充元数据；已保留现有检索/本地笔记证据继续审计，"
+                    "不会将其视为论文不存在或升级证据等级。",
+                    path,
+                )
             return "当前材料已自动降级为较低证据等级并继续。", path
         if outcome.status == "AUTO_REPAIR":
             path = _extract_output_path(tool_name, data)

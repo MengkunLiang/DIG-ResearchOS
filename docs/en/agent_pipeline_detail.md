@@ -2615,6 +2615,10 @@ researchos run-task T4 --workspace ./workspace/local-test2
 - `compare_design_rationale_tuples`
 - `finish_task`
 
+### Targeted Search Boundary
+
+T4.5 may call `search_papers` and `fetch_paper_metadata` against the selected Candidate's `t45_search_targets.json` to check similar work, possible collisions, mechanism differences, and required baselines. This is audit-level supplementary retrieval: returned records are metadata/abstract leads for the current judgment and their role is stated in `novelty_audit.md` or `collision_cases.md`; they do not automatically download PDFs, enter the T2/T3 main literature pool or deep-reading queue, or raise the reading evidence level. A Candidate enters formal literature coverage only through an explicit supplementary-reading or retrieval-return decision.
+
 ### Input Files
 
 | Input key | File | Required | Meaning |

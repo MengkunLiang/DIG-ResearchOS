@@ -2617,6 +2617,10 @@ researchos run-task T4 --workspace ./workspace/local-test2
 - `compare_design_rationale_tuples`
 - `finish_task`
 
+### 定向检索边界
+
+T4.5 可以围绕已选 Candidate 的 `t45_search_targets.json` 调用 `search_papers` 与 `fetch_paper_metadata`，以检查相似工作、潜在 collision、机制差异和必需 baseline。这是审计级的补充检索：返回记录只作为本轮判断的 metadata/摘要线索，并在 `novelty_audit.md` 或 `collision_cases.md` 中说明其作用；不会自动下载 PDF、写入 T2/T3 主文献池、进入精读队列或提高阅读证据等级。只有显式发起补读或回流检索时，候选才可以进入正式文献覆盖流程。
+
 ### 输入文件
 
 | 输入 key | 文件 | 必需 | 含义 |
