@@ -160,7 +160,7 @@ gates:
   # 允许用户确认进入 T2、返回重选，或结束项目。
   t2_literature_param_confirm_gate:
     title: "T2 文献覆盖参数最终确认"
-    description: "请最后确认本轮 T2/T3 将使用的覆盖参数。确认后才会真正开始文献检索；如果数字或语言不对，请返回重选。"
+    description: "请确认本轮 T2/T3 将使用的覆盖参数。首次运行后会开始检索；从 T2 恢复时可确认不变继续，或返回重选并启动一轮保留旧结果的定向补检。"
     presentation:
       selected_parameters:
         from_file: literature/literature_params.json
@@ -171,17 +171,21 @@ gates:
           你现在只需要判断：
           - 参数摘要是否符合本轮研究/综述需求；
           - 写作语言与是否允许中文文献是否正确；
-          - 是否可以正式开始 T2 检索。
-          如果刚才自定义输入错了，选择“返回重选参数”，不会启动 T2。
+          - 是否可以继续当前 T2，或在恢复时重新配置后补充检索。
+          如果数字、语言或覆盖范围不对，选择“重新选择参数并更新检索范围”。
     options:
       - id: confirm_start_t2
         label: "确认，开始 T2 检索"
         aliases: ["确认", "开始", "start", "continue", "yes", "y"]
         next: T2
       - id: revise_params
-        label: "返回重选参数"
+        label: "重新选择参数并更新检索范围"
+        description: "保留已有论文和阅读笔记；重新选择 T2/T3 覆盖参数后，只补未覆盖的检索角度。"
         aliases: ["重选", "修改", "revise", "back"]
         next: T2-PARAM-GATE
+        extra:
+          allow_t2_failure_recovery: false
+          t2_user_requested_expansion: true
       - id: stop_project
         label: "结束项目"
         aliases: ["结束", "停止", "stop", "done"]
@@ -703,7 +707,7 @@ gates:
   # 这个 gate 把补检/复核建议交给用户决策，避免系统在覆盖不足时直接进入 T3。
   t2_coverage_gate:
     title: "T2 检索覆盖确认"
-    description: "Scout 已完成初步检索、验证、引用图和 deep-read queue。请确认是否按当前队列进入 T3，或回到 T2 扩检/调整。"
+    description: "Scout 已完成初步检索、验证、引用图和 deep-read queue。T3 恢复时也会先回到这里，确认是否继续当前队列、定向补检，或调整 T2/T3 阅读参数。"
     presentation:
       search_log:
         from_file: literature/search_log.md
@@ -727,11 +731,20 @@ gates:
         summary_chars: 12000
     options:
       - id: continue_to_t3
-        label: "进入 T3 精读"
+        label: "按当前队列进入 T3 精读"
+        description: "不新增检索；继续已保存的 deep-read queue 和未完成阅读。"
         next: T3
       - id: rerun_t2_expand
-        label: "回到 T2 扩检/调整 query"
+        label: "回到 T2 定向补检 / 调整 query"
+        description: "保留已有语料，只检索当前 missing_areas 指出的主题、时间窗口或来源。"
         next: T2
+        extra:
+          allow_t2_failure_recovery: false
+          t2_user_requested_expansion: true
+      - id: revise_t2_parameters
+        label: "调整 T2/T3 阅读参数后再检索"
+        description: "返回参数选择页。确认新参数后保留已有语料，并按新范围执行一轮定向补检。"
+        next: T2-PARAM-GATE
         extra:
           allow_t2_failure_recovery: false
           t2_user_requested_expansion: true

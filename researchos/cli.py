@@ -1609,6 +1609,14 @@ async def run_command(args: argparse.Namespace) -> int:
         )
         if reentry_code != 0:
             return reentry_code
+    elif bool(getattr(args, "resume", False)):
+        checkpoint_code = _prepare_literature_resume_checkpoint(
+            workspace_dir=workspace_dir,
+            state_machine=state_machine,
+            quiet=_is_quiet_args(args, runtime_settings),
+        )
+        if checkpoint_code != 0:
+            return checkpoint_code
 
     try:
         prepared = await _prepare_runtime(args, workspace_dir)
@@ -2078,16 +2086,15 @@ def _prepare_resume_from_task(
     """
 
     requested_task = resolve_public_stage_alias(start_task)
-    # A normal ``resume`` deliberately reuses its already confirmed Literature
-    # Contract.  An explicit ``--from-task T2`` is different: the researcher
-    # is intentionally reopening retrieval, so show the workspace-local
-    # coverage/language settings once more before any new search request.
-    # They can confirm unchanged settings or return to the parameter chooser.
-    start_task = (
-        "T2-PARAM-CONFIRM-GATE"
-        if requested_task == "T2" and "T2-PARAM-CONFIRM-GATE" in state_machine.nodes
-        else requested_task
-    )
+    # T2/T3 are researcher-facing literature re-entry points. Before either
+    # one resumes work, restore the decision surface that determines the
+    # corpus and reading scope.
+    if requested_task == "T2" and "T2-PARAM-CONFIRM-GATE" in state_machine.nodes:
+        start_task = "T2-PARAM-CONFIRM-GATE"
+    elif requested_task == "T3" and "T2-COVERAGE-GATE" in state_machine.nodes:
+        start_task = "T2-COVERAGE-GATE"
+    else:
+        start_task = requested_task
     if start_task not in state_machine.nodes:
         print(f"Unknown --from-task: {requested_task}")
         return 2
@@ -2130,11 +2137,86 @@ def _prepare_resume_from_task(
     if requested_task == "T2" and start_task == "T2-PARAM-CONFIRM-GATE":
         message = (
             f"[进度] 已受校验地从 {prior_task} 重入 T2；"
-            "下一步会先展示现有文献覆盖参数供你确认或返回重选，不会立即提交新的检索请求。"
+            "下一步会先展示现有文献覆盖参数供你确认或重新选择，不会立即提交新的检索请求。"
+        )
+    elif requested_task == "T3" and start_task == "T2-COVERAGE-GATE":
+        message = (
+            f"[进度] 已受校验地从 {prior_task} 重入 T3；"
+            "下一步会先复查 T2 检索覆盖，可继续当前阅读队列、定向补检，或返回调整阅读参数。"
         )
     else:
         message = f"[进度] 已受校验地从 {prior_task} 重入 {start_task}；下一步将按该节点正常执行。"
     print(f"[Pipeline] resume_from_task={start_task}" if quiet else message, flush=True)
+    return 0
+
+
+def _prepare_literature_resume_checkpoint(
+    *,
+    workspace_dir: Path,
+    state_machine: StateMachine,
+    quiet: bool = False,
+) -> int:
+    """Restore T2/T3 scope decisions before an ordinary literature resume.
+
+    Literature coverage is a researcher decision rather than a transient
+    runtime detail. A plain ``resume`` at T2 exposes the saved parameter
+    confirmation; a plain ``resume`` at T3 exposes the T2 coverage review.
+    Both paths preserve durable papers, notes, and diagnostics. Only an
+    explicit Gate choice can request a new retrieval round.
+    """
+
+    state_path = workspace_dir / "state.yaml"
+    if not state_path.is_file():
+        return 0
+    try:
+        state = StateYaml.load_yaml(state_path)
+    except Exception as exc:
+        print(f"Unable to load existing state.yaml for literature resume checkpoint: {exc}")
+        return 2
+
+    current_task = resolve_public_stage_alias(str(state.current_task or ""))
+    target_task = {"T2": "T2-PARAM-CONFIRM-GATE", "T3": "T2-COVERAGE-GATE"}.get(current_task)
+    if target_task is None or target_task not in state_machine.nodes:
+        return 0
+    pending_gate_id = state.pending_gate.gate_id if state.pending_gate is not None else ""
+    if pending_gate_id and pending_gate_id != "runtime_recovery_gate":
+        return 0
+    ok, _error = validate_prerequisites(workspace_dir, target_task)
+    if not ok:
+        # The task's recovery route remains responsible for explaining missing
+        # inputs. Do not replace it with a decision that cannot be answered.
+        return 0
+
+    record = {
+        "from_task": current_task,
+        "to_task": target_task,
+        "requested_at": datetime.now(timezone.utc).isoformat(),
+        "reason": "ordinary_resume_literature_scope_checkpoint",
+        "cleared_pending_gate": pending_gate_id or None,
+        "prior_error": str(state.last_error or ""),
+    }
+    history = state.task_context.get("literature_resume_checkpoints")
+    records = list(history) if isinstance(history, list) else []
+    records.append(record)
+    state.task_context["literature_resume_checkpoints"] = records[-20:]
+    state.current_task = target_task
+    state.status = "PAUSED"
+    state.pending_gate = None
+    state.paused_at = datetime.now(timezone.utc).isoformat()
+    state.last_error = None
+    state.dump_yaml(state_path)
+
+    if current_task == "T2":
+        message = (
+            "[进度] T2 恢复前先展示已保存的文献/阅读参数；"
+            "可确认不变继续，或选择重新配置参数后再进行定向补检。"
+        )
+    else:
+        message = (
+            "[进度] T3 恢复前先复查 T2 检索覆盖；"
+            "可继续当前精读队列、定向补检，或返回调整阅读参数。"
+        )
+    print(f"[Pipeline] literature_resume_checkpoint={target_task}" if quiet else message, flush=True)
     return 0
 
 
@@ -3940,7 +4022,7 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser.add_argument(
         "--from-task",
         default=None,
-        help="在当前 workspace 中受校验地从指定任务重入，例如 T4；会清除当前 pending gate 并记录重入原因",
+        help="在当前 workspace 中受校验地从指定任务重入，例如 T4；T2 会先确认/重选阅读参数，T3 会先复查检索覆盖",
     )
     resume_parser.add_argument(
         "--from",

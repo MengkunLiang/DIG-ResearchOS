@@ -39,7 +39,7 @@ python -m researchos.cli run --workspace ./workspace/project-a
 候选 30 篇，精读 15 篇，摘要轻读 15 篇；英文稿，不搜索中文文献。
 ```
 
-确认面板会写入 `literature/literature_params.json`。英文稿件语言本身并不排除中文文献；当此事项重要时，应明确声明收录策略。
+确认面板会写入 `literature/literature_params.json`。英文稿件语言本身并不排除中文文献；当此事项重要时，应明确声明收录策略。普通 `resume` 恢复到 T2 时会先重新展示这份确认：可保持当前参数继续，或返回选择页修改。修改参数不会丢弃论文和笔记，而是在保留现有语料的基础上开始一轮定向补检。
 
 ## 4. 综述分支
 
@@ -75,6 +75,8 @@ python -m researchos.cli workspace-status --workspace-root ./workspace
 
 `status` 默认显示简洁的项目摘要：当前步骤、状态、待定决策、最新可操作消息和下一个命令。仅在调试需要完整的原始 `state.yaml` 时使用 `status --detail`。
 
+普通 `resume` 恢复到 T2 时，ResearchOS 会先展示已保存的 T2/T3 覆盖参数；恢复到 T3 时，会先重新打开 T2 检索覆盖决策：继续已保存的精读队列、执行一次定向 T2 补检，或返回调整 T2/T3 参数。若要从更后阶段主动回到这些决策面，可用 `resume --from-task T2` 重看参数，或用 `resume --from-task T3` 重看检索覆盖；两者都不会删除论文、笔记或旧诊断。
+
 ### 安全暂停
 
 运行中的项目需要暂停时按一次 `Ctrl+C`。ResearchOS 会停止当前命令、把 `state.yaml` 标记为 `PAUSED`，并显示可直接复制的 `resume` 命令；已落盘的论文、笔记和阶段产物会保留。终端正在等待 provider 或用户输入时，第一次 `Ctrl+C` 也会走同一保存路径。第二次 `Ctrl+C` 表示立即退出，仅在不需要等待清理完成时使用。
@@ -88,7 +90,7 @@ python -m researchos.cli workspace-status --workspace-root ./workspace
 | `init-workspace` | 创建项目工作区和基线输入 | `init-workspace --workspace <dir> --project-id <id> --topic <topic>` |
 | `run` | 运行完整流水线；可选择从其他项目复用已验证的前提条件 | `run --workspace <dir>`; `run --workspace <new> --from <source> --start-task T4` |
 | `run_smoke` | 运行一个真实工具的冒烟工作流 | `run_smoke --workspace <dir>` |
-| `resume` | 继续已暂停的项目 | `resume --workspace <dir>`; 使用 `--from-task <task>` 进行同一工作区的有目的重新进入 |
+| `resume` | 继续已暂停的项目；T2 会先确认参数，T3 会先复查检索覆盖 | `resume --workspace <dir>`; 使用 `--from-task T2` 重看参数，或 `--from-task T3` 重看检索覆盖 |
 | `run-task` | 通常诊断或执行单个任务而不推进主流水线；公共名 `T8` 是特例，会接收外部 handoff 并运行完整 T8 链 | `run-task T4 --workspace <dir>`；`run-task T8 --workspace <dir>` |
 | `status` / `workspace-status` | 检查单个项目或工作区根目录；`status --detail` 打印原始状态 | `status --workspace <dir>`; `workspace-status --workspace-root ./workspace` |
 | `configure-llm` / `selftest` | 配置并检查所有阶段共用的 provider/model connection | `configure-llm`; `selftest` |

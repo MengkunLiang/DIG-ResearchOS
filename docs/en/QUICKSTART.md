@@ -36,7 +36,7 @@ At the T2 gate, select a profile or enter one sentence. Unspecified fields keep 
 30 candidate papers, 15 deep reads, 15 lightweight abstract reads; English manuscript; exclude Chinese-language retrieval.
 ```
 
-The confirmation panel writes `literature/literature_params.json`. English manuscript language does not by itself exclude Chinese literature; explicitly state the inclusion policy when that matters.
+The confirmation panel writes `literature/literature_params.json`. English manuscript language does not by itself exclude Chinese literature; explicitly state the inclusion policy when that matters. A plain `resume` paused at T2 first reopens this confirmation: keep the saved parameters to continue, or return to the selector to change them. A parameter change preserves papers and notes and starts a targeted expansion rather than discarding the existing corpus.
 
 ## 4. Survey Branch
 
@@ -72,6 +72,8 @@ python -m researchos.cli workspace-status --workspace-root ./workspace
 
 `status` shows a compact project summary by default: current step, state, pending decision, latest actionable message, and the next command. Use `status --detail` only when you need the complete raw `state.yaml` for debugging.
 
+When ordinary `resume` returns to T2, ResearchOS first shows the saved T2/T3 coverage parameters. When it returns to T3, it first reopens the T2 coverage decision: continue the saved deep-read queue, run a targeted T2 supplement, or revise the T2/T3 parameters. Use `resume --from-task T2` or `resume --from-task T3` to deliberately reopen the same decision surfaces from a later stage; neither command deletes papers, notes, or previous diagnostics.
+
 ### Safe interruption
 
 Press `Ctrl+C` once to pause a running project. ResearchOS stops the current command, marks `state.yaml` as `PAUSED`, and prints a copyable `resume` command; persisted papers, notes, and stage artifacts remain in place. The same path applies while the terminal is waiting for a provider or for user input. A second `Ctrl+C` requests an immediate exit and should be used only when you do not need to wait for cleanup.
@@ -85,7 +87,7 @@ Do not use `Ctrl+Z` to end a project. It only suspends the shell job: the proces
 | `init-workspace` | Create a project workspace and baseline inputs | `init-workspace --workspace <dir> --project-id <id> --topic <topic>` |
 | `run` | Run the full pipeline; optionally reuse verified prerequisites from another project | `run --workspace <dir>`; `run --workspace <new> --from <source> --start-task T4` |
 | `run_smoke` | Run a real-tool smoke workflow | `run_smoke --workspace <dir>` |
-| `resume` | Continue a paused project | `resume --workspace <dir>`; use `--from-task <task>` for deliberate same-workspace reentry |
+| `resume` | Continue a paused project; T2 reopens parameter confirmation and T3 reopens retrieval coverage | `resume --workspace <dir>`; use `--from-task T2` to revisit parameters or `--from-task T3` to revisit coverage |
 | `run-task` | Diagnose or execute one task without advancing the main pipeline; public `T8` is the deliberate exception that accepts the external handoff and runs the complete T8 chain | `run-task T4 --workspace <dir>`; `run-task T8 --workspace <dir>` |
 | `status` / `workspace-status` | Inspect one project or a workspace root; `status --detail` prints raw state | `status --workspace <dir>`; `workspace-status --workspace-root ./workspace` |
 | `configure-llm` / `selftest` | Configure and check the provider/model connection shared by every stage | `configure-llm`; `selftest` |
