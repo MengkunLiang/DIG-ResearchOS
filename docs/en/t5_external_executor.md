@@ -22,10 +22,10 @@ python -m researchos.cli resume --workspace ./workspace/project-a
 
 After REBOOST and project-Skill specialization, T5 first stops at the **protocol-readiness gate**. This separates a compiled research handoff from authorization to run a real experiment.
 
-1. If the handoff reports `execution_readiness=ready`, continue to the material gate. If it reports `protocol_decision_required`, inspect and resolve the recorded setting decisions before executor selection or any real run. Typical decisions include the simulation/benchmark, agent backbone, scale, seed policy, budget, and compute resources.
-2. Put source datasets, baselines, benchmarks, model weights, and repositories under `workspace/project-a/resources/`. `datasets/`, `baselines/`, `benchmarks/`, and `repos/` are recommended organizing directories.
-3. Put only already runnable deployment assets under `workspace/project-a/external_executor/expr/`. When the protocol is still pending, material confirmation returns to the protocol Gate instead of bypassing it into executor selection.
-4. Choose Codex CLI, Claude Code, or a manual executor only after the protocol is ready and materials are confirmed. `mock dry-run` only validates the local file protocol; it returns to the executor Gate and cannot enter T8 or support paper claims.
+1. If the handoff reports `execution_readiness=ready`, continue to full-executor selection. If it reports `protocol_decision_required`, do not assume that you need to supply files or choose every operational value yourself. Choose “let the external executor prepare resources” to launch bounded Phase A/B. That mode discovers, locks revisions for, statically reviews, and records public resources; it cannot implement or run an experiment. For a setting that remains within the declared T4.5 scope, Phase B writes an exact source-backed `operational_settings` record (package/version/model/scale/benchmark resource) that the recompiled handoff passes to the full executor. An undeclared seed policy uses the stable, auditable ResearchOS ensemble.
+2. Source datasets, baselines, benchmarks, model weights, and repositories may be placed under `workspace/project-a/resources/`, but are not required by hand. When none are available, Phase B checks local resources, then authorized public sources, and only then provenance-backed baseline reimplementation where permitted.
+3. Put only already runnable deployment assets under `workspace/project-a/external_executor/expr/`. After automatic resource preparation, stop the external executor and run `resume`; ResearchOS accepts the Phase B report and recompiles T5.
+4. Choose Codex CLI, Claude Code, or a manual executor for full experiments only after the protocol is ready and materials are confirmed. `mock dry-run` only validates the local file protocol; it returns to the executor Gate and cannot enter T8 or support paper claims.
 5. For Codex CLI, start Codex from the workspace root:
 
 ```bash
@@ -64,7 +64,7 @@ python -m researchos.cli run-task T5-REBOOST \
 python -m researchos.cli run-task T5-SPECIALIZE \
   --workspace ./workspace/project-a
 
-# Inspect the compiled protocol, pending settings, and authorization boundary.
+# Inspect the compiled protocol, automatic-resource branch, and authorization boundary.
 python -m researchos.cli run-task T5-PROTOCOL-GATE \
   --workspace ./workspace/project-a
 
@@ -73,7 +73,7 @@ python -m researchos.cli run-task T5-EXECUTOR-GATE \
   --workspace ./workspace/project-a
 ```
 
-Resources may be added as soon as the workspace exists and should be ready before executor selection. Phase B classifies reviewed resources under `resources/byhand/`, `resources/Remote_acquisition/`, or `resources/reproduction/`; those labels describe provenance, not completed reproduction or experimental evidence.
+Resources may be added as soon as the workspace exists and are useful, but are not a prerequisite for automatic preparation. When none are available, choose “let the external executor prepare resources” at Protocol Confirmation. Phase B classifies reviewed resources under `resources/byhand/`, `resources/Remote_acquisition/`, or `resources/reproduction/`; those labels describe provenance, not completed reproduction or experimental evidence.
 
 Calling `T5-EXECUTOR-GATE` directly while the handoff still requires protocol decisions redirects to `T5-PROTOCOL-GATE` and does not write an executor-selection artifact.
 
@@ -84,7 +84,7 @@ Calling `T5-EXECUTOR-GATE` directly while the handoff still requires protocol de
 | Status | Already completed | Allowed next work | Explicitly forbidden |
 | --- | --- | --- | --- |
 | `ready` | Setting, metrics, baselines, claim graph, and execution decisions have source-bound records | Confirm materials, select an executor, and perform the declared contract | Treating plans or resource leads as experimental results |
-| `protocol_decision_required` | The handoff, metrics, baselines, and claim graph are compiled; pending decisions are retained explicitly | Inspect the protocol, add source-bound decisions, and prepare existing materials | Letting an executor choose framework/backbone/seed/scale/budget; implementation, formal runs, or a T8 result handoff |
+| `protocol_decision_required` | The handoff, metrics, baselines, and claim graph are compiled; operational unknowns are retained visibly | Launch bounded Phase A/B automatic resource preparation; override a setting only when you intentionally need a different source-bound choice | A silent change to the research task/mechanism/required-baseline set/benchmark scope/claim or contribution boundary; implementation, formal runs, or a T8 result handoff |
 | `blocked` | The compiler retains a diagnostic record | Restore the genuinely missing source or minimum protocol field named in the report | Manually changing `generation_status` or retrying to hide the gap |
 
 `proposed_not_verified` is the **claim-verification status** for the central thesis, contributions, and hypotheses. It prevents an expected result from being written as an established finding, but does not by itself block a source-complete T5 handoff. Literature background can be `source_supported` and a resource catalog can be `discovered`; those statuses remain distinct from a proposed research claim.

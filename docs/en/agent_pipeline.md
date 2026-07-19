@@ -9,7 +9,9 @@ The canonical topology is [config/system_config/state_machine.yaml](../../config
 ```text
 T1 -> T2 -> T3 -> T3.5
   -> T3.6 survey gate (optional) -> T4 -> T4.5
-  -> T5 reboost -> T5 specialize executor Skills -> protocol -> materials -> executor gate
+  -> T5 reboost -> T5 specialize executor Skills -> protocol
+  -> (no local material) bounded Phase A/B automatic resource preparation -> T5 reboost
+  -> (optional) local-material inventory -> executor gate
   -> T5 external execution/wait
   -> T8 manuscript/review -> T9 submission bundle
 ```
@@ -27,7 +29,7 @@ T1 -> T2 -> T3 -> T3.5
 | T3.6 | Is a taxonomy-driven survey warranted and sufficiently evidenced? | survey plan/state/sections/audit/real PDF | Survey, outline, corpus, compile recovery gates |
 | T4 | Which evidence-grounded research idea should be evolved or selected? | P0/P1/P2 Population, Evidence Index, scores, lineage, Portfolio, Pre-Novelty brief | Pre-run confirmation; Gate1 directives, composition, rollback |
 | T4.5 | Does the selected Pre-Novelty idea remain differentiated after targeted novelty/collision review? | novelty/collision audit; on pass only, formal hypotheses, maps, kill criteria, experiment plan | Novelty human review |
-| T5 | What can an external executor implement without inventing protocol, and what research report is ready for writing? | handoff pack, project-specific Skill suite, specialization execution record, executor selection, `external_executor/executor_research_report.md` | Protocol, materials, and executor gates |
+| T5 | What can an external executor implement without inventing paper claims, and which resources can be acquired and audited automatically first? | handoff pack, project-specific Skill suite, Phase B resource/provenance reports, executor selection, `external_executor/executor_research_report.md` | Protocol boundary, optional local-material, and executor gates; manual resource upload is not required |
 | T8 | How are sources/results transformed into an evidence-aligned paper? | style, storyline, sections, reviews, revisions, claim audit | Style/template gate |
 | T9 | Is the submission bundle internally consistent and genuinely compiled? | bundle, compile report, PDF/source fingerprint | Environment/recovery pause |
 
@@ -71,7 +73,7 @@ Choosing one complete Candidate creates `ideation/hypothesis_brief.yaml`, lineag
 
 ## T5 To T8 External Evidence Path
 
-ResearchOS deterministically compiles the executor handoff, then deterministically runs `T5-SPECIALIZE-EXECUTOR-SKILLS` to publish and independently validate the context/report/13-Skill suite. Neither operation asks an LLM to reconstruct control files or repeat shell diagnostics. Protocol Readiness separates a compiled handoff from authorization to implement or run; a pending framework, backbone, seed, scale, or budget returns to that Gate rather than reaching executor selection. Phase B uses `resources/` as its source-material root, while `external_executor/expr/` holds only deployed runnable baseline or method assets. External execution must leave the core T8 handoff file at `external_executor/executor_research_report.md`; other files under `external_executor/` remain supporting provenance. After evidence packaging, `writer-handoff` compiles and validates the report, final status, result pack, manifest, figures, and tables. The root then executes the routed `run-task T8` command in the same executor session. ResearchOS independently accepts the frozen handoff, derives T8 evidence/claim indexes, and delegates to the existing full T8 pipeline. A mock dry run verifies the protocol chain only and does not create empirical claims. See the [T5 External Executor Guide](t5_external_executor.md) for commands, the material gate, and A-F artifact paths.
+ResearchOS deterministically compiles the executor handoff, then deterministically runs `T5-SPECIALIZE-EXECUTOR-SKILLS` to publish and independently validate the context/report/13-Skill suite. Neither operation asks an LLM to reconstruct control files or repeat shell diagnostics. The Protocol page separates a compiled handoff from authorization for a full experiment, but it does not require a researcher to find public datasets, code, baselines, benchmarks, or weights manually: when no local material is available, a bounded Phase A/B executor searches, acquires fixed revisions, reviews license/security/protocol fit, records provenance, stops, and is accepted by `resume` before T5 is recompiled. An undeclared seed policy uses a stable auditable default ensemble. `resources/` is an optional existing-material root, while `external_executor/expr/` holds only deployed runnable baseline or method assets. Human confirmation is required only for changing the T4.5-defined task, mechanism, required-baseline set, benchmark scope, or claim/contribution boundary. Full external execution must leave the core T8 handoff file at `external_executor/executor_research_report.md`; other files under `external_executor/` remain supporting provenance. After evidence packaging, `writer-handoff` compiles and validates the report, final status, result pack, manifest, figures, and tables. The root then executes the routed `run-task T8` command in the same executor session. ResearchOS independently accepts the frozen handoff, derives T8 evidence/claim indexes, and delegates to the existing full T8 pipeline. A mock dry run verifies the protocol chain only and does not create empirical claims. See the [T5 External Executor Guide](t5_external_executor.md) for commands, the material gate, and A-F artifact paths.
 
 ## T8-T9 Writing And Submission
 

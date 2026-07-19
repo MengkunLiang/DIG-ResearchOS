@@ -945,6 +945,21 @@ class AgentRunner:
                     legacy_migration = t45_brief.get("mode") == "legacy_migrated"
                     ctx.extra["t45_legacy_migrated_brief"] = legacy_migration
                 t45_pre_finalized = await self._maybe_finalize_t45_before_llm(ctx)
+            resource_prepare_wait_pre_finalized = False
+            if not (
+                deterministic_pre_finalized
+                or t2_pre_finalized
+                or t3_pre_finalized
+                or t36_section_pre_finalized
+                or t36_visuals_pre_finalized
+                or t36_compile_pre_finalized
+                or t4_pre_finalized
+                or t4_gate1_pre_finalized
+                or t45_pre_finalized
+            ):
+                resource_prepare_wait_pre_finalized = await self._maybe_finalize_resource_prepare_wait_before_llm(ctx)
+            if resource_prepare_wait_pre_finalized:
+                deterministic_pre_finalized = True
             external_wait_pre_finalized = False
             if not (
                 deterministic_pre_finalized
@@ -5562,6 +5577,93 @@ class AgentRunner:
             "external_wait_prefinalize",
             {"outputs": ["external_executor/wait_acceptance_report.json"]},
             action_type="external_wait_prefinalize",
+        )
+        return True
+
+    async def _maybe_finalize_resource_prepare_wait_before_llm(self, ctx: ExecutionContext) -> bool:
+        """Accept a bounded external Phase B run before recompiling T5."""
+
+        if ctx.task_id != "T5-RESOURCE-PREP-WAIT":
+            return False
+
+        selection_path = ctx.workspace_dir / "external_executor" / "report" / "executor_selection.json"
+        report_path = ctx.workspace_dir / "external_executor" / "report" / "phase_B" / "resource_preparation_report.json"
+        validation_path = ctx.workspace_dir / "external_executor" / "report" / "phase_B" / "validation_report.json"
+        source_report_path = ctx.workspace_dir / "external_executor" / "report" / "phase_B" / "resource_source_report.json"
+        try:
+            selection = json.loads(selection_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise RecoverableRuntimePause(
+                "WAITING_RESOURCE_PREPARATION: external executor selection is unavailable; choose a resource-preparation executor again."
+            ) from exc
+        if not isinstance(selection, dict) or selection.get("execution_scope") != "resource_preparation":
+            raise RecoverableRuntimePause(
+                "WAITING_RESOURCE_PREPARATION: the current executor selection is not limited to resource preparation."
+            )
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            validation = json.loads(validation_path.read_text(encoding="utf-8"))
+            source_report = json.loads(source_report_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise RecoverableRuntimePause(
+                "WAITING_RESOURCE_PREPARATION: Phase B is still running. Complete resource discovery, acquisition, static review, "
+                "and validation before resuming ResearchOS."
+            ) from exc
+        readiness = report.get("resource_readiness") if isinstance(report.get("resource_readiness"), dict) else {}
+        readiness_status = str(readiness.get("status") or "").strip()
+        validation_ok = (
+            validation.get("schema_version") == "resource_preparation_validation.v1"
+            and validation.get("child_skill") == "resource-and-baseline-preparation"
+            and validation.get("valid") is True
+            and validation.get("status") == "pass"
+            and validation.get("resource_preparation_report")
+            == "external_executor/report/phase_B/resource_preparation_report.json"
+        )
+        source_report_ok = (
+            isinstance(source_report, dict)
+            and source_report.get("schema_version") == "resource_source_report.v1"
+            and source_report.get("status") in {"complete", "partial"}
+            and isinstance(source_report.get("counts"), dict)
+        )
+        if (
+            report.get("schema_version") != "resource_preparation_report.v1"
+            or report.get("child_skill") != "resource-and-baseline-preparation"
+            or report.get("status") not in {"complete", "partial", "blocked"}
+            or readiness_status not in {"ready", "partial", "blocked"}
+            or not validation_ok
+            or not source_report_ok
+        ):
+            raise RecoverableRuntimePause(
+                "WAITING_RESOURCE_PREPARATION: the Phase B report, source record, or overall validation receipt is incomplete."
+            )
+
+        acceptance = {
+            "version": "1.0",
+            "semantics": "t5_resource_preparation_acceptance",
+            "ok": True,
+            "execution_scope": "resource_preparation",
+            "resource_preparation_report": "external_executor/report/phase_B/resource_preparation_report.json",
+            "resource_validation_report": "external_executor/report/phase_B/validation_report.json",
+            "resource_source_report": "external_executor/report/phase_B/resource_source_report.json",
+            "resource_readiness": readiness_status,
+            "next_step": "T5-REBOOST-GATE",
+            "note": (
+                "Phase B resource preparation is accepted as provenance and readiness context only; "
+                "it is not an experiment result or a T8 handoff."
+            ),
+        }
+        output_path = ctx.workspace_dir / "external_executor" / "report" / "resource_preparation_acceptance.json"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(acceptance, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        self.progress.emit(
+            "[Experimenter Agent] T5 已接收外部 Phase B 资源准备记录；将重新编译交接，不把资源准备当作实验结果。",
+            important=True,
+        )
+        self._record_runtime_completion(
+            ctx,
+            "resource_preparation_wait_prefinalize",
+            {"outputs": ["external_executor/report/resource_preparation_acceptance.json"]},
+            action_type="resource_preparation_wait_prefinalize",
         )
         return True
 

@@ -60,6 +60,18 @@ The preflight must confirm:
 
 A preflight warning prompts targeted review. A preflight blocker prevents acquisition and reimplementation. Missing `resources/` by-hand inputs, `resources/baseline_candidates.jsonl`, or `literature/baseline_map.json` are not blockers; this skill owns discovering/acquiring/reimplementing missing resources under `resources/`.
 
+## Resolve operational settings only when Phase B can prove them within scope
+
+When `external_executor/report/executor_selection.json` has `execution_scope=resource_preparation`, read the handoff's `execution_readiness.required_decisions`. Do not send these back as a generic request for the researcher to fill in. For every decision that can be resolved *within the already declared T4.5 scope*, record a precise item in `resource_preparation_report.json#operational_settings` after source review:
+
+- `setting`: the exact pending T5 decision string;
+- `setting_type`: `runtime_environment`, `model_backbone`, `execution_scale`, `declared_benchmark_resource`, or `seed_policy`;
+- `selected_value`: the exact version, package, model/checkpoint, scale policy, benchmark resource, or seed policy to use;
+- `selection_basis` and non-empty `source_refs`;
+- `research_boundary_preserved=true`.
+
+Examples include a concrete simulator package/version for a declared simulation, a reviewed accessible checkpoint for a declared model family, a fixed benchmark version/split for an already declared benchmark, or a bounded sample/budget policy under project constraints. Mark an item `unresolved` when the available sources cannot establish it. Never use this mechanism to choose a different research task, central mechanism, required baseline set, benchmark scope, or claim/contribution boundary; those remain explicit scope-change records for the root.
+
 ## Build the resource requirement matrix
 
 Run:
@@ -290,7 +302,8 @@ Run:
 
 ```bash
 python <skill-dir>/scripts/validate_resource_report.py --workspace <workspace> \
-  --report external_executor/report/phase_B/resource_preparation_report.json
+  --report external_executor/report/phase_B/resource_preparation_report.json \
+  --output external_executor/report/phase_B/validation_report.json
 
 python <skill-dir>/scripts/apply_resource_report.py --workspace <workspace> \
   --report external_executor/report/phase_B/resource_preparation_report.json
@@ -309,6 +322,7 @@ result_pack.resource_readiness
 ```
 
 If validation fails, fix the report. Do not bypass the validator or edit sibling sections.
+The final `validation_report.json` is the overall Phase B receipt (not merely a subpackage check): it must have `schema_version=resource_preparation_validation.v1` and `valid=true` before returning to ResearchOS.
 
 ## Return to the root
 

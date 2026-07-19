@@ -35,8 +35,11 @@ T1 项目初始化
  -> T4.5 novelty/collision audit，并在通过后 formalization
  -> T5-REBOOST-GATE 运行 research-reboost 并编译 handoff
  -> T5-SPECIALIZE-EXECUTOR-SKILLS 发布并校验项目专属 Skill Suite
- -> T5-PROTOCOL-GATE 确认执行协议与真实运行授权边界
- -> T5-EXPR-MATERIAL-GATE 确认源材料
+ -> T5-PROTOCOL-GATE 区分可自动补齐的资源/运行设置与真正的研究边界变更
+    -> 无现成资源或可自动补齐项：T5-RESOURCE-PREP-EXECUTOR-GATE
+       -> T5-RESOURCE-PREP-WAIT 接收 Phase B 来源、审查与准备度记录
+       -> T5-REBOOST-GATE 基于该记录重新编译交接
+ -> T5-EXPR-MATERIAL-GATE（可选：盘点研究者已有的源材料）
  -> T5-EXECUTOR-GATE（仅协议 ready 后）外部执行器选择
     -> mock_dry_run: T5-DRY-RUN 外部执行器协议 dry-run
     -> codex_cli / claude_code_window / manual: T5-EXTERNAL-WAIT 等待外部结果
@@ -145,7 +148,7 @@ PYTHONPATH=. python -m researchos.cli run --workspace ./workspace/local-test2
 - 会推进整个状态机
 - 会进入和恢复 human gate
 - 会从一个 task 自动跳到下一个 task
-- 会完整体现 `T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-PROTOCOL-GATE -> T5-EXPR-MATERIAL-GATE -> T5-EXECUTOR-GATE -> T5-DRY-RUN/T5-EXTERNAL-WAIT -> T8-STYLE-GATE -> T8` 这样的链条
+  - 会完整体现 `T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-PROTOCOL-GATE` 的交接链；若没有现成资源，会先走受限的 `T5-RESOURCE-PREP-EXECUTOR-GATE -> T5-RESOURCE-PREP-WAIT -> T5-REBOOST-GATE`，否则可走可选的材料盘点 Gate，再进入 `T5-EXECUTOR-GATE -> T5-DRY-RUN/T5-EXTERNAL-WAIT -> T8-STYLE-GATE -> T8`
 
 ### 3.2 恢复完整 pipeline
 
@@ -2798,7 +2801,7 @@ T6 不应该从零重跑一次 T4.5，这个逻辑现在已经明确分开了。
 | `external_executor/CLAUDE.md` | Claude Code 窗口执行说明；执行模式在 T5-EXECUTOR-GATE 前保持 `UNSET` |
 | `external_executor/report/reboost_llm_candidate_handoff_pack.json` / `external_executor/report/reboost_llm_candidate_validation_report.json` | 当模型把 handoff candidate 交给发布工具时写出的诊断文件；不是声明的下游输入 |
 
-`resources/` 是 Phase B 的源资源根，研究者提供的数据集、baseline、benchmark、代码与权重应先进入该目录；`external_executor/expr/` 在 workspace 初始化时创建，后续只由材料门展示并由外部执行阶段保存已部署、可运行的 baseline 和方法资产。T5-REBOOST 不创建 `expr/MATERIALS_CHECKLIST.json` / `expr/README.md`。具体操作、目录流向与恢复边界见 [T5 外部执行器使用指南](t5_external_executor.md)。
+`resources/` 是 Phase B 的源资源根，也是**可选的**研究者已有材料入口：已有数据集、baseline、benchmark、代码与权重可以放入这里，但缺少它们不会阻止 T5。选择“让外部执行器自动准备资源”后，受限执行器会先检查本地材料，再从公开来源检索、固定版本下载、许可证/安全审查、来源留痕，并在授权时形成可审计的 baseline 重实现；它只运行 Phase A/B，绝不运行实验或生成结果。`external_executor/expr/` 在 workspace 初始化时创建，只保存已部署、可运行的 baseline 和方法资产。T5-REBOOST 不创建 `expr/MATERIALS_CHECKLIST.json` / `expr/README.md`。具体操作、目录流向与恢复边界见 [T5 外部执行器使用指南](t5_external_executor.md)。
 
 `T5-REBOOST-GATE` 不会写 `external_executor/report/executor_selection.json`、`external_executor/report/executor_capabilities.json`、`input_manifest.json`、`job_state.json`、`executor_events.jsonl`、`executor_prompt.md`、`codex_prompt.md`、`claude_code_prompt.md`、`manual_instructions.md` 或 `external_executor/skills/`。执行器专属 prompt 文件不再生成；外部执行器直接读取 `external_executor/AGENTS.md` / `external_executor/CLAUDE.md` 以及其中引用的 JSON/text 控制文件。项目专属 Skill Suite 由 `T5-SPECIALIZE-EXECUTOR-SKILLS` 发布。
 
@@ -2806,7 +2809,7 @@ T6 不应该从零重跑一次 T4.5，这个逻辑现在已经明确分开了。
 
 `research-reboost` Skill 会在 system prompt 中得到 bundled contract 与 references，因此只读取 workspace artifacts。它依据 `project.yaml`、post-novelty formalization bundle、synthesis/comparison artifacts 和三类 Paper Note 根目录准备语义 handoff candidate。编译器会落盘 candidate、进行校验并生成控制文件。它不会发布 executor Skill：将语义 handoff 编译与 Suite 发布分开，能让两组 artifact 独立 resume，也不会把不完整的 Suite 误报为 ready。
 
-此时执行模式仍为 `UNSET`。下一步 `T5-SPECIALIZE-EXECUTOR-SKILLS` 运行仓库维护的 `project-skill-specialization` Skill。它的确定性 wrapper 先做 preflight，再构建并原子发布全部 13 个 Skill；随后 runtime 独立校验 context、template integrity、report 与输入 fingerprint。它会写出 `external_executor/report/skill_specialization_execution.json`；没有这份可追溯执行回执时，后续 Gate 不会解除阻塞。Suite 发布后先进入 `T5-PROTOCOL-GATE`：当 `execution_readiness=protocol_decision_required` 时，研究者可补充来源明确的仿真/benchmark、backbone、样本规模、seed 或预算，并可先准备材料，但不能选择执行器、实现或正式运行；当状态为 `ready` 才进入材料确认和 `T5-EXECUTOR-GATE`。这避免把正常的科研协议决策误报成 runtime recovery，也避免执行器在未授权时自行填充设置。`T5-HANDOFF` 继续作为旧 workspace 或显式恢复路径的 legacy-compatible 协议编译器，但不是 T4.5 的默认目的地。
+此时执行模式仍为 `UNSET`。下一步 `T5-SPECIALIZE-EXECUTOR-SKILLS` 运行仓库维护的 `project-skill-specialization` Skill。它的确定性 wrapper 先做 preflight，再构建并原子发布全部 13 个 Skill；随后 runtime 独立校验 context、template integrity、report 与输入 fingerprint。它会写出 `external_executor/report/skill_specialization_execution.json`；没有这份可追溯执行回执时，后续 Gate 不会解除阻塞。Suite 发布后先进入 `T5-PROTOCOL-GATE`。`protocol_decision_required` 不是“请先手工找资源”：数据、代码、baseline、benchmark、权重和可由来源决定的运行环境会由受限 Phase A/B 自动准备流程检索、审查和记录；随机种子在未声明时采用可审计的稳定默认 ensemble。此时可直接选择“让外部执行器自动准备资源”，完成后停止执行器并 `resume`，ResearchOS 会用 Phase B 记录重新编译 T5。只有一项操作会把 T4.5 已定义的研究任务、核心机制、必需 baseline 集合、benchmark 范围或 claim/贡献边界改成另一项时，系统才保留人工确认；它不是普通资源获取。`ready` 后才允许选择完整实验执行器。`T5-HANDOFF` 继续作为旧 workspace 或显式恢复路径的 legacy-compatible 协议编译器，但不是 T4.5 的默认目的地。
 
 ### 恢复逻辑
 
@@ -2816,11 +2819,23 @@ T6 不应该从零重跑一次 T4.5，这个逻辑现在已经明确分开了。
 
 这是仓库维护的 Skill task，不是第二个 handoff prompt。它通过允许的 `bash_run` capability 依次运行 `skills/project-skill-specialization/scripts/preflight_specialization.py`、`run_specialization.py` 和有界的 report reader。compiler 会写出 `external_executor/project_skill_context.yaml`，把 context schema 复制到 `external_executor/schemas/project_skill_context.schema.json`，把 13 个模板 Skill 目录分别复制到 `external_executor/skills/<skill>/`，并且只替换每个 `SKILL.md` 中 marker 包围的 Project-Specific Guidance。workspace 内的 schema 会保留，因为 task adapter、artifact validator 与 `T5-EXECUTOR-GATE` 输入契约会继续消费它来校验 context。task adapter 会拒绝本轮没有调用 wrapper 的完成结果，再次校验已发布 artifact，并将精确 source/template fingerprint 记录到 `external_executor/report/skill_specialization_execution.json`。`ready` 与 `incomplete` 都是有效的已发布状态；`failed` 或缺失 artifact 会在选择执行器前停止。如果失败的重建发现此前已有可用 Suite，则保留该 Suite，并把诊断写到 `external_executor/report/skill_specialization_failure_report.json`；否则失败诊断写到 `external_executor/report/skill_specialization_report.json`。显式 `researchos specialize-executor-skills` 命令仍可用于 pipeline 外的预览、修复或校验，但 pipeline 节点本身负责写入可恢复的执行回执。
 
-## 6.10 T5-PROTOCOL-GATE / T5-EXECUTOR-GATE / T5-EXTERNAL-WAIT：协议确认、执行器选择与外部等待
+## 6.10 T5-PROTOCOL-GATE / 自动资源准备 / T5-EXECUTOR-GATE / T5-EXTERNAL-WAIT：协议、资源、执行器与外部等待
 
 ### T5-PROTOCOL-GATE
 
-此 immediate Gate 展示 `execution_contract.execution_readiness`、已编译的 setting/metrics/baseline/claim graph、显式未决项和对应文件路径。`protocol_decision_required` 不是失败：它说明 T5 已保留完整研究交接，但 T4.5 明确将若干执行决定保留为 `unknown`。研究者可准备已有材料或在来源明确的 `ideation/exp_plan.yaml` / 项目输入中补充决定，然后从 `T5-REBOOST-GATE` 重新编译。材料 Gate 在该状态下会返回这里；直接进入 `T5-EXECUTOR-GATE` 会被拦截且不会写 executor selection。只有 `ready` 状态可以选择真实或 mock 执行器。
+此 immediate Gate 展示 `execution_contract.execution_readiness`、已编译的 setting/metrics/baseline/claim graph、显式未决项和对应文件路径。`protocol_decision_required` 不是失败，更不表示研究者必须先上传数据、代码或模型：T4.5 留下 `unknown` 时，优先选择“让外部执行器自动准备资源”。该分支允许 Codex/Claude/manual 执行器只运行 Phase A/B：检查本地材料、检索公开来源、固定版本下载、许可证/安全/协议匹配审查、来源记录以及授权的 baseline 重实现。完成后执行器**必须停止**；执行 `resume` 后 ResearchOS 接收 `resource_preparation_report.json` 和验证记录，重新编译 T5，而不会把资源准备冒充成实验结果。
+
+未声明随机种子时，T5 使用稳定、可审计的默认 ensemble；研究者可覆盖它，但不是继续流程的前提。材料 Gate 是可选的本地盘点入口；在协议未完全 ready 时会返回此 Gate。直接进入完整 `T5-EXECUTOR-GATE` 仍会被拦截，原因是完整执行不能静默改变研究任务、核心机制、必需 baseline 集合、benchmark 范围或 claim/贡献边界。只有这些真正改变研究结论范围的变更才需要人工确认；普通公开资源获取与审查不需要。
+
+### T5-RESOURCE-PREP-EXECUTOR-GATE / T5-RESOURCE-PREP-WAIT
+
+这是“没有人工材料时仍可继续”的受限执行器分支，不是完整实验启动。选择 Codex CLI、Claude Code 或其它执行器后，ResearchOS 写入带 `execution_scope=resource_preparation` 的选择记录，执行器只可完成：
+
+1. Phase A 上下文对齐；
+2. Phase B 的资源需求矩阵、本地盘点、公开来源检索、固定版本获取、静态安全/许可/协议审查、来源报告和准备度计算；
+3. `external_executor/report/phase_B/resource_preparation_report.json`、`validation_report.json` 与 `resource_source_report.json`。
+
+它不可实现方法、跑 baseline、运行实验、诊断结果、打包证据、写 Writer Handoff 或进入 T8。对不改变 T4.5 已声明范围、且 Phase B 能完成来源审查的环境、模型/checkpoint、规模、seed policy 或已声明 benchmark resource，它会写入带精确值、来源和边界保持标记的 `operational_settings` 记录；重新编译后的 handoff 会把该记录交给完整执行器。Phase B 结果可为 `ready`、`partial` 或 `blocked`：三者都是对真实资源情况的诚实记录；它们仅作为下一次 T5 编译的来源与约束上下文。资源不可获得时不会被伪装为成功，Rich 面板会保留具体缺口、许可或兼容性原因；若修复需要改变研究边界，才请求人工选择。
 
 ### T5-EXECUTOR-GATE
 
@@ -2881,7 +2896,9 @@ T6 不应该从零重跑一次 T4.5，这个逻辑现在已经明确分开了。
 T7 结果摄取、完整性审计、实验后 novelty 复核以及 T7.5 PI 决策节点，已经从当前主状态机中移除。外部执行器在 Evidence Packaging 后通过最后一个 `writer-handoff` 子 Skill 形成核心研究报告并执行外部最终 handoff 核验；总控 Skill 记录结果后路由到 `launch-t8`，并在同一外部执行器会话中调用专用 ResearchOS 桥接命令。当前主链是：
 
 ```text
-T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-PROTOCOL-GATE -> T5-EXPR-MATERIAL-GATE -> T5-EXECUTOR-GATE
+T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-PROTOCOL-GATE
+  -> （无现成资源或需要来源审查）T5-RESOURCE-PREP-EXECUTOR-GATE -> T5-RESOURCE-PREP-WAIT -> T5-REBOOST-GATE
+  -> （可选本地材料盘点）T5-EXPR-MATERIAL-GATE -> T5-EXECUTOR-GATE
  -> mock_dry_run: T5-DRY-RUN -> T5-EXECUTOR-GATE（协议验证完成后选择真实执行器）
  -> external: T5-EXTERNAL-WAIT
  -> root launch-t8: python -m researchos.cli run-task T8 --workspace <workspace>

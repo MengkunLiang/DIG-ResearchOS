@@ -69,6 +69,19 @@ If state exists:
 
 Never delete stale or failed evidence automatically. Preserve it as history and exclude it from current claims.
 
+## Honor a bounded resource-preparation launch
+
+Read `external_executor/report/executor_selection.json` before dispatching the first child. When its `execution_scope` is `resource_preparation`, this is not a formal experiment launch.
+
+In that bounded mode, do exactly the following:
+
+1. Run `context-alignment` if its checkpoint is absent or stale.
+2. Run `resource-and-baseline-preparation`, including its authorized local inventory, public remote acquisition, static review, resource-source report, source-backed operational-setting records for the declared scope, readiness computation, validation, and narrow result-pack apply steps.
+3. Ensure `external_executor/report/phase_B/resource_preparation_report.json` is present and that the final overall receipt `external_executor/report/phase_B/validation_report.json` has `schema_version=resource_preparation_validation.v1` and `valid=true`. Preserve a `ready`, `partial`, or `blocked` resource-readiness result honestly.
+4. Stop after Phase B. Do not dispatch `experiment-design`, baseline reproduction, implementation, experiment runs, diagnosis, evidence packaging, Writer Handoff, or T8.
+
+This mode authorizes retrieval and provenance recording only. It does not authorize changing the research task, central mechanism, required baseline set, benchmark scope, claim boundary, or contribution type. Once the Phase B report is complete, return control to ResearchOS; it will recompile T5 using the recorded resources and show a human decision only if a material research boundary is still genuinely unresolved.
+
 ## Route through one owner
 
 Read `<root-skill>/references/routing-and-gates.md`. Determine the next action from artifacts, not conversational memory.

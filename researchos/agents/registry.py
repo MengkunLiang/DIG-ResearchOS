@@ -74,6 +74,8 @@ TASK_TO_AGENT_MAP = {
     "T5-HANDOFF": ExperimenterAgent,  # 外部实验 handoff
     "T5-SPECIALIZE-EXECUTOR-SKILLS": ExperimenterAgent,  # 发布外部执行 Skill suite
     "T5-EXECUTOR-GATE": ExperimenterAgent,  # 外部实验执行器选择
+    "T5-RESOURCE-PREP-EXECUTOR-GATE": ExperimenterAgent,  # 受限 Phase B 执行器选择
+    "T5-RESOURCE-PREP-WAIT": ExperimenterAgent,  # 等待外部资源准备完成
     "T5-EXTERNAL-WAIT": ExperimenterAgent,  # 外部执行器等待/恢复
     "T5-DRY-RUN": ExperimenterAgent,  # 外部实验 dry-run
     "LEGACY-T5-PILOT": ExperimenterAgent,  # legacy Pilot实验

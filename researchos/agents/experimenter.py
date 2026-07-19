@@ -384,6 +384,7 @@ EXTERNAL_EXPERIMENT_MODES = {
     "handoff",
     "executor_gate",
     "external_wait",
+    "resource_prepare_wait",
     "dry_run",
     "result_ingest",
     "integrity_audit",
@@ -684,8 +685,19 @@ def _validate_external_executor_selection(ws: Path) -> tuple[bool, str | None]:
     selected = selection.get("selected_executor")
     if selected not in {"mock_dry_run", "codex_cli", "claude_code_window", "manual"}:
         return False, "executor_selection.selected_executor 必须是 mock_dry_run/codex_cli/claude_code_window/manual"
-    if selection.get("next_state") not in {"T5-DRY-RUN", "T5-EXTERNAL-WAIT"}:
+    execution_scope = str(selection.get("execution_scope") or "full_execution")
+    if execution_scope not in {"full_execution", "resource_preparation"}:
+        return False, "executor_selection.execution_scope 必须是 full_execution/resource_preparation"
+    expected_next = (
+        {"T5-DRY-RUN", "T5-EXTERNAL-WAIT"}
+        if execution_scope == "full_execution"
+        else {"T5-RESOURCE-PREP-WAIT"}
+    )
+    if selection.get("next_state") not in expected_next:
         return False, "executor_selection.next_state 不正确"
+    if execution_scope == "resource_preparation":
+        if selected == "mock_dry_run" or selection.get("real_experiment_allowed") is not False:
+            return False, "受限资源准备不得使用 mock，且不得授权真实实验"
     for rel in (
         "external_executor/AGENTS.md",
         "external_executor/CLAUDE.md",
@@ -702,6 +714,15 @@ def _validate_external_wait(ws: Path) -> tuple[bool, str | None]:
         return False, err
     if report.get("semantics") != "external_executor_wait_acceptance_report" or report.get("ok") is not True:
         return False, "wait_acceptance_report.json 必须 ok=true"
+    return True, None
+
+
+def _validate_resource_prepare_wait(ws: Path) -> tuple[bool, str | None]:
+    report, err = _read_json_artifact(ws, "external_executor/report/resource_preparation_acceptance.json")
+    if err:
+        return False, err
+    if report.get("semantics") != "t5_resource_preparation_acceptance" or report.get("ok") is not True:
+        return False, "resource_preparation_acceptance.json 必须是通过的 Phase B 接收记录"
     return True, None
 
 
@@ -1259,6 +1280,15 @@ class ExperimenterAgent(Agent):
                     "应暂停等待外部执行器写回。"
                 ),
             )
+        if mode == "resource_prepare_wait":
+            return prepend_resume_prefix(
+                ctx,
+                (
+                    "T5-RESOURCE-PREP-WAIT 是确定性等待节点。它只接受外部执行器完成的 Phase B "
+                    "资源准备报告，不接受实验结果或 T8 handoff。若报告尚未完成，不要伪造；暂停等待外部执行器 "
+                    "检索、获取、静态审查并记录资源后再 resume。"
+                ),
+            )
         if mode == "dry_run":
             return prepend_resume_prefix(
                 ctx,
@@ -1447,6 +1477,8 @@ class ExperimenterAgent(Agent):
             return _validate_external_executor_selection(ws)
         if mode == "external_wait":
             return _validate_external_wait(ws)
+        if mode == "resource_prepare_wait":
+            return _validate_resource_prepare_wait(ws)
         if mode == "dry_run":
             return _validate_external_dry_run(ws)
         if mode == "result_ingest":

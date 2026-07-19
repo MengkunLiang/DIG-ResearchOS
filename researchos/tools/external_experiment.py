@@ -1222,6 +1222,7 @@ def _is_mock_executor(executor: str) -> bool:
 
 
 VALID_EXTERNAL_EXECUTORS = {"mock_dry_run", "codex_cli", "claude_code_window", "manual"}
+VALID_EXTERNAL_EXECUTION_SCOPES = {"full_execution", "resource_preparation"}
 
 
 def _validate_executor_identity_binding(
@@ -1308,6 +1309,9 @@ def _extract_exp_plan_metrics(exp_plan: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(metrics))
 
 
+DEFAULT_RESEARCHOS_SEED_ENSEMBLE: tuple[int, ...] = (42, 123, 456, 789, 2025)
+
+
 def _extract_exp_plan_seeds(project: dict[str, Any]) -> list[int]:
     seed_ensemble = project.get("seed_ensemble") if isinstance(project, dict) else {}
     seeds: list[int] = []
@@ -1319,6 +1323,19 @@ def _extract_exp_plan_seeds(project: dict[str, Any]) -> list[int]:
                 except Exception:
                     continue
     return list(dict.fromkeys(seeds))
+
+
+def _execution_seed_ensemble(project: dict[str, Any]) -> list[int]:
+    """Use project-declared seeds when available, otherwise a stable default.
+
+    A seed ensemble controls reproducibility but does not change a project's
+    task, mechanism, benchmark, or claim boundary. Requiring a human to choose
+    one made T5 stall for a mechanical setting that can be recorded honestly.
+    The fallback is deliberately fixed and visible in the handoff so it can be
+    overridden by a project-specific policy later.
+    """
+
+    return _extract_exp_plan_seeds(project) or list(DEFAULT_RESEARCHOS_SEED_ENSEMBLE)
 
 
 def _handoff_metrics_for_execution(handoff: dict[str, Any]) -> list[str]:
@@ -1831,10 +1848,10 @@ def _extract_datasets(exp_plan: dict[str, Any]) -> list[str]:
 
 
 def _exp_plan_seed_policy(project: dict[str, Any]) -> str:
-    seeds = _extract_exp_plan_seeds(project)
-    if seeds:
-        return "Use the predeclared ResearchOS seed ensemble: " + ", ".join(str(seed) for seed in seeds)
-    return "unknown; a source-backed seed policy or explicit human decision is required before formal execution"
+    declared = _extract_exp_plan_seeds(project)
+    seeds = _execution_seed_ensemble(project)
+    origin = "predeclared" if declared else "stable default"
+    return f"Use the {origin} ResearchOS seed ensemble: " + ", ".join(str(seed) for seed in seeds)
 
 
 def _protocol_decisions_from_plan(exp_plan: dict[str, Any], project: dict[str, Any]) -> list[str]:
@@ -1846,9 +1863,113 @@ def _protocol_decisions_from_plan(exp_plan: dict[str, Any], project: dict[str, A
         decisions.extend(str(item).strip() for item in raw_unknowns if str(item).strip())
     elif isinstance(raw_unknowns, str) and raw_unknowns.strip():
         decisions.append(raw_unknowns.strip())
-    if not _extract_exp_plan_seeds(project):
-        decisions.append("source-backed seed policy")
     return list(dict.fromkeys(decisions))
+
+
+def _phase_b_operational_resolution(
+    workspace: Path,
+    decisions: list[str],
+    *,
+    has_declared_setting: bool,
+) -> list[dict[str, Any]]:
+    """Accept Phase B as an operational resolver without changing research scope.
+
+    A reviewed Phase B report can supply the concrete public package, version,
+    and provenance for an already declared study setting.  It must not choose a
+    new research task or replace a T4.5-required comparison.  This function
+    therefore resolves only categories whose exact operational value belongs in
+    executor configs and source records, and only after ResearchOS accepted the
+    bounded Phase B receipt.
+    """
+
+    acceptance = _read_json(workspace / "external_executor" / "report" / "resource_preparation_acceptance.json")
+    report = _read_json(workspace / "external_executor" / "report" / "phase_B" / "resource_preparation_report.json")
+    validation = _read_json(workspace / "external_executor" / "report" / "phase_B" / "validation_report.json")
+    source_report = _read_json(workspace / "external_executor" / "report" / "phase_B" / "resource_source_report.json")
+    readiness = report.get("resource_readiness") if isinstance(report.get("resource_readiness"), dict) else {}
+    operational_settings = report.get("operational_settings") if isinstance(report.get("operational_settings"), dict) else {}
+    setting_records = operational_settings.get("items") if isinstance(operational_settings.get("items"), list) else []
+    if not (
+        acceptance.get("semantics") == "t5_resource_preparation_acceptance"
+        and acceptance.get("ok") is True
+        and report.get("schema_version") == "resource_preparation_report.v1"
+        and report.get("child_skill") == "resource-and-baseline-preparation"
+        and readiness.get("status") in {"ready", "partial"}
+        and validation.get("schema_version") == "resource_preparation_validation.v1"
+        and validation.get("valid") is True
+        and source_report.get("schema_version") == "resource_source_report.v1"
+    ):
+        return []
+
+    categories: dict[str, str] = {
+        "seed": "seed_policy",
+        "environment": "runtime_environment",
+        "backbone": "model_backbone",
+        "scale": "execution_scale",
+        "benchmark": "declared_benchmark_resource",
+    }
+
+    def classify(value: str) -> str | None:
+        lowered = value.casefold()
+        if "seed" in lowered or "随机种子" in value:
+            return "seed"
+        if any(token in lowered for token in ("framework", "simulat", "environment")) or "仿真" in value:
+            return "environment"
+        if any(token in lowered for token in ("backbone", "model", "agent")) or "骨干" in value:
+            return "backbone"
+        if any(token in lowered for token in ("scale", "sample", "episode", "rollout", "budget")) or any(token in value for token in ("规模", "预算", "样本")):
+            return "scale"
+        if ("benchmark" in lowered or "数据集" in value) and has_declared_setting:
+            return "benchmark"
+        return None
+
+    source_paths = [
+        "external_executor/report/phase_B/resource_preparation_report.json",
+        "external_executor/report/phase_B/resource_source_report.json",
+        "external_executor/report/phase_B/validation_report.json",
+    ]
+    records: list[dict[str, Any]] = []
+    for decision in decisions:
+        category = classify(decision)
+        if category is None:
+            continue
+        setting_type = categories[category]
+        setting_record = next(
+            (
+                item
+                for item in setting_records
+                if isinstance(item, dict)
+                and str(item.get("setting") or "").strip() == decision
+                and str(item.get("setting_type") or "").strip() == setting_type
+                and item.get("status") == "resolved"
+                and isinstance(item.get("selected_value"), str)
+                and item.get("selected_value", "").strip()
+                and isinstance(item.get("selection_basis"), str)
+                and item.get("selection_basis", "").strip()
+                and isinstance(item.get("source_refs"), list)
+                and any(str(ref).strip() for ref in item.get("source_refs", []))
+                and item.get("research_boundary_preserved") is True
+            ),
+            None,
+        )
+        if setting_record is None:
+            continue
+        selected_value = str(setting_record["selected_value"]).strip()
+        selection_basis = str(setting_record["selection_basis"]).strip()
+        source_refs = [str(ref).strip() for ref in setting_record.get("source_refs", []) if str(ref).strip()]
+        records.append(
+            {
+                "setting": decision,
+                "setting_type": setting_type,
+                "selected_value": selected_value,
+                "resolution": f"Use `{selected_value}`. {selection_basis}",
+                "authority": "phase_b_source_backed_operational_resolution",
+                "resource_readiness": readiness.get("status"),
+                "source_paths": list(dict.fromkeys(source_paths + source_refs)),
+                "research_boundary_preserved": True,
+            }
+        )
+    return records
 
 
 def _execution_readiness(
@@ -2263,7 +2384,18 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
         for baseline in baselines:
             baseline["linked_claim_ids"] = []
 
-    protocol_decisions = _protocol_decisions_from_plan(exp_plan, project)
+    raw_protocol_decisions = _protocol_decisions_from_plan(exp_plan, project)
+    auto_resolved_operational_settings = _phase_b_operational_resolution(
+        workspace,
+        raw_protocol_decisions,
+        has_declared_setting=bool(datasets),
+    )
+    auto_resolved_decisions = {
+        str(item.get("setting") or "")
+        for item in auto_resolved_operational_settings
+        if isinstance(item, dict)
+    }
+    protocol_decisions = [item for item in raw_protocol_decisions if item not in auto_resolved_decisions]
     execution_readiness = _execution_readiness(
         missing_required_sources=missing_required,
         protocol_missing=protocol_missing,
@@ -2275,11 +2407,11 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 "item_id": f"U{len(unresolved_items) + 1}",
                 "severity": "material",
                 "question": "The handoff is compiled, but formal execution still requires the recorded protocol decisions.",
-                "why_unresolved": "T4.5 explicitly retained these decisions as unknown. T5 may prepare context and resources, but it must not select a framework, seed policy, scale, or budget by convention.",
+                "why_unresolved": "T4.5 explicitly retained these decisions as unknown and the current Phase B record cannot resolve them within the declared research boundary.",
                 "affected_fields": protocol_decisions,
                 "blocking": False,
                 "owner": "human",
-                "required_action": "Review the T5 protocol-readiness Gate, record approved decisions in ideation/exp_plan.yaml or a source-backed project input, then recompile T5-REBOOST before formal execution.",
+                "required_action": "Use T5 automatic resource preparation when the setting can be resolved from an existing study scope. Request a human decision only when resolution would change the research task, core mechanism, required baseline set, benchmark scope, or claim boundary.",
                 "source_refs": [_source_ref("SRC_EXP_PLAN", "unknown_fields", "T4.5 explicitly retained protocol decisions for later confirmation")],
             }
         )
@@ -2703,6 +2835,13 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
         },
         "resource_acquisition_policy": default_resource_acquisition_policy(),
         "unresolved_items": unresolved_items,
+        "extensions": {
+            "phase_b_operational_resolution": {
+                "status": "resolved" if auto_resolved_operational_settings else "not_applied",
+                "settings": auto_resolved_operational_settings,
+                "boundary": "Operational settings are resolved only from an accepted Phase B report; research-task, mechanism, required-baseline, benchmark-scope, and claim-boundary changes remain outside this automation.",
+            }
+        },
         "validation_summary": {
             "status": "pass" if status == "completed" else "blocked",
             "required_source_coverage": _required_source_coverage(source_manifest),
@@ -2730,6 +2869,7 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
         "execution_readiness": execution_readiness,
         "protocol_missing_fields": protocol_missing,
         "protocol_decisions": protocol_decisions,
+        "auto_resolved_operational_settings": auto_resolved_operational_settings,
         "source_files_used": [item.get("path") for item in source_manifest if item.get("used")],
         "missing_required_sources": missing_required,
         "missing_optional_sources": [
@@ -2806,6 +2946,8 @@ def _guide_view_from_reboost_pack(pack: dict[str, Any], project: dict[str, Any],
     ]
     execution_contract = pack.get("execution_contract") if isinstance(pack.get("execution_contract"), dict) else {}
     readiness = execution_contract.get("execution_readiness") if isinstance(execution_contract.get("execution_readiness"), dict) else {}
+    extensions = pack.get("extensions") if isinstance(pack.get("extensions"), dict) else {}
+    phase_b_resolution = extensions.get("phase_b_operational_resolution") if isinstance(extensions.get("phase_b_operational_resolution"), dict) else {}
     effective_metrics = metrics or [
         str(item).strip()
         for item in ((pack.get("context_reboost") or {}).get("study_scope") or {}).get("metrics", [])
@@ -2822,8 +2964,9 @@ def _guide_view_from_reboost_pack(pack: dict[str, Any], project: dict[str, Any],
         "claim_evidence_matrix": pack.get("claim_evidence_matrix"),
         "required_baselines": baselines,
         "metrics": [{"metric_id": f"metric_{idx}", "name": name, "direction": "unknown", "primary": idx == 1} for idx, name in enumerate(effective_metrics, start=1)],
-        "seeds": _extract_exp_plan_seeds(project),
+        "seeds": _execution_seed_ensemble(project),
         "execution_readiness": readiness,
+        "phase_b_operational_resolution": phase_b_resolution,
         "allowed_paths": _allowed_path_rules_for_external_executor(),
         "executor_outputs_contract": {
             "must_write": [
@@ -2846,15 +2989,26 @@ def build_executor_selection_payload(
     selected_executor: str,
     selected_by: str = "human",
     notes: str = "",
+    execution_scope: str = "full_execution",
 ) -> dict[str, Any]:
-    real_allowed = selected_executor != "mock_dry_run"
+    if execution_scope not in VALID_EXTERNAL_EXECUTION_SCOPES:
+        raise ValueError(f"Unsupported external execution scope: {execution_scope}")
+    if execution_scope == "resource_preparation" and selected_executor == "mock_dry_run":
+        raise ValueError("mock_dry_run cannot perform resource preparation")
+    real_allowed = selected_executor != "mock_dry_run" and execution_scope == "full_execution"
     requires_copy = selected_executor in {"codex_cli", "claude_code_window", "manual"}
-    next_state = "T5-DRY-RUN" if selected_executor == "mock_dry_run" else "T5-EXTERNAL-WAIT"
+    next_state = (
+        "T5-DRY-RUN"
+        if selected_executor == "mock_dry_run"
+        else ("T5-RESOURCE-PREP-WAIT" if execution_scope == "resource_preparation" else "T5-EXTERNAL-WAIT")
+    )
     payload: dict[str, Any] = {
         "version": "1.0",
         "semantics": "external_executor_selection",
         "selected_executor": selected_executor,
+        "execution_scope": execution_scope,
         "real_experiment_allowed": real_allowed,
+        "resource_preparation_allowed": selected_executor != "mock_dry_run",
         "requires_user_copy_paste": requires_copy,
         "selected_by": selected_by,
         "selected_at": _now_iso(),
@@ -2867,17 +3021,20 @@ def build_executor_selection_payload(
         payload["workspace_relative_workdir"] = "."
         payload["workspace_relative_executor_root"] = "."
         payload["workspace_relative_deployment_dir"] = "external_executor/expr"
-        payload["codex_user_input"] = (
-            "请读取 external_executor/AGENTS.md，并执行 "
-            "external_executor/skills/research-execution/SKILL.md。"
-        )
+        payload["codex_user_input"] = "请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research-execution/SKILL.md。"
         payload["launch_instruction"] = (
             "On the host, enter the <workspace> root, start Codex CLI there, and paste codex_user_input."
         )
-        payload["resume_instruction"] = (
-            "After Codex writes external_executor/executor_research_report.md, result_pack.json, "
-            f"executor_status.json, and {RUN_MANIFEST_PATH}, run: python -m researchos.cli resume --workspace <workspace>"
-        )
+        if execution_scope == "resource_preparation":
+            payload["resume_instruction"] = (
+                "After Codex completes the bounded Phase B resource report and stops, run: "
+                "python -m researchos.cli resume --workspace <workspace>"
+            )
+        else:
+            payload["resume_instruction"] = (
+                "After Codex writes external_executor/executor_research_report.md, result_pack.json, "
+                f"executor_status.json, and {RUN_MANIFEST_PATH}, run: python -m researchos.cli resume --workspace <workspace>"
+            )
     return payload
 
 
@@ -2891,11 +3048,46 @@ def _default_executor_selection_note(selected_executor: str) -> str:
     return "Manual external execution selected; ResearchOS waits for executor_research_report.md."
 
 
+def _active_execution_scope_notice(selection: dict[str, Any]) -> str:
+    """Render the current selection as an overridable section in executor guides."""
+
+    selected = str(selection.get("selected_executor") or "UNSET").strip()
+    scope = str(selection.get("execution_scope") or "full_execution").strip()
+    if selected == "UNSET":
+        return "<!-- RESEARCHOS_ACTIVE_SCOPE: UNSET -->\n<!-- RESEARCHOS_ACTIVE_SCOPE: END -->"
+    if scope == "resource_preparation":
+        return (
+            "<!-- RESEARCHOS_ACTIVE_SCOPE: resource_preparation -->\n"
+            "## Active Scope: Resource Preparation Only\n\n"
+            "This active selection overrides any generic full-execution wording below. Run Phase A context alignment and Phase B resource/baseline preparation only. "
+            "You may inspect local materials, search authorized public sources, acquire fixed revisions, perform static review, and write provenance/readiness records. "
+            "Do not implement a method, reproduce a baseline, run experiments, diagnose results, package evidence, write Writer Handoff, or enter T8.\n\n"
+            "Before stopping, write `external_executor/report/phase_B/resource_preparation_report.json`, "
+            "`external_executor/report/phase_B/resource_source_report.json`, and a valid overall "
+            "`external_executor/report/phase_B/validation_report.json`; then return control to ResearchOS.\n"
+            "<!-- RESEARCHOS_ACTIVE_SCOPE: END -->"
+        )
+    if selected == "mock_dry_run":
+        return (
+            "<!-- RESEARCHOS_ACTIVE_SCOPE: mock_dry_run -->\n"
+            "## Active Scope: Protocol Dry Run Only\n\n"
+            "Produce only schema-valid mock artifacts. Do not treat mock output as experiment evidence or enter T8.\n"
+            "<!-- RESEARCHOS_ACTIVE_SCOPE: END -->"
+        )
+    return (
+        "<!-- RESEARCHOS_ACTIVE_SCOPE: full_execution -->\n"
+        "## Active Scope: Full External Execution\n\n"
+        "The protocol is ready for the declared external workflow. Keep all work within the handoff, project-specific Skills, and allowed paths; do not change the research boundary by inference.\n"
+        "<!-- RESEARCHOS_ACTIVE_SCOPE: END -->"
+    )
+
+
 def patch_external_executor_files_with_selection(workspace: Path, selection: dict[str, Any]) -> None:
     dry_run = "true" if selection.get("selected_executor") == "mock_dry_run" else "false"
     mock_only = "true" if selection.get("selected_executor") == "mock_dry_run" else "false"
     real_allowed = "true" if selection.get("real_experiment_allowed") else "false"
     selected = str(selection.get("selected_executor") or "mock_dry_run")
+    scope_notice = _active_execution_scope_notice(selection)
     execution_mode = "dry_run" if selected == "mock_dry_run" else "external"
     handoff_path = workspace / "external_executor" / "handoff_pack.json"
     handoff = _read_json(handoff_path)
@@ -2932,6 +3124,14 @@ def patch_external_executor_files_with_selection(workspace: Path, selection: dic
             "EXECUTION MODE NOT YET SELECTED",
             f"EXECUTION MODE SELECTED: {selection.get('selected_executor')}",
         )
+        scope_marker = re.compile(
+            r"<!-- RESEARCHOS_ACTIVE_SCOPE: [^>]* -->.*?<!-- RESEARCHOS_ACTIVE_SCOPE: END -->",
+            flags=re.DOTALL,
+        )
+        if scope_marker.search(text):
+            text = scope_marker.sub(scope_notice, text, count=1)
+        else:
+            text = text.rstrip() + "\n\n" + scope_notice + "\n"
         path.write_text(text, encoding="utf-8")
     job_state = _read_json(workspace / "external_executor" / "job_state.json")
     if job_state:
@@ -3197,7 +3397,39 @@ def _write_external_executor_guides(
     readiness = handoff.get("execution_readiness") if isinstance(handoff.get("execution_readiness"), dict) else {}
     readiness_status = str(readiness.get("status") or "ready")
     pending_decisions = readiness.get("required_decisions") if isinstance(readiness.get("required_decisions"), list) else []
-    if readiness_status == "protocol_decision_required":
+    phase_b_resolution = handoff.get("phase_b_operational_resolution") if isinstance(handoff.get("phase_b_operational_resolution"), dict) else {}
+    auto_settings = phase_b_resolution.get("settings") if isinstance(phase_b_resolution.get("settings"), list) else []
+    auto_settings_block = ""
+    if auto_settings:
+        lines = []
+        for item in auto_settings:
+            if not isinstance(item, dict):
+                continue
+            setting = str(item.get("setting") or "operational setting").strip()
+            resolution = str(item.get("resolution") or "Record the reviewed Phase B selection in the run configuration.").strip()
+            lines.append(f"- {setting}: {resolution}")
+        if lines:
+            auto_settings_block = (
+                "## Phase B Resolved Operational Settings\n"
+                "These settings were accepted from Phase B within the existing research boundary. Use only reviewed resources and record the exact version/configuration in every run; do not broaden task, benchmark scope, baseline set, mechanism, or claim boundary.\n"
+                + "\n".join(lines)
+                + "\n\n"
+            )
+    execution_scope = str(selection.get("execution_scope") or "full_execution")
+    if execution_scope == "resource_preparation":
+        readiness_block = (
+            "## Resource Preparation Scope\n"
+            "This launch is deliberately limited to Phase A context alignment and Phase B resource/baseline preparation. "
+            "Use the literature resource catalog and authorized public sources to discover, acquire, statically review, and record candidate datasets, benchmarks, code, checkpoints, and baseline implementations. "
+            "Do not dispatch experiment-design, implementation, baseline reproduction, experiment-run, diagnosis, evidence packaging, or Writer Handoff.\n\n"
+            "Before stopping, validate and apply the Phase B resource report at "
+            "`external_executor/report/phase_B/resource_preparation_report.json`. "
+            "It may be `ready`, `partial`, or `blocked`; record every unavailable, restricted, or incompatible resource honestly. "
+            "Write the overall Phase B receipt `external_executor/report/phase_B/validation_report.json` with "
+            "`schema_version=resource_preparation_validation.v1` and `valid=true`. "
+            "After it is written, stop and let ResearchOS resume T5 compilation.\n\n"
+        )
+    elif readiness_status == "protocol_decision_required":
         readiness_block = (
             "## Protocol Readiness\n"
             "The research handoff is compiled, but formal execution is not authorized yet. You may inspect context and prepare or verify resource/baseline candidates only. "
@@ -3213,9 +3445,13 @@ def _write_external_executor_guides(
         )
     else:
         readiness_block = "## Protocol Readiness\nThe handoff is ready for the declared preparation and execution stages, subject to executor selection and all remaining evidence boundaries.\n\n"
+    scope_header = (
+        "RESOURCE PREPARATION ONLY" if execution_scope == "resource_preparation" else "FULL EXECUTION"
+    )
     common_header = (
         "> EXECUTION MODE NOT YET SELECTED - see external_executor/report/executor_selection.json after T5-EXECUTOR-GATE\n\n"
-        f"- dry_run: UNSET\n- mock_only: UNSET\n- real_experiment_allowed: UNSET\n\n"
+        f"- execution_scope: {scope_header}\n- dry_run: UNSET\n- mock_only: UNSET\n- real_experiment_allowed: UNSET\n\n"
+        "<!-- RESEARCHOS_ACTIVE_SCOPE: UNSET -->\n<!-- RESEARCHOS_ACTIVE_SCOPE: END -->\n\n"
     )
     agents = (
         f"# External Executor Instructions for ResearchOS - project {project_id}\n\n"
@@ -3227,6 +3463,7 @@ def _write_external_executor_guides(
         "## This experiment in one line\n"
         f"{handoff.get('experiment_intent_oneliner')}\n\n"
         + readiness_block
+        + auto_settings_block
         + "## Read first\n"
         "1. external_executor/handoff_pack.json\n"
         "2. external_executor/expected_outputs_schema.json\n"
@@ -3270,6 +3507,7 @@ def _write_external_executor_guides(
         f"# Claude Code External Execution Guide - project {project_id}\n\n"
         + common_header
         + readiness_block
+        + auto_settings_block
         + "You are used as an external coding executor for ResearchOS via a Claude Code window.\n\n"
         "## Steps\n"
         "1. Read handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt.\n"
@@ -4187,7 +4425,13 @@ class CompileResearchReboostHandoffTool(Tool):
             _write_external_executor_guides(
                 self.policy,
                 guide_handoff,
-                selection=existing_selection if preserve_existing_selection else {"selected_executor": "UNSET"},
+                # Rebuild neutral guide text first.  A persisted selection may
+                # be a bounded Phase-B launch from the previous T5 pass; using
+                # it to choose the static prose here would leave stale
+                # resource-only instructions after T5 recompiles to ready.
+                # The deterministic patch below reapplies the current active
+                # scope through its replaceable scope marker.
+                selection={"selected_executor": "UNSET"},
                 include_legacy_control_files=False,
             )
             if preserve_existing_selection:
@@ -4300,7 +4544,7 @@ class BuildExperimentHandoffPackTool(Tool):
             )
             risks = _read_text(ws / "ideation" / "risks.md", max_chars=6000)
             metrics = _extract_exp_plan_metrics(exp_plan)
-            seeds = _extract_exp_plan_seeds(project)
+            seeds = _execution_seed_ensemble(project)
             required_baselines = _extract_required_baselines(ws)
             _write_json(
                 self.policy.resolve_write("novelty/required_baselines.json"),

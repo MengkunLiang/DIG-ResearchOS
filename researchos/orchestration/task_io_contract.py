@@ -1056,6 +1056,51 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         ],
         "schemas": {},
     },
+    "T5-RESOURCE-PREP-EXECUTOR-GATE": {
+        "inputs": {
+            "handoff_pack": "external_executor/handoff_pack.json",
+            "expected_outputs_schema": "external_executor/expected_outputs_schema.json",
+            "allowed_paths": "external_executor/allowed_paths.txt",
+            "agents_md": "external_executor/AGENTS.md",
+            "claude_md": "external_executor/CLAUDE.md",
+            "skills_dir": "external_executor/skills",
+            "project_skill_context": "external_executor/project_skill_context.yaml",
+            "project_skill_context_schema": "external_executor/schemas/project_skill_context.schema.json",
+            "skill_specialization_report": "external_executor/report/skill_specialization_report.json",
+            "skill_specialization_execution": "external_executor/report/skill_specialization_execution.json",
+        },
+        "outputs": {
+            "executor_selection": "external_executor/report/executor_selection.json",
+        },
+        "required_inputs": [
+            "handoff_pack",
+            "expected_outputs_schema",
+            "allowed_paths",
+            "agents_md",
+            "skills_dir",
+            "project_skill_context",
+            "project_skill_context_schema",
+            "skill_specialization_report",
+            "skill_specialization_execution",
+        ],
+        "schemas": {},
+    },
+    "T5-RESOURCE-PREP-WAIT": {
+        "inputs": {
+            "executor_selection": "external_executor/report/executor_selection.json",
+            "handoff_pack": "external_executor/handoff_pack.json",
+            "expected_outputs_schema": "external_executor/expected_outputs_schema.json",
+            "allowed_paths": "external_executor/allowed_paths.txt",
+            "resource_preparation_report": "external_executor/report/phase_B/resource_preparation_report.json",
+            "resource_validation_report": "external_executor/report/phase_B/validation_report.json",
+            "resource_source_report": "external_executor/report/phase_B/resource_source_report.json",
+        },
+        "outputs": {
+            "resource_preparation_acceptance": "external_executor/report/resource_preparation_acceptance.json",
+        },
+        "required_inputs": ["executor_selection", "handoff_pack", "expected_outputs_schema", "allowed_paths"],
+        "schemas": {},
+    },
     "T5-EXTERNAL-WAIT": {
         "inputs": {
             "executor_selection": "external_executor/report/executor_selection.json",

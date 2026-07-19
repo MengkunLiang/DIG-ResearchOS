@@ -2573,7 +2573,7 @@ class StateMachine:
             if self._t4_gate1_ready_without_selection(workspace_dir):
                 return True
             return self._t4_prerun_confirmation_required(workspace_dir)
-        if state.current_task == "T5-EXTERNAL-WAIT" and state.status == "PAUSED":
+        if state.current_task in {"T5-EXTERNAL-WAIT", "T5-RESOURCE-PREP-WAIT"} and state.status == "PAUSED":
             # Older workspaces persisted this wait as a generic runtime pause.
             # Reopen it as the dedicated external-executor handoff panel before
             # any agent or model can run again.
@@ -2672,7 +2672,7 @@ class StateMachine:
                         workspace_dir,
                     )
                 return self._pause_for_t4_prerun_gate(state, workspace_dir)
-        if state.current_task == "T5-EXTERNAL-WAIT" and state.status == "PAUSED":
+        if state.current_task in {"T5-EXTERNAL-WAIT", "T5-RESOURCE-PREP-WAIT"} and state.status == "PAUSED":
             return self._pause_for_runtime_recovery_gate(
                 state,
                 error=state.last_error,
@@ -3427,17 +3427,25 @@ class StateMachine:
                 selection = {}
 
         selected_executor = str(selection.get("selected_executor") or "unknown").strip()
+        execution_scope = str(selection.get("execution_scope") or "full_execution").strip()
         root = str(workspace) if workspace is not None else "<workspace>"
         prompt = str(selection.get("codex_user_input") or "").strip()
         if selected_executor == "codex_cli" and not prompt:
             prompt = "请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research-execution/SKILL.md。"
 
-        required_paths = [
-            "external_executor/executor_research_report.md",
-            "external_executor/result_pack.json",
-            "external_executor/executor_status.json",
-            "external_executor/report/run_manifest.json",
-        ]
+        if execution_scope == "resource_preparation":
+            required_paths = [
+                "external_executor/report/phase_B/resource_preparation_report.json",
+                "external_executor/report/phase_B/validation_report.json",
+                "external_executor/report/phase_B/resource_source_report.json",
+            ]
+        else:
+            required_paths = [
+                "external_executor/executor_research_report.md",
+                "external_executor/result_pack.json",
+                "external_executor/executor_status.json",
+                "external_executor/report/run_manifest.json",
+            ]
         artifacts = [
             {
                 "path": rel_path,
@@ -3455,8 +3463,10 @@ class StateMachine:
         else:
             launch_summary = "未读取到有效执行器选择记录；先检查 external_executor/report/executor_selection.json。"
 
+        is_resource_preparation = execution_scope == "resource_preparation"
         return {
             "selected_executor": selected_executor,
+            "execution_scope": execution_scope,
             "selection_path": selection_path,
             "workspace_root": root,
             "launch_summary": launch_summary,
@@ -3468,9 +3478,14 @@ class StateMachine:
                 "这些命令可能读取到外部执行器尚未原子写完的 result pack、状态或运行清单。"
             ),
             "completion_boundary": (
-                "外部执行根 Skill 在 Writer Handoff 校验通过后会执行其 route 返回的 T8 交接命令。"
-                "只有当该执行器明确报告未能启动 T8，且四项回传文件均已就绪时，才在外部执行器停止后运行 "
-                f"python -m researchos.cli resume --workspace {shlex.quote(root)}。"
+                "受限资源准备完成后，停止外部执行器并运行 "
+                f"python -m researchos.cli resume --workspace {shlex.quote(root)}；ResearchOS 会接收 Phase B 报告并重新编译 T5。"
+                if is_resource_preparation
+                else (
+                    "外部执行根 Skill 在 Writer Handoff 校验通过后会执行其 route 返回的 T8 交接命令。"
+                    "只有当该执行器明确报告未能启动 T8，且四项回传文件均已就绪时，才在外部执行器停止后运行 "
+                    f"python -m researchos.cli resume --workspace {shlex.quote(root)}。"
+                )
             ),
         }
 
@@ -3518,6 +3533,7 @@ class StateMachine:
         is_literature_coverage = recovery_kind == "literature_coverage"
         is_survey_retrieval = recovery_kind == "survey_retrieval"
         is_external_wait = state.current_task == "T5-EXTERNAL-WAIT"
+        is_resource_preparation_wait = state.current_task == "T5-RESOURCE-PREP-WAIT"
         payload.update(
             {
                 "schema_version": "1.0.0",
@@ -3580,6 +3596,29 @@ class StateMachine:
                     "id": "exit",
                     "label": "结束本次运行",
                     "description": "不删除任何补检记录或笔记；之后 resume 时仍会先展示这项补检恢复决策。",
+                },
+            ]
+        elif is_resource_preparation_wait:
+            title = "外部执行器正在自动准备资源"
+            description = (
+                "当前外部执行器只允许进行上下文核对和 Phase B 资源准备：检查本地材料、检索公开资源、固定版本下载、"
+                "许可证/安全审查和资源记录。它不会实现方法、运行实验或写入 T8。"
+            )
+            options = [
+                {
+                    "id": "retry_targeted_repair",
+                    "label": "检查资源准备报告",
+                    "description": "只检查 Phase B 报告和验证记录；通过后重新编译 T5，不会把资源准备当作实验结果。",
+                },
+                {
+                    "id": "inspect_then_pause",
+                    "label": "暂不检查，保持等待",
+                    "description": "保留当前资源准备执行器与全部来源记录；下次 resume 仍展示启动说明与完成条件。",
+                },
+                {
+                    "id": "exit",
+                    "label": "结束本次 ResearchOS 会话",
+                    "description": "不删除外部资源准备任务或任何 artifact；执行器完成后可显式 resume 回到此处检查。",
                 },
             ]
         elif is_external_wait:
@@ -3646,7 +3685,7 @@ class StateMachine:
                 "resume_state_path": "_runtime/resume/" + state.current_task.lower().replace(".", "_") + "_resume_state.json",
                 **(
                     {"external_executor_launch": self._t5_external_wait_launch_context(workspace_dir)}
-                    if is_external_wait
+                    if is_external_wait or is_resource_preparation_wait
                     else {}
                 ),
             },
@@ -3844,6 +3883,37 @@ class StateMachine:
             presentation["_title"] = gate_spec["title"]
         if gate_spec.get("description"):
             presentation["_description"] = gate_spec["description"]
+        # T5 protocol/material gates are persisted while waiting for a human.
+        # Refresh their declarative choices on resume so an older workspace is
+        # offered the current automatic-resource branch instead of a stale
+        # "put files here / decide every setting" menu.  No selected decision
+        # is overwritten: this runs only while the Gate is still pending.
+        if state.pending_gate.gate_id in {
+            "t5_protocol_gate",
+            "t5_expr_material_gate",
+            "t5_resource_executor_gate",
+        } and isinstance(gate_spec.get("options"), list):
+            configured_options = [dict(item) for item in gate_spec["options"] if isinstance(item, dict)]
+            if configured_options:
+                previous_ids = [
+                    str(item.get("id") or item.get("key") or "")
+                    for item in options
+                    if isinstance(item, dict)
+                ]
+                current_ids = [str(item.get("id") or item.get("key") or "") for item in configured_options]
+                if previous_ids != current_ids:
+                    options = configured_options
+                    state.pending_gate.options = configured_options
+                    receipts = state.task_context.get("pending_gate_migrations")
+                    history = list(receipts) if isinstance(receipts, list) else []
+                    history.append(
+                        {
+                            "gate_id": state.pending_gate.gate_id,
+                            "migration": "refresh_t5_resource_automation_options",
+                            "migrated_at": _now_iso(),
+                        }
+                    )
+                    state.task_context["pending_gate_migrations"] = history[-20:]
         # T5 material/executor gates formerly required an unprompted ``notes``
         # line. Pending gates persist their options by design, so a workspace
         # paused before this fix would otherwise keep requesting a field that
@@ -4528,9 +4598,9 @@ class StateMachine:
             state.status = "PAUSED"
             state.paused_at = _now_iso()
             state.last_error = (
-                "WAITING_MATERIALS: place source datasets, repositories, baselines, benchmarks, weights, "
-                "and material notes under resources/; place only deployed runnable assets under "
-                "external_executor/expr/, then resume."
+                "WAITING_MATERIALS: this optional inventory is paused. Add only materials already available under resources/ "
+                "and deployed runnable assets under external_executor/expr/, or return to T5-PROTOCOL-GATE and choose "
+                "bounded automatic resource preparation for public resources."
             )
             return state
         if node.task_id == "T5-PROTOCOL-GATE" and next_task == "T5-PROTOCOL-GATE":
@@ -4538,8 +4608,8 @@ class StateMachine:
             state.status = "PAUSED"
             state.paused_at = _now_iso()
             state.last_error = (
-                "WAITING_PROTOCOL: T5 handoff is preserved. Confirm the recorded simulation/benchmark, backbone, "
-                "seed, scale, and resource decisions before formal execution."
+                "WAITING_PROTOCOL: T5 handoff is preserved. Resolve any material research-boundary decision, "
+                "or start bounded automatic resource preparation from the protocol Gate."
             )
             return state
         if (
@@ -6222,9 +6292,13 @@ class StateMachine:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             return
-        if node.task_id == "T5-EXECUTOR-GATE":
+        if node.task_id in {"T5-EXECUTOR-GATE", "T5-RESOURCE-PREP-EXECUTOR-GATE"}:
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "codex_cli")
-            if next_task in {"T5-HANDOFF", "T5-REBOOST-GATE"} or option_id == "revise_handoff":
+            resource_preparation = node.task_id == "T5-RESOURCE-PREP-EXECUTOR-GATE"
+            if (
+                not resource_preparation
+                and (next_task in {"T5-HANDOFF", "T5-REBOOST-GATE"} or option_id == "revise_handoff")
+            ):
                 outputs = node.outputs or {}
                 for rel_path in outputs.values():
                     path = workspace_dir / rel_path
@@ -6241,6 +6315,8 @@ class StateMachine:
                     }
                     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
                     return
+            if resource_preparation and option_id in {"return_to_protocol", "pause_protocol"}:
+                return
             aliases = {
                 "mock": "mock_dry_run",
                 "dry": "mock_dry_run",
@@ -6264,6 +6340,7 @@ class StateMachine:
                 selected_executor=selected_executor,
                 selected_by="human",
                 notes=notes,
+                execution_scope="resource_preparation" if resource_preparation else "full_execution",
             )
             selection["next_state"] = next_task
             path = workspace_dir / "external_executor" / "report" / "executor_selection.json"
@@ -6655,6 +6732,46 @@ class StateMachine:
             for item in unresolved
             if isinstance(item, dict)
         ]
+        phase_b_report = self._read_json_dict(
+            workspace_dir / "external_executor" / "report" / "phase_B" / "resource_preparation_report.json"
+        ) or {}
+        phase_b_acceptance = self._read_json_dict(
+            workspace_dir / "external_executor" / "report" / "resource_preparation_acceptance.json"
+        ) or {}
+        resource_readiness = (
+            phase_b_report.get("resource_readiness")
+            if isinstance(phase_b_report.get("resource_readiness"), dict)
+            else {}
+        )
+        source_report = (
+            phase_b_report.get("resource_source_report")
+            if isinstance(phase_b_report.get("resource_source_report"), dict)
+            else {}
+        )
+        source_counts = source_report.get("counts") if isinstance(source_report.get("counts"), dict) else {}
+        resource_blockers = resource_readiness.get("blocking_issues")
+        if not isinstance(resource_blockers, list):
+            resource_blockers = []
+        resource_constraints = resource_readiness.get("claim_constraints")
+        if not isinstance(resource_constraints, list):
+            resource_constraints = []
+        resource_preparation: dict[str, Any] = {"status": "not_run"}
+        if phase_b_report:
+            resource_preparation = {
+                "status": str(resource_readiness.get("status") or "reported"),
+                "phase_b_status": str(phase_b_report.get("status") or "reported"),
+                "accepted": phase_b_acceptance.get("ok") is True,
+                "minimum_loop_feasible": resource_readiness.get("minimum_loop_feasible"),
+                "source_counts": {
+                    "byhand": int(source_counts.get("byhand") or 0),
+                    "remote": int(source_counts.get("Remote_acquisition") or 0),
+                    "reproduction": int(source_counts.get("reproduction") or 0),
+                },
+                "blockers": [" ".join(str(item).split()) for item in resource_blockers if str(item).strip()][:4],
+                "constraints": [" ".join(str(item).split()) for item in resource_constraints if str(item).strip()][:4],
+                "report_path": "external_executor/report/phase_B/resource_preparation_report.json",
+                "source_report_path": "external_executor/report/phase_B/resource_source_report.json",
+            }
         return {
             "status": readiness.get("status"),
             "formal_execution_allowed": readiness.get("formal_execution_allowed"),
@@ -6671,6 +6788,7 @@ class StateMachine:
             },
             "required_decisions": readiness.get("required_decisions") or [],
             "missing_requirements": unresolved_records,
+            "resource_preparation": resource_preparation,
             "settings_file": "ideation/exp_plan.yaml",
             "proposal_file": "ideation/proposal/research_proposal.md",
         }

@@ -1182,8 +1182,8 @@ states:
     next_on_failure: failed
 
   # T5-PROTOCOL-GATE 状态：区分“handoff 已编译”与“已经授权真实运行”。
-  # 当 T4.5 明确保留仿真环境、backbone、样本规模、seed 或预算等未决项时，
-  # 此 Gate 呈现它们并阻止直接选择真实执行器；它不是运行时错误或重试循环。
+  # 资源、版本、环境与其他可来源核验的运行项可先经受限 Phase A/B 自动准备；
+  # 完整实验只会在不改变 T4.5 研究边界时获授权。此 Gate 不是运行时错误或重试循环。
   T5-PROTOCOL-GATE:
     agent: experimenter
     mode: executor_gate
@@ -1203,9 +1203,9 @@ states:
     next_on_failure: failed
 
   # T5-EXPR-MATERIAL-GATE 状态：实验材料放置确认
-  # 用途：T5 re-boost 与 skill 编译完成后，暂停等待用户把 dataset、baseline、
-  # benchmark、repo 和权重等源材料放入 resources/；已可运行的部署资产可放在
-  # external_executor/expr/。节点 ID 和决策路径保留，避免打断旧 workspace 的恢复。
+  # 用途：T5 re-boost 与 skill 编译完成后，可选地盘点用户已有 dataset、baseline、
+  # benchmark、repo 和权重等源材料；缺少这些资源时应优先使用受限自动准备分支。
+  # 已可运行的部署资产可放在 external_executor/expr/。节点 ID 和决策路径保留，避免打断旧 workspace 的恢复。
   T5-EXPR-MATERIAL-GATE:
     agent: experimenter
     mode: executor_gate
@@ -1246,6 +1246,49 @@ states:
     gate:
       type: t5_executor_gate
     next_on_success: __parse_from_output__
+    next_on_failure: failed
+
+  # T5-RESOURCE-PREP-EXECUTOR-GATE：协议存在非阻断未决项时，允许外部执行器
+  # 仅运行 Phase A/B，自动检索、获取和静态审查公开资源；它不能实现或运行实验。
+  T5-RESOURCE-PREP-EXECUTOR-GATE:
+    agent: experimenter
+    mode: executor_gate
+    extra:
+      immediate_gate: true
+      execution_scope: resource_preparation
+    inputs:
+      handoff_pack: external_executor/handoff_pack.json
+      expected_outputs_schema: external_executor/expected_outputs_schema.json
+      allowed_paths: external_executor/allowed_paths.txt
+      agents_md: external_executor/AGENTS.md
+      claude_md: external_executor/CLAUDE.md
+      project_skill_context: external_executor/project_skill_context.yaml
+      project_skill_context_schema: external_executor/schemas/project_skill_context.schema.json
+      skills_dir: external_executor/skills
+      skill_specialization_report: external_executor/report/skill_specialization_report.json
+      skill_specialization_execution: external_executor/report/skill_specialization_execution.json
+    outputs:
+      executor_selection: external_executor/report/executor_selection.json
+    gate:
+      type: t5_resource_executor_gate
+    next_on_success: __parse_from_output__
+    next_on_failure: failed
+
+  # T5-RESOURCE-PREP-WAIT：等待受限外部执行器完成 Phase B；其完成不等于实验或 T8 handoff。
+  T5-RESOURCE-PREP-WAIT:
+    agent: experimenter
+    mode: resource_prepare_wait
+    inputs:
+      executor_selection: external_executor/report/executor_selection.json
+      handoff_pack: external_executor/handoff_pack.json
+      expected_outputs_schema: external_executor/expected_outputs_schema.json
+      allowed_paths: external_executor/allowed_paths.txt
+      resource_preparation_report: external_executor/report/phase_B/resource_preparation_report.json
+      resource_validation_report: external_executor/report/phase_B/validation_report.json
+      resource_source_report: external_executor/report/phase_B/resource_source_report.json
+    outputs:
+      resource_preparation_acceptance: external_executor/report/resource_preparation_acceptance.json
+    next_on_success: T5-REBOOST-GATE
     next_on_failure: failed
 
   # T5-EXTERNAL-WAIT 状态：等待外部执行器写回结果材料

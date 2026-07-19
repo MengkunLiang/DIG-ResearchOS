@@ -1073,8 +1073,8 @@ class CLIHumanInterface(HumanInterface):
                 "green",
             ),
             "protocol_decision_required": (
-                "研究方案已整理，仍需明确实验设置",
-                "这不是运行错误。T4.5 有意保留了部分实验决定，外部执行器不能替研究者猜测这些条件。",
+                "研究方案已整理，可先自动准备资源",
+                "这不是运行错误，也不要求你手工寻找数据、代码或权重。系统会先让受限执行器获取、审查并记录公开资源；完整实验只在研究边界保持一致时才会启动。",
                 "bright_yellow",
             ),
             "blocked": (
@@ -1104,16 +1104,16 @@ class CLIHumanInterface(HumanInterface):
             text = " ".join(str(raw or "").replace("_", " ").split())
             lowered = text.casefold()
             if "seed" in lowered or "随机种子" in text:
-                return ("随机种子策略", "保证不同方法在同一可复现条件下比较", "在实验计划中写明固定种子或 seed ensemble")
+                return ("随机种子策略", "保证不同方法在同一可复现条件下比较", "未声明时使用稳定默认 ensemble；需要覆盖时再在实验计划中声明")
             if any(token in lowered for token in ("framework", "simulat", "environment")) or "仿真" in text:
-                return ("仿真环境或实验框架", "决定研究对象、可观测变量和结论边界", "在实验计划中写明环境、版本和配置来源")
+                return ("仿真环境或实验框架", "需要可追溯版本和配置，才能解释实验条件", "先让 Phase B 按来源检索、审查并记录；只有换到另一个研究对象时才需人工确认")
             if "benchmark" in lowered or "数据集" in text:
-                return ("benchmark 或数据集", "决定比较对象和结论能外推到哪里", "在实验计划中写明名称、版本、划分和获取来源")
+                return ("benchmark 或数据集", "需要明确版本、划分和协议，才能解释结论适用范围", "先让 Phase B 获取并审查来源；只有扩大或替换 T4.5 已定义范围时才需人工确认")
             if any(token in lowered for token in ("backbone", "model", "agent")) or "骨干" in text:
-                return ("模型或 agent backbone", "执行器不能自行决定要使用的基础模型", "在实验计划中写明模型、版本和许可/访问条件")
+                return ("模型或 agent backbone", "需要记录版本、许可和可访问性，以便复现比较", "先让 Phase B 核验可用公开版本；只有更换研究对象或模型家族时才需人工确认")
             if any(token in lowered for token in ("scale", "sample", "episode", "rollout", "budget")) or any(token in text for token in ("规模", "预算", "样本")):
-                return ("样本规模、轮次或预算", "决定统计解释范围、资源消耗和停止条件", "在实验计划中写明规模、重复次数和资源上限")
-            return (text or "待定实验设置", "该设置会改变实验条件或结论范围，不能由执行器自行推定", "在实验计划或来源明确的项目材料中补充决定")
+                return ("样本规模、轮次或预算", "需要记录统计解释范围、资源消耗和停止条件", "由执行器按已声明约束与来源记录提出可执行值；仅在需要扩大研究范围时再确认")
+            return (text or "待核对执行设置", "该设置必须有来源记录，避免把默认值误写成研究事实", "优先通过 Phase B 的来源检索与审查记录；若会改变研究边界，系统会明确请求确认")
 
         width = max(88, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
         buffer = io.StringIO()
@@ -1141,13 +1141,39 @@ class CLIHumanInterface(HumanInterface):
         requirements = value.get("missing_requirements") if isinstance(value.get("missing_requirements"), list) else []
         if status == "protocol_decision_required" and decisions:
             table = Table(expand=True, show_header=True, show_lines=True, box=box.SQUARE, header_style="bold bright_yellow", border_style="bright_yellow")
-            table.add_column("仍需决定什么", width=24, overflow="fold")
-            table.add_column("为什么必须决定", ratio=2, overflow="fold")
-            table.add_column("应补充到哪里", ratio=2, overflow="fold")
+            table.add_column("待核对的执行设置", width=24, overflow="fold")
+            table.add_column("为什么需要留痕", ratio=2, overflow="fold")
+            table.add_column("系统如何处理", ratio=2, overflow="fold")
             for decision in decisions:
                 label, why, destination = decision_detail(decision)
                 table.add_row(label, why, destination)
             renderables.append(table)
+
+        preparation = value.get("resource_preparation") if isinstance(value.get("resource_preparation"), dict) else {}
+        preparation_status = str(preparation.get("status") or "not_run")
+        if preparation_status != "not_run":
+            source_counts = preparation.get("source_counts") if isinstance(preparation.get("source_counts"), dict) else {}
+            source_text = (
+                f"人工提供 {source_counts.get('byhand', 0)}；公开获取 {source_counts.get('remote', 0)}；"
+                f"可审计重实现 {source_counts.get('reproduction', 0)}"
+            )
+            detail = Table.grid(expand=True, padding=(0, 1))
+            detail.add_column(style="bold", width=18, no_wrap=True)
+            detail.add_column(ratio=1, overflow="fold")
+            detail.add_row("Phase B 状态", Text(f"{preparation_status}（资源准备：{preparation.get('phase_b_status') or 'reported'}）", overflow="fold"))
+            detail.add_row("最小实验环", Text("可行" if preparation.get("minimum_loop_feasible") is True else "尚不可行或仍有限制", overflow="fold"))
+            detail.add_row("资源来源", Text(source_text, overflow="fold"))
+            blockers = preparation.get("blockers") if isinstance(preparation.get("blockers"), list) else []
+            constraints = preparation.get("constraints") if isinstance(preparation.get("constraints"), list) else []
+            if blockers:
+                detail.add_row("仍需处理", Text("；".join(str(item) for item in blockers), overflow="fold"))
+            elif constraints:
+                detail.add_row("仍有限制", Text("；".join(str(item) for item in constraints), overflow="fold"))
+            else:
+                detail.add_row("接收状态", Text("已被 T5 接收并作为下一次交接编译的来源上下文。" if preparation.get("accepted") else "Phase B 已有报告；恢复时将重新检查接收记录。", overflow="fold"))
+            report_path = str(preparation.get("report_path") or "external_executor/report/phase_B/resource_preparation_report.json")
+            source_path = str(preparation.get("source_report_path") or "external_executor/report/phase_B/resource_source_report.json")
+            renderables.append(Panel(Group(detail, Text(f"详情：{report_path}  |  来源：{source_path}", style="dim", overflow="fold")), title="自动资源准备记录", border_style="cyan", expand=True))
         elif status == "blocked":
             fields: list[Any] = []
             for record in requirements:
@@ -1170,10 +1196,12 @@ class CLIHumanInterface(HumanInterface):
         next_steps.add_column("系统接下来会做什么", ratio=2, overflow="fold")
         if status == "ready":
             next_steps.add_row("协议已经完整", "先准备实验材料", "进入资源确认页；核对数据、代码、benchmark 和权重，再选择外部执行器。")
+            next_steps.add_row("手头没有资源", "让外部执行器自动准备资源", "启动受限的 Phase B；它只检索、下载、审查和记录公开资源，不运行实验。")
         elif status == "protocol_decision_required":
-            next_steps.add_row("已经补完上表设置", "协议已补充，重新编译", "只重新整理和校验 T5 交接，不会重做 T4/T4.5。")
-            next_steps.add_row("已有数据、代码或权重可先放入", "先准备实验材料", "允许准备资源；正式运行仍会回到这里核对协议。")
-            next_steps.add_row("暂时不准备决定", "暂停协议确认", "保存全部材料；下次 resume 仍从这里开始。")
+            next_steps.add_row("没有本地材料，或想先核验公开来源", "让外部执行器自动准备资源", "推荐路径：启动受限 Phase B；它会按公开来源、许可、安全和协议规则获取并记录资源，不实现或运行方法。")
+            next_steps.add_row("已有数据、代码或权重", "先准备实验材料", "可选：只盘点已有材料；正式运行仍会在 T5 中核对研究边界。")
+            next_steps.add_row("你有意改变研究边界", "协议已补充，重新编译", "仅在任务、机制、必需 baseline、benchmark 范围或 claim/贡献边界确实变化时使用；不会重做 T4/T4.5。")
+            next_steps.add_row("暂时不继续", "暂停协议确认", "保存全部材料；下次 resume 仍从这里开始。")
         else:
             next_steps.add_row("实验计划缺少必要字段", "协议已补充，重新编译", "补充实验计划后重新编译 T5；不会丢失 proposal 或文献材料。")
             next_steps.add_row("研究问题、机制或贡献本身需要改变", "回到 T4 重构", "返回研究方向阶段，保留现有版本供对照。")

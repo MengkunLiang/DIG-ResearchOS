@@ -25,7 +25,7 @@ T1 研究范围 -> T2 文献 -> T3 阅读 -> T3.5 综合
 | T3.6 可选综述 | 在当前证据足够时撰写领域综述；不做综述时会跳过。 | 选择跳过、使用当前语料库，或先做一次定向补检。 | `drafts/survey/` |
 | T4 研究方向 | 生成、比较和演化多个可选研究方向。 | 选择推进、优化、再探索，或只查看 Candidate。 | `ideation/` 下的 Candidate Card、评分、证据和谱系 |
 | T4.5 新颖性审计 | 检查相似工作和机制差异，把选定方向变成正式研究包。 | 复核新颖性审计结论与必需 baseline。 | `ideation/proposal/research_proposal.md`、`hypotheses.md`、`exp_plan.yaml` |
-| T5 外部执行准备 | 把 T4.5 的正式研究包变成外部执行器不能擅自改写的交接。 | 明确尚缺的实验设置、放置已有资源、选择执行器。 | `external_executor/handoff_pack.json`、`resources/` |
+| T5 外部执行准备 | 把 T4.5 的正式研究包变成外部执行器不能擅自改写的交接。 | 明确仍影响研究边界的设置；可放置已有资源，或让执行器自动准备公开资源。 | `external_executor/handoff_pack.json`、`resources/` |
 | T8 写作 | 用已经核验的实验事实写作、审稿和修订。 | 选择写作风格或模板。 | `drafts/`、实验 claim/evidence 文件 |
 | T9 投稿 | 审阅、真实编译并生成提交包。 | 只在环境或编译恢复时处理问题。 | `submission/`、最终 PDF 与编译报告 |
 
@@ -211,21 +211,21 @@ python -m researchos.cli skill-status --workspace ./workspace/project-a
 
 ### 5. T5 外部执行：从研究方案到真实实验
 
-完整流程在 T4.5 通过后会自动进入 T5。T5 会确定性编译 handoff 并发布 13 个项目专属执行 Skill，不让模型重写这些控制文件；之后依次停在“协议就绪”“材料准备”“选择执行器”三个 Gate。
+完整流程在 T4.5 通过后会自动进入 T5。T5 会确定性编译 handoff 并发布 13 个项目专属执行 Skill，不让模型重写这些控制文件；之后先停在“协议就绪”。“材料准备”只是盘点你已经拥有的资源的可选入口；缺少公开资源时，系统会先自动准备，再进入完整执行器选择。
 
-正常使用时不需要手工启动这些 T5 子节点。T5 会读取并保留 T4.5 的完整 proposal、正式假设、实验计划、新颖性审计和停止条件；它不会重做 T4/T4.5，也不会允许执行器自行选择实验框架、模型、随机种子、样本规模或预算。
+正常使用时不需要手工启动这些 T5 子节点。T5 会读取并保留 T4.5 的完整 proposal、正式假设、实验计划、新颖性审计和停止条件；它不会重做 T4/T4.5，也不会允许执行器静默改变研究任务、核心机制、必需 baseline、benchmark 范围或论文主张。随机种子使用可审计的稳定默认 ensemble，除非项目已明确声明自己的 seed policy。
 
 ```text
 T4.5 通过
   -> T5 编译研究交接和项目专属 Skill
-  -> 协议确认：实验设置是否已经明确？
-  -> 材料确认：已有数据、代码和权重是否已放好？
+  -> 协议确认：区分可自动补齐的资源/运行设置与真正的研究边界变更
+  -> 可选本地材料盘点，或让受限执行器自动准备公开资源
   -> 选择 Codex / Claude / 人工执行器
   -> 外部执行写回可审计的实验结果
   -> T8 接收结果并开始论文写作
 ```
 
-“协议确认”页不是报错页。`ready` 表示可以进入材料确认；`protocol_decision_required` 表示仿真环境、benchmark、模型/backbone、随机种子、规模或预算等研究者决定还没有写清；`blocked` 才表示最小实验定义确实缺失。Rich 表会列出每项设置为什么重要，以及应补充到哪里，通常是 `ideation/exp_plan.yaml`。
+“协议确认”页不是报错页。`ready` 表示可以选择完整实验执行器；`protocol_decision_required` **不**表示你必须手工寻找数据、代码、baseline、benchmark 或权重：选择“让外部执行器自动准备资源”即可。它只运行 Phase A/B，从公开来源检索、固定版本下载、许可证/安全/协议审查和来源记录；随后停止执行器，`resume` 会重新编译 T5。对于不改变既有 T4.5 范围的设置，Phase B 会在 operational-settings 回执中记录精确的 package/version/model/scale，完整执行器可直接消费，无需再填一张人工表。未声明随机种子时使用稳定、可审计的默认 ensemble。`blocked` 才表示最小实验定义确实缺失。只有改变 T4.5 已定义的研究任务、核心机制、必需 baseline 集合、benchmark 范围或 claim/贡献边界时才需人工决定；普通公开资源获取不需要。
 
 ```bash
 # 仅做 T5 定点诊断，不会启动真实实验。
@@ -234,7 +234,7 @@ python -m researchos.cli run-task T5-SPECIALIZE --workspace ./workspace/project-
 python -m researchos.cli run-task T5-PROTOCOL-GATE --workspace ./workspace/project-a
 ```
 
-在选择执行器前，把已有资源放在下面的位置。原始数据或下载的仓库不要直接放进 `external_executor/expr/`：
+如果你已有资源，可在选择执行器前放在下面的位置；这不是必需前提。没有资源时使用“让外部执行器自动准备资源”，不要先手工下载不明来源仓库。原始数据或下载的仓库不要直接放进 `external_executor/expr/`：
 
 ```text
 resources/datasets/      数据集
@@ -245,7 +245,7 @@ resources/repos/         用户提供的代码仓库或压缩包
 external_executor/expr/  仅放已经部署、可直接运行的 baseline 或方法资产
 ```
 
-协议和材料均就绪后，在执行器 Gate 选择 Codex CLI，再从 **workspace 根目录** 启动：
+自动资源准备完成后，停止外部执行器并运行 `resume`；ResearchOS 接收 Phase B 报告、重新编译 T5。协议与材料均就绪后，在执行器 Gate 选择 Codex CLI，再从 **workspace 根目录** 启动：
 
 ```bash
 cd workspace/project-a

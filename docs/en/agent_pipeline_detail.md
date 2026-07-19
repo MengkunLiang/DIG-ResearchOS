@@ -35,8 +35,11 @@ T1 Project initialization
  -> T4.5 novelty/collision audit and post-audit formalization on pass
  -> T5-REBOOST-GATE research-reboost handoff compilation
  -> T5-SPECIALIZE-EXECUTOR-SKILLS project-Skill publication and validation
- -> T5-PROTOCOL-GATE confirms execution readiness and explicit protocol decisions
- -> T5-EXPR-MATERIAL-GATE confirms source materials
+ -> T5-PROTOCOL-GATE separates automatically preparable resources/settings from research-boundary changes
+    -> no local resource is available, or source review is needed: T5-RESOURCE-PREP-EXECUTOR-GATE
+       -> T5-RESOURCE-PREP-WAIT accepts Phase B provenance, review, and readiness records
+       -> T5-REBOOST-GATE recompiles from that record
+ -> T5-EXPR-MATERIAL-GATE (optional inventory of researcher-supplied materials)
  -> T5-EXECUTOR-GATE external executor selection only when protocol-ready
     -> mock_dry_run: T5-DRY-RUN external-executor protocol dry run -> T5-EXECUTOR-GATE
     -> codex_cli / claude_code_window / manual: T5-EXTERNAL-WAIT waits for external results
@@ -145,7 +148,7 @@ Its characteristics:
 - advances the entire state machine
 - enters and resumes from human gates
 - automatically jumps from one task to the next
-- fully embodies the chain `T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-PROTOCOL-GATE -> T5-EXPR-MATERIAL-GATE -> T5-EXECUTOR-GATE -> T5-DRY-RUN -> T5-EXECUTOR-GATE` for protocol tests, or `T5-EXTERNAL-WAIT -> T8-STYLE-GATE -> T8` after a real external writer handoff
+ - embodies the handoff chain `T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-PROTOCOL-GATE`; without local resources it first uses the bounded `T5-RESOURCE-PREP-EXECUTOR-GATE -> T5-RESOURCE-PREP-WAIT -> T5-REBOOST-GATE` branch, then continues through the optional material inventory and `T5-EXECUTOR-GATE -> T5-DRY-RUN/T5-EXTERNAL-WAIT -> T8-STYLE-GATE -> T8`
 
 ### 3.2 Resume Full Pipeline
 
@@ -2796,7 +2799,7 @@ T6 should not rerun T4.5 from scratch; this logic is now clearly separated.
 | `external_executor/CLAUDE.md` | Execution instructions for the Claude Code window; execution mode remains `UNSET` until T5-EXECUTOR-GATE |
 | `external_executor/report/reboost_llm_candidate_handoff_pack.json` / `external_executor/report/reboost_llm_candidate_validation_report.json` | Diagnostic files written when the model supplies a handoff candidate to the publication tool; not declared downstream inputs |
 
-`resources/` is the Phase B source-material root: researcher-provided datasets, baselines, benchmarks, code, and weights belong there first. `external_executor/expr/` is created during workspace initialization, shown at the material gate, and later holds only deployed runnable baseline and method assets. T5-REBOOST does not write `expr/MATERIALS_CHECKLIST.json` / `expr/README.md`. See the [T5 External Executor Guide](t5_external_executor.md) for operations, directory flow, and recovery boundaries.
+`resources/` is the Phase B source-material root and an **optional** entry point for materials already held by the researcher: datasets, baselines, benchmarks, code, and weights may be placed there, but their absence does not block T5. Choosing “let the external executor prepare resources” makes a bounded executor inspect local materials, search authorized public sources, acquire fixed revisions, perform license/security review, record provenance, and create a traceable baseline reimplementation when authorized. It runs Phase A/B only and never runs an experiment or produces results. `external_executor/expr/` is created during workspace initialization and holds only deployed runnable baseline and method assets. T5-REBOOST does not write `expr/MATERIALS_CHECKLIST.json` / `expr/README.md`. See the [T5 External Executor Guide](t5_external_executor.md) for operations, directory flow, and recovery boundaries.
 
 `T5-REBOOST-GATE` does not write `external_executor/report/executor_selection.json`, `external_executor/report/executor_capabilities.json`, `input_manifest.json`, `job_state.json`, `executor_events.jsonl`, `executor_prompt.md`, `codex_prompt.md`, `claude_code_prompt.md`, `manual_instructions.md`, or `external_executor/skills/`. Executor-specific prompt files are no longer generated; external executors read `external_executor/AGENTS.md` / `external_executor/CLAUDE.md` plus the JSON/text control files directly. The project-specific Skill Suite is published by `T5-SPECIALIZE-EXECUTOR-SKILLS`.
 
@@ -2804,7 +2807,7 @@ T6 should not rerun T4.5 from scratch; this logic is now clearly separated.
 
 The `research-reboost` Skill receives its bundled contract and references in the system prompt, so it reads only workspace artifacts. It prepares the semantic handoff candidate from `project.yaml`, the post-novelty formalization bundle, synthesis and comparison artifacts, and all three Paper Note roots. The compiler persists the candidate, validates it, and generates the control files. It does not publish executor Skills: separating semantic handoff compilation from Suite publication makes each artifact set independently resumable and prevents a partial suite from being advertised as ready.
 
-At this point the execution mode is still `UNSET`. `T5-SPECIALIZE-EXECUTOR-SKILLS` next runs the repository-owned `project-skill-specialization` Skill. Its deterministic wrapper performs preflight, builds and atomically publishes all 13 Skills, then the runtime independently validates the context, template integrity, report, and input fingerprint. It writes `external_executor/report/skill_specialization_execution.json`; without that durable execution receipt, later Gates remain unavailable. After Suite publication, `T5-PROTOCOL-GATE` runs first. When `execution_readiness=protocol_decision_required`, the researcher may add source-bound simulation/benchmark, backbone, scale, seed, or budget decisions and may prepare materials, but cannot select an executor, implement, or run formally. Only `ready` continues to material confirmation and `T5-EXECUTOR-GATE`. This prevents a normal research-design decision from becoming a runtime-recovery loop and prevents an executor from silently filling the setting. `T5-HANDOFF` remains available as a legacy-compatible protocol compiler for an older workspace or explicit recovery route; it is not the default T4.5 destination.
+At this point the execution mode is still `UNSET`. `T5-SPECIALIZE-EXECUTOR-SKILLS` next runs the repository-owned `project-skill-specialization` Skill. Its deterministic wrapper performs preflight, builds and atomically publishes all 13 Skills, then the runtime independently validates the context, template integrity, report, and input fingerprint. It writes `external_executor/report/skill_specialization_execution.json`; without that durable execution receipt, later Gates remain unavailable. After Suite publication, `T5-PROTOCOL-GATE` runs first. `protocol_decision_required` does not mean “find resources by hand”: datasets, code, baselines, benchmarks, weights, and source-resolvable runtime environments are retrieved, reviewed, and recorded by the bounded Phase A/B resource-preparation path; when no seed policy is declared, T5 uses a stable auditable default ensemble. Choose “let the external executor prepare resources,” stop the executor when Phase B finishes, and `resume`; ResearchOS recompiles T5 from the Phase B record. Human confirmation remains only for a requested change that would replace the T4.5-defined research task, core mechanism, required-baseline set, benchmark scope, or claim/contribution boundary. It is not ordinary resource acquisition. Only `ready` allows a full experiment executor. `T5-HANDOFF` remains available as a legacy-compatible protocol compiler for an older workspace or explicit recovery route; it is not the default T4.5 destination.
 
 ### Resume logic
 
@@ -2814,11 +2817,23 @@ If the reboost outputs and their fingerprint are still valid, `resume` preserves
 
 This is a repository-owned Skill task, not a second handoff prompt. It runs `skills/project-skill-specialization/scripts/preflight_specialization.py`, `run_specialization.py`, and the bounded report reader through the permitted `bash_run` capability. The compiler writes `external_executor/project_skill_context.yaml`, copies the context schema to `external_executor/schemas/project_skill_context.schema.json`, copies each of the 13 template Skill directories into `external_executor/skills/<skill>/`, and replaces only the marked Project-Specific Guidance section in each `SKILL.md`. The copied workspace schema is retained because the task adapter, artifact validator, and `T5-EXECUTOR-GATE` input contract consume it for downstream context validation. The task adapter rejects a completion that did not call the wrapper in the current run, validates the published artifacts a second time, and records the exact source/template fingerprint in `external_executor/report/skill_specialization_execution.json`. `ready` and `incomplete` are both valid published states; `failed` or missing artifacts stop before executor selection. If a failed rebuild finds a previously usable published Suite, that Suite is preserved and diagnostics are written to `external_executor/report/skill_specialization_failure_report.json`; otherwise failure diagnostics are written to `external_executor/report/skill_specialization_report.json`. The explicit `researchos specialize-executor-skills` command remains available for preview, repair, or validation outside the pipeline, but the pipeline state itself owns the durable execution receipt.
 
-## 6.10 T5-PROTOCOL-GATE / T5-EXECUTOR-GATE / T5-EXTERNAL-WAIT: Protocol confirmation, executor selection, and external wait
+## 6.10 T5-PROTOCOL-GATE / automatic resource preparation / T5-EXECUTOR-GATE / T5-EXTERNAL-WAIT: protocol, resources, executor, and external wait
 
 ### T5-PROTOCOL-GATE
 
-This immediate Gate displays `execution_contract.execution_readiness`, the compiled setting/metrics/baseline/claim graph, explicit pending decisions, and the relevant artifact paths. `protocol_decision_required` is not a failure: T5 has preserved a complete research handoff while T4.5 intentionally retained particular execution decisions as `unknown`. The researcher may prepare existing materials or add source-bound decisions in `ideation/exp_plan.yaml` or project inputs, then recompile through `T5-REBOOST-GATE`. In this state the material Gate returns here, and a direct attempt to enter `T5-EXECUTOR-GATE` is intercepted without writing executor selection. Only `ready` may select a real or mock executor.
+This immediate Gate displays `execution_contract.execution_readiness`, the compiled setting/metrics/baseline/claim graph, explicit pending items, and their artifact paths. `protocol_decision_required` is not a failure, and it does not mean the researcher must upload data, code, or models first. When T4.5 retained an `unknown`, first choose “let the external executor prepare resources.” This branch lets a Codex/Claude/manual executor run Phase A/B only: inspect local material, search public sources, acquire fixed revisions, review license/security/protocol fit, record provenance, and create an authorized baseline reimplementation. The executor **must stop** when it has finished; after `resume`, ResearchOS accepts `resource_preparation_report.json` and its validation record and recompiles T5. It never presents resource preparation as an experiment result.
+
+When a seed policy is absent, T5 uses a stable, auditable default ensemble; researchers may override it, but it is not a prerequisite to continuing. The material gate is an optional local-inventory entry point and returns here while the protocol is not fully ready. A direct full `T5-EXECUTOR-GATE` launch remains blocked because full execution may not silently change the research task, core mechanism, required-baseline set, benchmark scope, or claim/contribution boundary. Only those changes to the research-conclusion boundary require a human confirmation; ordinary public resource acquisition and review do not.
+
+### T5-RESOURCE-PREP-EXECUTOR-GATE / T5-RESOURCE-PREP-WAIT
+
+This is the bounded-executor branch that keeps a project moving without researcher-supplied material; it is not a full experiment launch. Once Codex CLI, Claude Code, or another executor is selected, ResearchOS writes an `execution_scope=resource_preparation` selection. The executor may only complete:
+
+1. Phase A context alignment;
+2. Phase B requirement matrix, local inventory, public-source search, fixed-revision acquisition, static security/license/protocol review, source report, and readiness computation;
+3. `external_executor/report/phase_B/resource_preparation_report.json`, `validation_report.json`, and `resource_source_report.json`.
+
+It may not implement a method, reproduce a baseline, run an experiment, diagnose results, package evidence, write Writer Handoff, or enter T8. For an environment, model/checkpoint, scale, seed policy, or an already declared benchmark resource that Phase B can source-review without changing the T4.5 scope, it writes an exact `operational_settings` record with value, source, and boundary-preservation flag; the recompiled handoff passes that record to the full executor. Phase B may truthfully finish `ready`, `partial`, or `blocked`; all three are source/readiness context for the next T5 compilation, not experimental results. An unavailable resource is never disguised as success: the Rich view retains the material gap, license, or compatibility reason, and asks for a human choice only when resolving it requires a research-boundary change.
 
 ### T5-EXECUTOR-GATE
 
@@ -2879,7 +2894,9 @@ Interaction details: When the CLI runs interactively, pressing Enter directly in
 T7 result ingestion, integrity audit, post-experiment novelty review, and the T7.5 PI decision node have been removed from the current main state machine. After Evidence Packaging, the final `writer-handoff` child Skill compiles the core research report and performs the external final handoff validation. The root records that result, routes `launch-t8`, and invokes the dedicated ResearchOS bridge command from the same external-executor session. The main chain is:
 
 ```text
-T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-PROTOCOL-GATE -> T5-EXPR-MATERIAL-GATE -> T5-EXECUTOR-GATE
+T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-PROTOCOL-GATE
+  -> (no local resource is available, or source review is needed) T5-RESOURCE-PREP-EXECUTOR-GATE -> T5-RESOURCE-PREP-WAIT -> T5-REBOOST-GATE
+  -> (optional local-material inventory) T5-EXPR-MATERIAL-GATE -> T5-EXECUTOR-GATE
  -> mock_dry_run: T5-DRY-RUN -> T5-EXECUTOR-GATE (select a real executor after protocol verification)
  -> external: T5-EXTERNAL-WAIT
  -> root launch-t8: python -m researchos.cli run-task T8 --workspace <workspace>

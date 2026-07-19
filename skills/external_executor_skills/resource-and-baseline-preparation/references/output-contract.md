@@ -17,6 +17,22 @@ resources/**
 
 The root owns manifest registration and executor status.
 
+`validation_report.json` is the final overall Phase B receipt. It is written by `validate_resource_report.py` after the report has been assembled and has this minimum shape:
+
+```json
+{
+  "schema_version": "resource_preparation_validation.v1",
+  "child_skill": "resource-and-baseline-preparation",
+  "valid": true,
+  "status": "pass",
+  "resource_preparation_report": "external_executor/report/phase_B/resource_preparation_report.json",
+  "errors": [],
+  "warnings": []
+}
+```
+
+It is distinct from any intermediate validation of a single baseline reimplementation. A failed resource report writes `valid=false` and stays an honest Phase B result; it is not a T8 handoff.
+
 ## Report envelope
 
 ```json
@@ -50,6 +66,20 @@ The root owns manifest registration and executor status.
   "resource_reviews": {"status": "not_started|not_needed|complete|partial|blocked|stale", "items": []},
   "material_gaps": {"status": "not_started|not_needed|complete|partial|blocked|stale", "items": []},
   "resource_risks": {"status": "not_started|not_needed|complete|partial|blocked|stale", "items": []},
+  "operational_settings": {
+    "status": "not_started|not_needed|complete|partial|blocked|stale",
+    "items": [
+      {
+        "setting": "one pending T5 setting",
+        "setting_type": "runtime_environment|model_backbone|execution_scale|declared_benchmark_resource|seed_policy",
+        "status": "resolved|unresolved",
+        "selected_value": "exact version, package, model, scale, or policy",
+        "selection_basis": "why this stays within the declared T4.5 scope",
+        "source_refs": ["workspace-relative artifact or public source"],
+        "research_boundary_preserved": true
+      }
+    ]
+  },
   "resource_readiness": {
     "status": "ready|partial|blocked",
     "minimum_loop_feasible": false,
@@ -101,6 +131,7 @@ resource_readiness <- report.resource_readiness
 - Staged local products must be under `resources/byhand/`, remote acquisitions under `resources/Remote_acquisition/`, and baseline reimplementations under `resources/reproduction/`.
 - The final resource source report must classify products under `resources/` as `byhand`, `Remote_acquisition`, or `reproduction`.
 - Every required baseline requirement is represented by a candidate, a material gap, or a blocker.
+- During a bounded `resource_preparation` launch, every resolvable operational setting retained by T5 is recorded in `operational_settings`. A resolved record has a non-empty exact `selected_value`, source references, and `research_boundary_preserved=true`. It may not choose a new research task, mechanism, required baseline set, benchmark scope, or claim boundary.
 - `ready` requires all minimum-loop blocking requirements to be satisfied by passing reviews with suitable approvals.
 - `partial` requires `minimum_loop_feasible=true` and at least one documented constraint/gap/risk.
 - `blocked` requires `minimum_loop_feasible=false` or one or more blocking requirement IDs/issues.

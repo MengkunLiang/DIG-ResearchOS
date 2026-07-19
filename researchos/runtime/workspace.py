@@ -587,7 +587,7 @@ def create_directory_guides(workspace_dir: Path, *, runtime_dir_name: str = "_ru
             "produced_by": "T5-REBOOST-GATE, T5-HANDOFF, T5-SPECIALIZE-EXECUTOR-SKILLS, T5-EXPR-MATERIAL-GATE, T5-EXECUTOR-GATE, external executor, T5-DRY-RUN.",
             "consumed_by": "T5-EXTERNAL-WAIT, T8.",
             "key_files": "AGENTS.md, CLAUDE.md, handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt, report/, skills/, expr/, executor_research_report.md, result_pack.json, executor_status.json.",
-            "human_editable": "Place source datasets, repositories, baselines, benchmarks, weights, and material notes under resources/. Put only already deployed runnable baseline/method assets in expr/. Manual executor outputs use the declared writable paths; skills/ is generated and customized by ResearchOS before execution.",
+            "human_editable": "Optionally place source datasets, repositories, baselines, benchmarks, weights, and material notes under resources/ when already available. When they are not, the T5 bounded resource-preparation executor can search, acquire, review, and record authorized public resources. Put only already deployed runnable baseline/method assets in expr/. Manual executor outputs use the declared writable paths; skills/ is generated and customized by ResearchOS before execution.",
             "agent_editable": "ResearchOS customizes skills/ during T5; external executor may write only paths allowed by allowed_paths.txt.",
             "do_not_put": "Final paper text, API keys, unrelated notebooks, ResearchOS source edits.",
             "validation": "Every metric must trace to raw result, config, log, run id, and sha256.",

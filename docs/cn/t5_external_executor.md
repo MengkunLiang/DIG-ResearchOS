@@ -22,10 +22,10 @@ python -m researchos.cli resume --workspace ./workspace/project-a
 
 T5 完成 REBOOST 与项目专属 Skill Suite 后，终端会先停在**实验协议就绪 Gate**。这里区分“交接已编译”与“已经授权真实运行”：
 
-1. 若 handoff 显示 `execution_readiness=ready`，继续到实验材料 Gate；若为 `protocol_decision_required`，先查看未决 setting，不能选择执行器或开始真实运行。典型未决项包括仿真/benchmark、agent backbone、样本规模、seed policy、预算或计算资源。
-2. 将数据集、baseline、benchmark、模型权重和仓库等**源资源**放入 `workspace/project-a/resources/`。推荐按 `datasets/`、`baselines/`、`benchmarks/`、`repos/` 分类，但 Phase B 会以实际资源清单和许可审查为准。
-3. 仅将已经整理为可直接运行的部署资产放入 `workspace/project-a/external_executor/expr/`。不要把未经审查的下载仓库或原始数据混入该目录。若协议仍待确认，材料完成后会回到协议 Gate，而不是绕过它进入执行器选择。
-4. 只有协议 ready 且材料确认后，才选择 Codex CLI、Claude Code 或人工执行器。`mock dry-run` 仅用于验证本地文件协议；它完成后会回到执行器 Gate，不能进入 T8 或形成论文实验结论。
+1. 若 handoff 显示 `execution_readiness=ready`，可继续选择完整实验执行器；若为 `protocol_decision_required`，不要理解为必须手工提供文件或逐项选择运行值。选择“让外部执行器自动准备资源”即可启动受限 Phase A/B：它检索、固定版本下载、静态审查和记录公开资源，不能实现或运行实验。对不改变已声明 T4.5 范围的设置，Phase B 会写出精确且有来源的 `operational_settings` 记录（package/version/model/scale/benchmark resource），重新编译后的 handoff 会把它交给完整执行器。项目未声明 seed policy 时，T5 使用稳定、可审计的 ResearchOS 默认 ensemble。
+2. 数据集、baseline、benchmark、模型权重和仓库等**源资源**可由研究者放入 `workspace/project-a/resources/`，但不是必需前提。没有现成材料时，Phase B 会先检查本地目录，再从授权公开来源获取，最后才在许可条件下尝试有来源的 baseline 重实现。
+3. 仅将已经整理为可直接运行的部署资产放入 `workspace/project-a/external_executor/expr/`。不要把未经审查的下载仓库或原始数据混入该目录。自动资源准备完成后，停止外部执行器并运行 `resume`；ResearchOS 会接收 Phase B 报告并重新编译 T5。
+4. 只有协议 ready 且材料确认后，才选择 Codex CLI、Claude Code 或人工执行器进行完整实验。`mock dry-run` 仅用于验证本地文件协议；它完成后会回到执行器 Gate，不能进入 T8 或形成论文实验结论。
 5. 选择 Codex CLI 时，在 workspace 根目录启动 Codex：
 
 ```bash
@@ -68,7 +68,7 @@ python -m researchos.cli run-task T5-REBOOST \
 python -m researchos.cli run-task T5-SPECIALIZE \
   --workspace ./workspace/project-a
 
-# 阶段 3：检查已编译协议、未决 setting 与真实执行授权边界
+# 阶段 3：检查已编译协议、自动资源分支与真实执行授权边界
 python -m researchos.cli run-task T5-PROTOCOL-GATE \
   --workspace ./workspace/project-a
 
@@ -77,7 +77,7 @@ python -m researchos.cli run-task T5-EXECUTOR-GATE \
   --workspace ./workspace/project-a
 ```
 
-调试执行器选择前，先准备 `resources/` 中的源材料；只有现成可运行的部署资产才放入 `external_executor/expr/`。直接运行 `T5-EXECUTOR-GATE` 时，若 handoff 仍待协议确认，系统会转回 `T5-PROTOCOL-GATE` 且不会写入 executor selection。
+调试完整实验执行器选择前，已有源材料可放入 `resources/`；只有现成可运行的部署资产才放入 `external_executor/expr/`。这不是强制要求：当前没有材料时，在协议 Gate 选择“让外部执行器自动准备资源”。直接运行 `T5-EXECUTOR-GATE` 时，若 handoff 仍待协议确认，系统会转回 `T5-PROTOCOL-GATE` 且不会写入完整实验 executor selection。
 
 ### 协议就绪状态
 
@@ -86,14 +86,14 @@ python -m researchos.cli run-task T5-EXECUTOR-GATE \
 | 状态 | 已完成的工作 | 允许的后续工作 | 明确禁止 |
 | --- | --- | --- | --- |
 | `ready` | 研究 setting、指标、baseline、主张映射和执行决策均有来源明确的记录 | 材料确认、选择执行器、按执行契约实施与运行 | 把计划或资源线索写成实验结果 |
-| `protocol_decision_required` | handoff、指标、baseline、claim graph 已编译；未决项已明确保留 | 查看协议、补充来源明确的设置、准备已有材料 | 执行器自行选择框架/backbone/seed/规模/预算；实现方法、正式运行、写 T8 结果交接 |
+| `protocol_decision_required` | handoff、指标、baseline、claim graph 已编译；运行层未知项仍可见 | 启动受限 Phase A/B 自动准备资源；只有你有意采用另一套有来源设��时才覆盖 | 静默改变研究任务/机制/必需 baseline 集合/benchmark 范围/claim 或贡献边界；实现方法、正式运行、写 T8 结果交接 |
 | `blocked` | 编译报告仍保留 | 按报告补齐真正缺少的上游来源或最低协议字段 | 通过手工改 `generation_status` 或重试掩盖缺口 |
 
 `proposed_not_verified` 作用于中心论点、贡献和假设的**主张验证状态**：它禁止把预期结果写成已证实发现，但不会使一个来源完整的 T5 handoff 自动 blocked。文献背景可以是 `source_supported`，资源目录可以是 `discovered`，两者与待验证的研究主张必须分别解释。
 
 ### 何时放置资源
 
-已有资源可以在 workspace 初始化后随时放入，推荐在第一次进入 T5 前准备。最迟应在 `T5-REBOOST-GATE` 和 `T5-SPECIALIZE-EXECUTOR-SKILLS` 完成后的实验材料确认 Gate、选择执行器之前放入。
+已有资源可以在 workspace 初始化后随时放入，推荐但不要求在第一次进入 T5 前准备。没有资源时，在协议 Gate 选择“让外部执行器自动准备资源”；它会调用 Phase A/B 的公开资源检索、下载、静态审查和来源记录流程。只有公开来源、许可证、安全或协议匹配仍无法满足最低实验环时，才会形成可操作的资源 blocker。
 
 ```text
 resources/datasets/      数据集

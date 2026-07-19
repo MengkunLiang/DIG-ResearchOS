@@ -25,7 +25,7 @@ Longer names such as `T5-REBOOST-GATE`, `T5-PROTOCOL-GATE`, and `T3.6-SEC-INTRO`
 | T3.6 optional Survey | Write a field Survey only when the current evidence justifies it; otherwise it is skipped. | Skip, write from the present corpus, or request one targeted supplement. | `drafts/survey/` |
 | T4 research ideas | Generate, compare, and evolve multiple research directions. | Proceed, optimize, explore again, or inspect a Candidate only. | Candidate Cards, scores, evidence, and lineage under `ideation/` |
 | T4.5 novelty audit | Check similar work and mechanism differences; turn the selected direction into a formal research package. | Review the novelty verdict and required baselines. | `ideation/proposal/research_proposal.md`, `hypotheses.md`, `exp_plan.yaml` |
-| T5 external-execution preparation | Compile the T4.5 package into an executor handoff whose research constraints cannot be silently changed. | Resolve remaining protocol settings, place existing resources, and choose an executor. | `external_executor/handoff_pack.json`, `resources/` |
+| T5 external-execution preparation | Compile the T4.5 package into an executor handoff whose research constraints cannot be silently changed. | Resolve only settings that affect research boundaries; place existing resources or let the executor prepare public ones. | `external_executor/handoff_pack.json`, `resources/` |
 | T8 writing | Write, review, and revise using verified experimental facts. | Choose a writing style or template. | `drafts/` and experiment claim/evidence files |
 | T9 submission | Review, genuinely compile, and package the submission. | Only when an environment or compilation recovery is needed. | `submission/`, final PDF, and compile report |
 
@@ -213,21 +213,21 @@ python -m researchos.cli skill-status --workspace ./workspace/project-a
 
 ### 5. T5 External Execution: From Research Plan To Real Experiments
 
-The normal pipeline reaches T5 automatically after T4.5. T5 deterministically compiles the handoff and publishes the 13 project-specific executor Skills; it does not ask a model to reconstruct these control files. It then pauses at Protocol Readiness, Materials, and Executor gates in that order.
+The normal pipeline reaches T5 automatically after T4.5. T5 deterministically compiles the handoff and publishes the 13 project-specific executor Skills; it does not ask a model to reconstruct these control files. It then pauses at Protocol Readiness; the optional material inventory is only for resources you already have, while missing public resources can be prepared automatically before full executor selection.
 
-In normal use, do not start these T5 subnodes yourself. T5 reads and preserves the complete T4.5 proposal, formal hypotheses, experiment plan, novelty audit, and stopping criteria. It neither repeats T4/T4.5 nor permits an executor to choose an experimental framework, model, seed, sample scale, or budget by convention.
+In normal use, do not start these T5 subnodes yourself. T5 reads and preserves the complete T4.5 proposal, formal hypotheses, experiment plan, novelty audit, and stopping criteria. It neither repeats T4/T4.5 nor permits an executor to silently change the research task, core mechanism, required baseline set, benchmark scope, or paper-claim boundary. Seeds use an auditable stable default ensemble unless the project already declares its own seed policy.
 
 ```text
 T4.5 passes
   -> T5 compiles the research handoff and project-specific Skills
-  -> Protocol confirmation: are the experimental settings explicit?
-  -> Material confirmation: are existing data, code, and weights in place?
+  -> Protocol confirmation: separate automatically preparable resources/settings from real research-boundary changes
+  -> Optional local-material inventory, or let a bounded executor prepare public resources
   -> Choose a Codex / Claude / manual executor
   -> External execution writes auditable results
   -> T8 receives results and starts manuscript work
 ```
 
-The Protocol Confirmation page is not an error page. `ready` means that you can confirm materials. `protocol_decision_required` means that a researcher decision such as simulation environment, benchmark, model/backbone, seed policy, scale, or budget remains unspecified. Only `blocked` means that a minimum experiment definition is genuinely missing. Its Rich table explains why every setting matters and where to add it, usually `ideation/exp_plan.yaml`.
+The Protocol Confirmation page is not an error page. `ready` means that a full executor can be selected. `protocol_decision_required` does **not** mean that you must manually find data, code, a baseline, a benchmark, or weights: choose “let the external executor prepare resources.” It runs Phase A/B only, searches authorized public sources, locks revisions, performs license/security/protocol review, and records provenance; then it stops and T5 recompiles on `resume`. For a setting that stays inside the existing T4.5 scope, Phase B records the exact selected package/version/model/scale in its operational-settings receipt, so the full executor can consume it without a new human form. An undeclared seed policy uses a stable auditable default ensemble. Only `blocked` means that a minimum experiment definition is genuinely missing. A human decision is reserved for changing the T4.5-defined task, core mechanism, required-baseline set, benchmark scope, or claim/contribution boundary—not for ordinary public-resource retrieval.
 
 ```bash
 # Targeted T5 diagnostics only. These do not run an experiment.
@@ -236,7 +236,7 @@ python -m researchos.cli run-task T5-SPECIALIZE --workspace ./workspace/project-
 python -m researchos.cli run-task T5-PROTOCOL-GATE --workspace ./workspace/project-a
 ```
 
-Before executor selection, place existing resources in the following locations. Do not put raw data or downloaded repositories directly under `external_executor/expr/`:
+If you already have resources, place them in the following locations before executor selection; this is optional. When you do not, use “let the external executor prepare resources” rather than manually downloading unknown repositories. Do not put raw data or downloaded repositories directly under `external_executor/expr/`:
 
 ```text
 resources/datasets/      datasets
@@ -247,7 +247,7 @@ resources/repos/         user-provided repositories or archives
 external_executor/expr/  only deployed, directly runnable baseline or method assets
 ```
 
-When protocol and materials are ready, choose Codex CLI at the executor Gate, then start it from the **workspace root**:
+After automatic resource preparation finishes, stop the external executor and run `resume`; ResearchOS accepts the Phase B report and recompiles T5. When protocol and materials are ready, choose Codex CLI at the executor Gate, then start it from the **workspace root**:
 
 ```bash
 cd workspace/project-a

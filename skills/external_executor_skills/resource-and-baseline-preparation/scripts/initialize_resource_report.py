@@ -34,6 +34,7 @@ SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
     "resource_reviews": {"status": "not_started", "items": []},
     "material_gaps": {"status": "not_started", "items": []},
     "resource_risks": {"status": "not_started", "items": []},
+    "operational_settings": {"status": "not_needed", "items": []},
 }
 
 
@@ -113,6 +114,7 @@ def main() -> int:
         "resource_reviews": deepcopy(SECTION_DEFAULTS["resource_reviews"]),
         "material_gaps": deepcopy(SECTION_DEFAULTS["material_gaps"]),
         "resource_risks": deepcopy(SECTION_DEFAULTS["resource_risks"]),
+        "operational_settings": deepcopy(SECTION_DEFAULTS["operational_settings"]),
         "resource_readiness": {
             "status": "blocked",
             "minimum_loop_feasible": False,
