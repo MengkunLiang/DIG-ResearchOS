@@ -724,10 +724,21 @@ class ProcessSeedPaperTool(Tool):
         """
         arxiv_id = params.value.strip()
 
-        # 验证格式（如 2401.12345 或 arXiv:2401.12345）
-        import re
-        if arxiv_id.startswith("arXiv:"):
-            arxiv_id = arxiv_id[6:]
+        # Accept the two identifier representations researchers naturally
+        # paste into a seed prompt. The Agent may label an arXiv DOI as an
+        # ``arxiv_id``; that is a recoverable representation mismatch, not an
+        # invalid paper identifier.
+        if arxiv_id.casefold().startswith("arxiv:"):
+            arxiv_id = arxiv_id.split(":", 1)[1].strip()
+        if arxiv_id.casefold().startswith("doi:"):
+            arxiv_id = arxiv_id.split(":", 1)[1].strip()
+        arxiv_doi_match = re.fullmatch(
+            r"10\.48550/arxiv\.(\d{4}\.\d{4,5}(?:v\d+)?)",
+            arxiv_id,
+            flags=re.IGNORECASE,
+        )
+        if arxiv_doi_match:
+            arxiv_id = arxiv_doi_match.group(1)
 
         if not re.match(r"^\d{4}\.\d{4,5}(v\d+)?$", arxiv_id):
             return ToolResult(
