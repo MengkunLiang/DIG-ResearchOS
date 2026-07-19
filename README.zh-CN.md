@@ -10,24 +10,28 @@ T1 研究范围 -> T2 文献 -> T3 阅读 -> T3.5 综合
   -> T5 外部执行 -> T8 论文 -> T9 投稿包
 ```
 
-## 流程一览
+## 先理解流程，而不是记住内部名称
 
-`T` 是稳定的流程阶段编号，不要求用户记住或直接调用。`Gate` 表示系统需要你对有实质影响的选择作确认；已完成的 workspace 文件会保留，终端会说明下一步会发生什么。
+`T` 是流程阶段标签，不是你日常需要输入的命令。正常情况下只需新项目使用 `run`、暂停后使用 `resume`；系统会在需要你做研究决定时停在 `Gate`，并说明下一步。`T3.5` 是 T3 阅读后的综合，`T3.6` 是可选的综述分支，`T4.5` 是 T4 研究方向后的新颖性审计，不是需要你手动运行的“半个任务”。
 
-| 阶段 | 用通俗语言说 | 用户可查看的主要产物 |
-| --- | --- | --- |
-| T1 | 明确研究问题、边界、投稿取向与种子材料。 | `project.yaml`、种子索引、跨领域检索计划 |
-| T2 | 检索、去重、核验并排定文献阅读优先级。 | 文献池、检索日志、引用边、阅读队列 |
-| T3 | 阅读论文并记录可回查的页码/部分证据。 | 深读/浅读笔记、比较表、文献清单 |
-| T3.5 | 综合证据、方法、机制差异与研究缺口。 | 综合报告、工作台、领域图谱 |
-| T3.6（可选） | 判断是否值得写综述；选中时准备并撰写综述。 | 综述计划、章节、审计、PDF |
-| T4 | 生成、核验、评分并比较研究方向。 | Candidate 卡、证据/评分/谱系记录、Portfolio |
-| T4.5 | 审计新颖性和相似工作，把已选方向正式化。 | 新颖性审计、假设、实验计划、完整 proposal |
-| T5 | 把已批准的研究包编译成外部执行器可审计的交接。 | handoff、协议决策、项目专属 Skill、资源契约 |
-| T8 | 将已核验的外部实验材料写成论文。 | 草稿、claim-证据映射、图表整合 |
-| T9 | 审阅、编译并生成投稿包。 | 最终 PDF、审阅记录、投稿文件 |
+带长后缀的名称，例如 `T5-REBOOST-GATE`、`T5-PROTOCOL-GATE` 或 `T3.6-SEC-INTRO`，是终端状态和定点调试使用的内部检查点。首次运行不需要记住它们；看到它们时，可用下面的表理解它们属于哪一段流程。当前主流程没有面向用户的 T6/T7：旧的同名节点仅为历史 workspace 兼容保留，真实实验由 T5 外部执行链完成。
 
-T4.5 是“有潜力的方向”与“正式、受证据约束的研究包”的边界。T5 不自行跑实验；它准备和核验执行契约，随后由同一 workspace 中的 Codex、Claude 或人工执行器完成真实工作。
+| 你会看到的阶段 | 用通俗语言说 | 什么时候需要你决定 | 优先查看的文件 |
+| --- | --- | --- | --- |
+| T1 范围 | 明确研究问题、边界、投稿取向和种子材料。 | 项目初始化时确认题目与范围。 | `project.yaml` |
+| T2 文献 | 检索、去重、核验并排定阅读优先级。 | 选择阅读覆盖、精读数量、稿件语言和中文文献策略。 | `literature/literature_params.json`、阅读队列 |
+| T3 阅读 | 逐篇阅读并记录能回查的页码或段落证据。 | 仅在关键 PDF/证据不足时决定补充材料或暂停。 | `literature/deep_read_notes/`、`comparison_table.csv` |
+| T3.5 综合 | 把文献整理成机制、方法差异、张力和研究缺口。 | 决定是否进入可选综述分支。 | `literature/synthesis.md` |
+| T3.6 可选综述 | 在当前证据足够时撰写领域综述；不做综述时会跳过。 | 选择跳过、使用当前语料库，或先做一次定向补检。 | `drafts/survey/` |
+| T4 研究方向 | 生成、比较和演化多个可选研究方向。 | 选择推进、优化、再探索，或只查看 Candidate。 | `ideation/` 下的 Candidate Card、评分、证据和谱系 |
+| T4.5 新颖性审计 | 检查相似工作和机制差异，把选定方向变成正式研究包。 | 复核新颖性审计结论与必需 baseline。 | `ideation/proposal/research_proposal.md`、`hypotheses.md`、`exp_plan.yaml` |
+| T5 外部执行准备 | 把 T4.5 的正式研究包变成外部执行器不能擅自改写的交接。 | 明确尚缺的实验设置、放置已有资源、选择执行器。 | `external_executor/handoff_pack.json`、`resources/` |
+| T8 写作 | 用已经核验的实验事实写作、审稿和修订。 | 选择写作风格或模板。 | `drafts/`、实验 claim/evidence 文件 |
+| T9 投稿 | 审阅、真实编译并生成提交包。 | 只在环境或编译恢复时处理问题。 | `submission/`、最终 PDF 与编译报告 |
+
+最重要的两个边界是：T4.5 把“有潜力的想法”变成“有假设、实验计划和风险边界的研究方案”；T5 不自行跑实验，它只准备和核验执行契约，随后由同一 workspace 中的 Codex、Claude 或人工执行器完成真实工作。
+
+T4.5 成功时，终端会显示“重点研究文件”表，直接指出 proposal、假设、实验计划、贡献/验证映射、停止条件和新颖性审计的路径及其后续用途；这些文件会传递给 T5，不需要靠记忆寻找。
 
 ## 运行前须知
 
@@ -124,11 +128,21 @@ python -m researchos.cli run --workspace ./workspace/project-a
 
 T3 的强证据阅读仍逐篇处理，因为页码覆盖、section 证据和阅读状态必须逐篇可审计。其后的 abstract sweep 会把多篇相互独立的摘要动态装入适配当前 provider 上下文窗口的调用，再分别写出 `ABSTRACT-ONLY` 笔记。你设定的“摘要轻读 N 篇”是实际笔记数，metadata-only triage 不计入；保留候选不足时系统会从有摘要的 backlog 补位，仍不足就暂停并要求补检，而不会带着缺口进入 T3.5。已有 PDF 的浅层论文会写入 `literature/reading_upgrade_queue.jsonl`，可升级为真实的全文或定向部分阅读；下载 PDF 本身不会提升证据等级。书籍、专著和超过 100 页的长资料默认只按研究问题读取相关章节，并记录页码范围。
 
-## 日常命令
+## 日常操作：按目的选择命令
 
-新项目使用 `run`，同一项目继续使用 `resume`。`run-task` 用于定点诊断一个阶段，不会推进完整主流程。
+绝大多数项目只会反复使用 `status`、`run` 和 `resume`。不要通过手工编辑 `state.yaml` 跳过阶段，也不要把 `run-task` 当作完整流程的快捷方式。
 
-### 系统状态与诊断
+| 你现在想做什么 | 首选命令 | 系统会做什么 |
+| --- | --- | --- |
+| 确认项目停在哪里、是否需要你的选择 | `status --workspace <项目目录>` | 显示当前阶段、Gate、最近可操作信息和下一步命令。 |
+| 新建一个研究项目并从头开始 | `init-workspace`，然后 `run` | 创建新的 workspace 并启动完整流程。 |
+| 继续被暂停的同一项目 | `resume --workspace <项目目录>` | 复用已确认选择和已合格文件，不重复完成的模型调用。 |
+| 有意从 T2/T3/T4 等阶段重新开始 | `resume --from-task T4` | 先校验该阶段需要的前置材料；通过才安全重入。 |
+| 用另一个项目的材料开一个新项目 | `run --from <来源目录> --start-task T4` | 创建独立目标 workspace，只复制声明的上游材料，不合并历史。 |
+| 只诊断一个阶段 | `run-task T4` | 只运行这个 task，不自动推进完整主流程。 |
+| 浏览或运行独立功能 | `browse-skills` / `run-skill` | 在独立、可恢复的 Skill 会话中工作。 |
+
+### 1. 系统状态与诊断
 
 ```bash
 # 当前项目停在哪里、为什么暂停、下一步是什么？
@@ -147,7 +161,7 @@ python -m researchos.cli trace <run-id> --workspace ./workspace/project-a
 python -m researchos.cli validate --task T4 --workspace ./workspace/project-a
 ```
 
-### 运行项目
+### 2. 运行完整项目或单个阶段
 
 ```bash
 # 新建并启动完整项目。
@@ -160,7 +174,7 @@ python -m researchos.cli run-task T4 --workspace ./workspace/t4-debug \
   --from ./workspace/project-a
 ```
 
-### 恢复、重入与迁移
+### 3. 恢复、重入与迁移
 
 ```bash
 # 正常继续：复用已确认选择和已完成产物。
@@ -184,7 +198,7 @@ python -m researchos.cli resume --workspace ./workspace/t4-debug \
 
 `resume --from-task` 不会合并历史记录，也不要求你修改 `state.yaml`。`T3.6` 是可选综述决策，`T8` 是写作入口。显式重开 T2 是普通 resume 的例外：它会重新展示当前参数，避免新检索静默沿用过期范围。
 
-### Skill
+### 4. Skill：独立、可恢复的小型工作流
 
 ```bash
 python -m researchos.cli list-skills --workspace ./workspace/project-a
@@ -195,9 +209,23 @@ python -m researchos.cli run-skill pdf-note-card --workspace ./workspace/project
 python -m researchos.cli skill-status --workspace ./workspace/project-a
 ```
 
-### T5 外部执行
+### 5. T5 外部执行：从研究方案到真实实验
 
 完整流程在 T4.5 通过后会自动进入 T5。T5 会确定性编译 handoff 并发布 13 个项目专属执行 Skill，不让模型重写这些控制文件；之后依次停在“协议就绪”“材料准备”“选择执行器”三个 Gate。
+
+正常使用时不需要手工启动这些 T5 子节点。T5 会读取并保留 T4.5 的完整 proposal、正式假设、实验计划、新颖性审计和停止条件；它不会重做 T4/T4.5，也不会允许执行器自行选择实验框架、模型、随机种子、样本规模或预算。
+
+```text
+T4.5 通过
+  -> T5 编译研究交接和项目专属 Skill
+  -> 协议确认：实验设置是否已经明确？
+  -> 材料确认：已有数据、代码和权重是否已放好？
+  -> 选择 Codex / Claude / 人工执行器
+  -> 外部执行写回可审计的实验结果
+  -> T8 接收结果并开始论文写作
+```
+
+“协议确认”页不是报错页。`ready` 表示可以进入材料确认；`protocol_decision_required` 表示仿真环境、benchmark、模型/backbone、随机种子、规模或预算等研究者决定还没有写清；`blocked` 才表示最小实验定义确实缺失。Rich 表会列出每项设置为什么重要，以及应补充到哪里，通常是 `ideation/exp_plan.yaml`。
 
 ```bash
 # 仅做 T5 定点诊断，不会启动真实实验。
@@ -206,7 +234,18 @@ python -m researchos.cli run-task T5-SPECIALIZE --workspace ./workspace/project-
 python -m researchos.cli run-task T5-PROTOCOL-GATE --workspace ./workspace/project-a
 ```
 
-协议和材料均就绪后，在执行器 Gate 选择 Codex CLI，再从 workspace 根目录启动：
+在选择执行器前，把已有资源放在下面的位置。原始数据或下载的仓库不要直接放进 `external_executor/expr/`：
+
+```text
+resources/datasets/      数据集
+resources/baselines/     baseline 材料
+resources/benchmarks/    benchmark、官方评测或协议
+resources/repos/         用户提供的代码仓库或压缩包
+
+external_executor/expr/  仅放已经部署、可直接运行的 baseline 或方法资产
+```
+
+协议和材料均就绪后，在执行器 Gate 选择 Codex CLI，再从 **workspace 根目录** 启动：
 
 ```bash
 cd workspace/project-a
@@ -217,7 +256,16 @@ codex
 请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research-execution/SKILL.md。
 ```
 
-Writer Handoff 生成 `external_executor/executor_research_report.md`、`result_pack.json`、`executor_status.json` 与 `report/run_manifest.json` 后，用 `python -m researchos.cli run-task T8 --workspace ./workspace/project-a` 接收已核验的结果。外部执行器仍在写入时，不要在另一终端运行 `resume` 或第二个执行器。完整操作契约见 [T5 外部执行器使用指南](docs/cn/t5_external_executor.md)。
+外部执行完成前必须存在以下四个回传文件：
+
+```text
+external_executor/executor_research_report.md
+external_executor/result_pack.json
+external_executor/executor_status.json
+external_executor/report/run_manifest.json
+```
+
+Writer Handoff 已完成但没有自动进入 T8 时，且外部执行器已经停止写入，运行 `python -m researchos.cli run-task T8 --workspace ./workspace/project-a` 接收已核验的结果。外部执行器仍在写入时，不要在另一终端运行 `resume`、第二个执行器或 `run-task T8`。完整操作契约、A-F 阶段和产物路径见 [T5 外部执行器使用指南](docs/cn/t5_external_executor.md)。
 
 跨项目复用已验证上游材料时，创建新的目标 workspace 后使用 `run --from <source-workspace> --start-task <task>`。它不是两个项目的合并操作。恢复细节见 [快速开始](docs/cn/QUICKSTART.md)。
 
@@ -343,6 +391,7 @@ python -m researchos.cli run-skill pdf-note-card \
 | 完整流程、命令与产物契约 | [完整流程说明](docs/cn/agent_pipeline_detail.md) |
 | 配置 | [配置](docs/cn/config.md) |
 | 本地、Docker 与 TeX | [Docker 与 TeX](docs/cn/docker.md) |
+| T5 外部执行与 Codex/Claude 交接 | [T5 外部执行器使用指南](docs/cn/t5_external_executor.md) |
 | Runtime、事件与扩展 | [运行时架构](docs/cn/runtime.md) |
 | Skills | [Skill 指南](docs/cn/skills.md) |
 | 日志、trace 与排障 | [日志与排障](docs/cn/logging.md) |

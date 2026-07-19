@@ -10,24 +10,28 @@ T1 scope -> T2 discover -> T3 read -> T3.5 synthesize
   -> T5 external execution -> T8 manuscript -> T9 submission bundle
 ```
 
-## Pipeline At A Glance
+## Understand The Flow Before Internal Names
 
-The `T` labels are stable workflow stages, not commands that a researcher needs to memorize. `Gate` means ResearchOS pauses for a consequential human choice; it preserves all completed workspace files and tells you what will happen next.
+`T` is a workflow-stage label, not a command you need to type every day. In normal use, start a new project with `run` and continue a paused one with `resume`. ResearchOS stops at a `Gate` only when a research decision needs your input and explains the next action. `T3.5` is the synthesis after T3 reading, `T3.6` is the optional Survey branch, and `T4.5` is the novelty audit after T4 ideation, not a separate “half task” to run manually.
 
-| Stage | Plain-language purpose | Main researcher-visible outputs |
-| --- | --- | --- |
-| T1 | Define the question, boundaries, target venue, and seed materials. | `project.yaml`, seed indexes, bridge-domain plan |
-| T2 | Search, deduplicate, verify, and prioritize the literature pool. | paper pool, search log, citation edges, reading queue |
-| T3 | Read papers and record page/section-aware notes. | deep/shallow notes, comparison table, literature manifest |
-| T3.5 | Synthesize the evidence, methods, mechanisms, and gaps. | synthesis, workbench, domain map |
-| T3.6 (optional) | Decide whether a Survey is justified and prepare/write it when selected. | survey plan, sections, audit, PDF |
-| T4 | Generate, test, score, and compare research directions. | Candidate cards, evidence/score/lineage records, Portfolio |
-| T4.5 | Audit novelty and similar work; formalize the selected direction. | novelty audit, hypotheses, experiment plan, full proposal |
-| T5 | Compile the approved research package for an external executor. | handoff, protocol decision, project-specific Skills, resource contract |
-| T8 | Turn verified external-execution evidence into a manuscript. | drafts, claim-evidence mapping, figures/tables integration |
-| T9 | Review, compile, and package the submission. | final PDF, review records, submission bundle |
+Longer names such as `T5-REBOOST-GATE`, `T5-PROTOCOL-GATE`, and `T3.6-SEC-INTRO` are internal checkpoints used in terminal status and targeted debugging. First-time users do not need to memorize them; use the table below to see which part of the research workflow they belong to. There is no user-facing T6/T7 in the current main path: identically named old nodes exist only for historical-workspace compatibility, while real experiments use T5's external-executor path.
 
-T4.5 is the boundary between an interesting direction and a formal, evidence-bounded research package. T5 is not an experiment runner: it prepares and verifies the executor contract, then an external Codex/Claude/manual executor performs the actual work in the same workspace.
+| Stage you will see | Plain-language purpose | When you decide | Files to open first |
+| --- | --- | --- | --- |
+| T1 scope | Define the question, boundaries, target venue, and seed material. | Confirm the topic and scope during initialization. | `project.yaml` |
+| T2 literature | Search, deduplicate, verify, and prioritize the reading pool. | Choose literature coverage, deep-read target, manuscript language, and Chinese-literature policy. | `literature/literature_params.json`, reading queue |
+| T3 reading | Read papers and record page- or section-recoverable evidence. | Only when a key PDF/evidence source is unavailable or needs supplementation. | `literature/deep_read_notes/`, `comparison_table.csv` |
+| T3.5 synthesis | Turn the literature into mechanisms, method differences, tensions, and research gaps. | Decide whether to take the optional Survey branch. | `literature/synthesis.md` |
+| T3.6 optional Survey | Write a field Survey only when the current evidence justifies it; otherwise it is skipped. | Skip, write from the present corpus, or request one targeted supplement. | `drafts/survey/` |
+| T4 research ideas | Generate, compare, and evolve multiple research directions. | Proceed, optimize, explore again, or inspect a Candidate only. | Candidate Cards, scores, evidence, and lineage under `ideation/` |
+| T4.5 novelty audit | Check similar work and mechanism differences; turn the selected direction into a formal research package. | Review the novelty verdict and required baselines. | `ideation/proposal/research_proposal.md`, `hypotheses.md`, `exp_plan.yaml` |
+| T5 external-execution preparation | Compile the T4.5 package into an executor handoff whose research constraints cannot be silently changed. | Resolve remaining protocol settings, place existing resources, and choose an executor. | `external_executor/handoff_pack.json`, `resources/` |
+| T8 writing | Write, review, and revise using verified experimental facts. | Choose a writing style or template. | `drafts/` and experiment claim/evidence files |
+| T9 submission | Review, genuinely compile, and package the submission. | Only when an environment or compilation recovery is needed. | `submission/`, final PDF, and compile report |
+
+The two most important boundaries are these: T4.5 turns an interesting idea into a research plan with hypotheses, an experiment plan, and risk boundaries. T5 is not an experiment runner: it prepares and verifies an execution contract; an external Codex, Claude, or human executor then performs the real work in the same workspace.
+
+When T4.5 succeeds, the terminal displays a “key research files” table that points directly to the proposal, hypotheses, experiment plan, contribution/validation maps, stopping criteria, and novelty audit, with their next use. T5 consumes those files; you do not need to find them from memory.
 
 ## Before You Run
 
@@ -126,11 +130,21 @@ T3 processes strong-evidence papers individually because page coverage and secti
 
 To pause a live command, press `Ctrl+C` once. ResearchOS persists the workspace as `PAUSED` and prints the matching `resume` command. `Ctrl+Z` only suspends the shell job; use `fg` and then `Ctrl+C` to recover from an accidental suspend.
 
-## Daily Commands
+## Everyday Use: Choose A Command By Goal
 
-Use `run` for a new project and `resume` for the same project. `run-task` is a focused diagnostic tool; it does not advance the complete pipeline.
+Most projects repeatedly use only `status`, `run`, and `resume`. Do not edit `state.yaml` to skip a stage, and do not treat `run-task` as a shortcut for the complete workflow.
 
-### System Status And Diagnostics
+| What you want to do now | Preferred command | What ResearchOS does |
+| --- | --- | --- |
+| See where the project stopped and whether it needs a choice | `status --workspace <project-dir>` | Shows the current stage, Gate, latest actionable message, and next command. |
+| Create a research project from scratch | `init-workspace`, then `run` | Creates a new workspace and starts the complete workflow. |
+| Continue the same paused project | `resume --workspace <project-dir>` | Reuses confirmed choices and valid files; it does not repeat completed model calls. |
+| Intentionally restart at T2/T3/T4 | `resume --from-task T4` | Checks the selected stage's prerequisites before safe re-entry. |
+| Start a new project with another project's material | `run --from <source-dir> --start-task T4` | Creates a separate target workspace and copies declared upstream inputs without merging histories. |
+| Diagnose one stage only | `run-task T4` | Runs that task only; it does not advance the complete main path. |
+| Browse or run a focused capability | `browse-skills` / `run-skill` | Works in an independent, resumable Skill session. |
+
+### 1. System Status And Diagnostics
 
 ```bash
 # Where is this project paused and what action is needed?
@@ -149,7 +163,7 @@ python -m researchos.cli trace <run-id> --workspace ./workspace/project-a
 python -m researchos.cli validate --task T4 --workspace ./workspace/project-a
 ```
 
-### Run A Project
+### 2. Run A Complete Project Or One Stage
 
 ```bash
 # Create and start a new complete project.
@@ -162,7 +176,7 @@ python -m researchos.cli run-task T4 --workspace ./workspace/t4-debug \
   --from ./workspace/project-a
 ```
 
-### Resume, Re-enter, Or Migrate
+### 3. Resume, Re-enter, Or Migrate
 
 ```bash
 # Normal continuation: reuse prior confirmed choices and completed artifacts.
@@ -186,7 +200,7 @@ python -m researchos.cli resume --workspace ./workspace/t4-debug \
 
 `resume --from-task` never merges histories or asks you to edit `state.yaml`. `T3.6` is the optional Survey decision; `T8` is the writing entry gate. An explicit T2 re-entry is the one exception to normal resume reuse: it opens the existing parameter confirmation page so a new search cannot silently use stale scope settings.
 
-### Skills
+### 4. Skills: Focused, Resumable Workflows
 
 ```bash
 python -m researchos.cli list-skills --workspace ./workspace/project-a
@@ -197,9 +211,23 @@ python -m researchos.cli run-skill pdf-note-card --workspace ./workspace/project
 python -m researchos.cli skill-status --workspace ./workspace/project-a
 ```
 
-### T5 External Execution
+### 5. T5 External Execution: From Research Plan To Real Experiments
 
 The normal pipeline reaches T5 automatically after T4.5. T5 deterministically compiles the handoff and publishes the 13 project-specific executor Skills; it does not ask a model to reconstruct these control files. It then pauses at Protocol Readiness, Materials, and Executor gates in that order.
+
+In normal use, do not start these T5 subnodes yourself. T5 reads and preserves the complete T4.5 proposal, formal hypotheses, experiment plan, novelty audit, and stopping criteria. It neither repeats T4/T4.5 nor permits an executor to choose an experimental framework, model, seed, sample scale, or budget by convention.
+
+```text
+T4.5 passes
+  -> T5 compiles the research handoff and project-specific Skills
+  -> Protocol confirmation: are the experimental settings explicit?
+  -> Material confirmation: are existing data, code, and weights in place?
+  -> Choose a Codex / Claude / manual executor
+  -> External execution writes auditable results
+  -> T8 receives results and starts manuscript work
+```
+
+The Protocol Confirmation page is not an error page. `ready` means that you can confirm materials. `protocol_decision_required` means that a researcher decision such as simulation environment, benchmark, model/backbone, seed policy, scale, or budget remains unspecified. Only `blocked` means that a minimum experiment definition is genuinely missing. Its Rich table explains why every setting matters and where to add it, usually `ideation/exp_plan.yaml`.
 
 ```bash
 # Targeted T5 diagnostics only. These do not run an experiment.
@@ -208,7 +236,18 @@ python -m researchos.cli run-task T5-SPECIALIZE --workspace ./workspace/project-
 python -m researchos.cli run-task T5-PROTOCOL-GATE --workspace ./workspace/project-a
 ```
 
-When protocol and materials are ready, choose Codex CLI at the executor Gate, then start it from the workspace root:
+Before executor selection, place existing resources in the following locations. Do not put raw data or downloaded repositories directly under `external_executor/expr/`:
+
+```text
+resources/datasets/      datasets
+resources/baselines/     baseline material
+resources/benchmarks/    benchmarks, official evaluation, or protocols
+resources/repos/         user-provided repositories or archives
+
+external_executor/expr/  only deployed, directly runnable baseline or method assets
+```
+
+When protocol and materials are ready, choose Codex CLI at the executor Gate, then start it from the **workspace root**:
 
 ```bash
 cd workspace/project-a
@@ -219,7 +258,16 @@ codex
 Please read external_executor/AGENTS.md and execute external_executor/skills/research-execution/SKILL.md.
 ```
 
-After Writer Handoff produces `external_executor/executor_research_report.md`, `result_pack.json`, `executor_status.json`, and `report/run_manifest.json`, accept the verified result with `python -m researchos.cli run-task T8 --workspace ./workspace/project-a`. Do not run `resume` or a second executor while the first executor is writing. The complete operational contract is in [T5 External Executor Guide](docs/en/t5_external_executor.md).
+External execution must produce these four return files before it finishes:
+
+```text
+external_executor/executor_research_report.md
+external_executor/result_pack.json
+external_executor/executor_status.json
+external_executor/report/run_manifest.json
+```
+
+When Writer Handoff has finished but did not automatically enter T8, and the external executor has stopped writing, accept the verified result with `python -m researchos.cli run-task T8 --workspace ./workspace/project-a`. Do not run `resume`, a second executor, or `run-task T8` in another terminal while the external executor is writing. See the [T5 External Executor Guide](docs/en/t5_external_executor.md) for the full A-F phase contract and artifact paths.
 
 Use `run --from <source-workspace> --start-task <task>` only to initialize a new target workspace from another project's validated upstream artifacts. `run-task <task> --from <source-workspace>` performs the same declared-input copy but executes only that task. For every literature-dependent downstream stage (`T3.5`, `T3.6`, `T4`, `T5`, and `T8`), the import closure includes the complete `literature/` tree, so initialized empty note directories cannot suppress real source paper cards. `bridge_notes/` remains the paper-note root; `cross_domain_catalogs/` is the independent retrieval catalog and is imported alongside it. The import happens before the model connection check, so a provider outage does not discard the prepared debugging workspace. Neither command is a state merge. The recovery guide is in [Quick Start](docs/en/QUICKSTART.md).
 
@@ -348,6 +396,7 @@ Console panels expose stage inputs, calculations, decisions, risks, and artifact
 | Full pipeline and artifact contracts | [Pipeline Detail](docs/en/agent_pipeline_detail.md) |
 | Configuration | [Configuration](docs/en/config.md) |
 | Native/Docker/TeX | [Docker and TeX](docs/en/docker.md) |
+| T5 external execution and Codex/Claude handoff | [T5 External Executor Guide](docs/en/t5_external_executor.md) |
 | Runtime, events, and extension points | [Runtime](docs/en/runtime.md) |
 | Skills | [Skills](docs/en/skills.md) |
 | Logs, traces, and debug procedure | [Logging and Troubleshooting](docs/en/logging.md) |
