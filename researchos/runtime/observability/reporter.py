@@ -185,13 +185,14 @@ class StageReporter:
             if self.quiet:
                 self._plain(f"[编译] {task_id} · {tex_path or 'LaTeX 源文件'} · {engine} · 后端={backend}")
             elif self.verbosity != "concise":
-                rows = [
-                    ("源文件", tex_path or "未声明"),
-                    ("编译引擎", engine),
-                    ("编译后端", backend),
-                    ("说明", "真实编译已开始；语法错误会快速停止，完整日志会写入工作区。"),
-                ]
-                self._render(Panel(self._rows_table(rows), title=f"{stage_display_name(task_id)} · 正在真实编译 LaTeX", border_style="yellow", expand=False))
+                self._render(
+                    Text(
+                        f"· {stage_display_name(task_id)} · 正在真实编译 LaTeX"
+                        f" · {tex_path or 'LaTeX 源文件'} · {engine} · 后端 {backend}",
+                        style="yellow",
+                        overflow="fold",
+                    )
+                )
 
     def observe_tool_result(
         self,
@@ -294,6 +295,16 @@ class StageReporter:
         rows = [(str(key), str(value)) for key, value in summary.get("rows", [])]
         if not rows:
             return False
+        if len(rows) == 1:
+            label, value = rows[0]
+            self._render(
+                Text(
+                    f"· {title} · {label} {value}",
+                    style="blue",
+                    overflow="fold",
+                )
+            )
+            return True
         self._render(Panel(self._rows_table(rows), title=title, border_style="blue", expand=False))
         return True
 
