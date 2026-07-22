@@ -1044,7 +1044,7 @@ class CLIHumanInterface(HumanInterface):
             print(rendered)
 
     def _render_t2_parameter_overview(self, value: Any) -> None:
-        """Present T2 coverage as a reading plan instead of configuration JSON."""
+        """Present the choices this gate controls before any plan is committed."""
 
         data = value if isinstance(value, dict) else {}
         summary = data.get("recommended_summary") if isinstance(data.get("recommended_summary"), dict) else {}
@@ -1065,34 +1065,39 @@ class CLIHumanInterface(HumanInterface):
             "auto": "随写作语言决定",
         }.get(include_zh.casefold(), include_zh)
 
-        table = Table(box=box.SIMPLE_HEAVY, show_header=False, pad_edge=False, expand=True)
-        table.add_column("项目", style="bold cyan", width=14)
-        table.add_column("本轮方案", overflow="fold")
-        table.add_row("研究用途", f"{profile_label} · {data.get('recommended_label') or '当前推荐'}")
+        table = Table(box=box.HORIZONTALS, show_header=False, pad_edge=False, expand=True)
+        table.add_column("可设置内容", style="bold cyan", width=16)
+        table.add_column("本轮可选择或调整的范围", overflow="fold")
+        table.add_row("研究用途", "研究论文、综述均衡覆盖、综述强覆盖，或按你的研究目标自定义。")
         table.add_row(
             "阅读范围",
-            f"{summary.get('active_pool_max', '—')} 篇不同论文；精读与摘要轻读从同一候选池分配。",
+            "本轮不同论文的总数；精读与摘要轻读从同一候选池分配，不会在候选数之外重复计数。",
         )
         table.add_row(
             "深度阅读",
-            "目标 {} 篇（最低 {}，最多 {}）".format(
+            "精读目标、最低线和上限。当前推荐为目标 {} 篇（最低 {}，最多 {}）。".format(
                 summary.get("deep_read_target", "—"),
                 summary.get("deep_read_min", "—"),
                 summary.get("deep_read_max", "—"),
             ),
         )
-        table.add_row("摘要轻读", f"目标 {summary.get('abstract_sweep_target', '—')} 篇；仅作为摘要级背景和趋势证据。")
-        table.add_row("完成条件", completion)
-        table.add_row("写作语言", f"{language_label}；中文文献：{chinese_label}。")
+        table.add_row(
+            "摘要轻读",
+            "摘要级阅读数量；只支持背景、趋势和候选发现。当前推荐为 {} 篇。".format(
+                summary.get("abstract_sweep_target", "—"),
+            ),
+        )
+        table.add_row("完成条件", f"是否必须读满精读目标。当前推荐：{completion}。")
+        table.add_row("写作与语言", f"稿件语言与中文文献准入。当前推荐：{language_label}；{chinese_label}。")
 
         note = Text(
-            "变更参数不会删除已抓取的论文或笔记。系统会保留既有材料，并只按新范围补充检索或调整阅读队列。",
+            "下方选择尚未写入工作区。选择后才会保存本轮方案；变更参数不会删除已抓取的论文或笔记，只会补充检索或调整阅读队列。",
             style="dim",
             overflow="fold",
         )
         self._render_rich_panel(
             Group(table, note),
-            title="本轮文献阅读方案",
+            title=f"本轮可配置的文献阅读方案 · 当前推荐：{profile_label}",
             border_style="bright_cyan",
         )
 
@@ -1168,18 +1173,19 @@ class CLIHumanInterface(HumanInterface):
     def _render_t2_action_options(self, gate_id: str, options: list[dict]) -> None:
         """Keep the two T2 decision menus short and comparable."""
 
-        table = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold", pad_edge=False, expand=True)
+        table = Table(box=box.HORIZONTALS, show_header=True, header_style="bold", pad_edge=False, expand=True)
         table.add_column("输入", justify="right", width=6, style="bold yellow")
-        table.add_column("选择", min_width=22, max_width=38, overflow="fold")
+        table.add_column("方案", min_width=22, max_width=38, overflow="fold")
+        table.add_column("推荐", width=10, overflow="fold")
         table.add_column("接下来会做什么", overflow="fold")
         for index, option in enumerate(options, start=1):
             label = str(option.get("label") or option.get("id") or "未命名选项")
-            if option.get("is_default"):
-                label += "（默认）"
+            label = label.replace("（当前推荐）", "").replace("(当前推荐)", "").strip()
             description = str(option.get("description") or "按此选择继续。")
             if gate_id == "t2_literature_param_gate" and option.get("parameter_preview"):
                 description = f"{option['parameter_preview']}\n{description}"
-            table.add_row(str(index), label, description)
+            recommendation = "当前推荐\n回车默认" if option.get("is_default") else ""
+            table.add_row(str(index), label, recommendation, description)
         self._render_rich_panel(
             table,
             title="请选择下一步",
