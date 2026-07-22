@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from .model_settings import load_llm_runtime_defaults, load_model_settings
+from .model_settings import load_model_settings
 from .system_config import system_config_path_for
 
 
@@ -26,6 +26,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
     cdr_schema_path = system_config_path_for(config_dir, "cdr_schema.yaml")
     venue_writing_profiles_path = system_config_path_for(config_dir, "venue_writing_profiles.yaml")
     state_machine = _load_yaml(state_machine_path)
+    truncation = dict(model_settings.get("truncation") or {})
 
     return {
         "system_config_contracts": {
@@ -33,7 +34,6 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
             "gates_yaml": str(gates_path),
             "cdr_schema_yaml": str(cdr_schema_path),
             "venue_writing_profiles_yaml": str(venue_writing_profiles_path),
-            "llm_runtime_yaml": str(system_config_path_for(config_dir, "llm_runtime.yaml")),
             "purpose": (
                 "系统契约配置：状态机拓扑、human gate 展示、CDR schema，以及统一的 venue writing profiles；"
                 "普通用户日常不需要修改。"
@@ -46,6 +46,8 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
                 "api_key",
                 "model",
                 "fallback.max_attempts/initial_wait_seconds/max_wait_seconds/retry_after_timeout",
+                "context_window_fallback",
+                "truncation.trigger_ratio/target_ratio",
             ],
             "runtime_yaml": [
                 "workspace.default_root",
@@ -66,10 +68,6 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
                 "agents.<agent>.behavior.*",
                 "agents.<agent>.modes.<mode>.description/prompt/behavior/tools",
             ],
-            "llm_runtime_yaml": [
-                "context_window_fallback",
-                "truncation.trigger_ratio/target_ratio",
-            ],
             "state_machine_yaml": [
                 "states.<task>.agent/mode",
                 "states.<task>.inputs/outputs",
@@ -79,13 +77,13 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
             ],
         },
         "configuration_layers": [
-            "日常只改 config/model_settings.yaml 中的 provider、api_base、api_key、model 和 fallback，或运行 `researchos configure-llm`；所有 Agent 使用同一模型。",
+            "日常只改 config/model_settings.yaml 中的 provider、api_base、api_key、model、fallback、context_window_fallback 和 truncation，或运行 `researchos configure-llm`；所有 Agent 使用同一模型。",
             "T2/T3 文献流程机械阈值默认来自 config/system_config/agent_params.yaml 的 scout.behavior.t2_finalize/progress/literature_quality 和 reader.modes.read.behavior；完整 run 会先经 T2-PARAM-GATE 写 workspace-local literature/literature_params.json，覆盖保留候选数、精读目标、摘要轻读目标和写作语言/中文文献策略。",
             "状态机、gate、CDR schema 和 venue writing profiles 属于 config/system_config/ 系统契约；CLI 默认读取新路径，并保留 config/*.yaml 旧路径 fallback。",
             "state_machine.yaml 只定义拓扑、IO、gate 和少数 extra；默认配置不应写 llm/budget 强覆盖。",
             "agent_params.yaml 是 agent capability registry；T2/T3 文献流程阈值属于 behavior，不属于普通 LLM/budget 参数。",
             "literature/literature_params.json 是单个 workspace 的运行决策文件，优先于全局 yaml；要改本次运行覆盖规模，优先看这个文件。",
-            "config/system_config/llm_runtime.yaml 保存 context fallback 与 truncation 默认值；它不是日常用户配置。旧 endpoint/profile 文件仅为历史部署保留兼容读取。",
+            "context fallback 与 truncation 与连接字段保存在同一个 config/model_settings.yaml；旧 endpoint/profile 文件仅为历史部署保留兼容读取。",
         ],
         "model_settings": {
             "path": str(settings_path),
@@ -95,6 +93,8 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
             "model": model_settings.get("model"),
             "api_key_configured": bool(model_settings.get("api_key")),
             "fallback": model_settings.get("fallback"),
+            "context_window_fallback": model_settings.get("context_window_fallback"),
+            "truncation": dict(truncation),
         },
         "effective_runtime": {
             "global_budget": agent_params.get("global_budget") or {},
@@ -104,7 +104,10 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
                 agent_params.get("budget_escalation") or {}
             ),
         },
-        "effective_llm_runtime": load_llm_runtime_defaults(),
+        "effective_llm_runtime": {
+            "context_window_fallback": model_settings.get("context_window_fallback"),
+            "truncation": dict(truncation),
+        },
         # Retained as a migration audit. These historical fields no longer
         # route a new run away from model_settings.yaml, but a maintainer can
         # still locate stale direct model declarations before removing them.

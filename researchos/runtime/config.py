@@ -272,26 +272,11 @@ def validate_runtime_config(settings: RuntimeSettings, config_dir: Path) -> list
             if not isinstance(configured, dict):
                 errors.append("model_settings.yaml: 根节点必须是字典")
             elif any(key in configured for key in ("endpoints", "profiles")):
-                errors.append("model_settings.yaml: 不支持 legacy endpoint/profile 路由；请保留 provider、api_base、api_key、model 和 fallback")
+                errors.append("model_settings.yaml: 不支持 legacy endpoint/profile 路由；请保留 provider、api_base、api_key、model、fallback、context_window_fallback 和 truncation")
+            elif "truncation" in configured and not isinstance(configured.get("truncation"), dict):
+                errors.append("model_settings.yaml: truncation 必须是字典")
         except Exception as exc:
             errors.append(f"model_settings.yaml: 解析错误: {exc}")
-
-    # System defaults are versioned with the workflow contracts, not copied
-    # into the user-facing model settings file.
-    from .system_config import system_config_path_for
-
-    llm_runtime = system_config_path_for(config_dir, "llm_runtime.yaml")
-    if not llm_runtime.exists():
-        errors.append(f"缺少系统 LLM 默认配置: {llm_runtime}")
-    else:
-        try:
-            runtime_defaults = yaml.safe_load(llm_runtime.read_text(encoding="utf-8")) or {}
-            if not isinstance(runtime_defaults, dict):
-                errors.append("llm_runtime.yaml: 根节点必须是字典")
-            elif not isinstance(runtime_defaults.get("truncation"), dict):
-                errors.append("llm_runtime.yaml: 缺少 truncation")
-        except Exception as exc:
-            errors.append(f"llm_runtime.yaml: 解析错误: {exc}")
 
     # 检查runtime.yaml值
     if settings.agent_behavior.max_empty_reply < 1:

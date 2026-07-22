@@ -19,7 +19,7 @@ import yaml
 
 DEFAULT_USER_SETTINGS_PATH = Path(__file__).parent.parent.parent / "config" / "user_settings.yaml"
 SIMPLE_LLM_FIELDS = {"api_base", "api_key", "model", "provider", "max_context_fallback"}
-DEFAULT_CONTEXT_WINDOW_FALLBACK = 131_072
+DEFAULT_CONTEXT_WINDOW_FALLBACK = 262_144
 
 
 def should_apply_default_user_settings(config_path: Path, default_config_path: Path) -> bool:

@@ -96,7 +96,7 @@ phase id / visible status / summary / artifact paths / evidence boundary / next 
 
 ### 提供方上下文摘要批处理
 
-T3 的全文阅读仍然逐篇进行。LLM client 会从 OpenAI-compatible `/models` metadata 尝试识别当前 model 的 `context window`，同时兼容 `/v1` 与非 `/v1` URL；可接受 `context_length`、`context_window`、`max_context`、`max_input_tokens` 等常见字段。该值在当前 client 内缓存，用于 file reading、history trimming 和 abstract batching。provider 没有可验证 metadata 时，runtime 使用 128k token fallback；研究者不需要配置 context 或 batch size。
+T3 的全文阅读仍然逐篇进行。LLM client 会从 OpenAI-compatible `/models` metadata 尝试识别当前 model 的 `context window`，同时兼容 `/v1` 与非 `/v1` URL；可接受 `context_length`、`context_window`、`max_context`、`max_input_tokens` 等常见字段。该值在当前 client 内缓存，用于 file reading、history trimming 和 abstract batching。provider 没有可验证 metadata 时，runtime 使用同一份 `config/model_settings.yaml` 中的 `262144` token `context_window_fallback`；它是总上下文容量兜底，不是原始输入上限。provider metadata 优先，研究者通常不需要配置 context 或 batch size。
 
 编排器用当前 model 的 `count_tokens()` 与发现到的 context window 自动打包 abstract records，不设置固定论文数量。每篇返回的 JSON 笔记都会规范化后写入 `shallow_read_notes/<paper>.md`；它属于粗读线索，不等同于全文证据。
 

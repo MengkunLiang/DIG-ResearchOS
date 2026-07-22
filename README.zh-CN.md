@@ -80,6 +80,12 @@ T4.5 成功时，终端会显示“重点研究文件”表，直接指出 propo
 
 - 同一个 workspace 同一时刻只允许一个写入者。不要同时用本地和 Docker 写同一项目。
 - API key 可以放在本地 `.env` 或被 Git 忽略的 `config/model_settings.yaml`；不要提交这些文件、workspace、PDF、日志或生成的投稿文件。
+
+### 模型连接与上下文容量
+
+`python -m researchos.cli configure-llm` 会创建真实生效的本地连接文件 `config/model_settings.yaml`。手动配置时，把 `config/model_settings.example.yaml` 复制到这个准确输出路径，再填写 `provider`、`api_key` 和 `model`；`openai_compatible` 还必须填写 `api_base`。模板本身不会被读取。手动保存后执行 `python -m researchos.cli selftest` 校验；自定义位置可执行 `python -m researchos.cli selftest --model-settings /absolute/path/model_settings.yaml`。
+
+同一份 `config/model_settings.yaml` 还包含 `context_window_fallback: 262144` 与 `truncation`，模型连接和上下文设置无需再分开查看。它不是单次 prompt 输入上限；只有 provider 无法报告 model 的真实 context window 时，ResearchOS 才把 fallback 作为总 token 容量估计。该容量由 prompt、研究材料、历史、Tool 输入/结果和回复空间共同使用；provider 报告真实容量时始终优先。完整字段和兜底语义见[配置说明](docs/cn/config.md)。
 - `requirements.txt` / `pyproject.toml` 只管理 Python 依赖。TeX、`latexmk` 与字体由宿主机或 Docker 镜像提供。
 
 ## 本地安装
@@ -415,7 +421,7 @@ external_executor/report/phase_F/writer_handoff_validation.json
 
 ## 文件读取与上下文预算
 
-`read_file` 不是固定只能读 200 或 3000 字符的工具。创建上下文敏感工具前，ResearchOS 会并发查询当前 provider 的直接模型记录和模型列表，并同时兼容带或不带 `/v1` 的 OpenAI 风格端点。只有返回记录与配置 model 匹配，且公开了 `context_length`、`context_window`、`max_context`、`max_input_tokens` 或等价嵌套容量字段时，才把该值作为有效容量。该结果在本次运行中缓存，并被文件读取、历史截断和摘要批处理共同使用。若服务端不公开可核验容量，系统默认回退到 `128k` token，不需要在命令中手工传入；它仍不是对 provider 公共 API 极限的声称。单模型配置下，task/state-machine 的 context override 不会改变用户看到的有效容量，系统以当前 provider 的实际能力为准。
+`read_file` 不是固定只能读 200 或 3000 字符的工具。创建上下文敏感工具前，ResearchOS 会并发查询当前 provider 的直接模型记录和模型列表，并同时兼容带或不带 `/v1` 的 OpenAI 风格端点。只有返回记录与配置 model 匹配，且公开了 `context_length`、`context_window`、`max_context`、`max_input_tokens` 或等价嵌套容量字段时，才把该值作为有效容量。该结果在本次运行中缓存，并被文件读取、历史截断和摘要批处理共同使用。若服务端不公开可核验容量，系统使用同一份 `config/model_settings.yaml` 中的 `262144` token `context_window_fallback`；它是总上下文容量兜底，不是单次 prompt 输入上限，也不表示 provider 对外承诺的 API 极限。单模型配置下，task/state-machine 的 context override 不会改变用户看到的有效容量，系统以当前 provider 的实际能力为准。
 
 有效容量会预留 system prompt、历史消息和后续 Tool 调用空间，并将余量的 70% 分给单次文件结果；文件只有在自动 整篇读取预算内才会一次返回，超过该比例即自动分页。公开的 `read_file` schema 只暴露 `path` 与 `offset`，刻意不接受人工或模型指定的 `max_chars`，因此不能再用 `max_chars=200` 把阅读拆成大量微小调用。需要看已知局部时，先用 `grep_search` 找到 offset，再以该 offset 调用 `read_file`；结果元数据会记录本次容量来源和分页预算。T2 读取大型 `literature/papers_raw.jsonl` 时保留完全读取能力，但会在超过 T2 专项页预算时使用检查点安全分页；页面在 JSONL 记录边界结束，并保留已完成 query、来源覆盖、raw 数量和唯一正确的下一页 `next_offset`，避免大页挤掉检索状态后重复扩 query 或重跑检索。
 

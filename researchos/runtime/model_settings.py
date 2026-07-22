@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-"""The single user-maintained model connection.
+"""The single user-maintained model configuration.
 
-``config/model_settings.yaml`` is deliberately small.  It contains the one
-provider connection used by every Agent and Skill, plus the retry behaviour a
-researcher may reasonably want to adjust.  Workflow topology, prompt policy,
-context fallback, and other runtime internals remain in ``system_config``.
+``config/model_settings.yaml`` contains the one provider connection used by
+every Agent and Skill, its retry behaviour, and the context-capacity defaults
+that must stay aligned with that connection. Workflow topology and prompt
+policy remain in ``system_config``.
 """
 
 from collections.abc import Mapping
@@ -16,12 +16,16 @@ from typing import Any
 
 import yaml
 
-from .system_config import REPO_ROOT, config_file_path, system_config_path
+from .system_config import REPO_ROOT, config_file_path
 
 
 DEFAULT_MODEL_SETTINGS_PATH = REPO_ROOT / "config" / "model_settings.yaml"
 LEGACY_USER_SETTINGS_PATH = REPO_ROOT / "config" / "user_settings.yaml"
-DEFAULT_LLM_RUNTIME_PATH = system_config_path("llm_runtime.yaml")
+DEFAULT_CONTEXT_WINDOW_FALLBACK = 262_144
+DEFAULT_TRUNCATION = {
+    "trigger_ratio": 0.90,
+    "target_ratio": 0.72,
+}
 MODEL_FIELDS = ("provider", "api_base", "api_key", "model")
 PROVIDER_DEFAULTS = {
     # Native LiteLLM providers.
@@ -172,6 +176,7 @@ def load_model_settings(path: Path | None = None) -> dict[str, Any]:
     provider = normalize_provider(connection.get("provider"))
     provider_defaults = PROVIDER_DEFAULTS[provider]
     fallback = connection.get("fallback") if isinstance(connection.get("fallback"), dict) else {}
+    truncation = connection.get("truncation") if isinstance(connection.get("truncation"), dict) else {}
     configured_api_base = _expand_env_value(str(connection.get("api_base") or "").strip())
     settings = {
         "provider": provider,
@@ -187,6 +192,26 @@ def load_model_settings(path: Path | None = None) -> dict[str, Any]:
             "initial_wait_seconds": _positive_float(fallback.get("initial_wait_seconds"), 3.0, minimum=0.0, maximum=60.0),
             "max_wait_seconds": _positive_float(fallback.get("max_wait_seconds"), 20.0, minimum=0.0, maximum=300.0),
             "retry_after_timeout": _as_bool(fallback.get("retry_after_timeout"), True),
+        },
+        "context_window_fallback": _positive_int(
+            connection.get("context_window_fallback"),
+            DEFAULT_CONTEXT_WINDOW_FALLBACK,
+            minimum=4_096,
+            maximum=10_000_000,
+        ),
+        "truncation": {
+            "trigger_ratio": _positive_float(
+                truncation.get("trigger_ratio"),
+                DEFAULT_TRUNCATION["trigger_ratio"],
+                minimum=0.01,
+                maximum=0.99,
+            ),
+            "target_ratio": _positive_float(
+                truncation.get("target_ratio"),
+                DEFAULT_TRUNCATION["target_ratio"],
+                minimum=0.01,
+                maximum=0.99,
+            ),
         },
         "api_key_env": str(provider_defaults["api_key_env"]),
         "api_key_required": bool(provider_defaults.get("api_key_required", True)),
@@ -236,36 +261,10 @@ def inspect_model_settings_source(path: Path | None = None) -> dict[str, Any]:
     }
 
 
-def load_llm_runtime_defaults(path: Path | None = None) -> dict[str, Any]:
-    """Load internal defaults that users should not need to tune."""
-
-    runtime_path = path or DEFAULT_LLM_RUNTIME_PATH
-    raw: dict[str, Any] = {}
-    if runtime_path.exists():
-        try:
-            loaded = yaml.safe_load(runtime_path.read_text(encoding="utf-8")) or {}
-        except yaml.YAMLError:
-            loaded = {}
-        if isinstance(loaded, dict):
-            raw = loaded
-    context = _positive_int(raw.get("context_window_fallback"), 131_072, minimum=4_096, maximum=10_000_000)
-    truncation = raw.get("truncation") if isinstance(raw.get("truncation"), dict) else {}
-    return {
-        "context_window_fallback": context,
-        "truncation": {
-            "trigger_ratio": _positive_float(truncation.get("trigger_ratio"), 0.90, minimum=0.01, maximum=0.99),
-            "target_ratio": _positive_float(truncation.get("target_ratio"), 0.72, minimum=0.01, maximum=0.99),
-        },
-    }
-
-
 def build_single_model_runtime_config(path: Path | None = None) -> dict[str, Any]:
     """Adapt the public one-connection file to the stable client internals."""
 
     connection = load_model_settings(path)
-    settings_path = resolve_model_settings_path(path)
-    local_runtime = settings_path.parent / "system_config" / "llm_runtime.yaml"
-    defaults = load_llm_runtime_defaults(local_runtime if local_runtime.exists() else None)
     return {
         "_simple_llm_mode": True,
         "_simple_llm": connection,
@@ -284,12 +283,12 @@ def build_single_model_runtime_config(path: Path | None = None) -> dict[str, Any
                     "primary": {
                         "model": connection["model"],
                         "endpoint": "default",
-                        "max_context": defaults["context_window_fallback"],
+                        "max_context": connection["context_window_fallback"],
                     }
                 }
             }
         },
-        "truncation": defaults["truncation"],
+        "truncation": connection["truncation"],
     }
 
 
@@ -321,6 +320,26 @@ def write_model_settings(
             "initial_wait_seconds": _positive_float(recovery.get("initial_wait_seconds"), 3.0, minimum=0.0, maximum=60.0),
             "max_wait_seconds": _positive_float(recovery.get("max_wait_seconds"), 20.0, minimum=0.0, maximum=300.0),
             "retry_after_timeout": _as_bool(recovery.get("retry_after_timeout"), True),
+        },
+        "context_window_fallback": _positive_int(
+            current.get("context_window_fallback"),
+            DEFAULT_CONTEXT_WINDOW_FALLBACK,
+            minimum=4_096,
+            maximum=10_000_000,
+        ),
+        "truncation": {
+            "trigger_ratio": _positive_float(
+                (current.get("truncation") or {}).get("trigger_ratio") if isinstance(current.get("truncation"), dict) else None,
+                DEFAULT_TRUNCATION["trigger_ratio"],
+                minimum=0.01,
+                maximum=0.99,
+            ),
+            "target_ratio": _positive_float(
+                (current.get("truncation") or {}).get("target_ratio") if isinstance(current.get("truncation"), dict) else None,
+                DEFAULT_TRUNCATION["target_ratio"],
+                minimum=0.01,
+                maximum=0.99,
+            ),
         },
     }
     settings_path.parent.mkdir(parents=True, exist_ok=True)

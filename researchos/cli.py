@@ -51,6 +51,7 @@ from .runtime.environment import (
 from .runtime.llm_client import LLMClient
 from .runtime.logger import configure_file_logging, configure_logging
 from .runtime.model_settings import (
+    DEFAULT_MODEL_SETTINGS_PATH,
     load_dotenv_for_model_settings,
     inspect_model_settings_source,
     load_model_settings,
@@ -1059,6 +1060,70 @@ def _render_llm_configuration_step(
     )
 
 
+def _render_llm_context_capacity_notice(
+    args: argparse.Namespace,
+    *,
+    settings_path: Path,
+) -> None:
+    """Explain the context fallback that lives beside the model connection."""
+
+    settings = load_model_settings(settings_path)
+    fallback = settings["context_window_fallback"]
+    details = Table(box=box.SIMPLE_HEAVY, show_header=False, expand=True)
+    details.add_column(style="bold cyan", no_wrap=True)
+    details.add_column(overflow="fold")
+    details.add_row("当前兜底", f"{fallback:,} tokens")
+    details.add_row("何时生效", "仅当 provider/model 未报告可核验的真实 context window 时使用")
+    details.add_row("优先级", "provider 报告的真实容量优先；该值不会覆盖已发现的真实容量")
+    details.add_row("它表示什么", "整次模型调用共享的总上下文容量，不是单独的用户输入上限")
+    details.add_row("容量包含", "system prompt、研究材料、对话历史、Tool 输入/结果和为回复预留的空间")
+    details.add_row("配置位置", str(settings_path.resolve()))
+    details.add_row("同一文件中的字段", "context_window_fallback；通常保留默认值，只有已知 provider/gateway 总容量时才调整")
+    _cli_console(args).print(
+        Panel(
+            Group(
+                Text("ResearchOS 会先尝试识别当前 model 的真实上下文容量；识别不到时才使用同一模型配置文件中的下面字段。"),
+                details,
+            ),
+            title="上下文容量说明",
+            border_style="cyan",
+            expand=True,
+        )
+    )
+
+
+def _render_llm_manual_edit_instructions(
+    args: argparse.Namespace,
+    *,
+    settings_path: Path,
+) -> None:
+    """Show exact local paths and validation before waiting for a manual edit."""
+
+    target_path = settings_path.expanduser().resolve()
+    template_path = DEFAULT_MODEL_SETTINGS_PATH.with_name("model_settings.example.yaml").resolve()
+    details = Table(box=box.SIMPLE_HEAVY, show_header=False, expand=True)
+    details.add_column(style="bold cyan", no_wrap=True)
+    details.add_column(overflow="fold")
+    details.add_row("实际生效文件", str(target_path))
+    details.add_row("安全模板", str(template_path))
+    details.add_row("最小必填字段", "provider、api_key、model；仅 openai_compatible 还必须填写 api_base")
+    details.add_row("上下文容量字段", "context_window_fallback 与 truncation 都在此文件中；通常保留模板默认值")
+    details.add_row("创建方式", f"cp {template_path} {target_path}")
+    details.add_row("保存后校验", f"python -m researchos.cli selftest --model-settings {target_path}")
+    _cli_console(args).print(
+        Panel(
+            Group(
+                Text("只会读取“实际生效文件”；模板不会自动生效。API key 可填写为环境变量引用，例如 ${DEEPSEEK_API_KEY}。"),
+                details,
+                Text("完成编辑后回到本终端按 Enter，ResearchOS 会重新读取并检查该文件。"),
+            ),
+            title="手动配置模型",
+            border_style="cyan",
+            expand=True,
+        )
+    )
+
+
 def _render_llm_configuration_saved(
     args: argparse.Namespace,
     *,
@@ -1078,6 +1143,8 @@ def _render_llm_configuration_saved(
     table.add_row("Model", model)
     table.add_row("设置文件", str(settings_path))
     table.add_row("Key 保存位置", secret_location)
+    fallback = load_model_settings(settings_path)["context_window_fallback"]
+    table.add_row("上下文容量兜底", f"{fallback:,} tokens；仅在 provider 未报告真实容量时使用")
     _cli_console(args).print(Panel(table, title="模型配置已保存", border_style="green", expand=True))
 
 
@@ -1102,13 +1169,9 @@ async def _ensure_llm_is_ready(args: argparse.Namespace, client: LLMClient) -> L
     )
     choice = input("请选择 [1/2/3]: ").strip()
     if choice in {"2", "edit", "e"}:
-        _cli_console(args).print(
-            Panel(
-                Text(f"编辑 {status.get('settings_path') or 'config/model_settings.yaml'} 后，按 Enter 重新读取并检查配置。"),
-                title="等待配置文件更新",
-                border_style="cyan",
-                expand=True,
-            )
+        _render_llm_manual_edit_instructions(
+            args,
+            settings_path=Path(status.get("settings_path") or "config/model_settings.yaml"),
         )
         input()
     elif choice not in {"1", "configure", "c"}:
@@ -1143,6 +1206,7 @@ async def configure_llm_command(args: argparse.Namespace) -> int:
     """Write and optionally test the public single-model LLM configuration."""
 
     settings_path = resolve_model_settings_path(Path(getattr(args, "model_settings", "config/model_settings.yaml")))
+    _render_llm_context_capacity_notice(args, settings_path=settings_path)
     current = load_model_settings(settings_path)
     source = inspect_model_settings_source(settings_path)
     interactive = sys.stdin.isatty()

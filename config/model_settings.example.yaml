@@ -30,6 +30,20 @@ api_key: "${DEEPSEEK_API_KEY}"
 # 所有 Agent 和 Skill 使用同一个 model；没有 heavy/medium/light 或单 Agent 路由。
 model: deepseek-v4-pro
 
+# provider 无法报告真实 context window 时使用的总上下文容量（token）。它由
+# system prompt、研究材料、历史、Tool 输入/结果和回复空间共同使用，不是单次输入上限。
+# provider 报告可核验的真实容量时会优先使用真实值。通常保留默认值。
+# Total context capacity fallback (tokens) when the provider cannot report a
+# real window. It is shared by prompts, research material, history, Tool I/O,
+# and response space; provider-reported capacity takes priority.
+context_window_fallback: 262144
+
+# 到达总上下文容量前的历史压缩阈值。通常保留默认值。
+# History-compaction thresholds before the effective total context capacity.
+truncation:
+  trigger_ratio: 0.90
+  target_ratio: 0.72
+
 # 同一 provider/model 临时故障时的重试策略，不会暗中切换到其他模型。
 # 认证或配置错误不会重试，CLI 会提示需要修正的内容。
 fallback:

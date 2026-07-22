@@ -96,7 +96,7 @@ This is not nested `run-skill` execution. The current runtime executes one Skill
 
 ### Provider-Context Abstract Batching
 
-T3 full-text reading remains paper-specific. The LLM client tries to identify the current model's `context window` from OpenAI-compatible `/models` metadata, supporting both `/v1` and non-`/v1` URLs and common fields such as `context_length`, `context_window`, `max_context`, and `max_input_tokens`. The result is cached for the active client and drives file reading, history trimming, and abstract batching. When the provider exposes no verifiable metadata, the runtime uses a 128k-token fallback; researchers do not configure context or batch size.
+T3 full-text reading remains paper-specific. The LLM client tries to identify the current model's `context window` from OpenAI-compatible `/models` metadata, supporting both `/v1` and non-`/v1` URLs and common fields such as `context_length`, `context_window`, `max_context`, and `max_input_tokens`. The result is cached for the active client and drives file reading, history trimming, and abstract batching. When the provider exposes no verifiable metadata, the runtime uses the `262144`-token `context_window_fallback` from the same `config/model_settings.yaml` file as the provider connection. It is a total context-capacity fallback, not a raw input limit; provider metadata takes priority and researchers normally do not configure context or batch size.
 
 The orchestrator uses the current model's `count_tokens()` and discovered context window to pack abstract records without a fixed paper count. Every returned JSON note is normalized into `shallow_read_notes/<paper>.md`; it is a shallow-reading lead, not full-text evidence.
 
