@@ -846,6 +846,11 @@ class CLIHumanInterface(HumanInterface):
                 presentation.get("current_parameter_preview"),
             )
             rendered_compact_gate = True
+        elif gate_id == "t2_literature_param_confirm_gate":
+            self._render_t2_parameter_confirmation(
+                presentation.get("selected_parameters"),
+            )
+            rendered_compact_gate = True
         elif gate_id == "t2_coverage_gate":
             self._render_t2_coverage_overview(presentation)
             rendered_compact_gate = True
@@ -882,7 +887,11 @@ class CLIHumanInterface(HumanInterface):
             print(rendered)
         if gate_id == "t4_gate1_selection_gate":
             self._render_t4_action_options(options)
-        elif gate_id in {"t2_literature_param_gate", "t2_coverage_gate"}:
+        elif gate_id in {
+            "t2_literature_param_gate",
+            "t2_literature_param_confirm_gate",
+            "t2_coverage_gate",
+        }:
             self._render_t2_action_options(gate_id, options)
         else:
             for idx, option in enumerate(options, start=1):
@@ -1121,6 +1130,66 @@ class CLIHumanInterface(HumanInterface):
             border_style="bright_cyan",
         )
 
+    def _render_t2_parameter_confirmation(self, value: Any) -> None:
+        """Render the persisted T2 selection as an operational confirmation."""
+
+        path, raw = _path_summary_text(
+            value,
+            default_path="literature/literature_params.json",
+        )
+        data = _parse_t2_params_summary(raw) or {}
+        summary = data.get("selected_summary") if isinstance(data.get("selected_summary"), dict) else {}
+        reader = data.get("reader") if isinstance(data.get("reader"), dict) else {}
+        abstract_sweep = reader.get("abstract_sweep") if isinstance(reader.get("abstract_sweep"), dict) else {}
+        quality = data.get("literature_quality") if isinstance(data.get("literature_quality"), dict) else {}
+        t2_finalize = data.get("t2_finalize") if isinstance(data.get("t2_finalize"), dict) else {}
+
+        pool = summary.get("active_pool_max") or t2_finalize.get("active_pool_max") or "—"
+        deep_target = summary.get("deep_read_target") or reader.get("deep_read_target") or "—"
+        deep_min = summary.get("deep_read_min") or reader.get("deep_read_min") or "—"
+        deep_max = summary.get("deep_read_max") or reader.get("deep_read_max") or "—"
+        shallow_target = summary.get("abstract_sweep_target") or abstract_sweep.get("lite_paper_num") or "—"
+        require_target = summary.get("require_deep_read_target")
+        if require_target is None:
+            require_target = reader.get("require_deep_read_target")
+        completion = "须完成精读目标后才能进入 T3.5" if require_target is True else "达到最低精读线即可继续"
+        language = str(summary.get("manuscript_language") or quality.get("manuscript_language") or "auto")
+        language_label = {"en": "英文", "zh": "中文", "mixed": "双语", "auto": "自动判断"}.get(language, language)
+        include_zh = str(summary.get("include_chinese_literature") or quality.get("include_chinese_literature") or "auto")
+        chinese_label = {
+            "true": "允许纳入，并在后续复核来源",
+            "false": "不主动检索非 seed 中文文献",
+            "auto": "随写作语言决定",
+        }.get(include_zh.casefold(), include_zh)
+
+        table = Table(
+            box=_T2_THREE_LINE_RULED_BOX,
+            show_header=False,
+            show_lines=True,
+            pad_edge=False,
+            expand=True,
+        )
+        table.add_column("即将生效", style="bold cyan", width=16)
+        table.add_column("本轮 T2/T3 方案", overflow="fold")
+        table.add_row("已选档位", str(data.get("selected_label") or data.get("selected_option") or "已保存方案"))
+        table.add_row("阅读覆盖", f"{pool} 篇不同论文；候选数是本轮阅读总范围，不是额外阅读数量。")
+        table.add_row("阅读分配", f"精读目标 {deep_target} 篇（最低 {deep_min}，最多 {deep_max}）+ 摘要轻读 {shallow_target} 篇。")
+        table.add_row("进入下一阶段", completion)
+        table.add_row("写作与语言", f"{language_label}；中文文献：{chinese_label}。")
+        table.add_row("确认后", "启动 T2：检索、核验元数据与可得性、建立引用图，并生成 T3 精读队列。")
+
+        note = Text(
+            "选择“重新选择参数”会保留已有论文与阅读笔记，仅按新范围补充检索或调整队列；不会删除已保存材料。",
+            style="dim",
+            overflow="fold",
+        )
+        source = Text(f"已保存于：{path}", style="dim", overflow="fold")
+        self._render_rich_panel(
+            Group(table, note, source),
+            title="即将确认的文献阅读方案",
+            border_style="bright_cyan",
+        )
+
     def _render_t2_coverage_overview(self, presentation: dict[str, Any]) -> None:
         """Compress T2 artifacts into the actual decision required before T3."""
 
@@ -1193,6 +1262,7 @@ class CLIHumanInterface(HumanInterface):
     def _render_t2_action_options(self, gate_id: str, options: list[dict]) -> None:
         """Keep the two T2 decision menus short and comparable."""
 
+        show_recommendation = gate_id == "t2_literature_param_gate"
         table = Table(
             box=_T2_THREE_LINE_RULED_BOX,
             show_header=True,
@@ -1203,7 +1273,8 @@ class CLIHumanInterface(HumanInterface):
         )
         table.add_column("输入", justify="right", width=6, style="bold yellow")
         table.add_column("方案", min_width=22, max_width=38, overflow="fold")
-        table.add_column("推荐", width=10, overflow="fold")
+        if show_recommendation:
+            table.add_column("推荐", width=10, overflow="fold")
         table.add_column("接下来会做什么", overflow="fold")
         for index, option in enumerate(options, start=1):
             label = str(option.get("label") or option.get("id") or "未命名选项")
@@ -1212,10 +1283,13 @@ class CLIHumanInterface(HumanInterface):
             if gate_id == "t2_literature_param_gate" and option.get("parameter_preview"):
                 description = f"{option['parameter_preview']}\n{description}"
             recommendation = "当前推荐\n回车默认" if option.get("is_default") else ""
-            table.add_row(str(index), label, recommendation, description)
+            if show_recommendation:
+                table.add_row(str(index), label, recommendation, description)
+            else:
+                table.add_row(str(index), label, description)
         self._render_rich_panel(
             table,
-            title="请选择下一步",
+            title="确认操作" if gate_id == "t2_literature_param_confirm_gate" else "请选择下一步",
             border_style="bright_yellow",
         )
 
