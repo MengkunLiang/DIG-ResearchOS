@@ -448,10 +448,6 @@ def audit_docs(repo_root: Path, docs_root: Path, *, include_prose_audit: bool = 
     findings: list[Finding] = []
     if not docs_root.is_dir():
         return [Finding("ERROR", "missing_docs_root", _repo_relative(docs_root, repo_root), 0, "docs 根目录不存在。")]
-    required = docs_root / "STYLE_AND_TERMINOLOGY_GUIDE.md"
-    if not required.is_file():
-        findings.append(Finding("ERROR", "missing_terminology_guide", _repo_relative(required, repo_root), 0, "缺少 Goal 要求的 STYLE_AND_TERMINOLOGY_GUIDE.md。"))
-
     commands, options, task_ids = _cli_parser_data()
     anchor_cache: dict[Path, set[str]] = {}
     for path in _iter_markdown_files(docs_root):

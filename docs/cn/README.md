@@ -17,7 +17,7 @@
 | 理解仓库/工作空间所有权 | [project_structure.md](project_structure.md) | [runtime.md](runtime.md) |
 | 扩展工具、智能体、模式、状态机或技能 | [dev.md](dev.md) | [runtime.md](runtime.md) |
 | 查看部署、配置示例或维护脚本 | [../../deploy/README.md](../../deploy/README.md) | [../../config/README.md](../../config/README.md) · [../../scripts/README.md](../../scripts/README.md) |
-| 统一术语或检查文档质量 | [../STYLE_AND_TERMINOLOGY_GUIDE.md](../STYLE_AND_TERMINOLOGY_GUIDE.md) | `python scripts/check_docs.py` |
+| 检查文档质量 | `python scripts/check_docs.py` | 查看报告中的本地路径和失效链接。 |
 
 ## 操作原则
 

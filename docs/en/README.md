@@ -17,7 +17,7 @@ This is a maintained English documentation set, not a pointer-only reference. Th
 | Understand repository/workspace ownership | [project_structure.md](project_structure.md) | [runtime.md](runtime.md) |
 | Extend tools, agents, schemas, state machine, or Skills | [dev.md](dev.md) | [runtime.md](runtime.md) |
 | Inspect deployment, configuration examples, or maintenance scripts | [../../deploy/README.md](../../deploy/README.md) | [../../config/README.md](../../config/README.md) · [../../scripts/README.md](../../scripts/README.md) |
-| Use consistent terms or audit documentation quality | [../STYLE_AND_TERMINOLOGY_GUIDE.md](../STYLE_AND_TERMINOLOGY_GUIDE.md) | `python scripts/check_docs.py` |
+| Audit documentation quality | `python scripts/check_docs.py` | Review the reported local paths and links. |
 
 ## Operating Principles
 
