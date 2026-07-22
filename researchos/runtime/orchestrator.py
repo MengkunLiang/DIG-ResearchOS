@@ -6331,6 +6331,43 @@ class AgentRunner:
             or ctx.extra.get("resume_reason") in {"interrupted", "iteration"}
         )
 
+    @staticmethod
+    def _normalize_tool_call_arguments(tc: ToolCall) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Apply narrowly scoped compatibility repairs before schema validation.
+
+        ``read_file`` owns its response size from the active model context.  A
+        few OpenAI-compatible models nevertheless emit old, advisory read-size
+        fields such as ``limit``.  Rejecting those fields creates a transient
+        red error even though the path is valid and the next identical call
+        normally succeeds.  Drop only known no-op fields for this one tool;
+        every other malformed parameter remains a normal validation failure.
+        The removed values are returned so trace artifacts retain an audit
+        record without treating the call as a researcher-visible failure.
+        """
+
+        arguments = dict(tc.arguments) if isinstance(tc.arguments, dict) else {}
+        if tc.name != "read_file":
+            return arguments, {}
+
+        ignored_keys = {
+            "limit",
+            "max_chars",
+            "max_length",
+            "max_tokens",
+        }
+        removed = {
+            key: arguments.pop(key)
+            for key in sorted(ignored_keys)
+            if key in arguments
+        }
+        if not removed:
+            return arguments, {}
+        return arguments, {
+            "kind": "read_file_legacy_size_hint_ignored",
+            "removed_fields": removed,
+            "reason": "read_file response size is derived from the active model context",
+        }
+
     async def _execute_one_tool_call(
         self,
         tc: ToolCall,
@@ -6465,9 +6502,13 @@ class AgentRunner:
                     )
                 return tool_msg
 
+        tool_arguments, argument_auto_repair = self._normalize_tool_call_arguments(tc)
         try:
-            # 先用 pydantic schema 做参数校验。
-            parsed = tool.parameters_schema(**tc.arguments)
+            # 先用 pydantic schema 做参数校验。少数 OpenAI-compatible
+            # providers 会给 read_file 附加其历史 schema 中的 ``limit``
+            # 一类提示参数；它们不改变读文件的安全边界或分页语义，已经在
+            # _normalize_tool_call_arguments 中被窄范围地移除并留痕。
+            parsed = tool.parameters_schema(**tool_arguments)
         except Exception as exc:
             tool_msg = Message.tool(
                 tool_call_id=tc.id,
@@ -6674,6 +6715,16 @@ class AgentRunner:
                 raw_count_after=self._count_jsonl_records(ctx.workspace_dir / "literature" / "papers_raw.jsonl"),
                 append_status=str(result.error or "failed"),
             )
+        if argument_auto_repair:
+            result.data = {
+                **(result.data if isinstance(result.data, dict) else {}),
+                "argument_auto_repair": argument_auto_repair,
+                # The normal CLI deliberately suppresses successful file
+                # reads.  Keep this marker for --verbose/trace rather than
+                # presenting a red transient error to a researcher.
+                "display_disposition": "auto_repair",
+            }
+
         content = result.content
         metadata = {"data": result.data, "error": result.error}
         content, cap_metadata = self._cap_tool_content_for_context(tc.name, content)
@@ -7974,7 +8025,6 @@ class AgentRunner:
         error = " ".join(str(recovery.get("error_summary") or "").split())[:1200]
         existing = recovery.get("existing_outputs")
         existing_outputs = [str(item) for item in existing[:12]] if isinstance(existing, list) else []
-        receipt_path = str(recovery.get("path") or "").strip()
         lines = [
             "[本轮恢复决策] 研究者已明确批准一次可恢复的续跑。",
             "先读取现有产物与诊断，在保留可用内容的前提下只处理实际受影响的问题；不要把一次修复变成整轮重写。",
@@ -7984,8 +8034,12 @@ class AgentRunner:
             lines.append("本轮额外资源/修复窗口已被批准；它只用于有针对性的诊断、修复和复核。")
         else:
             lines.append("本轮是定向修复窗口；优先复核上次失败原因对应的来源文件和结构化产物。")
-        if receipt_path:
-            lines.append(f"- 恢复决策记录：`{receipt_path}`")
+        if recovery.get("path"):
+            # The receipt is a controller-private audit artifact.  Its useful
+            # facts are injected below, while telling the Agent to read its
+            # path causes an avoidable access_denied tool call on every
+            # resumed task.
+            lines.append("- 恢复决策与诊断摘要已由 controller 注入；不要读取 `_runtime/` 下的内部记录。")
         if error:
             lines.append(f"- 上次可恢复问题：{error}")
         if existing_outputs:

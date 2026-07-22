@@ -826,8 +826,19 @@ class CLIHumanInterface(HumanInterface):
                 "请选择后继续；系统会保存你的选择，并按该选择继续。",
             ],
         )
+        rendered_compact_gate = False
+        if gate_id == "t2_literature_param_gate":
+            self._render_t2_parameter_overview(
+                presentation.get("current_parameter_preview"),
+            )
+            rendered_compact_gate = True
+        elif gate_id == "t2_coverage_gate":
+            self._render_t2_coverage_overview(presentation)
+            rendered_compact_gate = True
         for key, value in presentation.items():
             if key.startswith("_"):
+                continue
+            if rendered_compact_gate:
                 continue
             if not self._should_render_presentation_field(gate_id, key):
                 continue
@@ -857,6 +868,8 @@ class CLIHumanInterface(HumanInterface):
             print(rendered)
         if gate_id == "t4_gate1_selection_gate":
             self._render_t4_action_options(options)
+        elif gate_id in {"t2_literature_param_gate", "t2_coverage_gate"}:
+            self._render_t2_action_options(gate_id, options)
         else:
             for idx, option in enumerate(options, start=1):
                 default_marker = " [默认]" if option.get("is_default") else ""
@@ -1026,6 +1039,166 @@ class CLIHumanInterface(HumanInterface):
             description = " ".join(str(option.get("description") or "").split())
             table.add_row(str(index), label, description)
         console.print(Panel(table, title="推荐操作", border_style="bright_yellow", expand=True))
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            print(rendered)
+
+    def _render_t2_parameter_overview(self, value: Any) -> None:
+        """Present T2 coverage as a reading plan instead of configuration JSON."""
+
+        data = value if isinstance(value, dict) else {}
+        summary = data.get("recommended_summary") if isinstance(data.get("recommended_summary"), dict) else {}
+        profile = str(data.get("detected_profile") or "research_article")
+        profile_label = {
+            "research_article": "研究论文",
+            "survey": "综述论文",
+            "standard_research": "研究论文",
+        }.get(profile, profile)
+        require_target = summary.get("require_deep_read_target")
+        completion = "完成精读目标后继续" if require_target is True else "达到最低精读线即可继续"
+        language = str(summary.get("manuscript_language") or "auto")
+        language_label = {"en": "英文", "zh": "中文", "mixed": "双语", "auto": "自动判断"}.get(language, language)
+        include_zh = str(summary.get("include_chinese_literature") or "auto")
+        chinese_label = {
+            "true": "纳入并标记来源复核",
+            "false": "不主动检索非 seed 中文文献",
+            "auto": "随写作语言决定",
+        }.get(include_zh.casefold(), include_zh)
+
+        table = Table(box=box.SIMPLE_HEAVY, show_header=False, pad_edge=False, expand=True)
+        table.add_column("项目", style="bold cyan", width=14)
+        table.add_column("本轮方案", overflow="fold")
+        table.add_row("研究用途", f"{profile_label} · {data.get('recommended_label') or '当前推荐'}")
+        table.add_row(
+            "阅读范围",
+            f"{summary.get('active_pool_max', '—')} 篇不同论文；精读与摘要轻读从同一候选池分配。",
+        )
+        table.add_row(
+            "深度阅读",
+            "目标 {} 篇（最低 {}，最多 {}）".format(
+                summary.get("deep_read_target", "—"),
+                summary.get("deep_read_min", "—"),
+                summary.get("deep_read_max", "—"),
+            ),
+        )
+        table.add_row("摘要轻读", f"目标 {summary.get('abstract_sweep_target', '—')} 篇；仅作为摘要级背景和趋势证据。")
+        table.add_row("完成条件", completion)
+        table.add_row("写作语言", f"{language_label}；中文文献：{chinese_label}。")
+
+        note = Text(
+            "变更参数不会删除已抓取的论文或笔记。系统会保留既有材料，并只按新范围补充检索或调整阅读队列。",
+            style="dim",
+            overflow="fold",
+        )
+        self._render_rich_panel(
+            Group(table, note),
+            title="本轮文献阅读方案",
+            border_style="bright_cyan",
+        )
+
+    def _render_t2_coverage_overview(self, presentation: dict[str, Any]) -> None:
+        """Compress T2 artifacts into the actual decision required before T3."""
+
+        search_path, search_text = _path_summary_text(
+            presentation.get("search_log"),
+            default_path="literature/search_log.md",
+        )
+        queue_path, queue_text = _path_summary_text(
+            presentation.get("deep_read_queue_preview"),
+            default_path="literature/deep_read_queue.jsonl",
+        )
+        access_path, access_text = _path_summary_text(
+            presentation.get("access_audit"),
+            default_path="literature/access_audit.md",
+        )
+        _, missing_text = _path_summary_text(
+            presentation.get("missing_areas"),
+            default_path="literature/missing_areas.md",
+        )
+
+        raw_count = _find_first_int(search_text, r"原始结果:\s*([0-9,]+)")
+        active_count = _find_first_int(search_text, r"当前阅读候选:\s*([0-9,]+)")
+        if active_count is None:
+            active_count = _find_first_int(search_text, r"去重后:\s*([0-9,]+)")
+        deep_target = _find_first_int(search_text, r"\bdeep_read_target=([0-9,]+)")
+        queue_count = sum(1 for line in queue_text.splitlines() if line.lstrip().startswith("{"))
+        access_facts = _t2_access_gate_facts(access_text)
+        weak_topics = _extract_bullets_under_heading(missing_text, "覆盖不足的主题", limit=2)
+        if not weak_topics:
+            weak_topics = _extract_hint_titles(missing_text, limit=2)
+
+        table = Table(box=box.SIMPLE_HEAVY, show_header=False, pad_edge=False, expand=True)
+        table.add_column("状态", style="bold cyan", width=14)
+        table.add_column("T3 前的可用材料", overflow="fold")
+        corpus_bits = []
+        if raw_count is not None:
+            corpus_bits.append(f"检索记录 {raw_count} 篇")
+        if active_count is not None:
+            corpus_bits.append(f"本轮候选 {active_count} 篇")
+        table.add_row("检索语料", "；".join(corpus_bits) if corpus_bits else "检索、核验与候选筛选已完成。")
+        queue_detail = f"已排入 {queue_count} 篇"
+        if deep_target is not None:
+            queue_detail += f"；精读目标 {deep_target} 篇"
+        table.add_row("T3 阅读队列", queue_detail + "。T3 会逐篇写出可追溯的阅读笔记。")
+        table.add_row("全文可得性", access_facts or "可得性已审计；PDF 可得不等于已完成全文阅读。")
+        if weak_topics:
+            table.add_row("建议补检", "；".join(_compact_text(item.lstrip("- ").strip(), 150) for item in weak_topics))
+        else:
+            table.add_row("建议补检", "当前没有明确的强制补检项；仍可按研究边界选择定向扩展。")
+        recovery_context = " ".join(str(presentation.get("recovery_context") or "").split())
+        if recovery_context:
+            table.add_row("恢复提示", _compact_text(recovery_context, 220))
+
+        note = Text(
+            "现在只需决定是否接受当前阅读队列。补检提示是检索覆盖信号，不是已经成立的研究缺口；进入 T3 后会结合真实阅读内容复核。",
+            style="dim",
+            overflow="fold",
+        )
+        sources = Text(
+            f"详情：{search_path} · {queue_path} · {access_path}",
+            style="dim",
+            overflow="fold",
+        )
+        self._render_rich_panel(
+            Group(table, note, sources),
+            title="T2 已完成：进入阅读前确认",
+            border_style="bright_cyan",
+        )
+
+    def _render_t2_action_options(self, gate_id: str, options: list[dict]) -> None:
+        """Keep the two T2 decision menus short and comparable."""
+
+        table = Table(box=box.SIMPLE_HEAVY, show_header=True, header_style="bold", pad_edge=False, expand=True)
+        table.add_column("输入", justify="right", width=6, style="bold yellow")
+        table.add_column("选择", min_width=22, max_width=38, overflow="fold")
+        table.add_column("接下来会做什么", overflow="fold")
+        for index, option in enumerate(options, start=1):
+            label = str(option.get("label") or option.get("id") or "未命名选项")
+            if option.get("is_default"):
+                label += "（默认）"
+            description = str(option.get("description") or "按此选择继续。")
+            if gate_id == "t2_literature_param_gate" and option.get("parameter_preview"):
+                description = f"{option['parameter_preview']}\n{description}"
+            table.add_row(str(index), label, description)
+        self._render_rich_panel(
+            table,
+            title="请选择下一步",
+            border_style="bright_yellow",
+        )
+
+    def _render_rich_panel(self, renderable: Any, *, title: str, border_style: str) -> None:
+        """Render a bounded Rich panel through the same terminal settings as gates."""
+
+        width = max(80, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        buffer = io.StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=not self._no_color,
+            color_system=None if self._no_color else "auto",
+            width=width,
+            highlight=False,
+        )
+        console.print(Panel(renderable, title=title, border_style=border_style, expand=True))
         rendered = buffer.getvalue().rstrip()
         if rendered:
             print(rendered)
@@ -3794,6 +3967,28 @@ def _format_t2_access_audit_summary(value: Any) -> str:
         lines.append(f"- {item}")
     lines.append("Top candidate 表保存在文件中；CLI 不展开完整表格。")
     return "\n".join(lines)
+
+
+def _t2_access_gate_facts(text: str) -> str:
+    """Return the small availability fact set useful at the T2 -> T3 decision."""
+
+    wanted_prefixes = (
+        "候选论文总数",
+        "`literature/pdfs/` 本地 PDF",
+        "`user_seeds/pdfs/` 可匹配的 seed PDF",
+        "`FULL_TEXT`",
+        "`ABSTRACT_ONLY`",
+        "`METADATA_ONLY`",
+    )
+    facts: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("- "):
+            continue
+        body = stripped[2:].strip()
+        if any(body.startswith(prefix) for prefix in wanted_prefixes):
+            facts.append(body)
+    return "；".join(facts[:4])
 
 
 def _format_t2_deep_read_queue_summary(value: Any) -> str:

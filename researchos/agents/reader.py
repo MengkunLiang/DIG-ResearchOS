@@ -53,6 +53,51 @@ ABSTRACT_BRIDGE_HEADING = "## B. Bridge Point"
 LEGACY_ABSTRACT_CORE_HEADING = "## A. 核心做法/视角"
 LEGACY_ABSTRACT_BRIDGE_HEADING = "## B. 桥接点"
 
+# T3.5's adjacent-transfer section is a durable interface consumed by T4,
+# T4.5, T5, and T8.  Keep the machine-stable Chinese name at the beginning of
+# the heading, while allowing the prose subtitle to be more descriptive.
+_T35_ADJACENT_TRANSFER_CANONICAL_HEADING = "邻接领域可迁移机制：理论桥接与适用边界"
+_T35_ADJACENT_TRANSFER_HEADING_ALIASES = (
+    "邻接领域与理论桥接可迁移机制",
+    "邻接领域和理论桥接可迁移机制",
+)
+
+
+def _repair_t35_adjacent_transfer_heading(path: Path) -> bool:
+    """Repair one known semantic heading drift without rewriting synthesis prose.
+
+    Earlier T3.5 prompts used ``邻接领域与理论桥接可迁移机制`` while the
+    downstream contract requires the stable prefix ``邻接领域可迁移机制``.
+    This edit affects only an actual Markdown heading, preserves its level and
+    all body content, and is safe to apply before validation.  It prevents a
+    wording-only mismatch from triggering expensive LLM retries that can
+    overwrite an otherwise complete synthesis.
+    """
+
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+    repaired_lines: list[str] = []
+    changed = False
+    for line in source.splitlines(keepends=True):
+        match = re.match(r"^(#{1,6}\s+)(.+?)(\r?\n)?$", line)
+        if not match:
+            repaired_lines.append(line)
+            continue
+        prefix, heading, ending = match.groups()
+        normalized = re.sub(r"\s+", "", heading)
+        if any(alias in normalized for alias in _T35_ADJACENT_TRANSFER_HEADING_ALIASES):
+            repaired_lines.append(f"{prefix}{_T35_ADJACENT_TRANSFER_CANONICAL_HEADING}{ending or ''}")
+            changed = True
+            continue
+        repaired_lines.append(line)
+
+    if changed:
+        path.write_text("".join(repaired_lines), encoding="utf-8")
+    return changed
+
 
 class ReaderAgent(Agent):
     """深度阅读Agent。read (T3)逐篇精读，synthesize (T3.5)综合。"""
@@ -300,8 +345,9 @@ class ReaderAgent(Agent):
             "摘要阅读笔记用于扩展 taxonomy、趋势、比较与问题发现，全文/部分全文和已升级的跨领域笔记用于核心机制与方法论断。"
             "先用你的LLM能力分析方法家族、共同假设、趋势和问题，再调用 build_synthesis_workbench "
             "生成结构化证据、outline和写作指导。工具产物不是最终结论；你必须审阅后亲自写出"
-            "literature/synthesis.md，包含5个必需章节：方法家族分类、共同假设、"
-            "贡献空间地图、跨论文矛盾/张力、技术趋势、可操作研究问题。"
+            "literature/synthesis.md，包含6个必需章节：方法家族分类、共同假设、"
+            "贡献空间地图、技术趋势与跨论文矛盾、邻接领域可迁移机制、可操作研究问题。"
+            "第5节标题必须以“邻接领域可迁移机制”开头；可以在冒号后添加理论桥接等副标题。"
             ),
         )
 
@@ -503,6 +549,7 @@ class ReaderAgent(Agent):
         if not syn_path.exists():
             return False, "缺少literature/synthesis.md"
 
+        _repair_t35_adjacent_transfer_heading(syn_path)
         content = read_text_file(syn_path)
 
         required_sections = [
@@ -517,7 +564,13 @@ class ReaderAgent(Agent):
             ctx.workspace_dir / "literature" / "synthesis_workbench.json"
         ).exists():
             required_sections.append(
-                ("邻接领域可迁移机制", "Adjacent Transfers", "Transferable Mechanisms", "邻接迁移")
+                (
+                    "邻接领域可迁移机制",
+                    "邻接领域与理论桥接可迁移机制",
+                    "Adjacent Transfers",
+                    "Transferable Mechanisms",
+                    "邻接迁移",
+                )
             )
 
         missing = []
