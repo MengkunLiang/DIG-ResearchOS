@@ -73,6 +73,25 @@ AbstractReader = Callable[[dict[str, Any], str], str | Awaitable[str]]
 AbstractBatchReader = Callable[[list[dict[str, Any]], str], Any | Awaitable[Any]]
 MetadataTriageReader = Callable[[list[dict[str, Any]], str], str | Awaitable[str]]
 PromptTokenCounter = Callable[[str], int]
+ProgressReporter = Callable[[str], None]
+
+
+def _emit_abstract_sweep_progress(
+    reporter: ProgressReporter | None,
+    message: str,
+) -> None:
+    """Report bounded shallow-reading progress without coupling to a UI backend."""
+
+    if reporter is not None:
+        try:
+            reporter(message)
+            return
+        except Exception:
+            # Progress rendering must never interrupt a literature run.  Keep
+            # the legacy stdout fallback for programmatic callers with a bad
+            # callback, rather than losing the operational signal entirely.
+            pass
+    print(format_cli_message(message), flush=True)
 
 
 def has_shallow_read_coverage_contract(workspace: Path) -> bool:
@@ -1349,10 +1368,17 @@ def generate_bib_entry(paper: dict) -> str:
 def run_abstract_sweep(
     workspace: Path,
     config: dict[str, Any] | None = None,
+    *,
+    progress_reporter: ProgressReporter | None = None,
 ) -> dict:
     """执行 deterministic fallback abstract sweep，返回统计摘要。"""
 
-    return _run_abstract_sweep_sync(workspace, config, abstract_reader=None)
+    return _run_abstract_sweep_sync(
+        workspace,
+        config,
+        abstract_reader=None,
+        progress_reporter=progress_reporter,
+    )
 
 
 async def run_abstract_sweep_with_reader(
@@ -1364,6 +1390,7 @@ async def run_abstract_sweep_with_reader(
     metadata_triage_reader: MetadataTriageReader | None = None,
     provider_context_window: int | None = None,
     prompt_token_counter: PromptTokenCounter | None = None,
+    progress_reporter: ProgressReporter | None = None,
 ) -> dict:
     """执行 abstract sweep，可注入 Reader LLM callback。"""
 
@@ -1375,6 +1402,7 @@ async def run_abstract_sweep_with_reader(
         metadata_triage_reader=metadata_triage_reader,
         provider_context_window=provider_context_window,
         prompt_token_counter=prompt_token_counter,
+        progress_reporter=progress_reporter,
     )
 
 
@@ -1383,6 +1411,7 @@ def _run_abstract_sweep_sync(
     config: dict[str, Any] | None = None,
     *,
     abstract_reader: None = None,
+    progress_reporter: ProgressReporter | None = None,
 ) -> dict:
     """Synchronous compatibility path used by tests/offline runs."""
 
@@ -1392,6 +1421,10 @@ def _run_abstract_sweep_sync(
 
     candidates = build_sweep_candidates(workspace, cfg)
     if not candidates:
+        _emit_abstract_sweep_progress(
+            progress_reporter,
+            "[Reader Agent] 摘要轻读：当前没有需要新增处理的候选论文。",
+        )
         plan_summary = _abstract_sweep_plan_summary(workspace, cfg, [])
         return _finalize_sweep_result(
             workspace,
@@ -1410,6 +1443,11 @@ def _run_abstract_sweep_sync(
             candidates=[],
         )
     plan_summary = _abstract_sweep_plan_summary(workspace, cfg, candidates)
+    _emit_abstract_sweep_progress(
+        progress_reporter,
+        "[Reader Agent] 摘要轻读：使用确定性回退整理 "
+        f"{len(candidates)} 篇候选，不调用新的模型请求。",
+    )
 
     # 确保输出目录存在
     abstract_dir = workspace / "literature" / "shallow_read_notes"
@@ -1503,6 +1541,7 @@ async def _run_abstract_sweep_async(
     metadata_triage_reader: MetadataTriageReader | None = None,
     provider_context_window: int | None = None,
     prompt_token_counter: PromptTokenCounter | None = None,
+    progress_reporter: ProgressReporter | None = None,
 ) -> dict:
     cfg = _cap_shallow_target_to_distinct_reading_pool(workspace, _resolve_config(config))
     if not cfg.get("enabled", False):
@@ -1510,6 +1549,10 @@ async def _run_abstract_sweep_async(
 
     candidates = build_sweep_candidates(workspace, cfg)
     if not candidates:
+        _emit_abstract_sweep_progress(
+            progress_reporter,
+            "[Reader Agent] 摘要轻读：当前没有需要新增处理的候选论文。",
+        )
         plan_summary = _abstract_sweep_plan_summary(workspace, cfg, [])
         return _finalize_sweep_result(
             workspace,
@@ -1558,13 +1601,11 @@ async def _run_abstract_sweep_async(
             target_text = f"累计目标 {target_text}，已有 {plan_summary.get('existing_shallow_read_notes', 0)}，本轮剩余 {len(candidates)}"
         else:
             target_text = f"目标 {target_text}，本轮 retained/shallow 候选 {len(candidates)}"
-        print(
-            format_cli_message(
-                "[Agent] Abstract sweep plan: "
-                f"{target_text}; queue={plan_summary.get('candidate_queue_dispositions')}; "
-                f"sources={plan_summary.get('candidate_source_roles')}"
-            ),
-            flush=True,
+        _emit_abstract_sweep_progress(
+            progress_reporter,
+            "[Reader Agent] 摘要轻读计划："
+            f"{target_text}；队列={plan_summary.get('candidate_queue_dispositions')}；"
+            f"来源={plan_summary.get('candidate_source_roles')}。",
         )
 
     readable_papers: list[dict[str, Any]] = []
@@ -1588,14 +1629,11 @@ async def _run_abstract_sweep_async(
         batch_plan = [[paper] for paper in readable_papers]
 
     if progress_enabled and readable_papers:
-        print(
-            format_cli_message(
-                "[Reader Agent] Abstract sweep batching: "
-                f"provider_context={provider_context_window or 'unavailable'}; "
-                f"papers={len(readable_papers)}; batches={len(batch_plan)}; "
-                "batch size is derived from provider context, not a fixed paper cap."
-            ),
-            flush=True,
+        _emit_abstract_sweep_progress(
+            progress_reporter,
+            "[Reader Agent] 摘要轻读已分批："
+            f"可读论文 {len(readable_papers)} 篇，模型上下文批次 {len(batch_plan)} 个；"
+            "批次大小按当前模型上下文动态计算。",
         )
 
     processed_readable = 0
@@ -1603,6 +1641,13 @@ async def _run_abstract_sweep_async(
         batch_notes: dict[str, str] = {}
         used_batch_reader = abstract_batch_reader is not None and len(batch) > 1
         if used_batch_reader:
+            if progress_enabled:
+                _emit_abstract_sweep_progress(
+                    progress_reporter,
+                    "[Reader Agent] 摘要轻读：已提交模型请求，"
+                    f"正在处理第 {batch_index}/{len(batch_plan)} 批（本批 {len(batch)} 篇；"
+                    f"完成后将累计写入 {processed_readable + len(batch)}/{len(readable_papers)} 篇笔记）。",
+                )
             try:
                 raw = await _call_abstract_batch_reader(
                     abstract_batch_reader,
@@ -1623,6 +1668,12 @@ async def _run_abstract_sweep_async(
                 note_source = "reader_llm_batch"
                 llm_notes_generated += 1
             elif abstract_reader is not None:
+                if progress_enabled and not used_batch_reader:
+                    _emit_abstract_sweep_progress(
+                        progress_reporter,
+                        "[Reader Agent] 摘要轻读：已提交模型请求，"
+                        f"正在处理第 {batch_index}/{len(batch_plan)} 篇。",
+                    )
                 try:
                     note_raw = await _call_abstract_reader(abstract_reader, paper, build_abstract_reader_prompt(paper))
                     note = normalize_abstract_reader_note(note_raw, paper)
@@ -1645,14 +1696,12 @@ async def _run_abstract_sweep_async(
             notes_generated += 1
             processed_readable += 1
         if progress_enabled:
-            print(
-                format_cli_message(
-                    "[Reader Agent] Abstract sweep batch progress: "
-                    f"batch {batch_index}/{len(batch_plan)}; papers={processed_readable}/{len(readable_papers)}; "
-                    f"notes={notes_generated}; metadata_only={metadata_triage_count}; "
-                    f"batch_fallbacks={batch_fallback_count}"
-                ),
-                flush=True,
+            _emit_abstract_sweep_progress(
+                progress_reporter,
+                "[Reader Agent] 摘要轻读进度："
+                f"已完成 {processed_readable}/{len(readable_papers)} 篇（第 {batch_index}/{len(batch_plan)} 批）；"
+                f"已写入 {notes_generated} 份 ABSTRACT-ONLY 笔记；"
+                f"metadata-only 待批量处理 {metadata_triage_count} 篇。",
             )
 
     metadata_report_path = ""
@@ -1663,6 +1712,12 @@ async def _run_abstract_sweep_async(
         report_source = "deterministic_fallback"
         if metadata_triage_reader is not None:
             prompt = build_metadata_triage_prompt(metadata_only_papers)
+            if progress_enabled:
+                _emit_abstract_sweep_progress(
+                    progress_reporter,
+                    "[Reader Agent] 摘要轻读：已提交 metadata-only 批量分诊请求，"
+                    f"正在整理 {len(metadata_only_papers)} 篇资源补取线索；这些记录不计入轻读覆盖。",
+                )
             try:
                 report_raw = await _call_metadata_triage_reader(metadata_triage_reader, metadata_only_papers, prompt)
                 report = normalize_metadata_triage_report(report_raw, metadata_only_papers)
@@ -1676,6 +1731,12 @@ async def _run_abstract_sweep_async(
         report += f"\n<!-- metadata_triage_source: {report_source}; candidate_count: {len(metadata_only_papers)} -->\n"
         report_path.write_text(report, encoding="utf-8")
         metadata_report_path = report_rel
+        if progress_enabled:
+            _emit_abstract_sweep_progress(
+                progress_reporter,
+                "[Reader Agent] metadata-only 批量分诊已保存："
+                f"{len(metadata_only_papers)} 篇资源线索写入 {report_rel}。",
+            )
 
     if rows_to_append:
         _append_csv_rows(comparison_path, rows_to_append)

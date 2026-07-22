@@ -3149,8 +3149,15 @@ class AgentRunner:
                     important=True,
                 )
 
+            def _report_abstract_sweep_progress(message: str) -> None:
+                self.progress.emit(message, important=True)
+
             if stop_reason != AgentResult.STOP_FINISHED:
-                result = run_abstract_sweep(ctx.workspace_dir, sweep_config)
+                result = run_abstract_sweep(
+                    ctx.workspace_dir,
+                    sweep_config,
+                    progress_reporter=_report_abstract_sweep_progress,
+                )
                 ctx.extra["abstract_sweep"] = result
                 if result.get("notes_generated", 0) > 0:
                     self.progress.emit(
@@ -3264,6 +3271,7 @@ class AgentRunner:
                 metadata_triage_reader=_metadata_triage_llm,
                 provider_context_window=abstract_reader_binding.max_context,
                 prompt_token_counter=_count_abstract_batch_prompt,
+                progress_reporter=_report_abstract_sweep_progress,
             )
             ctx.extra["abstract_sweep"] = result
 
