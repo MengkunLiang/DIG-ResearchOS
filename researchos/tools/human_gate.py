@@ -51,6 +51,20 @@ _T4_LLM_DIRECTIVE_FIELDS = {
 }
 
 
+# The T2 decision surfaces are scan-oriented three-line tables: a strong
+# top/header/bottom hierarchy plus light row separators, without a dense grid.
+_T2_THREE_LINE_RULED_BOX = box.Box(
+    " ━━ \n"
+    "    \n"
+    " ━━ \n"
+    "    \n"
+    " ── \n"
+    " ── \n"
+    "    \n"
+    " ━━ \n"
+)
+
+
 def _strip_terminal_control_sequences(value: str) -> str:
     """Remove terminal replies/paste artifacts before parsing a human answer.
 
@@ -1065,7 +1079,13 @@ class CLIHumanInterface(HumanInterface):
             "auto": "随写作语言决定",
         }.get(include_zh.casefold(), include_zh)
 
-        table = Table(box=box.HORIZONTALS, show_header=False, pad_edge=False, expand=True)
+        table = Table(
+            box=_T2_THREE_LINE_RULED_BOX,
+            show_header=False,
+            show_lines=True,
+            pad_edge=False,
+            expand=True,
+        )
         table.add_column("可设置内容", style="bold cyan", width=16)
         table.add_column("本轮可选择或调整的范围", overflow="fold")
         table.add_row("研究用途", "研究论文、综述均衡覆盖、综述强覆盖，或按你的研究目标自定义。")
@@ -1173,7 +1193,14 @@ class CLIHumanInterface(HumanInterface):
     def _render_t2_action_options(self, gate_id: str, options: list[dict]) -> None:
         """Keep the two T2 decision menus short and comparable."""
 
-        table = Table(box=box.HORIZONTALS, show_header=True, header_style="bold", pad_edge=False, expand=True)
+        table = Table(
+            box=_T2_THREE_LINE_RULED_BOX,
+            show_header=True,
+            show_lines=True,
+            header_style="bold",
+            pad_edge=False,
+            expand=True,
+        )
         table.add_column("输入", justify="right", width=6, style="bold yellow")
         table.add_column("方案", min_width=22, max_width=38, overflow="fold")
         table.add_column("推荐", width=10, overflow="fold")
