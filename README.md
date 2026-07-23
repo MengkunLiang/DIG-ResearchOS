@@ -109,6 +109,17 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+On Windows PowerShell, use the Python launcher and the Windows activation path:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m pip install -e .
+```
+
+If PowerShell blocks activation for the current shell, run `Set-ExecutionPolicy -Scope Process Bypass`, then activate the environment again.
+
 T3.6 and T9 need a real TeX backend to produce and validate PDFs. On Ubuntu/Debian, install the host toolchain or use the Docker fallback described below:
 
 ```bash
@@ -117,6 +128,17 @@ sudo apt-get install -y \
   latexmk texlive-latex-base texlive-latex-extra \
   texlive-fonts-recommended texlive-xetex texlive-lang-chinese
 ```
+
+On Windows, use Docker Desktop with Linux containers for the recommended PDF workflow: the supplied image already contains the complete TeX toolchain. Configure the model on the Windows host first because Compose mounts `config/` read-only, then build and diagnose with PowerShell:
+
+```powershell
+py -m researchos.cli configure-llm
+docker compose -f deploy/compose.yaml build researchos
+cd deploy
+.\researchos.ps1 doctor
+```
+
+Native Windows TeX is also supported: install MiKTeX or TeX Live, make `latexmk`, `pdflatex`, `xelatex`, and `bibtex` available on `PATH`, then run `py -m researchos.cli doctor --workspace .\workspace\project-a`. See [Docker and TeX](docs/en/docker.md) for both Windows routes, the PATH check, and recovery guidance.
 
 Verify configuration, dependencies, the selected TeX backend, and provider connectivity before a long run:
 
@@ -138,9 +160,20 @@ Docker uses the same CLI, validators, state machine, and workspace format. The h
 
 ```bash
 python -m researchos.cli configure-llm
-mkdir -p workspace
 docker compose -f deploy/compose.yaml build researchos
 docker compose -f deploy/compose.yaml run --rm researchos doctor
+```
+
+Create the workspace directory before direct Compose use when it does not exist:
+
+```bash
+# macOS/Linux
+mkdir -p workspace
+```
+
+```powershell
+# Windows PowerShell
+New-Item -ItemType Directory -Force workspace
 ```
 
 Example project commands in Compose:

@@ -34,7 +34,16 @@ cp .env.example .env
 mkdir -p workspace
 ```
 
+Windows PowerShell uses the equivalent commands:
+
+```powershell
+Copy-Item .env.example .env
+New-Item -ItemType Directory -Force workspace
+```
+
 Run `python -m researchos.cli configure-llm` on the host before Docker Mode. It can store the API key in local `.env` or ignored `config/model_settings.yaml`; do not commit either file.
+
+On Windows, run `py -m researchos.cli configure-llm` in PowerShell before using `researchos.ps1`. Docker mounts `config/` read-only, so this setup cannot be deferred into the container.
 
 Edit non-secret runtime preferences in the root `config/` directory. Day-to-day
 settings normally belong in `config/model_settings.yaml`; all runtime contracts stay
@@ -121,7 +130,7 @@ cd deploy
 ./researchos.sh run-task project-a T3
 ```
 
-PowerShell:
+Windows PowerShell with Docker Desktop running Linux containers:
 
 ```powershell
 cd deploy

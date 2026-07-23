@@ -109,6 +109,17 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+Windows PowerShell 使用 Python Launcher 与 Windows 虚拟环境路径：
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m pip install -e .
+```
+
+若 PowerShell 只阻止当前终端激活环境，先执行 `Set-ExecutionPolicy -Scope Process Bypass`，再重新运行激活命令即可。
+
 T3.6 综述和 T9 投稿需要真实 PDF 时，安装宿主机 TeX，或使用后文 Docker fallback。Ubuntu/Debian：
 
 ```bash
@@ -117,6 +128,17 @@ sudo apt-get install -y \
   latexmk texlive-latex-base texlive-latex-extra \
   texlive-fonts-recommended texlive-xetex texlive-lang-chinese
 ```
+
+Windows 上推荐使用运行 Linux containers 的 Docker Desktop 完成真实 PDF 工作流，项目镜像已经包含完整 TeX 工具链。Compose 会把 `config/` 只读挂载进容器，因此先在 Windows 主机上配置模型，再用 PowerShell 构建并诊断：
+
+```powershell
+py -m researchos.cli configure-llm
+docker compose -f deploy/compose.yaml build researchos
+cd deploy
+.\researchos.ps1 doctor
+```
+
+也支持 Windows 原生 TeX：安装 MiKTeX 或 TeX Live，并让 `latexmk`、`pdflatex`、`xelatex` 与 `bibtex` 位于 `PATH`，然后执行 `py -m researchos.cli doctor --workspace .\workspace\project-a`。两条 Windows 路线、PATH 检查和修复方式见 [Docker 与 TeX](docs/cn/docker.md)。
 
 开始长任务前检查配置、依赖、实际选择的 TeX 后端和 provider：
 
@@ -138,9 +160,20 @@ Docker 与本地模式使用同一个 CLI、状态机、validator 和 workspace 
 
 ```bash
 python -m researchos.cli configure-llm
-mkdir -p workspace
 docker compose -f deploy/compose.yaml build researchos
 docker compose -f deploy/compose.yaml run --rm researchos doctor
+```
+
+直接使用 Compose 且 `workspace/` 不存在时，先创建目录：
+
+```bash
+# macOS/Linux
+mkdir -p workspace
+```
+
+```powershell
+# Windows PowerShell
+New-Item -ItemType Directory -Force workspace
 ```
 
 容器中的示例：
