@@ -8,3 +8,7 @@
 *.gif binary
 *.svg binary
 *.eps binary
+
+# Third-party conference and journal templates remain tracked for ResearchOS
+# compilation, but must not determine the repository's primary language.
+latex_templete/** linguist-vendored
