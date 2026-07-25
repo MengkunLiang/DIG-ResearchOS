@@ -36,19 +36,24 @@ model: deepseek-v4-pro
 # Total context capacity fallback (tokens) when the provider cannot report a
 # real window. It is shared by prompts, research material, history, Tool I/O,
 # and response space; provider-reported capacity takes priority.
-context_window_fallback: 262144
+context_window_fallback: 131072
 
-# 到达总上下文容量前的历史压缩阈值。`max_input_tokens` 是一次模型调用保留
-# 的历史/Tool 输入上限；它不会缩减 PDF 分页读取或已写入的笔记。设为 0 才会
-# 仅以有效总上下文容量作为上限。通常保留默认值。
+# 到达总上下文容量前的历史压缩阈值。默认直接根据 provider 已报告的容量或
+# context_window_fallback 计算；通常只需调整上面的 context_window_fallback。
 # History-compaction thresholds before the effective total context capacity.
-# ``max_input_tokens`` caps retained history/Tool input for one model request;
-# it does not reduce PDF page reading or durable notes. Set it to 0 to use only
-# the effective total context capacity.
+# It follows provider-reported capacity or context_window_fallback by default,
+# so ordinary users only need to adjust context_window_fallback above.
 truncation:
   trigger_ratio: 0.90
   target_ratio: 0.72
-  max_input_tokens: 160000
+
+# 高级 gateway 兼容覆盖（默认不需要）：如某个 gateway 虽报告了大 context，
+# 却要求更小的单次历史输入，可在 truncation 内显式加入正整数
+# max_input_tokens。它只压缩旧对话/Tool 轮次，不减少 PDF 分页阅读或已保存笔记。
+# Advanced gateway compatibility override (normally unnecessary): add a positive
+# truncation.max_input_tokens only when a gateway requires a smaller retained
+# history input despite reporting a larger context. It never reduces PDF page
+# reading or durable notes.
 
 # 本地 token 限流默认关闭：provider/account 的实际 TPM/RPM 配额才是权威。
 # 仅当你知道该连接的配额且希望平滑并发时才启用。它不是上下文容量，不能从

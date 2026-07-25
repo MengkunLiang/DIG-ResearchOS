@@ -14,7 +14,9 @@ python -m researchos.cli configure-llm
 
 同一文件中的 `context_window_fallback: 262144` 表示 provider 无法报告真实容量时采用的**总上下文容量兜底**，覆盖 system prompt、研究材料、历史、Tool 输入/结果和回复预留空间，不是单个输入框的上限。provider 报告真实 `context window` 时会优先使用真实值。
 
-`truncation.max_input_tokens: 160000` 是独立的单次请求保留历史/Tool 输入上限：实际值取它与有效总容量中的较小者。达到 `trigger_ratio` 后，系统只去掉较早的对话与 Tool 轮次；PDF 分页阅读、已保存的 paper note 与证据不会减少。除非已知 gateway 能稳定接收完整上下文，否则保留默认值。
+`truncation` 默认直接使用 provider 已报告的容量或 `context_window_fallback`，因此日常只需维护后者。只有某个 gateway 虽报告较大 context、却要求更小的保留历史输入时，才需要增加可选的正整数 `truncation.max_input_tokens`；实际值取它与有效总容量中的较小者。达到 `trigger_ratio` 后，系统只去掉较早的对话与 Tool 轮次；PDF 分页阅读、已保存的 paper note 与证据不会减少。
+
+`fallback` 是官方 API 临时 timeout/过载后的唯一同连接重试配置：`max_attempts`、两档等待和 `retry_after_timeout` 都由这里维护。每次调用先使用其正常 request deadline；全部尝试结束后，SDK/HTTP 清理最多等待“60 秒与请求 deadline 一半”中的较小值，随后才进入既有的可见 retry/wait/pause，而不会无限睡眠。这个清理期限是内部保护，不需要也不应成为第二份日常配置。
 
 `rate_limit` 默认 `enabled: false`。它不是模型容量，更不能根据 `context_window_fallback` 推导；实际 TPM/RPM 应由 provider/account 配额决定。日常不需要启用。只有明确知道配额、并想平滑并发时才配置它；`burst` 至少应覆盖允许发送的最大单请求。超过 burst 的请求会直接交给 provider，不会在本地无限等待。
 

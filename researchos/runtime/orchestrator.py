@@ -408,6 +408,35 @@ class AgentRunner:
             long_cooldown = 20.0
         return batches, cooldown, max(0.0, min(long_cooldown, 900.0))
 
+    def _llm_retry_overrides(self) -> tuple[int | None, float | None]:
+        """Use model-settings fallback unless a legacy override exists.
+
+        New one-model runs must not receive the historical runner defaults of
+        two attempts and two seconds: that would silently override the
+        researcher-maintained ``model_settings.yaml`` fallback block. Legacy
+        endpoint/profile configurations retain their prior defaults.
+        """
+
+        raw_attempts = self.retry_policy.get("llm_retries")
+        raw_delay = self.retry_policy.get("llm_retry_delay")
+        if bool(getattr(self.llm, "single_model_mode", False)):
+            attempts: int | None = None
+            delay: float | None = None
+        else:
+            attempts = 2
+            delay = 2.0
+        if raw_attempts is not None:
+            try:
+                attempts = max(1, min(int(raw_attempts), 10))
+            except (TypeError, ValueError):
+                pass
+        if raw_delay is not None:
+            try:
+                delay = max(0.0, min(float(raw_delay), 300.0))
+            except (TypeError, ValueError):
+                pass
+        return attempts, delay
+
     @staticmethod
     def _public_provider_error_message(exc: LLMProviderError) -> str:
         """Return a safe CLI message without endpoint, key, or SDK details."""
@@ -1125,6 +1154,7 @@ class AgentRunner:
                 messages = self._repair_openai_tool_message_sequence(messages)
 
                 provider_retry_batches, provider_cooldown, provider_long_cooldown = self._llm_provider_recovery_policy()
+                llm_retry_attempts, llm_retry_delay = self._llm_retry_overrides()
                 provider_failures_this_request = 0
                 provider_pause_requested = False
                 while True:
@@ -1151,8 +1181,8 @@ class AgentRunner:
                             endpoint_override=eff.llm_endpoint_override,
                             max_context_override=eff.llm_max_context_override,
                             timeout=int(self.global_timeout.get("llm_call") or 120),
-                            max_retries_per_model=int(self.retry_policy.get("llm_retries") or 2),
-                            retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
+                            max_retries_per_model=llm_retry_attempts,
+                            retry_base_delay=llm_retry_delay,
                         )
                     except LLMProviderError as exc:
                         # Keep complete provider diagnostics in the durable run
@@ -3185,6 +3215,7 @@ class AgentRunner:
                 endpoint_override=eff.llm_endpoint_override,
                 max_context_override=eff.llm_max_context_override,
             )[0][0]
+            llm_retry_attempts, llm_retry_delay = self._llm_retry_overrides()
 
             await self._acquire_t3_shallow_candidate_pdfs(ctx, sweep_config)
 
@@ -3211,8 +3242,8 @@ class AgentRunner:
                     endpoint_override=eff.llm_endpoint_override,
                     max_context_override=eff.llm_max_context_override,
                     timeout=int(self.global_timeout.get("llm_call") or 120),
-                    max_retries_per_model=max(1, int(self.retry_policy.get("llm_retries") or 2)),
-                    retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
+                    max_retries_per_model=llm_retry_attempts,
+                    retry_base_delay=llm_retry_delay,
                 )
                 choice = llm_resp.raw.choices[0].message
                 return str(getattr(choice, "content", "") or "")
@@ -3228,8 +3259,8 @@ class AgentRunner:
                     endpoint_override=eff.llm_endpoint_override,
                     max_context_override=eff.llm_max_context_override,
                     timeout=int(self.global_timeout.get("llm_call") or 120),
-                    max_retries_per_model=max(1, int(self.retry_policy.get("llm_retries") or 2)),
-                    retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
+                    max_retries_per_model=llm_retry_attempts,
+                    retry_base_delay=llm_retry_delay,
                 )
                 choice = llm_resp.raw.choices[0].message
                 return str(getattr(choice, "content", "") or "")
@@ -3257,8 +3288,8 @@ class AgentRunner:
                     endpoint_override=eff.llm_endpoint_override,
                     max_context_override=eff.llm_max_context_override,
                     timeout=int(self.global_timeout.get("llm_call") or 120),
-                    max_retries_per_model=max(1, int(self.retry_policy.get("llm_retries") or 2)),
-                    retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
+                    max_retries_per_model=llm_retry_attempts,
+                    retry_base_delay=llm_retry_delay,
                 )
                 choice = llm_resp.raw.choices[0].message
                 return str(getattr(choice, "content", "") or "")
@@ -4055,6 +4086,7 @@ class AgentRunner:
             self._record_t4_evolution_activity(ctx, phase=phase, status=status, payload=payload)
             self._render_t4_evolution_phase(phase=phase, status=status, payload=payload)
 
+        llm_retry_attempts, llm_retry_delay = self._llm_retry_overrides()
         invoker = LLMJsonRoleInvoker(
             config=T4RoleCallConfig(
                 tier=eff.llm_tier,
@@ -4063,8 +4095,8 @@ class AgentRunner:
                 endpoint_override=eff.llm_endpoint_override,
                 max_context_override=eff.llm_max_context_override,
                 timeout=int(self.global_timeout.get("llm_call") or 120),
-                max_retries_per_model=int(self.retry_policy.get("llm_retries") or 2),
-                retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
+                max_retries_per_model=llm_retry_attempts,
+                retry_base_delay=llm_retry_delay,
                 target_profile=run_config.target_profile,
             ),
             call=role_call,
@@ -4909,8 +4941,8 @@ class AgentRunner:
                     endpoint_override=eff.llm_endpoint_override,
                     max_context_override=eff.llm_max_context_override,
                     timeout=int(self.global_timeout.get("llm_call") or 120),
-                    max_retries_per_model=int(self.retry_policy.get("llm_retries") or 2),
-                    retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
+                    max_retries_per_model=self._llm_retry_overrides()[0],
+                    retry_base_delay=self._llm_retry_overrides()[1],
                 )
             except LLMProviderError as exc:
                 if not self._is_recoverable_provider_error(exc):

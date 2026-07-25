@@ -64,7 +64,11 @@ except Exception:  # pragma: no cover
 
 _log = get_logger("llm_client")
 DEFAULT_MODEL_SETTINGS_PATH = DEFAULT_USER_MODEL_SETTINGS_PATH
-LITELLM_CLEANUP_TIMEOUT_SECONDS = 5.0
+# A provider call receives its normal request timeout and fallback retries
+# first. This is only the final SDK/HTTP cleanup bound after that request has
+# already completed, timed out, or been cancelled; keep it generous while
+# making an uncooperative transport unable to block a pipeline indefinitely.
+LITELLM_CLEANUP_TIMEOUT_SECONDS = 60.0
 
 
 def suppress_litellm_info_logs() -> None:
@@ -1012,7 +1016,7 @@ class LLMClient:
                 f"tier={tier}). Errors: {errors}"
             )
         finally:
-            await self.aclose()
+            await self.aclose(cleanup_timeout_seconds=self._cleanup_timeout_for_request(timeout))
 
     @staticmethod
     def _is_authentication_failure(exc: Exception) -> bool:
@@ -1079,14 +1083,38 @@ class LLMClient:
             "DEEPSEEK_API_KEY, and DEEPSEEK_BASE_URL such as https://api.deepseek.com"
         )
 
-    async def aclose(self) -> None:
+    @staticmethod
+    def _cleanup_timeout_for_request(request_timeout: int | float) -> float:
+        """Derive cleanup patience from the existing request timeout.
+
+        No second user setting is required: a normal 120-second provider
+        deadline grants cleanup up to 60 seconds, while short explicit calls
+        keep a proportional but non-zero cleanup window.
+        """
+
+        try:
+            requested = float(request_timeout)
+        except (TypeError, ValueError):
+            requested = LITELLM_CLEANUP_TIMEOUT_SECONDS
+        return min(
+            LITELLM_CLEANUP_TIMEOUT_SECONDS,
+            max(5.0, requested / 2.0),
+        )
+
+    async def aclose(self, *, cleanup_timeout_seconds: float | None = None) -> None:
         """Close LiteLLM async HTTP clients without blocking a pipeline forever."""
 
         if litellm is None:
             return
-        await self._close_litellm_clients_with_timeout()
+        await self._close_litellm_clients_with_timeout(
+            timeout_seconds=(
+                LITELLM_CLEANUP_TIMEOUT_SECONDS
+                if cleanup_timeout_seconds is None
+                else cleanup_timeout_seconds
+            )
+        )
 
-    async def _close_litellm_clients_with_timeout(self) -> None:
+    async def _close_litellm_clients_with_timeout(self, *, timeout_seconds: float) -> None:
         """Bound SDK cleanup after a timed-out or cancelled provider request.
 
         LiteLLM delegates closure to its HTTP transports.  Those close calls
@@ -1095,11 +1123,15 @@ class LLMClient:
         outer T3 heartbeat alive indefinitely.
         """
 
+        try:
+            deadline = max(0.001, min(float(timeout_seconds), LITELLM_CLEANUP_TIMEOUT_SECONDS))
+        except (TypeError, ValueError):
+            deadline = LITELLM_CLEANUP_TIMEOUT_SECONDS
         task = asyncio.create_task(self._aclose_litellm_clients())
         try:
             done, _pending = await asyncio.wait(
                 {task},
-                timeout=LITELLM_CLEANUP_TIMEOUT_SECONDS,
+                timeout=deadline,
             )
         except BaseException:
             task.add_done_callback(self._consume_detached_task_result)
@@ -1116,7 +1148,7 @@ class LLMClient:
         task.cancel()
         _log.warning(
             "litellm_async_client_cleanup_timed_out",
-            timeout_seconds=LITELLM_CLEANUP_TIMEOUT_SECONDS,
+            timeout_seconds=deadline,
         )
 
     async def _aclose_litellm_clients(self) -> None:

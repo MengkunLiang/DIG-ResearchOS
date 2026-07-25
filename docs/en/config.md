@@ -22,7 +22,7 @@ The interactive flow asks for:
 | `model` | The one model used throughout the workflow. |
 | `fallback` | Retry behaviour for the same provider/model after temporary failures. It is not an alternate-model route. |
 | `context_window_fallback` | Total context capacity in tokens to use only when the provider cannot report the model's real capacity. Provider metadata takes priority. |
-| `truncation` | History-compaction thresholds before the effective total capacity. `max_input_tokens` independently limits retained history/Tool input for one request. |
+| `truncation` | History-compaction thresholds before the effective total capacity. Its optional `max_input_tokens` is only for a gateway that requires a stricter history cap. |
 | `rate_limit` | Optional local TPM token bucket. It is disabled by default and is unrelated to model context capacity. |
 
 The command writes the active file at `config/model_settings.yaml`, offers to store the key either in that local file or in `.env`, and sends a minimal request to check the connection. The file is ignored by Git and is written with owner-only permissions where the platform supports them. It also writes or preserves `context_window_fallback`, `truncation`, and the optional `rate_limit` block in that same file, so model connection and context settings never need a second configuration file.
@@ -77,7 +77,6 @@ context_window_fallback: 262144
 truncation:
   trigger_ratio: 0.90
   target_ratio: 0.72
-  max_input_tokens: 160000
 rate_limit:
   enabled: false
   tokens_per_minute: 200000
@@ -91,7 +90,7 @@ fallback:
 
 `api_key` accepts a direct value or an environment placeholder. A blank value still checks the conventional provider variable, such as `DEEPSEEK_API_KEY`. `.env` is loaded from the repository or current project without replacing values already supplied by the shell or Docker environment. `openai_compatible` must provide its exact `api_base`; known providers use their official endpoint when this field is blank. `model_settings.example.yaml` is only a template and is never loaded; only its sibling `model_settings.yaml` takes effect. With a custom target, use the same command after the subcommand: `python -m researchos.cli selftest --model-settings /absolute/path/model_settings.yaml`.
 
-The retry settings govern one connection only. Authentication failures and invalid URLs are reported immediately because retries cannot repair configuration. Temporary timeouts and overloads retry after a short wait; if recovery is exhausted, the runtime preserves the workspace and offers the normal retry/wait/pause decision instead of silently switching models.
+The retry settings govern one connection only. Authentication failures and invalid URLs are reported immediately because retries cannot repair configuration. Temporary timeouts and overloads retry according to `fallback.max_attempts`, `initial_wait_seconds`, `max_wait_seconds`, and `retry_after_timeout`; if recovery is exhausted, the runtime preserves the workspace and offers the normal retry/wait/pause decision instead of silently switching models. After all provider attempts finish, SDK/HTTP cleanup is allowed up to the smaller of 60 seconds and half the request deadline (60 seconds for the normal 120-second call). This cleanup deadline is internal rather than a second setting: it is bounded solely to prevent a broken client transport from waiting forever.
 
 ## Context Capacity Fallback
 
@@ -99,7 +98,7 @@ The retry settings govern one connection only. Authentication failures and inval
 
 The value is a total context-capacity estimate in tokens. It is shared by the system prompt, research material, conversation history, Tool calls and results, and room reserved for the model response. It is therefore not a raw user-input limit, not a fixed file-read size, and not a statement of the provider's public API limit. The runtime derives file pages, context compaction, and abstract batching from the effective capacity. Researchers normally keep this default; maintainers should change the fallback only for a provider or gateway that cannot report its capacity and whose total context capacity is known.
 
-`truncation.max_input_tokens: 160000` is a separate guard for the input history retained in one provider call. Its effective limit is the smaller of this value and the provider-reported/fallback total capacity. When the history reaches `trigger_ratio` of that effective limit, ResearchOS removes only older conversation and Tool turns and leaves a notice telling the model to read the durable workspace artifacts if needed. It does **not** reduce PDF page extraction, paper-note coverage, or stored evidence. Set it to `0` only when a known provider/gateway reliably accepts histories up to its full context capacity.
+By default, `truncation` follows the provider-reported context capacity or `context_window_fallback`; you only maintain that one capacity value. The optional positive `truncation.max_input_tokens` is an advanced compatibility override for a gateway that requires a smaller retained history input despite reporting a larger context. Its effective limit is the smaller of that override and the provider/fallback capacity. It only removes older conversation and Tool turns, never PDF page extraction, paper-note coverage, or stored evidence.
 
 `rate_limit` is intentionally disabled by default. Account TPM/RPM quotas are provider-, model-, plan-, and gateway-specific, so ResearchOS does not guess them or derive them from `context_window_fallback`. With the default `enabled: false`, requests go directly to the provider and normal provider rate-limit responses use the existing retry/recovery flow. Enable it only when the actual token-per-minute quota is known and local concurrency should be smoothed. `burst` must be at least as large as the largest request you intend to admit. An oversized request is sent to the provider rather than waiting forever in a local bucket.
 

@@ -25,10 +25,11 @@ DEFAULT_CONTEXT_WINDOW_FALLBACK = 262_144
 DEFAULT_TRUNCATION = {
     "trigger_ratio": 0.90,
     "target_ratio": 0.72,
-    # Keep one provider request well below an unknown provider's advertised
-    # capacity.  ``0`` explicitly disables this independent input cap and
-    # falls back to the effective model context window.
-    "max_input_tokens": 160_000,
+    # ``0`` follows the effective provider/fallback context capacity. A
+    # positive value remains an advanced per-request history cap for gateways
+    # that need one, but ordinary users should only maintain their model
+    # capacity in ``context_window_fallback``.
+    "max_input_tokens": 0,
 }
 DEFAULT_RATE_LIMIT = {
     # Account quotas vary by provider, model, plan, and gateway.  Do not
@@ -400,6 +401,11 @@ def write_model_settings(
             ),
         },
     }
+    # Keep the ordinary user-facing file to one capacity setting. The optional
+    # advanced override is emitted only when a researcher has opted into a
+    # positive value in an existing local configuration.
+    if payload["truncation"]["max_input_tokens"] == 0:
+        payload["truncation"].pop("max_input_tokens")
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
     try:

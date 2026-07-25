@@ -80,8 +80,8 @@ class T4RoleCallConfig:
     endpoint_override: str | None = None
     max_context_override: int | None = None
     timeout: int = 120
-    max_retries_per_model: int = 2
-    retry_base_delay: float = 2.0
+    max_retries_per_model: int | None = None
+    retry_base_delay: float | None = None
     target_profile: TargetProfile | None = None
 
 

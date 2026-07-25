@@ -22,7 +22,7 @@ python -m researchos.cli configure-llm
 | `model` | 全部 workflow 共用的一个 model。 |
 | `fallback` | 同一 provider/model 临时失败后的 retry 策略，不是自动换模型的路由链。 |
 | `context_window_fallback` | 仅当 provider 无法报告 model 真实容量时使用的总上下文容量（token）；provider metadata 优先。 |
-| `truncation` | 到达有效总容量前的历史压缩阈值；`max_input_tokens` 独立限制一次请求保留的历史/Tool 输入。 |
+| `truncation` | 到达有效总容量前的历史压缩阈值；可选的 `max_input_tokens` 仅用于某些 gateway 需要更严格历史上限的情况。 |
 | `rate_limit` | 可选的本地 TPM token bucket；默认关闭，且与模型上下文容量无关。 |
 
 命令会写入真实生效文件 `config/model_settings.yaml`，让用户选择把 key 存在该本地文件或 `.env`，并立刻发送一个最小请求检查连接。该文件已被 Git 忽略；系统支持时会设置为仅当前用户可读。`context_window_fallback`、`truncation` 和可选的 `rate_limit` 也会在同一个文件中写入或保留，因此模型连接和上下文设置不需要查看第二个配置文件。
@@ -77,7 +77,6 @@ context_window_fallback: 262144
 truncation:
   trigger_ratio: 0.90
   target_ratio: 0.72
-  max_input_tokens: 160000
 rate_limit:
   enabled: false
   tokens_per_minute: 200000
@@ -91,7 +90,7 @@ fallback:
 
 `api_key` 可以直接填写，也可以使用环境变量占位符。即使留空，runtime 仍会查找 provider 的惯例变量，例如 `DEEPSEEK_API_KEY`。`.env` 会从仓库或当前 project 加载，但不会覆盖 shell 或 Docker 已经传入的环境变量。`openai_compatible` 必须填写准确的 `api_base`；已知 provider 在该字段留空时使用官方 endpoint。`model_settings.example.yaml` 只是示例，runtime 不会读取它；只有同目录的 `model_settings.yaml` 会生效。使用自定义位置时，同样在保存后执行 `python -m researchos.cli selftest --model-settings /absolute/path/model_settings.yaml`。
 
-`fallback` 只针对同一条连接。认证错误、URL 错误和 model 不存在不能靠重试解决，因此会立即提示修正配置；timeout、临时过载等情况会等待后重试。重试耗尽时，workspace 保持可恢复状态，runtime 会走正常的 retry / wait / pause 交互，不会悄悄切换到其他模型。
+`fallback` 只针对同一条连接。认证错误、URL 错误和 model 不存在不能靠重试解决，因此会立即提示修正配置；timeout、临时过载等情况会按 `fallback.max_attempts`、`initial_wait_seconds`、`max_wait_seconds` 与 `retry_after_timeout` 重试。重试耗尽时，workspace 保持可恢复状态，runtime 会走正常的 retry / wait / pause 交互，不会悄悄切换到其他模型。所有 provider 尝试结束后，SDK/HTTP 清理最多等待“60 秒与请求 deadline 一半”中的较小值（普通 120 秒调用即最多 60 秒）。这个清理期限是内部保护，不另设第二个用户配置；它只用于避免失效的 client transport 无限等待。
 
 ## 上下文容量兜底
 
@@ -99,7 +98,7 @@ fallback:
 
 这个数值表示 token 计的**总上下文容量估计**，由 system prompt、研究材料、对话历史、Tool 调用及其结果，以及为模型回复预留的空间共同使用。因此它不是用户单次输入上限，不是固定文件读取大小，也不表示 provider 对外承诺的 API 极限。runtime 会依据有效容量自动计算文件分页、上下文压缩与摘要批处理。研究者日常通常保留该默认值；只有维护一个无法报告容量、且其总上下文容量已知的 provider/gateway 时，才应修改该兜底值。
 
-`truncation.max_input_tokens: 160000` 是一次 provider 请求保留历史输入的独立保护值。实际限制取 provider 已报告／兜底的总容量与该值中的较小者；历史达到该有效限制的 `trigger_ratio` 时，ResearchOS 只压缩较早的对话和 Tool 轮次，并提示模型需要时回读 workspace 中的持久 artifact。它**不会**减少 PDF 分页提取、论文笔记覆盖或已经保存的证据。只有已知 provider/gateway 能稳定接受接近完整上下文的历史时，才将它设为 `0`。
+默认情况下，`truncation` 直接跟随 provider 已报告的 context 或 `context_window_fallback`，日常只需要维护这一处容量值。可选的正整数 `truncation.max_input_tokens` 仅用于某些 gateway 虽报告较大 context、却要求更小保留历史输入的兼容场景；实际限制取它与 provider／兜底容量中的较小者。它只会压缩较早的对话和 Tool 轮次，**不会**减少 PDF 分页提取、论文笔记覆盖或已经保存的证据。
 
 `rate_limit` 默认刻意关闭。账号 TPM/RPM 配额取决于 provider、model、套餐和 gateway，ResearchOS 不会猜测，也不会从 `context_window_fallback` 推导。默认 `enabled: false` 时，请求直接交给 provider，provider 的限流响应会走既有的 retry/recovery。只有已知实际 token-per-minute 配额、且希望平滑本地并发时才启用。`burst` 必须不小于你允许发送的最大单请求；超过 burst 的单次请求会交给 provider，不会在本地 token bucket 中无限等待。
 
