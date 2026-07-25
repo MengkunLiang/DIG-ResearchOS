@@ -22,9 +22,10 @@ python -m researchos.cli configure-llm
 | `model` | 全部 workflow 共用的一个 model。 |
 | `fallback` | 同一 provider/model 临时失败后的 retry 策略，不是自动换模型的路由链。 |
 | `context_window_fallback` | 仅当 provider 无法报告 model 真实容量时使用的总上下文容量（token）；provider metadata 优先。 |
-| `truncation` | 达到有效总容量前的历史压缩阈值；通常保留默认值。 |
+| `truncation` | 到达有效总容量前的历史压缩阈值；`max_input_tokens` 独立限制一次请求保留的历史/Tool 输入。 |
+| `rate_limit` | 可选的本地 TPM token bucket；默认关闭，且与模型上下文容量无关。 |
 
-命令会写入真实生效文件 `config/model_settings.yaml`，让用户选择把 key 存在该本地文件或 `.env`，并立刻发送一个最小请求检查连接。该文件已被 Git 忽略；系统支持时会设置为仅当前用户可读。`context_window_fallback` 和 `truncation` 也会在同一个文件中写入或保留，因此模型连接和上下文设置不需要查看第二个配置文件。
+命令会写入真实生效文件 `config/model_settings.yaml`，让用户选择把 key 存在该本地文件或 `.env`，并立刻发送一个最小请求检查连接。该文件已被 Git 忽略；系统支持时会设置为仅当前用户可读。`context_window_fallback`、`truncation` 和可选的 `rate_limit` 也会在同一个文件中写入或保留，因此模型连接和上下文设置不需要查看第二个配置文件。
 
 非交互环境也可以显式配置：
 
@@ -76,6 +77,11 @@ context_window_fallback: 262144
 truncation:
   trigger_ratio: 0.90
   target_ratio: 0.72
+  max_input_tokens: 160000
+rate_limit:
+  enabled: false
+  tokens_per_minute: 200000
+  burst: 200000
 fallback:
   max_attempts: 3
   initial_wait_seconds: 3
@@ -91,7 +97,11 @@ fallback:
 
 `context_window_fallback: 262144` 与 provider、URL、key、model 一起位于真实生效的 `config/model_settings.yaml`。仅当当前 provider/model 没有通过模型 metadata 报告可核验的真实 context window 时，才会使用该值；provider 报告的、与当前 model 匹配的真实容量优先。
 
-这个数值表示 token 计的**总上下文容量估计**，由 system prompt、研究材料、对话历史、Tool 调用及其结果，以及为模型回复预留的空间共同使用。因此它不是用户单次输入上限，不是固定文件读取大小，也不表示 provider 对外承诺的 API 极限。runtime 会依据有效容量自动计算文件分页、上下文压缩与摘要批处理；同一文件中的 `truncation` 控制何时压缩已保存历史。研究者日常通常保留两者的默认值；只有维护一个无法报告容量、且其总上下文容量已知的 provider/gateway 时，才应修改该兜底值。
+这个数值表示 token 计的**总上下文容量估计**，由 system prompt、研究材料、对话历史、Tool 调用及其结果，以及为模型回复预留的空间共同使用。因此它不是用户单次输入上限，不是固定文件读取大小，也不表示 provider 对外承诺的 API 极限。runtime 会依据有效容量自动计算文件分页、上下文压缩与摘要批处理。研究者日常通常保留该默认值；只有维护一个无法报告容量、且其总上下文容量已知的 provider/gateway 时，才应修改该兜底值。
+
+`truncation.max_input_tokens: 160000` 是一次 provider 请求保留历史输入的独立保护值。实际限制取 provider 已报告／兜底的总容量与该值中的较小者；历史达到该有效限制的 `trigger_ratio` 时，ResearchOS 只压缩较早的对话和 Tool 轮次，并提示模型需要时回读 workspace 中的持久 artifact。它**不会**减少 PDF 分页提取、论文笔记覆盖或已经保存的证据。只有已知 provider/gateway 能稳定接受接近完整上下文的历史时，才将它设为 `0`。
+
+`rate_limit` 默认刻意关闭。账号 TPM/RPM 配额取决于 provider、model、套餐和 gateway，ResearchOS 不会猜测，也不会从 `context_window_fallback` 推导。默认 `enabled: false` 时，请求直接交给 provider，provider 的限流响应会走既有的 retry/recovery。只有已知实际 token-per-minute 配额、且希望平滑本地并发时才启用。`burst` 必须不小于你允许发送的最大单请求；超过 burst 的单次请求会交给 provider，不会在本地 token bucket 中无限等待。
 
 ## MCP Tool
 

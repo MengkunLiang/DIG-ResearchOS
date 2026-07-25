@@ -64,6 +64,7 @@ except Exception:  # pragma: no cover
 
 _log = get_logger("llm_client")
 DEFAULT_MODEL_SETTINGS_PATH = DEFAULT_USER_MODEL_SETTINGS_PATH
+LITELLM_CLEANUP_TIMEOUT_SECONDS = 5.0
 
 
 def suppress_litellm_info_logs() -> None:
@@ -1079,10 +1080,48 @@ class LLMClient:
         )
 
     async def aclose(self) -> None:
-        """Close LiteLLM async HTTP clients created by this process."""
+        """Close LiteLLM async HTTP clients without blocking a pipeline forever."""
 
         if litellm is None:
             return
+        await self._close_litellm_clients_with_timeout()
+
+    async def _close_litellm_clients_with_timeout(self) -> None:
+        """Bound SDK cleanup after a timed-out or cancelled provider request.
+
+        LiteLLM delegates closure to its HTTP transports.  Those close calls
+        are normally quick, but a broken transport can ignore cancellation.
+        Cleanup must never hide the original provider timeout or keep the
+        outer T3 heartbeat alive indefinitely.
+        """
+
+        task = asyncio.create_task(self._aclose_litellm_clients())
+        try:
+            done, _pending = await asyncio.wait(
+                {task},
+                timeout=LITELLM_CLEANUP_TIMEOUT_SECONDS,
+            )
+        except BaseException:
+            task.add_done_callback(self._consume_detached_task_result)
+            task.cancel()
+            raise
+        if task in done:
+            try:
+                task.result()
+            except Exception as exc:  # pragma: no cover - defensive boundary
+                _log.warning("litellm_async_client_cleanup_failed", error=repr(exc))
+            return
+
+        task.add_done_callback(self._consume_detached_task_result)
+        task.cancel()
+        _log.warning(
+            "litellm_async_client_cleanup_timed_out",
+            timeout_seconds=LITELLM_CLEANUP_TIMEOUT_SECONDS,
+        )
+
+    async def _aclose_litellm_clients(self) -> None:
+        """Best-effort LiteLLM cleanup implementation; called under a deadline."""
+
         closer = getattr(litellm, "close_litellm_async_clients", None)
         try:
             if closer is not None:

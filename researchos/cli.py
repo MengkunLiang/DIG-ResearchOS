@@ -1069,6 +1069,8 @@ def _render_llm_context_capacity_notice(
 
     settings = load_model_settings(settings_path)
     fallback = settings["context_window_fallback"]
+    truncation = settings["truncation"]
+    rate_limit = settings["rate_limit"]
     details = Table(box=box.SIMPLE_HEAVY, show_header=False, expand=True)
     details.add_column(style="bold cyan", no_wrap=True)
     details.add_column(overflow="fold")
@@ -1077,8 +1079,18 @@ def _render_llm_context_capacity_notice(
     details.add_row("优先级", "provider 报告的真实容量优先；该值不会覆盖已发现的真实容量")
     details.add_row("它表示什么", "整次模型调用共享的总上下文容量，不是单独的用户输入上限")
     details.add_row("容量包含", "system prompt、研究材料、对话历史、Tool 输入/结果和为回复预留的空间")
+    details.add_row(
+        "单次保留输入上限",
+        f"{truncation['max_input_tokens']:,} tokens；只压缩较早的会话/Tool 历史，不会减少 PDF 阅读或已保存笔记",
+    )
+    details.add_row(
+        "本地限流",
+        "关闭（默认；按 provider 实际配额处理）"
+        if not rate_limit["enabled"]
+        else f"已启用：{rate_limit['tokens_per_minute']:,} TPM，burst {rate_limit['burst']:,}",
+    )
     details.add_row("配置位置", str(settings_path.resolve()))
-    details.add_row("同一文件中的字段", "context_window_fallback；通常保留默认值，只有已知 provider/gateway 总容量时才调整")
+    details.add_row("同一文件中的字段", "context_window_fallback、truncation.max_input_tokens 和可选 rate_limit")
     _cli_console(args).print(
         Panel(
             Group(
@@ -1107,7 +1119,8 @@ def _render_llm_manual_edit_instructions(
     details.add_row("实际生效文件", str(target_path))
     details.add_row("安全模板", str(template_path))
     details.add_row("最小必填字段", "provider、api_key、model；仅 openai_compatible 还必须填写 api_base")
-    details.add_row("上下文容量字段", "context_window_fallback 与 truncation 都在此文件中；通常保留模板默认值")
+    details.add_row("上下文/输入字段", "context_window_fallback 与 truncation.max_input_tokens 都在此文件中；通常保留模板默认值")
+    details.add_row("本地限流字段", "rate_limit 默认关闭；它不等于模型容量，只有明确知道 provider 配额时才启用")
     details.add_row("创建方式", f"cp {template_path} {target_path}")
     details.add_row("保存后校验", f"python -m researchos.cli selftest --model-settings {target_path}")
     _cli_console(args).print(

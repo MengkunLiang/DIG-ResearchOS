@@ -22,9 +22,10 @@ The interactive flow asks for:
 | `model` | The one model used throughout the workflow. |
 | `fallback` | Retry behaviour for the same provider/model after temporary failures. It is not an alternate-model route. |
 | `context_window_fallback` | Total context capacity in tokens to use only when the provider cannot report the model's real capacity. Provider metadata takes priority. |
-| `truncation` | History-compaction thresholds before the effective total capacity. Keep the defaults unless maintaining the runtime. |
+| `truncation` | History-compaction thresholds before the effective total capacity. `max_input_tokens` independently limits retained history/Tool input for one request. |
+| `rate_limit` | Optional local TPM token bucket. It is disabled by default and is unrelated to model context capacity. |
 
-The command writes the active file at `config/model_settings.yaml`, offers to store the key either in that local file or in `.env`, and sends a minimal request to check the connection. The file is ignored by Git and is written with owner-only permissions where the platform supports them. It also writes or preserves `context_window_fallback` and `truncation` in that same file, so model connection and context settings never need a second configuration file.
+The command writes the active file at `config/model_settings.yaml`, offers to store the key either in that local file or in `.env`, and sends a minimal request to check the connection. The file is ignored by Git and is written with owner-only permissions where the platform supports them. It also writes or preserves `context_window_fallback`, `truncation`, and the optional `rate_limit` block in that same file, so model connection and context settings never need a second configuration file.
 
 A noninteractive setup is also available:
 
@@ -76,6 +77,11 @@ context_window_fallback: 262144
 truncation:
   trigger_ratio: 0.90
   target_ratio: 0.72
+  max_input_tokens: 160000
+rate_limit:
+  enabled: false
+  tokens_per_minute: 200000
+  burst: 200000
 fallback:
   max_attempts: 3
   initial_wait_seconds: 3
@@ -91,7 +97,11 @@ The retry settings govern one connection only. Authentication failures and inval
 
 `context_window_fallback: 262144` is a field in the same active `config/model_settings.yaml` file as the provider, URL, key, and model. It is used only when the configured provider/model does not expose a verifiable real context window through its model metadata. When the provider reports a matched real capacity, that capacity takes precedence.
 
-The value is a total context-capacity estimate in tokens. It is shared by the system prompt, research material, conversation history, Tool calls and results, and room reserved for the model response. It is therefore not a raw user-input limit, not a fixed file-read size, and not a statement of the provider's public API limit. The runtime derives file pages, context compaction, and abstract batching from the effective capacity. `truncation` in the same file controls when saved history is compacted. Researchers normally keep both defaults; maintainers should change the fallback only for a provider or gateway that cannot report its capacity and whose total context capacity is known.
+The value is a total context-capacity estimate in tokens. It is shared by the system prompt, research material, conversation history, Tool calls and results, and room reserved for the model response. It is therefore not a raw user-input limit, not a fixed file-read size, and not a statement of the provider's public API limit. The runtime derives file pages, context compaction, and abstract batching from the effective capacity. Researchers normally keep this default; maintainers should change the fallback only for a provider or gateway that cannot report its capacity and whose total context capacity is known.
+
+`truncation.max_input_tokens: 160000` is a separate guard for the input history retained in one provider call. Its effective limit is the smaller of this value and the provider-reported/fallback total capacity. When the history reaches `trigger_ratio` of that effective limit, ResearchOS removes only older conversation and Tool turns and leaves a notice telling the model to read the durable workspace artifacts if needed. It does **not** reduce PDF page extraction, paper-note coverage, or stored evidence. Set it to `0` only when a known provider/gateway reliably accepts histories up to its full context capacity.
+
+`rate_limit` is intentionally disabled by default. Account TPM/RPM quotas are provider-, model-, plan-, and gateway-specific, so ResearchOS does not guess them or derive them from `context_window_fallback`. With the default `enabled: false`, requests go directly to the provider and normal provider rate-limit responses use the existing retry/recovery flow. Enable it only when the actual token-per-minute quota is known and local concurrency should be smoothed. `burst` must be at least as large as the largest request you intend to admit. An oversized request is sent to the provider rather than waiting forever in a local bucket.
 
 ## MCP Tools
 

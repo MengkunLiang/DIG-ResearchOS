@@ -27,6 +27,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
     venue_writing_profiles_path = system_config_path_for(config_dir, "venue_writing_profiles.yaml")
     state_machine = _load_yaml(state_machine_path)
     truncation = dict(model_settings.get("truncation") or {})
+    rate_limit = dict(model_settings.get("rate_limit") or {})
 
     return {
         "system_config_contracts": {
@@ -47,7 +48,8 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
                 "model",
                 "fallback.max_attempts/initial_wait_seconds/max_wait_seconds/retry_after_timeout",
                 "context_window_fallback",
-                "truncation.trigger_ratio/target_ratio",
+                "truncation.trigger_ratio/target_ratio/max_input_tokens",
+                "rate_limit.enabled/tokens_per_minute/burst",
             ],
             "runtime_yaml": [
                 "workspace.default_root",
@@ -77,13 +79,13 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
             ],
         },
         "configuration_layers": [
-            "日常只改 config/model_settings.yaml 中的 provider、api_base、api_key、model、fallback、context_window_fallback 和 truncation，或运行 `researchos configure-llm`；所有 Agent 使用同一模型。",
+            "日常只改 config/model_settings.yaml 中的 provider、api_base、api_key、model、fallback、context_window_fallback、truncation 和可选 rate_limit，或运行 `researchos configure-llm`；所有 Agent 使用同一模型。",
             "T2/T3 文献流程机械阈值默认来自 config/system_config/agent_params.yaml 的 scout.behavior.t2_finalize/progress/literature_quality 和 reader.modes.read.behavior；完整 run 会先经 T2-PARAM-GATE 写 workspace-local literature/literature_params.json，覆盖保留候选数、精读目标、摘要轻读目标和写作语言/中文文献策略。",
             "状态机、gate、CDR schema 和 venue writing profiles 属于 config/system_config/ 系统契约；CLI 默认读取新路径，并保留 config/*.yaml 旧路径 fallback。",
             "state_machine.yaml 只定义拓扑、IO、gate 和少数 extra；默认配置不应写 llm/budget 强覆盖。",
             "agent_params.yaml 是 agent capability registry；T2/T3 文献流程阈值属于 behavior，不属于普通 LLM/budget 参数。",
             "literature/literature_params.json 是单个 workspace 的运行决策文件，优先于全局 yaml；要改本次运行覆盖规模，优先看这个文件。",
-            "context fallback 与 truncation 与连接字段保存在同一个 config/model_settings.yaml；旧 endpoint/profile 文件仅为历史部署保留兼容读取。",
+            "context fallback、truncation 和可选 rate_limit 与连接字段保存在同一个 config/model_settings.yaml；rate_limit 默认关闭且与上下文容量无关；旧 endpoint/profile 文件仅为历史部署保留兼容读取。",
         ],
         "model_settings": {
             "path": str(settings_path),
@@ -95,6 +97,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
             "fallback": model_settings.get("fallback"),
             "context_window_fallback": model_settings.get("context_window_fallback"),
             "truncation": dict(truncation),
+            "rate_limit": dict(rate_limit),
         },
         "effective_runtime": {
             "global_budget": agent_params.get("global_budget") or {},
@@ -107,6 +110,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
         "effective_llm_runtime": {
             "context_window_fallback": model_settings.get("context_window_fallback"),
             "truncation": dict(truncation),
+            "rate_limit": dict(rate_limit),
         },
         # Retained as a migration audit. These historical fields no longer
         # route a new run away from model_settings.yaml, but a maintainer can

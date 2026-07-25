@@ -7784,6 +7784,17 @@ class AgentRunner:
         """按 message group 粒度做上下文裁剪。"""
         config = self.llm.get_truncation_config()
         limit = self.llm.get_context_window(binding)
+        # ``context_window_fallback`` is a total capacity estimate, not a
+        # promise that every provider request near that number will complete
+        # promptly.  Keep an independent, user-visible cap for retained
+        # conversation/tool history.  It never changes PDF page extraction or
+        # durable notes: omitted turns remain available as workspace artifacts.
+        try:
+            configured_input_cap = int(config.get("max_input_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            configured_input_cap = 0
+        if configured_input_cap > 0:
+            limit = min(limit, configured_input_cap)
         trigger = int(limit * config.get("trigger_ratio", 0.8))
         target = int(limit * config.get("target_ratio", 0.6))
         current = self.llm.count_tokens([m.to_openai_dict() for m in messages], binding)

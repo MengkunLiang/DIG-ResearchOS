@@ -25,6 +25,17 @@ DEFAULT_CONTEXT_WINDOW_FALLBACK = 262_144
 DEFAULT_TRUNCATION = {
     "trigger_ratio": 0.90,
     "target_ratio": 0.72,
+    # Keep one provider request well below an unknown provider's advertised
+    # capacity.  ``0`` explicitly disables this independent input cap and
+    # falls back to the effective model context window.
+    "max_input_tokens": 160_000,
+}
+DEFAULT_RATE_LIMIT = {
+    # Account quotas vary by provider, model, plan, and gateway.  Do not
+    # silently throttle a research run with a guessed local value.
+    "enabled": False,
+    "tokens_per_minute": 200_000,
+    "burst": 200_000,
 }
 MODEL_FIELDS = ("provider", "api_base", "api_key", "model")
 PROVIDER_DEFAULTS = {
@@ -177,6 +188,7 @@ def load_model_settings(path: Path | None = None) -> dict[str, Any]:
     provider_defaults = PROVIDER_DEFAULTS[provider]
     fallback = connection.get("fallback") if isinstance(connection.get("fallback"), dict) else {}
     truncation = connection.get("truncation") if isinstance(connection.get("truncation"), dict) else {}
+    rate_limit = connection.get("rate_limit") if isinstance(connection.get("rate_limit"), dict) else {}
     configured_api_base = _expand_env_value(str(connection.get("api_base") or "").strip())
     settings = {
         "provider": provider,
@@ -211,6 +223,27 @@ def load_model_settings(path: Path | None = None) -> dict[str, Any]:
                 DEFAULT_TRUNCATION["target_ratio"],
                 minimum=0.01,
                 maximum=0.99,
+            ),
+            "max_input_tokens": _nonnegative_int(
+                truncation.get("max_input_tokens"),
+                DEFAULT_TRUNCATION["max_input_tokens"],
+                minimum_nonzero=4_096,
+                maximum=10_000_000,
+            ),
+        },
+        "rate_limit": {
+            "enabled": _as_bool(rate_limit.get("enabled"), DEFAULT_RATE_LIMIT["enabled"]),
+            "tokens_per_minute": _positive_int(
+                rate_limit.get("tokens_per_minute"),
+                DEFAULT_RATE_LIMIT["tokens_per_minute"],
+                minimum=1,
+                maximum=100_000_000,
+            ),
+            "burst": _positive_int(
+                rate_limit.get("burst"),
+                DEFAULT_RATE_LIMIT["burst"],
+                minimum=1,
+                maximum=100_000_000,
             ),
         },
         "api_key_env": str(provider_defaults["api_key_env"]),
@@ -275,6 +308,7 @@ def build_single_model_runtime_config(path: Path | None = None) -> dict[str, Any
                 "api_key": connection["api_key"] or None,
                 "api_key_env": connection["api_key_env"],
                 "api_base": connection["api_base"] or None,
+                "rate_limit": connection["rate_limit"],
             }
         },
         "profiles": {
@@ -339,6 +373,30 @@ def write_model_settings(
                 DEFAULT_TRUNCATION["target_ratio"],
                 minimum=0.01,
                 maximum=0.99,
+            ),
+            "max_input_tokens": _nonnegative_int(
+                (current.get("truncation") or {}).get("max_input_tokens") if isinstance(current.get("truncation"), dict) else None,
+                DEFAULT_TRUNCATION["max_input_tokens"],
+                minimum_nonzero=4_096,
+                maximum=10_000_000,
+            ),
+        },
+        "rate_limit": {
+            "enabled": _as_bool(
+                (current.get("rate_limit") or {}).get("enabled") if isinstance(current.get("rate_limit"), dict) else None,
+                DEFAULT_RATE_LIMIT["enabled"],
+            ),
+            "tokens_per_minute": _positive_int(
+                (current.get("rate_limit") or {}).get("tokens_per_minute") if isinstance(current.get("rate_limit"), dict) else None,
+                DEFAULT_RATE_LIMIT["tokens_per_minute"],
+                minimum=1,
+                maximum=100_000_000,
+            ),
+            "burst": _positive_int(
+                (current.get("rate_limit") or {}).get("burst") if isinstance(current.get("rate_limit"), dict) else None,
+                DEFAULT_RATE_LIMIT["burst"],
+                minimum=1,
+                maximum=100_000_000,
             ),
         },
     }
@@ -438,6 +496,24 @@ def _positive_float(value: Any, default: float, *, minimum: float, maximum: floa
     except (TypeError, ValueError):
         return default
     return min(maximum, max(minimum, parsed))
+
+
+def _nonnegative_int(
+    value: Any,
+    default: int,
+    *,
+    minimum_nonzero: int,
+    maximum: int,
+) -> int:
+    """Normalize an optional integer where zero has an intentional meaning."""
+
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed <= 0:
+        return 0
+    return min(maximum, max(minimum_nonzero, parsed))
 
 
 def _as_bool(value: Any, default: bool) -> bool:
