@@ -7,6 +7,7 @@ from __future__ import annotations
 """
 
 import asyncio
+from collections.abc import Callable
 from collections import Counter
 from difflib import SequenceMatcher
 from datetime import datetime, timezone
@@ -596,6 +597,18 @@ def _log_t2_progress(workspace_dir: Path, config: T2FinalizeConfig, event: str, 
     try:
         ScoutProgressLogger(workspace_dir, config.progress_file).log_runtime_event(event, **fields)
     except Exception:
+        return
+
+
+def _report_t2_finalize_progress(reporter: Callable[[str], None] | None, message: str) -> None:
+    """Emit a concise, non-fatal researcher-facing T2 finalize milestone."""
+
+    if reporter is None:
+        return
+    try:
+        reporter(message)
+    except Exception:
+        # Rendering must not affect the deterministic recovery contract.
         return
 
 
@@ -2854,6 +2867,7 @@ async def finalize_t2_outputs(
     workspace_dir: Path,
     *,
     trace_paths: list[Path] | None = None,
+    progress_reporter: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """根据现有 raw 结果，确定性补齐 T2 产物。"""
 
@@ -2887,6 +2901,10 @@ async def finalize_t2_outputs(
             deep_read_target=queue_config.deep_read_target,
             deep_read_max=queue_config.deep_read_max,
         )
+    _report_t2_finalize_progress(
+        progress_reporter,
+        f"[T2 收尾] 开始整理 {len(raw_papers)} 篇已检索候选：去重、元数据补全、资源可得性和精读队列将依次完成。",
+    )
 
     project = _load_project(workspace_dir)
     keywords = _normalize_keywords(project)
@@ -2976,6 +2994,12 @@ async def finalize_t2_outputs(
             backlog_count=active_pool_meta.get("backlog_count"),
             active_pool_max=active_pool_meta.get("active_pool_max"),
         )
+    _report_t2_finalize_progress(
+        progress_reporter,
+        "[T2 收尾] 候选池初步整理完成："
+        f"输入 {active_pool_meta.get('input_count', 0)} 篇，保留 {active_pool_meta.get('active_count', 0)} 篇，"
+        f"后备 {active_pool_meta.get('backlog_count', 0)} 篇；正在补全摘要、DOI、开放获取位置和引用关系。",
+    )
 
     openalex_title_backfill = await _backfill_recovered_openalex_title_metadata(
         dedup_papers,
@@ -3177,6 +3201,11 @@ async def finalize_t2_outputs(
             active_pool_max=active_pool_meta.get("active_pool_max"),
             selection_reasons=json.dumps(active_pool_meta.get("selection_reasons") or {}, ensure_ascii=False, sort_keys=True),
         )
+    _report_t2_finalize_progress(
+        progress_reporter,
+        "[T2 收尾] 元数据与引用补全完成："
+        f"本轮保留 {len(enriched_papers)} 篇，后备 {len(backlog_papers)} 篇；正在写入候选池并检查 PDF 可得性。",
+    )
 
     save_result = await SavePapersDedupTool(policy).execute(papers=enriched_papers, append=False)
     if not save_result.ok:
@@ -3203,6 +3232,32 @@ async def finalize_t2_outputs(
     # deep-read shortlist.  The receipt explicitly keeps acquisition separate
     # from evidence_level; Reader coverage remains the only promotion path.
     if t2_config.pdf_acquisition_enabled:
+        pdf_total = len(verified_papers)
+        pdf_available = 0
+        pdf_unavailable = 0
+        pdf_milestones = {1, pdf_total}
+        if pdf_total > 1:
+            pdf_milestones.update(max(1, (pdf_total * fraction + 3) // 4) for fraction in (1, 2, 3))
+
+        def report_pdf_progress(completed: int, total: int, receipt: dict[str, Any]) -> None:
+            nonlocal pdf_available, pdf_unavailable
+            status = str(receipt.get("status") or "")
+            if status in {"acquired_parseable", "existing_parseable"}:
+                pdf_available += 1
+            else:
+                pdf_unavailable += 1
+            if completed in pdf_milestones:
+                _report_t2_finalize_progress(
+                    progress_reporter,
+                    "[T2 收尾] PDF 可得性检查："
+                    f"{completed}/{total}；本地可解析 {pdf_available}，暂不可得 {pdf_unavailable}。"
+                    "可获得性不等同于已全文阅读。",
+                )
+
+        _report_t2_finalize_progress(
+            progress_reporter,
+            f"[T2 收尾] PDF 可得性检查：0/{pdf_total}；最多 {t2_config.pdf_acquisition_max_concurrency} 项并发获取与解析。",
+        )
         pdf_acquisition = await acquire_retained_pdfs(
             workspace_dir,
             verified_papers,
@@ -3211,8 +3266,16 @@ async def finalize_t2_outputs(
             skip_known_books=t2_config.pdf_acquisition_skip_known_books,
             max_auto_read_pages=t2_config.pdf_acquisition_max_auto_read_pages,
             source_pool="papers_verified",
+            progress_reporter=report_pdf_progress,
         )
         verified_papers = attach_pdf_acquisition(verified_papers, pdf_acquisition)
+        pdf_counts = pdf_acquisition.get("counts") if isinstance(pdf_acquisition, dict) else {}
+        _report_t2_finalize_progress(
+            progress_reporter,
+            "[T2 收尾] PDF 可得性检查完成："
+            f"本地可解析 {int(pdf_counts.get('available_local') or 0)}/{pdf_total}，"
+            f"暂不可得 {int(pdf_counts.get('unavailable') or 0)}。",
+        )
     else:
         pdf_acquisition = {
             "disabled": True,
@@ -3280,6 +3343,10 @@ async def finalize_t2_outputs(
     queue_meta_path.write_text(
         json.dumps(queue_meta, ensure_ascii=False, indent=2),
         encoding="utf-8",
+    )
+    _report_t2_finalize_progress(
+        progress_reporter,
+        f"[T2 收尾] 精读队列已生成：{len(queue_records)} 篇；正在写入访问审计、跨领域索引和完成记录。",
     )
 
     audit_records, audit_markdown = build_access_audit(
@@ -3596,4 +3663,8 @@ async def finalize_t2_outputs(
     }
     write_t2_finalize_manifest(workspace_dir, summary)
     summary["paths"]["t2_finalize_manifest"] = str(workspace_dir / T2_FINALIZE_MANIFEST_REL_PATH)
+    _report_t2_finalize_progress(
+        progress_reporter,
+        "[T2 收尾] 结果文件已整理完成；现在开始最终文件与结构校验。",
+    )
     return summary

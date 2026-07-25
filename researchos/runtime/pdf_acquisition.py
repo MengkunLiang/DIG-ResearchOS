@@ -9,6 +9,7 @@ event.  The only component allowed to promote a paper-note to ``FULL_TEXT`` or
 """
 
 import asyncio
+from collections.abc import Callable
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -26,6 +27,8 @@ PDF_ACQUISITION_MANIFEST_REL_PATH = "literature/pdf_acquisition_manifest.json"
 PDF_ACQUISITION_RECEIPTS_REL_PATH = "literature/pdf_acquisition_receipts.jsonl"
 PDF_ROOT_REL_PATH = "literature/pdfs"
 
+PdfAcquisitionProgressReporter = Callable[[int, int, dict[str, Any]], None]
+
 
 async def acquire_retained_pdfs(
     workspace_dir: Path,
@@ -36,6 +39,7 @@ async def acquire_retained_pdfs(
     skip_known_books: bool = True,
     max_auto_read_pages: int = 100,
     source_pool: str = "papers_verified",
+    progress_reporter: PdfAcquisitionProgressReporter | None = None,
 ) -> dict[str, Any]:
     """Attempt open-PDF acquisition once for every retained unique record.
 
@@ -55,10 +59,12 @@ async def acquire_retained_pdfs(
     existing_by_key = _existing_receipts_by_key(existing)
     retained = _dedupe_records(records)
     semaphore = asyncio.Semaphore(max(1, int(max_concurrency)))
+    completed = 0
 
     async def attempt(index: int, record: dict[str, Any]) -> dict[str, Any]:
+        nonlocal completed
         async with semaphore:
-            return await _acquire_one(
+            receipt = await _acquire_one(
                 policy,
                 record,
                 existing_by_key=existing_by_key,
@@ -68,6 +74,15 @@ async def acquire_retained_pdfs(
                 source_pool=source_pool,
                 ordinal=index,
             )
+        completed += 1
+        if progress_reporter is not None:
+            try:
+                progress_reporter(completed, len(retained), receipt)
+            except Exception:
+                # Terminal rendering must never turn a completed retrieval
+                # attempt into a failed literature acquisition.
+                pass
+        return receipt
 
     receipts = await asyncio.gather(*(attempt(index, record) for index, record in enumerate(retained, start=1)))
     merged = _merge_receipts(existing.get("receipts") if isinstance(existing.get("receipts"), list) else [], receipts)

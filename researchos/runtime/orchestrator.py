@@ -1565,7 +1565,6 @@ class AgentRunner:
                 if finish_requested:
                     # finish_task 只是“请求结束”而不是直接结束。
                     # 真正能否成功结束，仍以 validate_outputs 为准。
-                    self.progress.validation_start(task_id=ctx.task_id)
                     run_logger.event("FINISH_REQUESTED", task=ctx.task_id, step=budget.steps)
                     if ctx.task_id == "T2":
                         run_logger.event("FINALIZE_STARTED", task=ctx.task_id, mode="t2_finish_finalize")
@@ -1577,6 +1576,7 @@ class AgentRunner:
                             success_message="[Scout Agent] T2 确定性收尾成功，继续校验输出",
                         )
                         run_logger.event("FINALIZE_DONE", task=ctx.task_id, mode="t2_finish_finalize")
+                    self.progress.validation_start(task_id=ctx.task_id)
                     # T3's abstract sweep is a deterministic post-read
                     # operation.  Let the deep-read validator complete this
                     # turn, then validate the exact shallow-reading manifest
@@ -6228,7 +6228,10 @@ class AgentRunner:
             return False
 
         self.progress.emit(start_message, important=True)
-        recovery = await finalize_t2_outputs(ctx.workspace_dir)
+        recovery = await finalize_t2_outputs(
+            ctx.workspace_dir,
+            progress_reporter=lambda message: self.progress.emit(message, important=True),
+        )
         if not recovery.get("ok"):
             reason = recovery.get("reason") or "unknown"
             self.log.warning(f"{mode}_failed", reason=reason, recovery=recovery)
