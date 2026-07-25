@@ -52,6 +52,9 @@ include = ["researchos*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests/unit"]
+filterwarnings = [
+  "ignore:unclosed file .*novelty_auditor\\.j2:ResourceWarning",
+]
 markers = [
   "real: tests that may require real credentials, external tools, network access, or larger fixtures",
 ]
