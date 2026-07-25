@@ -22,6 +22,8 @@ from .system_config import REPO_ROOT, config_file_path
 DEFAULT_MODEL_SETTINGS_PATH = REPO_ROOT / "config" / "model_settings.yaml"
 LEGACY_USER_SETTINGS_PATH = REPO_ROOT / "config" / "user_settings.yaml"
 DEFAULT_CONTEXT_WINDOW_FALLBACK = 262_144
+MAX_CONTEXT_WINDOW_TOKENS = 100_000_000
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 120
 DEFAULT_TRUNCATION = {
     "trigger_ratio": 0.90,
     "target_ratio": 0.72,
@@ -201,6 +203,12 @@ def load_model_settings(path: Path | None = None) -> dict[str, Any]:
         "api_key": _expand_env_value(str(connection.get("api_key") or "").strip()),
         "model": _expand_env_value(str(connection.get("model") or "").strip()),
         "fallback": {
+            "request_timeout_seconds": _positive_int(
+                fallback.get("request_timeout_seconds"),
+                DEFAULT_REQUEST_TIMEOUT_SECONDS,
+                minimum=1,
+                maximum=86_400,
+            ),
             "max_attempts": _positive_int(fallback.get("max_attempts"), 3, minimum=1, maximum=10),
             "initial_wait_seconds": _positive_float(fallback.get("initial_wait_seconds"), 3.0, minimum=0.0, maximum=60.0),
             "max_wait_seconds": _positive_float(fallback.get("max_wait_seconds"), 20.0, minimum=0.0, maximum=300.0),
@@ -210,7 +218,7 @@ def load_model_settings(path: Path | None = None) -> dict[str, Any]:
             connection.get("context_window_fallback"),
             DEFAULT_CONTEXT_WINDOW_FALLBACK,
             minimum=4_096,
-            maximum=10_000_000,
+            maximum=MAX_CONTEXT_WINDOW_TOKENS,
         ),
         "truncation": {
             "trigger_ratio": _positive_float(
@@ -229,7 +237,7 @@ def load_model_settings(path: Path | None = None) -> dict[str, Any]:
                 truncation.get("max_input_tokens"),
                 DEFAULT_TRUNCATION["max_input_tokens"],
                 minimum_nonzero=4_096,
-                maximum=10_000_000,
+                maximum=MAX_CONTEXT_WINDOW_TOKENS,
             ),
         },
         "rate_limit": {
@@ -351,6 +359,12 @@ def write_model_settings(
         "api_key": str(api_key).strip(),
         "model": str(model).strip(),
         "fallback": {
+            "request_timeout_seconds": _positive_int(
+                recovery.get("request_timeout_seconds"),
+                DEFAULT_REQUEST_TIMEOUT_SECONDS,
+                minimum=1,
+                maximum=86_400,
+            ),
             "max_attempts": _positive_int(recovery.get("max_attempts"), 3, minimum=1, maximum=10),
             "initial_wait_seconds": _positive_float(recovery.get("initial_wait_seconds"), 3.0, minimum=0.0, maximum=60.0),
             "max_wait_seconds": _positive_float(recovery.get("max_wait_seconds"), 20.0, minimum=0.0, maximum=300.0),
@@ -360,7 +374,7 @@ def write_model_settings(
             current.get("context_window_fallback"),
             DEFAULT_CONTEXT_WINDOW_FALLBACK,
             minimum=4_096,
-            maximum=10_000_000,
+            maximum=MAX_CONTEXT_WINDOW_TOKENS,
         ),
         "truncation": {
             "trigger_ratio": _positive_float(
@@ -379,7 +393,7 @@ def write_model_settings(
                 (current.get("truncation") or {}).get("max_input_tokens") if isinstance(current.get("truncation"), dict) else None,
                 DEFAULT_TRUNCATION["max_input_tokens"],
                 minimum_nonzero=4_096,
-                maximum=10_000_000,
+                maximum=MAX_CONTEXT_WINDOW_TOKENS,
             ),
         },
         "rate_limit": {

@@ -437,6 +437,24 @@ class AgentRunner:
                 pass
         return attempts, delay
 
+    def _llm_request_timeout_seconds(self) -> int:
+        """Resolve the public deadline for a normal research-model request."""
+
+        if bool(getattr(self.llm, "single_model_mode", False)):
+            getter = getattr(self.llm, "get_request_timeout_seconds", None)
+            if callable(getter):
+                try:
+                    return max(1, int(getter()))
+                except (TypeError, ValueError):
+                    pass
+        try:
+            configured = self.global_timeout.get("llm_call")
+            if configured is not None:
+                return max(1, int(configured))
+        except (TypeError, ValueError):
+            pass
+        return 120
+
     @staticmethod
     def _public_provider_error_message(exc: LLMProviderError) -> str:
         """Return a safe CLI message without endpoint, key, or SDK details."""
@@ -1155,6 +1173,7 @@ class AgentRunner:
 
                 provider_retry_batches, provider_cooldown, provider_long_cooldown = self._llm_provider_recovery_policy()
                 llm_retry_attempts, llm_retry_delay = self._llm_retry_overrides()
+                llm_request_timeout = self._llm_request_timeout_seconds()
                 provider_failures_this_request = 0
                 provider_pause_requested = False
                 while True:
@@ -1180,7 +1199,7 @@ class AgentRunner:
                             model_override=eff.llm_model_override,
                             endpoint_override=eff.llm_endpoint_override,
                             max_context_override=eff.llm_max_context_override,
-                            timeout=int(self.global_timeout.get("llm_call") or 120),
+                            timeout=llm_request_timeout,
                             max_retries_per_model=llm_retry_attempts,
                             retry_base_delay=llm_retry_delay,
                         )
@@ -3216,6 +3235,7 @@ class AgentRunner:
                 max_context_override=eff.llm_max_context_override,
             )[0][0]
             llm_retry_attempts, llm_retry_delay = self._llm_retry_overrides()
+            llm_request_timeout = self._llm_request_timeout_seconds()
 
             await self._acquire_t3_shallow_candidate_pdfs(ctx, sweep_config)
 
@@ -3241,7 +3261,7 @@ class AgentRunner:
                     model_override=eff.llm_model_override,
                     endpoint_override=eff.llm_endpoint_override,
                     max_context_override=eff.llm_max_context_override,
-                    timeout=int(self.global_timeout.get("llm_call") or 120),
+                    timeout=llm_request_timeout,
                     max_retries_per_model=llm_retry_attempts,
                     retry_base_delay=llm_retry_delay,
                 )
@@ -3258,7 +3278,7 @@ class AgentRunner:
                     model_override=eff.llm_model_override,
                     endpoint_override=eff.llm_endpoint_override,
                     max_context_override=eff.llm_max_context_override,
-                    timeout=int(self.global_timeout.get("llm_call") or 120),
+                    timeout=llm_request_timeout,
                     max_retries_per_model=llm_retry_attempts,
                     retry_base_delay=llm_retry_delay,
                 )
@@ -3287,7 +3307,7 @@ class AgentRunner:
                     model_override=eff.llm_model_override,
                     endpoint_override=eff.llm_endpoint_override,
                     max_context_override=eff.llm_max_context_override,
-                    timeout=int(self.global_timeout.get("llm_call") or 120),
+                    timeout=llm_request_timeout,
                     max_retries_per_model=llm_retry_attempts,
                     retry_base_delay=llm_retry_delay,
                 )
@@ -4087,6 +4107,7 @@ class AgentRunner:
             self._render_t4_evolution_phase(phase=phase, status=status, payload=payload)
 
         llm_retry_attempts, llm_retry_delay = self._llm_retry_overrides()
+        llm_request_timeout = self._llm_request_timeout_seconds()
         invoker = LLMJsonRoleInvoker(
             config=T4RoleCallConfig(
                 tier=eff.llm_tier,
@@ -4094,7 +4115,7 @@ class AgentRunner:
                 model_override=eff.llm_model_override,
                 endpoint_override=eff.llm_endpoint_override,
                 max_context_override=eff.llm_max_context_override,
-                timeout=int(self.global_timeout.get("llm_call") or 120),
+                timeout=llm_request_timeout,
                 max_retries_per_model=llm_retry_attempts,
                 retry_base_delay=llm_retry_delay,
                 target_profile=run_config.target_profile,
@@ -4940,7 +4961,7 @@ class AgentRunner:
                     model_override=eff.llm_model_override,
                     endpoint_override=eff.llm_endpoint_override,
                     max_context_override=eff.llm_max_context_override,
-                    timeout=int(self.global_timeout.get("llm_call") or 120),
+                    timeout=self._llm_request_timeout_seconds(),
                     max_retries_per_model=self._llm_retry_overrides()[0],
                     retry_base_delay=self._llm_retry_overrides()[1],
                 )

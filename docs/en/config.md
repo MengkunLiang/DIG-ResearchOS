@@ -20,7 +20,7 @@ The interactive flow asks for:
 | `api_base` | Optional URL override for a named provider; required only for `openai_compatible`. Known providers use their official default when it is blank. |
 | `api_key` | Your provider credential. |
 | `model` | The one model used throughout the workflow. |
-| `fallback` | Retry behaviour for the same provider/model after temporary failures. It is not an alternate-model route. |
+| `fallback` | Per-request deadline and retry behaviour for the same provider/model after temporary failures. It is not an alternate-model route. |
 | `context_window_fallback` | Total context capacity in tokens to use only when the provider cannot report the model's real capacity. Provider metadata takes priority. |
 | `truncation` | History-compaction thresholds before the effective total capacity. Its optional `max_input_tokens` is only for a gateway that requires a stricter history cap. |
 | `rate_limit` | Optional local TPM token bucket. It is disabled by default and is unrelated to model context capacity. |
@@ -82,6 +82,7 @@ rate_limit:
   tokens_per_minute: 200000
   burst: 200000
 fallback:
+  request_timeout_seconds: 120
   max_attempts: 3
   initial_wait_seconds: 3
   max_wait_seconds: 20
@@ -90,11 +91,11 @@ fallback:
 
 `api_key` accepts a direct value or an environment placeholder. A blank value still checks the conventional provider variable, such as `DEEPSEEK_API_KEY`. `.env` is loaded from the repository or current project without replacing values already supplied by the shell or Docker environment. `openai_compatible` must provide its exact `api_base`; known providers use their official endpoint when this field is blank. `model_settings.example.yaml` is only a template and is never loaded; only its sibling `model_settings.yaml` takes effect. With a custom target, use the same command after the subcommand: `python -m researchos.cli selftest --model-settings /absolute/path/model_settings.yaml`.
 
-The retry settings govern one connection only. Authentication failures and invalid URLs are reported immediately because retries cannot repair configuration. Temporary timeouts and overloads retry according to `fallback.max_attempts`, `initial_wait_seconds`, `max_wait_seconds`, and `retry_after_timeout`; if recovery is exhausted, the runtime preserves the workspace and offers the normal retry/wait/pause decision instead of silently switching models. After all provider attempts finish, SDK/HTTP cleanup is allowed up to the smaller of 60 seconds and half the request deadline (60 seconds for the normal 120-second call). This cleanup deadline is internal rather than a second setting: it is bounded solely to prevent a broken client transport from waiting forever.
+The `fallback` settings govern one connection only. `request_timeout_seconds` is the deadline for every normal research-model request; temporary timeouts and overloads then retry according to `max_attempts`, `initial_wait_seconds`, `max_wait_seconds`, and `retry_after_timeout`. Authentication failures and invalid URLs are reported immediately because retries cannot repair configuration. If recovery is exhausted, the runtime preserves the workspace and offers the normal retry/wait/pause decision instead of silently switching models. After all provider attempts finish, SDK/HTTP cleanup is allowed up to the smaller of 60 seconds and half the request deadline (60 seconds for the default 120-second call). This cleanup deadline is internal rather than a second setting: it is bounded solely to prevent a broken client transport from waiting forever.
 
 ## Context Capacity Fallback
 
-`context_window_fallback: 262144` is a field in the same active `config/model_settings.yaml` file as the provider, URL, key, and model. It is used only when the configured provider/model does not expose a verifiable real context window through its model metadata. When the provider reports a matched real capacity, that capacity takes precedence.
+`context_window_fallback: 262144` is a field in the same active `config/model_settings.yaml` file as the provider, URL, key, and model. It is used only when the configured provider/model does not expose a verifiable real context window through its model metadata. When the provider reports a matched real capacity, that capacity takes precedence. Manually configured fallback values support 4,096 through 100,000,000 tokens, the same plausibility range used for provider metadata.
 
 The value is a total context-capacity estimate in tokens. It is shared by the system prompt, research material, conversation history, Tool calls and results, and room reserved for the model response. It is therefore not a raw user-input limit, not a fixed file-read size, and not a statement of the provider's public API limit. The runtime derives file pages, context compaction, and abstract batching from the effective capacity. Researchers normally keep this default; maintainers should change the fallback only for a provider or gateway that cannot report its capacity and whose total context capacity is known.
 

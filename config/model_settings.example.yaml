@@ -70,8 +70,15 @@ rate_limit:
   burst: 200000
 
 # 同一 provider/model 临时故障时的重试策略，不会暗中切换到其他模型。
-# 认证或配置错误不会重试，CLI 会提示需要修正的内容。
+# request_timeout_seconds 是每一次正式科研模型请求允许等待的最长时间；它和
+# 同块中的重试参数一起控制官方 API，不需要去修改 system_config。认证或配置
+# 错误不会重试，CLI 会提示需要修正的内容。
+# Retry policy for temporary failure of the same provider/model; it never
+# silently changes models. request_timeout_seconds is the deadline for each
+# research-model request and belongs here with retry behaviour, not in
+# system_config.
 fallback:
+  request_timeout_seconds: 120
   max_attempts: 3
   initial_wait_seconds: 3
   max_wait_seconds: 20

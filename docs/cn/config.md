@@ -20,7 +20,7 @@ python -m researchos.cli configure-llm
 | `api_base` | 已知 provider 的可选 URL 覆盖；只有 `openai_compatible` 必须填写。留空时已知 provider 使用官方默认地址。 |
 | `api_key` | provider credential。 |
 | `model` | 全部 workflow 共用的一个 model。 |
-| `fallback` | 同一 provider/model 临时失败后的 retry 策略，不是自动换模型的路由链。 |
+| `fallback` | 同一 provider/model 的单次请求 deadline 与临时失败后的 retry 策略，不是自动换模型的路由链。 |
 | `context_window_fallback` | 仅当 provider 无法报告 model 真实容量时使用的总上下文容量（token）；provider metadata 优先。 |
 | `truncation` | 到达有效总容量前的历史压缩阈值；可选的 `max_input_tokens` 仅用于某些 gateway 需要更严格历史上限的情况。 |
 | `rate_limit` | 可选的本地 TPM token bucket；默认关闭，且与模型上下文容量无关。 |
@@ -82,6 +82,7 @@ rate_limit:
   tokens_per_minute: 200000
   burst: 200000
 fallback:
+  request_timeout_seconds: 120
   max_attempts: 3
   initial_wait_seconds: 3
   max_wait_seconds: 20
@@ -90,11 +91,11 @@ fallback:
 
 `api_key` 可以直接填写，也可以使用环境变量占位符。即使留空，runtime 仍会查找 provider 的惯例变量，例如 `DEEPSEEK_API_KEY`。`.env` 会从仓库或当前 project 加载，但不会覆盖 shell 或 Docker 已经传入的环境变量。`openai_compatible` 必须填写准确的 `api_base`；已知 provider 在该字段留空时使用官方 endpoint。`model_settings.example.yaml` 只是示例，runtime 不会读取它；只有同目录的 `model_settings.yaml` 会生效。使用自定义位置时，同样在保存后执行 `python -m researchos.cli selftest --model-settings /absolute/path/model_settings.yaml`。
 
-`fallback` 只针对同一条连接。认证错误、URL 错误和 model 不存在不能靠重试解决，因此会立即提示修正配置；timeout、临时过载等情况会按 `fallback.max_attempts`、`initial_wait_seconds`、`max_wait_seconds` 与 `retry_after_timeout` 重试。重试耗尽时，workspace 保持可恢复状态，runtime 会走正常的 retry / wait / pause 交互，不会悄悄切换到其他模型。所有 provider 尝试结束后，SDK/HTTP 清理最多等待“60 秒与请求 deadline 一半”中的较小值（普通 120 秒调用即最多 60 秒）。这个清理期限是内部保护，不另设第二个用户配置；它只用于避免失效的 client transport 无限等待。
+`fallback` 只针对同一条连接。`request_timeout_seconds` 控制每一次正式科研模型请求的最长等待；timeout、临时过载等情况再按 `max_attempts`、`initial_wait_seconds`、`max_wait_seconds` 与 `retry_after_timeout` 重试。认证错误、URL 错误和 model 不存在不能靠重试解决，因此会立即提示修正配置。重试耗尽时，workspace 保持可恢复状态，runtime 会走正常的 retry / wait / pause 交互，不会悄悄切换到其他模型。所有 provider 尝试结束后，SDK/HTTP 清理最多等待“60 秒与请求 deadline 一半”中的较小值（默认 120 秒调用即最多 60 秒）。这个清理期限是内部保护，不另设第二个用户配置；它只用于避免失效的 client transport 无限等待。
 
 ## 上下文容量兜底
 
-`context_window_fallback: 262144` 与 provider、URL、key、model 一起位于真实生效的 `config/model_settings.yaml`。仅当当前 provider/model 没有通过模型 metadata 报告可核验的真实 context window 时，才会使用该值；provider 报告的、与当前 model 匹配的真实容量优先。
+`context_window_fallback: 262144` 与 provider、URL、key、model 一起位于真实生效的 `config/model_settings.yaml`。仅当当前 provider/model 没有通过模型 metadata 报告可核验的真实 context window 时，才会使用该值；provider 报告的、与当前 model 匹配的真实容量优先。手工填写的 fallback 支持 4,096 到 100,000,000 token，与 provider metadata 的容量合理性范围一致。
 
 这个数值表示 token 计的**总上下文容量估计**，由 system prompt、研究材料、对话历史、Tool 调用及其结果，以及为模型回复预留的空间共同使用。因此它不是用户单次输入上限，不是固定文件读取大小，也不表示 provider 对外承诺的 API 极限。runtime 会依据有效容量自动计算文件分页、上下文压缩与摘要批处理。研究者日常通常保留该默认值；只有维护一个无法报告容量、且其总上下文容量已知的 provider/gateway 时，才应修改该兜底值。
 

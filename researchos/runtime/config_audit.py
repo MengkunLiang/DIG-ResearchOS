@@ -46,7 +46,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
                 "api_base",
                 "api_key",
                 "model",
-                "fallback.max_attempts/initial_wait_seconds/max_wait_seconds/retry_after_timeout",
+                "fallback.request_timeout_seconds/max_attempts/initial_wait_seconds/max_wait_seconds/retry_after_timeout",
                 "context_window_fallback",
                 "truncation.trigger_ratio/target_ratio/(optional)max_input_tokens",
                 "rate_limit.enabled/tokens_per_minute/burst",

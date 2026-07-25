@@ -21,6 +21,8 @@ from .logger import get_logger
 from .rate_limiter import EndpointRateLimiter
 from .model_settings import (
     DEFAULT_MODEL_SETTINGS_PATH as DEFAULT_USER_MODEL_SETTINGS_PATH,
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    MAX_CONTEXT_WINDOW_TOKENS,
     build_single_model_runtime_config,
     load_dotenv_for_model_settings,
     provider_requires_api_base,
@@ -538,6 +540,25 @@ class LLMClient:
     def get_context_window(self, binding: ModelBinding) -> int:
         return binding.max_context
 
+    def get_request_timeout_seconds(self) -> int:
+        """Return the public one-model request deadline for research calls.
+
+        Legacy endpoint/profile routing keeps its historical runner default.
+        New one-model runs obtain this from ``model_settings.yaml`` alongside
+        retry settings, so a researcher never has to edit a second system file
+        merely to accommodate an official provider's response latency.
+        """
+
+        if not self.single_model_mode:
+            return DEFAULT_REQUEST_TIMEOUT_SECONDS
+        recovery = self.raw.get("_simple_llm", {}).get("fallback")
+        if not isinstance(recovery, dict):
+            return DEFAULT_REQUEST_TIMEOUT_SECONDS
+        try:
+            return max(1, min(int(recovery.get("request_timeout_seconds")), 86_400))
+        except (TypeError, ValueError):
+            return DEFAULT_REQUEST_TIMEOUT_SECONDS
+
     def get_context_window_info(
         self,
         binding: ModelBinding,
@@ -798,7 +819,7 @@ class LLMClient:
             return None
         # Smaller values are almost certainly output limits, prices, or an
         # unrelated capability field; values above this bound are malformed.
-        if 4_096 <= numeric <= 100_000_000:
+        if 4_096 <= numeric <= MAX_CONTEXT_WINDOW_TOKENS:
             return numeric
         return None
 
