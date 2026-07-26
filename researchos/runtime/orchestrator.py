@@ -4560,6 +4560,29 @@ class AgentRunner:
                 if len(targets) != 1:
                     raise ValueError("Focus Evolution requires exactly one selected Candidate")
                 result = await controller.focus_active_candidate(run_config, candidate_id=str(targets[0]))
+            elif operation_action == "recover_selection_score":
+                candidate_id = str(operation.get("candidate_id") or "").strip() if isinstance(operation, dict) else ""
+                if not candidate_id:
+                    raise ValueError("Selection score recovery requires one confirmed Candidate ID")
+                self.progress.emit(
+                    "T4 · 已确认推进候选；正在补做该候选缺失的独立评分。"
+                    "不会重新演化 Candidate，评分完成后将自动进入 T4.5。",
+                    important=True,
+                )
+                result = await controller.recover_active_candidate_score_for_selection(
+                    run_config,
+                    candidate_id=candidate_id,
+                )
+                self._write_t4_operation_outcome(
+                    ctx,
+                    operation=operation if isinstance(operation, dict) else None,
+                    status="selection_score_recovered",
+                    summary="The confirmed Candidate received its missing independent score. The original Gate1 confirmation remains valid and will now proceed to T4.5.",
+                    details={
+                        "candidate_id": candidate_id,
+                        "score_artifact": f"ideation/scoring/selection_recovery/{re.sub(r'[^a-zA-Z0-9_.-]+', '_', candidate_id).strip('_') or 'candidate'}.json",
+                    },
+                )
             elif operation_action == "merge_candidates":
                 targets = directive.get("target_candidate_ids") if isinstance(directive.get("target_candidate_ids"), list) else []
                 if len(targets) != 2:

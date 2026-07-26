@@ -373,6 +373,62 @@ class IdeaEvolutionController:
             active_scores=self._load_active_scores(population),
         )
 
+    async def recover_active_candidate_score_for_selection(
+        self,
+        run_config: T4RunConfig,
+        *,
+        candidate_id: str,
+    ) -> EvolutionRunResult:
+        """Score one selected active Candidate without re-running evolution.
+
+        Gate1 selection can be confirmed while the provider is temporarily
+        unavailable.  Once service access recovers, the missing independent
+        score is a narrow transport prerequisite, not a reason to discard the
+        human confirmation or to regenerate the Population.  This method
+        produces one blind, checkpointed score for the unchanged Candidate and
+        returns a projection-ready result.  A later interruption reuses the
+        score checkpoint rather than spending another model call.
+        """
+
+        result = self.load_active_result_for_final_card_repair()
+        candidate = next(
+            (item for item in result.active_dossiers if item.candidate_id == candidate_id),
+            None,
+        )
+        if candidate is None:
+            raise ValueError(f"selection score recovery references an inactive Candidate: {candidate_id}")
+
+        safe_candidate = re.sub(r"[^a-zA-Z0-9_.-]+", "_", candidate_id).strip("_") or "candidate"
+        batch_id = f"SB-SELECT-{safe_candidate}"
+        reports = await self._score([candidate], batch_id, run_config=run_config)
+        if len(reports) != 1 or reports[0].candidate_id != candidate_id:
+            raise ValueError(
+                "selection score recovery did not produce an independent score for the confirmed Candidate"
+            )
+        report = reports[0]
+        self.store.write_json(
+            f"ideation/scoring/selection_recovery/{safe_candidate}.json",
+            {
+                "schema_version": "1.0.0",
+                "semantics": "t4_selection_score_recovery",
+                "population_id": result.population.population_id,
+                "population_generation": result.population.generation,
+                "candidate_id": candidate_id,
+                "candidate_version": candidate.version,
+                "scoring_batch_id": batch_id,
+                "score": model_dump(report, mode="json"),
+            },
+        )
+        retained_scores = [item for item in result.active_scores if item.candidate_id != candidate_id]
+        return EvolutionRunResult(
+            population=result.population,
+            portfolio=result.portfolio,
+            state=result.state,
+            route_results=result.route_results,
+            active_dossiers=result.active_dossiers,
+            active_scores=[*retained_scores, report],
+        )
+
     async def continue_from_active_population(self, run_config: T4RunConfig) -> EvolutionRunResult:
         """Execute exactly one additional, fully audited Generation.
 

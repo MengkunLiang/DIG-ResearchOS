@@ -5350,6 +5350,34 @@ class StateMachine:
             candidate_id=selected_candidate_id,
         )
         if not selection_ready:
+            if "has no independent score after bounded retry" in str(selection_error or ""):
+                operation = {
+                    "schema_version": "1.0.0",
+                    "semantics": "t4_native_operation_request",
+                    "action": "recover_selection_score",
+                    "candidate_id": selected_candidate_id,
+                    "directive_path": directive_path,
+                    "directive": model_dump(directive, mode="json"),
+                    "requested_from_population": population.population_id,
+                    "queued_at": _now_iso(),
+                    "reason": "confirmed_selection_requires_missing_independent_score",
+                }
+                operation_path = f"ideation/evolution/operations/{directive.directive_id}_selection_score_recovery.json"
+                T4ArtifactStore(workspace_dir).write_json(operation_path, operation)
+                state.task_context["t4_operation_request"] = {**operation, "path": operation_path}
+                state.task_context["human_iteration_directive"] = {
+                    "decision_id": directive.directive_id,
+                    "gate_id": "t4_gate1_selection_gate",
+                    "source_task": "T4-GATE1",
+                    "target_task": "T4",
+                    "option_id": "recover_selection_score",
+                }
+                state.pending_gate = None
+                state.current_task = "T4"
+                state.status = "RUNNING"
+                state.paused_at = None
+                state.last_error = None
+                return state
             return self._reopen_native_t4_gate(
                 state,
                 workspace_dir,
