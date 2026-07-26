@@ -434,7 +434,7 @@ class LLMCandidateEnricher(IdeaEnricherPort):
 class LLMIdeaScorer(IdeaScoringPort):
     """Independent scorer. Its payload omits route, lineage, and ranking fields."""
 
-    def __init__(self, invoker: LLMJsonRoleInvoker, *, crossover_structured_repair_attempts: int = 3) -> None:
+    def __init__(self, invoker: LLMJsonRoleInvoker, *, crossover_structured_repair_attempts: int = 5) -> None:
         self.invoker = invoker
         self.crossover_structured_repair_attempts = max(1, min(int(crossover_structured_repair_attempts), 8))
 

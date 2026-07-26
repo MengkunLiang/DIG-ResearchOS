@@ -112,7 +112,6 @@ class ScoutAgent(Agent):
                     "max_steps": 50,
                     "max_tokens_total": 150_000,
                     "max_wall_seconds": 600,
-                    "max_validation_retries": 3,
                     "temperature": 0.5,
                     "allowed_read_prefixes": [
                         "",

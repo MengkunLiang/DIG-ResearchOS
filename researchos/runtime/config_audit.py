@@ -21,6 +21,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
     settings_path = config_dir / "model_settings.yaml"
     model_settings = load_model_settings(settings_path)
     agent_params = _load_yaml(system_config_path_for(config_dir, "agent_params.yaml"))
+    runtime_config = _load_yaml(system_config_path_for(config_dir, "runtime.yaml"))
     state_machine_path = system_config_path_for(config_dir, "state_machine.yaml")
     gates_path = system_config_path_for(config_dir, "gates.yaml")
     cdr_schema_path = system_config_path_for(config_dir, "cdr_schema.yaml")
@@ -28,6 +29,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
     state_machine = _load_yaml(state_machine_path)
     truncation = dict(model_settings.get("truncation") or {})
     rate_limit = dict(model_settings.get("rate_limit") or {})
+    agent_behavior = runtime_config.get("agent_behavior") if isinstance(runtime_config.get("agent_behavior"), dict) else {}
 
     return {
         "system_config_contracts": {
@@ -59,6 +61,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
                 "human_interface.backend",
                 "agent_behavior.max_empty_reply",
                 "agent_behavior.max_nudge_finish",
+                "agent_behavior.max_validation_retries",
             ],
             "agent_params_yaml": [
                 "agents.<agent>.tools.tool_names/allowed_read_prefixes/allowed_write_prefixes",
@@ -81,6 +84,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
         "configuration_layers": [
             "日常只改 config/model_settings.yaml 中的 provider、api_base、api_key、model、fallback、context_window_fallback、truncation 和可选 rate_limit，或运行 `researchos configure-llm`；通常只维护 context_window_fallback，max_input_tokens 仅是高级 gateway 覆盖；所有 Agent 使用同一模型。",
             "T2/T3 文献流程机械阈值默认来自 config/system_config/agent_params.yaml 的 scout.behavior.t2_finalize/progress/literature_quality 和 reader.modes.read.behavior；完整 run 会先经 T2-PARAM-GATE 写 workspace-local literature/literature_params.json，覆盖保留候选数、精读目标、摘要轻读目标和写作语言/中文文献策略。",
+            "输出校验的默认自动修复次数由 config/system_config/runtime.yaml 的 agent_behavior.max_validation_retries 控制；agent_params 或用户级 agent 设置可为单个 agent 覆盖。T3 深读队列未完成属于确定性续读，不消耗这个次数。",
             "状态机、gate、CDR schema 和 venue writing profiles 属于 config/system_config/ 系统契约；CLI 默认读取新路径，并保留 config/*.yaml 旧路径 fallback。",
             "state_machine.yaml 只定义拓扑、IO、gate 和少数 extra；默认配置不应写 llm/budget 强覆盖。",
             "agent_params.yaml 是 agent capability registry；T2/T3 文献流程阈值属于 behavior，不属于普通 LLM/budget 参数。",
@@ -100,6 +104,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
             "rate_limit": dict(rate_limit),
         },
         "effective_runtime": {
+            "default_validation_retries": agent_behavior.get("max_validation_retries", 5),
             "global_budget": agent_params.get("global_budget") or {},
             "global_timeout": agent_params.get("global_timeout") or {},
             "retry_policy": agent_params.get("retry_policy") or {},
@@ -119,9 +124,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
         "agents_disabling_profile_fallback": _scan_direct_llm_bindings(agent_params),
         "state_machine_llm_overrides": _scan_state_machine_llm_overrides(state_machine),
         "partially_or_not_wired": {
-            "runtime_yaml": [
-                "agent_behavior.max_validation_retries",
-            ],
+            "runtime_yaml": [],
             "agent_params_yaml": [
                 "部分 behavior 字段只由对应 agent/validator 消费，不存在统一全局执行器。",
             ],

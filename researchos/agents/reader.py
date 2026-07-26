@@ -129,7 +129,6 @@ class ReaderAgent(Agent):
                     "max_steps": 100,
                     "max_tokens_total": 300_000,
                     "max_wall_seconds": 1200,
-                    "max_validation_retries": 3,
                     "temperature": 0.5,
                     "allowed_read_prefixes": ["", "literature/", "user_seeds/", "_runtime/resume/"],
                     "allowed_write_prefixes": ["literature/"],

@@ -1123,7 +1123,6 @@ class ExperimenterAgent(Agent):
                     "max_steps": 150,
                     "max_tokens_total": 800_000,
                     "max_wall_seconds": 14400,
-                    "max_validation_retries": 2,
                     "temperature": 0.3,
                     "allowed_read_prefixes": ["", "ideation/", "experiments/", "pilot/", "literature/", "external_executor/", "drafts/"],
                     "allowed_write_prefixes": ["experiments/", "pilot/", "external_executor/", "drafts/"],

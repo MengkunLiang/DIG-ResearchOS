@@ -134,7 +134,6 @@ class SubmissionAgent(Agent):
                     "max_steps": 40,
                     "max_tokens_total": 80_000,
                     "max_wall_seconds": 300,
-                    "max_validation_retries": 3,
                     "temperature": 0.3,
                     "allowed_read_prefixes": [
                         "",

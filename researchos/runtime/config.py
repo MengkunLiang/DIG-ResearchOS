@@ -64,7 +64,7 @@ class AgentBehaviorSettings:
 
     max_empty_reply: int = 2
     max_nudge_finish: int = 2
-    max_validation_retries: int = 3
+    max_validation_retries: int = 5
     # T4 normally uses the controller-owned evolutionary workflow.  This
     # migration switch is deliberately opt-in: it permits the historical
     # prompt only when a workspace has no native T4 artifacts to protect.
@@ -196,7 +196,7 @@ def load_runtime_settings(config_path: Path | None = None) -> RuntimeSettings:
         agent_behavior=AgentBehaviorSettings(
             max_empty_reply=int(agent_behavior_block.get("max_empty_reply", 2)),
             max_nudge_finish=int(agent_behavior_block.get("max_nudge_finish", 2)),
-            max_validation_retries=int(agent_behavior_block.get("max_validation_retries", 3)),
+            max_validation_retries=int(agent_behavior_block.get("max_validation_retries", 5)),
             allow_legacy_t4_fallback=bool(
                 agent_behavior_block.get("allow_legacy_t4_fallback", False)
             ),

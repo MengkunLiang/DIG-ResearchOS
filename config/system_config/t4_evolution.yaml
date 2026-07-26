@@ -69,7 +69,7 @@ one_repair_attempt_per_route: true
 # Crossover compatibility reviews use a nested Gene Donor Map. Deterministic
 # aliases are normalized first; remaining semantic shape errors can receive
 # this many replacement-review attempts without creating a Child prematurely.
-crossover_structured_repair_attempts: 3
+crossover_structured_repair_attempts: 5
 # Candidate dossiers carry a large evidence-bound schema. Limit concurrent
 # provider calls so repairs do not saturate a single endpoint and turn a short
 # P0 formation phase into a queue of long-running requests.

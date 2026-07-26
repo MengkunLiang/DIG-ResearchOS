@@ -85,7 +85,7 @@ class T4EvolutionSettings(_ConfigModel):
     # Crossover reviewers return a compact but nested schema. Keep several
     # repair attempts available for semantic field-shape mistakes; this is
     # separate from provider/network retries and never auto-approves a Child.
-    crossover_structured_repair_attempts: int = Field(default=3, ge=1, le=8)
+    crossover_structured_repair_attempts: int = Field(default=5, ge=1, le=8)
     route_max_concurrency: int = Field(default=2, ge=1, le=4)
     # Score reports are evidence-dense. Small sequential batches keep a long
     # population from truncating its later candidates at the provider boundary.

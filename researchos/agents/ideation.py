@@ -1254,7 +1254,6 @@ class IdeationAgent(Agent):
                     "max_steps": 60,
                     "max_tokens_total": 200_000,
                     "max_wall_seconds": 600,
-                    "max_validation_retries": 3,
                     "temperature": 0.75,
                     "allowed_read_prefixes": [
                         "",

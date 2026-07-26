@@ -69,7 +69,6 @@ class WriterAgent(Agent):
                     "max_steps": 100,
                     "max_tokens_total": 400_000,
                     "max_wall_seconds": 1200,
-                    "max_validation_retries": 3,
                     "temperature": 0.7,
                     "allowed_read_prefixes": [
                         "",

@@ -40,9 +40,10 @@ agent_behavior:
   # 当 Agent 未主动结束时，系统推动其完成的最大尝试次数
   max_nudge_finish: 2
 
-  # 输出验证失败的最大重试次数
-  # Agent 输出不符合预期格式时的重试上限
-  max_validation_retries: 3
+  # 普通 Agent 输出校验失败时的默认自动修复次数。单个 Agent 可通过
+  # agent_params.yaml 或用户级 agent 设置覆盖；T3 未读完的深读队列走
+  # 确定性续读，不消耗此次数。
+  max_validation_retries: 5
 
   # 仅用于迁移极早期 T4 workspace 的显式兼容开关。默认 false：T4 只运行
   # Evolutionary Pipeline。即使设为 true，只要 workspace 已有 native T4

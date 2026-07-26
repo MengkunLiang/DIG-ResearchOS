@@ -40,7 +40,7 @@ class AgentSpec:
         default_factory=lambda: ["", "user_seeds/", "papers/", "hypotheses/", "exp_plans/"]
     )
     allowed_write_prefixes: list[str] = field(default_factory=list)
-    max_validation_retries: int = 3
+    max_validation_retries: int = 5
     pre_hooks: list[PreHook] = field(default_factory=list)
     post_hooks: list[PostHook] = field(default_factory=list)
     prompt_template: str | None = None

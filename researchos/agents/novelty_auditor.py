@@ -68,7 +68,6 @@ class NoveltyAuditorAgent(Agent):
                     "max_steps": 60,
                     "max_tokens_total": 150_000,
                     "max_wall_seconds": 600,
-                    "max_validation_retries": 3,
                     "temperature": 0.3,
                     "allowed_read_prefixes": ["", "ideation/", "literature/"],
                     "allowed_write_prefixes": ["ideation/"],

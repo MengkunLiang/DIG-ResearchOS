@@ -60,7 +60,6 @@ class NoveltyAgent(Agent):
                     "max_steps": 60,
                     "max_tokens_total": 150_000,
                     "max_wall_seconds": 600,
-                    "max_validation_retries": 3,
                     "temperature": 0.3,
                     # T6 在恢复运行时需要读取 novelty/ 下已有草稿，否则只能“会写不会读”。
                     "allowed_read_prefixes": ["", "ideation/", "literature/", "pilot/", "novelty/"],

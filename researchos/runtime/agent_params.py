@@ -13,6 +13,7 @@ from typing import Any
 import yaml
 
 from .agent import AgentSpec
+from .config import load_runtime_settings
 from .user_settings import (
     apply_agent_param_overrides,
     load_user_settings,
@@ -188,6 +189,16 @@ def _is_unlimited_budget(params: dict[str, Any], defaults: dict[str, Any]) -> bo
     return _as_bool(defaults.get("unlimited_budget", True))
 
 
+def _runtime_validation_retry_default() -> int:
+    """Read the global retry window used when an agent has no override."""
+
+    try:
+        configured = int(load_runtime_settings().agent_behavior.max_validation_retries)
+    except (TypeError, ValueError):
+        configured = 5
+    return max(0, configured)
+
+
 def build_agent_spec(
     agent_name: str,
     *,
@@ -268,7 +279,7 @@ def build_agent_spec(
             _pick_first(
                 params.get("max_validation_retries"),
                 defaults.get("max_validation_retries"),
-                3,
+                _runtime_validation_retry_default(),
             )
         ),
         pre_hooks=_as_list(params.get("pre_hooks"), fallback=defaults.get("pre_hooks", [])),

@@ -1718,11 +1718,12 @@ class AgentRunner:
                             messages.append(feedback)
                             trace.write_message(feedback)
                             continue
-                        validation_circuit_limit = (
-                            validation_retry_limit
-                            if ctx.task_id.startswith("T3.6-")
-                            else 3 if ctx.task_id == "T4" else 2
-                        )
+                        # All ordinary validation repairs receive the same
+                        # configured window.  T3 queue completion is handled
+                        # above by a deterministic no-counter preflight; this
+                        # circuit only applies to errors that still require
+                        # model judgment or a real artifact change.
+                        validation_circuit_limit = validation_retry_limit
                         stop_reason = AgentResult.STOP_INTERRUPTED
                         if repeated_validation_failures >= validation_circuit_limit:
                             error_msg = (
@@ -1752,11 +1753,7 @@ class AgentRunner:
                             },
                         )
                         break
-                    validation_circuit_limit = (
-                        validation_retry_limit
-                        if ctx.task_id.startswith("T3.6-")
-                        else 3 if ctx.task_id == "T4" else 2
-                    )
+                    validation_circuit_limit = validation_retry_limit
                     if repeated_validation_failures >= validation_circuit_limit:
                         stop_reason = AgentResult.STOP_INTERRUPTED
                         error_msg = (

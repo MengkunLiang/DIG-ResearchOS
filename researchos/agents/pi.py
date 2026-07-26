@@ -50,7 +50,6 @@ class PIAgent(Agent):
                     "max_steps": 30,
                     "max_tokens_total": 100_000,
                     "max_wall_seconds": 1800,
-                    "max_validation_retries": 3,
                     "temperature": 0.3,
                     "allowed_read_prefixes": [
                         "",

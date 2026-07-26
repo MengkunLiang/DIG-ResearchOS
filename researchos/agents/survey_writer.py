@@ -71,7 +71,6 @@ class SurveyWriterAgent(Agent):
                     # Section prose often needs a distinct structural rewrite
                     # after citation/syntax repair.  Keep the window bounded,
                     # then hand control to the runtime recovery gate.
-                    "max_validation_retries": 5,
                     "temperature": 0.55,
                     "allowed_read_prefixes": [
                         "",
