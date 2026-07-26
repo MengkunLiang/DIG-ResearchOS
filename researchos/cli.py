@@ -75,6 +75,7 @@ from .runtime.workspace import (
     merge_workspace_artifact,
     migrate_workspace_note_directories,
 )
+from .ideation.formalization import legacy_t45_upgrade_reason
 from .schemas.state import StateYaml
 from .schemas.validator import (
     build_declared_outputs_from_state_machine,
@@ -881,6 +882,37 @@ def _validate_pipeline_workspace_entry(args: argparse.Namespace, workspace_dir: 
         )
         return 2
     if state.status == "COMPLETED":
+        upgrade_reason = legacy_t45_upgrade_reason(workspace_dir)
+        if upgrade_reason:
+            # This is a contract migration, not a reset: retain every old
+            # audit, Candidate and Proposal artifact, then resume from the
+            # first new formalization phase in a fresh model context.
+            state.current_task = "T4.5-FORMALIZE"
+            state.status = "PAUSED"
+            state.pending_gate = None
+            state.paused_at = datetime.now(timezone.utc).isoformat()
+            state.last_error = upgrade_reason
+            state.task_context["t45_formalization_upgrade"] = {
+                "reason": upgrade_reason,
+                "requested_at": state.paused_at,
+                "from_contract": "monolithic_t45_v1",
+                "to_contract": "blueprint_claim_registry_orientation_review_v2",
+                "preserves_existing_artifacts": True,
+            }
+            state.dump_yaml(state_path)
+            _render_workspace_entry_panel(
+                args,
+                title="已准备升级 T4.5 研究方案",
+                message=(
+                    "检测到旧版 T4.5 的审计已通过，但 Proposal/claims 尚未通过当前统一质量 gate。"
+                    "系统已保留原有审计和所有工作区文件，并将从 T4.5-FORMALIZE 用新的独立上下文重新正式化；"
+                    "不会重新运行 T4 Candidate 演化或 novelty 检索。"
+                ),
+                workspace=workspace_dir,
+                state=state,
+                border_style="bright_cyan",
+            )
+            return None
         _render_workspace_entry_panel(
             args,
             title="项目已经完成",

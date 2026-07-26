@@ -10,6 +10,7 @@ from .scout import ScoutAgent
 from .reader import ReaderAgent
 from .ideation import IdeationAgent
 from .novelty_auditor import NoveltyAuditorAgent
+from .research_formalizer import ResearchFormalizerAgent
 from .novelty import NoveltyAgent
 from .experimenter import ExperimenterAgent
 from .survey_writer import SurveyWriterAgent
@@ -29,6 +30,7 @@ AGENT_REGISTRY = {
     "reader": ReaderAgent,  # T3/T3.5
     "ideation": IdeationAgent,  # T4
     "novelty_auditor": NoveltyAuditorAgent,  # T4.5
+    "research_formalizer": ResearchFormalizerAgent,  # T4.5 formalization/review
     "novelty": NoveltyAgent,  # T6
     "experimenter": ExperimenterAgent,  # T5 external execution
     "survey_writer": SurveyWriterAgent,  # T3.6 optional survey branch
@@ -70,6 +72,8 @@ TASK_TO_AGENT_MAP = {
     "T3.6-FEED": SurveyWriterAgent,
     "T4": IdeationAgent,  # 假设生成
     "T4.5": NoveltyAuditorAgent,  # 新颖性审计
+    "T4.5-FORMALIZE": ResearchFormalizerAgent,
+    "T4.5-REVIEW": ResearchFormalizerAgent,
     "T5-REBOOST-GATE": ExperimenterAgent,  # 外部实验 context re-boost
     "T5-HANDOFF": ExperimenterAgent,  # 外部实验 handoff
     "T5-SPECIALIZE-EXECUTOR-SKILLS": ExperimenterAgent,  # 发布外部执行 Skill suite

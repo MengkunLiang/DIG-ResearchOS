@@ -31,6 +31,10 @@ REQUIRED_SOURCES = (
     SourceSpec("SRC_SYNTHESIS_WORKBENCH", "literature/synthesis_workbench.json", "synthesis_workbench", "required", "Structured literature evidence and confidence", 5),
     SourceSpec("SRC_DOMAIN_MAP", "literature/domain_map.json", "domain_map", "required", "Domain and bridge relationships", 5),
     SourceSpec("SRC_COMPARISON_TABLE", "literature/comparison_table.csv", "comparison_table", "required", "Comparable methods, modules, datasets, and metrics", 5),
+    SourceSpec("SRC_ORIENTATION", "ideation/orientation_config.yaml", "orientation_config", "required", "T4-selected publication orientation and formalization weights", 1),
+    SourceSpec("SRC_RESEARCH_BLUEPRINT", "ideation/research_blueprint.yaml", "research_blueprint", "required", "Shared source of truth for problem, method, claims, evaluation, contributions, and risks", 1),
+    SourceSpec("SRC_CLAIM_REGISTRY", "ideation/claim_registry.yaml", "claim_registry", "required", "Falsifiable claims with mechanisms, counterfactuals, tests, and kill conditions", 1),
+    SourceSpec("SRC_ORIENTATION_REVIEW", "ideation/orientation_review.json", "orientation_review", "required", "Independent orientation-aware quality review and targeted repair record", 1),
     SourceSpec("SRC_HYPOTHESES", "ideation/hypotheses.md", "hypotheses", "required", "Central hypothesis and mechanism candidates", 3),
     SourceSpec("SRC_EXP_PLAN", "ideation/exp_plan.yaml", "experiment_plan", "required", "Planned datasets, metrics, protocols, and ablations", 2),
     SourceSpec(

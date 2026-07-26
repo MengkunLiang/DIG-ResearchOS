@@ -217,6 +217,10 @@
             "synthesis_workbench",
             "domain_map",
             "comparison_table",
+            "orientation_config",
+            "research_blueprint",
+            "claim_registry",
+            "orientation_review",
             "hypotheses",
             "experiment_plan",
             "idea_scorecard",
@@ -641,6 +645,18 @@
         },
         "evidence_status": {
           "enum": ["source_supported", "proposed_not_verified", "unknown"]
+        },
+        "orientation": {
+          "enum": ["utd", "ccf_a", "hybrid"]
+        },
+        "blueprint_path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "claim_registry_path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "active_claim_ids": {
+          "$ref": "#/$defs/id_list"
         },
         "proposal_context": {
           "$ref": "#/$defs/proposal_context"

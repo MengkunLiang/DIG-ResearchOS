@@ -1406,6 +1406,29 @@ def summarize_tool_result(
             summary = summarize_reader_note_progress(data, progress=progress)
             detail = _compact_text(error or content or "工具返回失败", 180)
             return f"{summary}；问题：{detail}", _extract_output_path(tool_name, data)
+        if tool_name == "write_structured_file" and error == "parameter_validation":
+            attempted_path = data.get("path")
+            required_path = data.get("required_path")
+            if required_path:
+                required_schema = str(data.get("required_schema") or "")
+                if required_schema in {"research_blueprint", "claim_registry"}:
+                    return (
+                        "结构化文件未调用：path/data 等参数无效。"
+                        f"请先用 write_structured_file 写入 {required_path}（{required_schema}），"
+                        "再继续 T4.5 正式化；正式 Proposal 尚未被接受。",
+                        str(required_path),
+                    )
+                return (
+                    "结构化文件未调用：path/data 等参数无效。"
+                    f"必须调用 {required_path} 的 write_structured_file（exp_plan/yaml）；"
+                    "已阻止继续生成依赖该计划的正式交接文件。",
+                    str(required_path),
+                )
+            return (
+                "结构化文件未调用：path 必须是非空相对路径，data 必须是对象；"
+                f"本次 path={attempted_path!r}。",
+                _extract_output_path(tool_name, data),
+            )
         if tool_name == "write_structured_file" and error == "schema_validation_failed":
             schema_name = str(data.get("schema_name") or "unknown")
             raw_diagnostics = data.get("schema_errors")
@@ -1421,6 +1444,18 @@ def summarize_tool_result(
             if len(diagnostics) > len(excerpts):
                 detail += f"；另有 {len(diagnostics) - len(excerpts)} 项"
             return f"结构化文件未写入（{schema_name}）：{detail}", _extract_output_path(tool_name, data)
+        if error == "t45_formalization_requires_exp_plan":
+            detail = _compact_text(data.get("validation_error") or content or "exp_plan.yaml 尚未就绪", 180)
+            return (
+                f"正式化已阻止：先修复并结构化写入 exp_plan.yaml。原因：{detail}",
+                "ideation/exp_plan.yaml",
+            )
+        if error == "t45_formalization_requires_blueprint":
+            detail = _compact_text(data.get("validation_error") or content or "research_blueprint.yaml 或 claim_registry.yaml 尚未就绪", 180)
+            return (
+                f"正式化已阻止：先结构化写入 research_blueprint、claim_registry 与 exp_plan，再写正文。原因：{detail}",
+                "ideation/research_blueprint.yaml",
+            )
         if tool_name in _HIGH_VOLUME_TOOL_NAMES:
             return _summarize_high_volume_failure(tool_name, data=data, error=error), _extract_output_path(tool_name, data)
         return _compact_text(error or content or "工具返回失败", 280), _extract_output_path(tool_name, data)

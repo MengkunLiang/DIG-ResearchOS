@@ -15,6 +15,7 @@ from typing import Any
 import yaml
 
 from .state import T4ArtifactStore, stable_fingerprint
+from .formalization import persist_orientation_configuration
 
 
 def compile_pre_novelty_hypothesis_brief(
@@ -101,12 +102,17 @@ def compile_pre_novelty_hypothesis_brief(
     store.path("ideation/selected/pre_novelty_brief.md").write_text(
         _render_pre_novelty_brief(candidate, hypotheses, source_paths), encoding="utf-8"
     )
+    # T4 already owns the publication-orientation choice.  Materialize the
+    # compact transfer record beside the Pre-Novelty handoff so T4.5 never
+    # opens a redundant orientation gate or guesses from Proposal prose.
+    persist_orientation_configuration(workspace_dir)
     return {
         "selected_candidate": "ideation/selected/selected_candidate.json",
         "hypothesis_brief": "ideation/hypothesis_brief.yaml",
         "hypothesis_lineage": "ideation/selected/hypothesis_lineage.json",
         "search_targets": "ideation/selected/t45_search_targets.json",
         "brief": "ideation/selected/pre_novelty_brief.md",
+        "orientation_config": "ideation/orientation_config.yaml",
     }
 
 

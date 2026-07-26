@@ -937,6 +937,7 @@ states:
       selected_candidate: ideation/selected/selected_candidate.json
       t45_search_targets: ideation/selected/t45_search_targets.json
       pre_novelty_brief: ideation/selected/pre_novelty_brief.md
+      orientation_config: ideation/orientation_config.yaml # T4 已选 publication orientation 的 T4.5 传递记录
       risks: ideation/risks.md                          # legacy compatibility projection
       idea_rationales: ideation/idea_rationales.json    # legacy compatibility projection
       idea_scorecard: ideation/idea_scorecard.yaml      # legacy compatibility projection
@@ -972,9 +973,8 @@ states:
     next_on_success: T4.5
     next_on_failure: failed
 
-  # T4.5 状态：新颖性审计（Novelty Auditing）
-  # 用途：评估研究假设的新颖性和可行性
-  # Agent：novelty_auditor（新颖性审计员）
+  # T4.5 phase 1: Novelty Audit.  A pass enters a fresh formalization context;
+  # an audit never writes researcher-facing claims or Proposal prose itself.
   T4.5:
     agent: novelty_auditor
     inputs:
@@ -999,19 +999,51 @@ states:
       design_rationale_tuples_dir: ideation/_design_rationale_tuples # CDR design-rationale tuple 中间产物
     optional_outputs:
       collision_cases: ideation/collision_cases.md       # 条件输出：High/Medium Overlap 时必须存在
-      hypotheses: ideation/hypotheses.md                 # 仅 Final Gate Verdict 通过后由 T4.5 正式编译
-      research_dossier: ideation/research_dossier.json   # 假设、贡献、意义和风险的结构化档案
-      exp_plan: ideation/exp_plan.yaml
-      contribution_hypothesis_map: ideation/contribution_hypothesis_map.yaml
-      validation_map: ideation/validation_map.yaml
-      kill_criteria: ideation/kill_criteria.yaml
-      research_proposal: ideation/proposal/research_proposal.md # T4/T4.5 证据、假设、设计和风险整合的完整研究方案
-      proposal_manifest: ideation/proposal/proposal_manifest.json # Proposal 章节来源、T5 传递角色与 freshness 锚点
-      formalization_manifest: ideation/post_novelty_formalization.json
     # 当前主链默认跳过 legacy T5 pilot 与 legacy T6 novelty-final，但必须尊重 T4.5 Final Gate Verdict。
     # pass* 进入 T5-REBOOST-GATE 外部实验协议链；return/drop/reject/collision 进入人工审阅 gate，
     # 由用户决定外部实验链/T4/stop。
     next_on_success: __parse_from_output__
+    next_on_failure: failed
+
+  # T4.5 phase 2: new model context for a unified research blueprint,
+  # claim registry, experiment plan and researcher-facing proposal.
+  T4.5-FORMALIZE:
+    agent: research_formalizer
+    mode: formalize
+    inputs:
+      project: project.yaml
+      hypothesis_brief: ideation/hypothesis_brief.yaml
+      selected_candidate: ideation/selected/selected_candidate.json
+      novelty_audit: ideation/novelty_audit.md
+      synthesis: literature/synthesis.md
+      comparison_table: literature/comparison_table.csv
+      t4_run_config: ideation/t4_run_config.json
+    outputs:
+      research_blueprint: ideation/research_blueprint.yaml
+      claim_registry: ideation/claim_registry.yaml
+      hypotheses: ideation/hypotheses.md
+      exp_plan: ideation/exp_plan.yaml
+      research_proposal: ideation/proposal/research_proposal.md
+    next_on_success: T4.5-REVIEW
+    next_on_failure: failed
+
+  # T4.5 phase 3: a separate orientation-aware review context performs
+  # targeted repair, records its rubric, then unlocks the T5 handoff.
+  T4.5-REVIEW:
+    agent: research_formalizer
+    mode: review
+    inputs:
+      project: project.yaml
+      novelty_audit: ideation/novelty_audit.md
+      orientation_config: ideation/orientation_config.yaml
+      research_blueprint: ideation/research_blueprint.yaml
+      claim_registry: ideation/claim_registry.yaml
+      hypotheses: ideation/hypotheses.md
+      exp_plan: ideation/exp_plan.yaml
+      research_proposal: ideation/proposal/research_proposal.md
+    outputs:
+      orientation_review: ideation/orientation_review.json
+    next_on_success: T5-REBOOST-GATE
     next_on_failure: failed
 
   # T4.5-HUMAN-REVIEW 状态：T4.5 非通过 verdict 的人工决策
@@ -1054,6 +1086,10 @@ states:
         若编译器报告缺失材料或契约不一致，保留具体诊断并暂停；不得调用模型臆造 T4.5 证据、基线或执行约束。
     inputs:
       project: project.yaml
+      orientation_config: ideation/orientation_config.yaml
+      research_blueprint: ideation/research_blueprint.yaml
+      claim_registry: ideation/claim_registry.yaml
+      orientation_review: ideation/orientation_review.json
       hypotheses: ideation/hypotheses.md
       research_dossier: ideation/research_dossier.json
       research_proposal: ideation/proposal/research_proposal.md
@@ -1098,6 +1134,10 @@ states:
     mode: handoff
     inputs:
       project: project.yaml
+      orientation_config: ideation/orientation_config.yaml
+      research_blueprint: ideation/research_blueprint.yaml
+      claim_registry: ideation/claim_registry.yaml
+      orientation_review: ideation/orientation_review.json
       hypotheses: ideation/hypotheses.md
       research_proposal: ideation/proposal/research_proposal.md
       proposal_manifest: ideation/proposal/proposal_manifest.json

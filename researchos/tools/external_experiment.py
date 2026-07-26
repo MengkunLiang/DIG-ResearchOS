@@ -407,6 +407,10 @@ PRE_T5_SOURCE_FILES = [
     "literature/literature_manifest.json",
     "literature/cross_domain_catalogs/index.json",
     "literature/comparison_table.csv",
+    "ideation/orientation_config.yaml",
+    "ideation/research_blueprint.yaml",
+    "ideation/claim_registry.yaml",
+    "ideation/orientation_review.json",
     "ideation/hypotheses.md",
     "ideation/research_dossier.json",
     "ideation/proposal/research_proposal.md",
@@ -573,6 +577,10 @@ def _research_reboost_inventory(workspace: Path) -> dict[str, Any]:
         "synthesis_workbench": ["method_mechanism", "claim_boundary"],
         "domain_map": ["project_scope", "method_mechanism"],
         "comparison_table": ["baseline_selection", "experiment_protocol"],
+        "orientation_config": ["research_goal", "writer_contract"],
+        "research_blueprint": ["research_goal", "method_mechanism", "experiment_protocol", "claim_boundary", "risk_analysis", "writer_contract"],
+        "claim_registry": ["hypothesis", "method_mechanism", "experiment_protocol", "claim_boundary", "writer_contract"],
+        "orientation_review": ["claim_boundary", "risk_analysis", "writer_contract"],
         "hypotheses": ["hypothesis", "method_mechanism", "claim_boundary"],
         "experiment_plan": ["experiment_protocol", "baseline_selection", "writer_contract"],
         "idea_scorecard": ["risk_analysis", "method_mechanism"],
@@ -591,6 +599,10 @@ def _research_reboost_inventory(workspace: Path) -> dict[str, Any]:
         is_available = entry.get("availability") == "available"
         is_current_t45_context = str(entry.get("category") or "") in {
             "research_dossier",
+            "orientation_config",
+            "research_blueprint",
+            "claim_registry",
+            "orientation_review",
             "research_proposal",
             "validation_map",
             "contribution_hypothesis_map",
@@ -1579,6 +1591,9 @@ def _research_context_source_refs(
     proposal_context: dict[str, Any],
 ) -> list[dict[str, str]]:
     refs = [
+        _source_ref("SRC_ORIENTATION", "ideation/orientation_config.yaml", "T4 orientation controls proposal and evaluation emphasis", "reconciled"),
+        _source_ref("SRC_RESEARCH_BLUEPRINT", "ideation/research_blueprint.yaml", "Blueprint is the source of truth for method, evaluation, contributions and risks", "reconciled"),
+        _source_ref("SRC_CLAIM_REGISTRY", "ideation/claim_registry.yaml", "Claim registry supplies falsification and experiment mappings", "reconciled"),
         _source_ref("SRC_IDEA_SCORECARD", "selected Candidate dossier", "T4 selected direction preserves the research problem and decision context"),
         _source_ref("SRC_HYPOTHESES", "formal research dossier", "Formal hypotheses define the testable mechanism and scope", "reconciled"),
         _source_ref("SRC_NOVELTY", "Final Gate Verdict", "Novelty audit bounds the interpretation and claim ceiling", "reconciled"),
@@ -1604,11 +1619,19 @@ def _build_t45_research_context(
     hypotheses: str,
     contribution_map: dict[str, Any],
     proposal_context: dict[str, Any],
+    orientation_config: dict[str, Any] | None = None,
+    blueprint: dict[str, Any] | None = None,
+    claim_registry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Retain T4 decision context without promoting it to empirical evidence."""
 
-    thesis = _dossier_statement(dossier, "central_thesis")
-    problem = _dossier_statement(dossier, "research_problem") or _candidate_dossier_value(
+    orientation_config = orientation_config or {}
+    blueprint = blueprint or {}
+    claim_registry = claim_registry or {}
+    blueprint_problem = blueprint.get("core_problem") if isinstance(blueprint.get("core_problem"), dict) else {}
+    blueprint_approach = blueprint.get("proposed_approach") if isinstance(blueprint.get("proposed_approach"), dict) else {}
+    thesis = _compact_text(str(blueprint_approach.get("central_insight") or ""), limit=800) or _dossier_statement(dossier, "central_thesis")
+    problem = _compact_text(str(blueprint_problem.get("scientific_significance") or ""), limit=800) or _dossier_statement(dossier, "research_problem") or _candidate_dossier_value(
         selected_candidate,
         "target_problem",
         "problem",
@@ -1654,6 +1677,14 @@ def _build_t45_research_context(
         "contribution_intent": contributions,
         "evidence_status": evidence_status,
         "proposal_context": proposal_context,
+        "orientation": str(orientation_config.get("profile_type") or "hybrid"),
+        "blueprint_path": "ideation/research_blueprint.yaml",
+        "claim_registry_path": "ideation/claim_registry.yaml",
+        "active_claim_ids": [
+            str(item.get("id") or "").strip()
+            for item in claim_registry.get("claims", [])
+            if isinstance(item, dict) and str(item.get("id") or "").strip()
+        ],
         "source_refs": _research_context_source_refs(dossier, proposal_context),
     }
 
@@ -2122,10 +2153,80 @@ def _build_reboost_baseline_matrix(exp_plan: dict[str, Any], workspace: Path, cl
     return baselines
 
 
-def _build_reboost_claims(exp_plan: dict[str, Any], metrics: list[str], baseline_ids: list[str], module_ids: list[str]) -> list[dict[str, Any]]:
+def _build_reboost_claims(
+    exp_plan: dict[str, Any],
+    metrics: list[str],
+    baseline_ids: list[str],
+    module_ids: list[str],
+    claim_registry: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     experiments = _experiments_from_plan(exp_plan)
     if not experiments:
         return []
+    formal_claims = claim_registry.get("claims") if isinstance(claim_registry, dict) else []
+    if isinstance(formal_claims, list) and formal_claims:
+        claims: list[dict[str, Any]] = []
+        for idx, claim in enumerate((item for item in formal_claims if isinstance(item, dict)), start=1):
+            claim_id = str(claim.get("id") or f"C{idx}").strip()
+            statement = _compact_text(str(claim.get("statement") or ""), limit=500)
+            evaluation_methods = claim.get("evaluation_methods") if isinstance(claim.get("evaluation_methods"), list) else []
+            raw_claim_type = str(claim.get("claim_type") or "research_claim").strip().casefold()
+            claim_type = {
+                "technical": "performance",
+                "algorithmic": "performance",
+                "system": "performance",
+                "mechanism": "mechanism",
+                "behavioral": "mechanism",
+                "causal": "mechanism",
+                "robustness": "robustness",
+                "generalization": "generality",
+                "design_proposition": "limitation",
+            }.get(raw_claim_type, "performance")
+            claims.append(
+                {
+                    "claim_id": claim_id,
+                    "statement": statement or f"{claim_id}: external execution must test this pre-experiment claim.",
+                    "claim_type": claim_type,
+                    "initial_strength_ceiling": "moderate",
+                    "pre_experiment_status": "untested",
+                    # The T5 handoff's executable module catalogue remains
+                    # the authority for IDs.  Blueprint component IDs are
+                    # retained in the source artifacts and cannot be emitted
+                    # here as dangling executor module references.
+                    "related_module_ids": module_ids,
+                    "required_baseline_ids": baseline_ids,
+                    "evidence_requirements": [
+                        {
+                            "experiment_id": "E_FORMAL",
+                            "evidence_type": "main_result",
+                            "dataset_or_setting": "planned setting in ideation/exp_plan.yaml",
+                            "metric_or_observation": "; ".join(str(item) for item in evaluation_methods if str(item).strip()) or ", ".join(metrics) or "unknown_metric_requires_protocol",
+                            "comparison": str(claim.get("baseline_or_counterfactual") or "Compare against every required baseline under the same protocol."),
+                            "acceptance_criterion": str(claim.get("falsification_condition") or "Preserve raw metrics, configs, logs, and baseline coverage before supporting the claim."),
+                        }
+                    ],
+                    "support_criteria": [
+                        "Required baselines and the mapped experiment are executed under the preserved protocol.",
+                        "Raw metrics, configurations, logs, and component attribution are retained for the final handoff.",
+                    ],
+                    "weaken_criteria": [
+                        "The declared comparison, mechanism test, or coverage condition is unavailable or inconclusive.",
+                        "A planned ablation cannot distinguish the proposed mechanism from its competing explanation.",
+                    ],
+                    "falsification_criteria": [
+                        str(claim.get("falsification_condition") or "The declared baseline or counterfactual explains the result equally well."),
+                    ],
+                    "prohibited_interpretations": [
+                        "Do not treat a planned expected observation as an empirical result.",
+                        "Do not claim novelty beyond the T4.5 novelty boundary.",
+                    ],
+                    "source_refs": [
+                        _source_ref("SRC_CLAIM_REGISTRY", f"claims[{idx - 1}]", "Claim registry defines the falsification and evaluation boundary", "reconciled"),
+                        _source_ref("SRC_EXP_PLAN", "experiments", "Experiment plan maps the claim to executable tests", "reconciled"),
+                    ],
+                }
+            )
+        return claims
     claims: list[dict[str, Any]] = []
     for idx, exp in enumerate(experiments[:4], start=1):
         claim_id = f"C{idx}"
@@ -2248,6 +2349,9 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
     if dossier.get("semantics") != "t45_research_dossier" or dossier.get("status") != "formalized_after_novelty_pass":
         dossier = {}
     selected_candidate = _read_json(workspace / "ideation" / "selected" / "selected_candidate.json")
+    orientation_config = _read_yaml(workspace / "ideation" / "orientation_config.yaml")
+    blueprint = _read_yaml(workspace / "ideation" / "research_blueprint.yaml")
+    claim_registry = _read_yaml(workspace / "ideation" / "claim_registry.yaml")
     contribution_map = _read_yaml(workspace / "ideation" / "contribution_hypothesis_map.yaml")
     proposal_context = _load_t45_proposal_context(
         workspace,
@@ -2265,6 +2369,10 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                     "Proposal is present but does not satisfy the current post-novelty proposal contract; "
                     "T5 uses the explicit legacy formalization fallback instead."
                 )
+    t45_quality_ok, t45_quality_error = validate_t45_research_proposal(
+        workspace,
+        workspace / "ideation" / "novelty_audit.md",
+    )
     synthesis = _read_text(workspace / "literature" / "synthesis.md", max_chars=16000)
     novelty = _read_text(workspace / "ideation" / "novelty_audit.md", max_chars=16000)
     risks, risk_source = _first_existing_text(
@@ -2280,6 +2388,9 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
         hypotheses=hypotheses,
         contribution_map=contribution_map,
         proposal_context=proposal_context,
+        orientation_config=orientation_config,
+        blueprint=blueprint,
+        claim_registry=claim_registry,
     )
     resource_discovery_context = _build_resource_discovery_context(workspace, source_manifest)
     metrics = _extract_exp_plan_metrics(exp_plan)
@@ -2289,7 +2400,7 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
     claim_ids = [f"C{idx}" for idx, _exp in enumerate(experiments[:4], start=1)]
     baselines = _build_reboost_baseline_matrix(exp_plan, workspace, claim_ids)
     baseline_ids = [item["baseline_id"] for item in baselines]
-    claims = _build_reboost_claims(exp_plan, metrics, baseline_ids, [module_id])
+    claims = _build_reboost_claims(exp_plan, metrics, baseline_ids, [module_id], claim_registry)
     claim_ids = [item["claim_id"] for item in claims]
     for baseline in baselines:
         baseline["linked_claim_ids"] = claim_ids
@@ -2372,6 +2483,21 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 "owner": "human",
                 "required_action": "Provide or approve the listed source-backed experiment fields in ideation/exp_plan.yaml, then rerun T5-REBOOST.",
                 "source_refs": [_source_ref("SRC_EXP_PLAN", "experiments", "Deterministic protocol completeness check")],
+            }
+        )
+    if not t45_quality_ok:
+        status = "blocked"
+        unresolved_items.append(
+            {
+                "item_id": f"U{len(unresolved_items) + 1}",
+                "severity": "blocking",
+                "question": "T4.5 formalization has not passed its final quality gate.",
+                "why_unresolved": "T5 may not reconstruct a research contract from incomplete, audit-dominated, or inconsistent T4.5 artifacts.",
+                "affected_fields": ["research_blueprint", "claim_registry", "hypotheses", "exp_plan", "research_proposal", "orientation_review"],
+                "blocking": True,
+                "owner": "human",
+                "required_action": "Resume T4.5-FORMALIZE or T4.5-REVIEW and repair the reported quality-gate failure before compiling T5.",
+                "source_refs": [_source_ref("SRC_RESEARCH_BLUEPRINT", "ideation/research_blueprint.yaml", str(t45_quality_error or "T4.5 quality validation failed"), "reconciled")],
             }
         )
 

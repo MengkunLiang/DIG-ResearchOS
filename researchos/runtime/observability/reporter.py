@@ -905,6 +905,18 @@ class StageReporter:
 
         candidates = (
             (
+                "研究蓝图",
+                "ideation/research_blueprint.yaml",
+                "真实问题、技术挑战、组件、评测、贡献和风险的共同来源。",
+                "优先核对；T5 以此保持研究结构一致。",
+            ),
+            (
+                "Claim 注册表",
+                "ideation/claim_registry.yaml",
+                "每项研究主张的机制、反事实、评测和证伪条件。",
+                "核对每条主张是否都能被实验否证。",
+            ),
+            (
                 "完整研究方案",
                 "ideation/proposal/research_proposal.md",
                 "问题、机制、贡献、现实意义、风险和完整实验逻辑。",
@@ -939,6 +951,12 @@ class StageReporter:
                 "ideation/kill_criteria.yaml",
                 "哪些结果要求收缩、修正或放弃主张。",
                 "T5 用于实验诊断和风险控制。",
+            ),
+            (
+                "方案审阅记录",
+                "ideation/orientation_review.json",
+                "UTD、CCF-A 或 Hybrid 权重下的质量评分与定向修复记录。",
+                "恢复或进入 T5 前核对质量 gate。",
             ),
             (
                 "新颖性审计",

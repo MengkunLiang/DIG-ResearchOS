@@ -84,7 +84,12 @@ from ..ideation.evidence_display import (
     load_evidence_display_catalog,
     referenced_evidence,
 )
-from ..ideation.proposal import repair_t45_proposal_manifest, validate_t45_research_proposal
+from ..ideation.formalization import (
+    ORIENTATION_REVIEW_REL_PATH,
+    validate_orientation_review,
+    validate_t45_formalization_core,
+)
+from ..ideation.proposal import validate_t45_research_proposal
 from ..ideation.state import T4ArtifactStore, build_t4_input_fingerprints, run_config_fingerprint
 
 
@@ -2194,10 +2199,11 @@ def _normalize_venue_style(value: Any) -> str:
 def _extract_t45_final_gate_verdict(text: str) -> str:
     """Extract the T4.5 Final Gate Verdict without interpreting scientific quality."""
 
-    match = re.search(
+    matches = list(re.finditer(
         r"(?im)^\s*(?:#+\s*)?(?:\*\*)?\s*Final\s+Gate\s+Verdict\s*(?:\*\*)?\s*[:：]\s*(.+?)\s*$",
         text,
-    )
+    ))
+    match = matches[-1] if matches else None
     if match:
         return match.group(1).strip()
 
@@ -2213,16 +2219,12 @@ def _extract_t45_final_gate_verdict(text: str) -> str:
 
 
 def _validate_t45_post_novelty_formalization(workspace_dir: Path, audit_path: Path) -> tuple[bool, str | None]:
-    """Require formal T4 artifacts only after an accepted T4.5 verdict.
-
-    The manifest makes the lifecycle explicit for downstream consumers: a
-    Pre-Novelty brief is sufficient for T4.5, while T5 may only receive the
-    formal bundle that was compiled against a completed audit.
-    """
-
+    """Validate the final formalization receipt for legacy/resume callers."""
     manifest_path = workspace_dir / "ideation" / "post_novelty_formalization.json"
-    repair_t45_proposal_manifest(workspace_dir, audit_path)
     required = {
+        "orientation_config": workspace_dir / "ideation" / "orientation_config.yaml",
+        "research_blueprint": workspace_dir / "ideation" / "research_blueprint.yaml",
+        "claim_registry": workspace_dir / "ideation" / "claim_registry.yaml",
         "hypotheses": workspace_dir / "ideation" / "hypotheses.md",
         "research_dossier": workspace_dir / "ideation" / "research_dossier.json",
         "exp_plan": workspace_dir / "ideation" / "exp_plan.yaml",
@@ -2231,6 +2233,7 @@ def _validate_t45_post_novelty_formalization(workspace_dir: Path, audit_path: Pa
         "kill_criteria": workspace_dir / "ideation" / "kill_criteria.yaml",
         "research_proposal": workspace_dir / "ideation" / "proposal" / "research_proposal.md",
         "proposal_manifest": workspace_dir / "ideation" / "proposal" / "proposal_manifest.json",
+        "orientation_review": workspace_dir / ORIENTATION_REVIEW_REL_PATH,
     }
     if not manifest_path.exists() or manifest_path.stat().st_size <= 0:
         return False, "missing post-novelty formalization manifest"
@@ -2255,69 +2258,15 @@ def _validate_t45_post_novelty_formalization(workspace_dir: Path, audit_path: Pa
     listed = manifest.get("artifacts") if isinstance(manifest.get("artifacts"), dict) else {}
     if any(str(listed.get(name) or "") != path.relative_to(workspace_dir).as_posix() for name, path in required.items()):
         return False, "post-novelty formalization manifest does not list the required artifact paths"
-    hypotheses_text = (workspace_dir / "ideation" / "hypotheses.md").read_text(encoding="utf-8", errors="replace")
-    dossier_ok, dossier_error = _validate_t45_research_dossier(workspace_dir, hypotheses_text)
-    if not dossier_ok:
-        return False, dossier_error
+    formal_ok, formal_error = validate_t45_formalization_core(workspace_dir)
+    if not formal_ok:
+        return False, formal_error
     proposal_ok, proposal_error = validate_t45_research_proposal(workspace_dir, audit_path)
     if not proposal_ok:
         return False, proposal_error
-    return True, None
-
-
-def _validate_t45_research_dossier(workspace_dir: Path, hypotheses_text: str) -> tuple[bool, str | None]:
-    """Require a usable research dossier after T4.5 without judging its science."""
-
-    if len(hypotheses_text.strip()) < 3_000:
-        return False, "hypotheses.md is too short for the post-novelty research dossier"
-    required_markers = {
-        "summary": r"(?im)^#{1,3}\s*(摘要|executive summary)\b",
-        "why_it_matters": r"(?im)^#{1,3}\s*(研究意义|why this matters|问题背景)",
-        "contributions": r"(?im)^#{1,3}\s*(研究贡献|contributions?)\b",
-        "practical_or_commercial_implications": r"(?im)^#{1,3}\s*(现实.*含义|实践.*含义|管理.*含义|商业.*含义|practical.*implications?|commercial.*implications?)",
-        "evidence_or_novelty_boundary": r"(?im)^#{1,3}\s*(证据边界|新颖性约束|evidence boundary|novelty boundary)",
-        "risks_or_kill_criteria": r"(?im)^#{1,3}\s*(风险.*停止|风险.*证伪|risks?.*(kill|falsification)|kill criteria)",
-        "lineage": r"(?im)^#{1,3}\s*(研究谱系|可追溯性|lineage|traceability)",
-    }
-    missing_markers = [label for label, pattern in required_markers.items() if not re.search(pattern, hypotheses_text)]
-    if missing_markers:
-        return False, "hypotheses.md is missing research-dossier sections: " + ", ".join(missing_markers)
-    if not re.search(r"(?im)^#{1,4}\s*H1\b", hypotheses_text):
-        return False, "hypotheses.md is missing a formal H1 heading"
-    dossier_path = workspace_dir / "ideation" / "research_dossier.json"
-    try:
-        dossier = json.loads(dossier_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return False, f"research_dossier.json cannot be read: {exc}"
-    if not isinstance(dossier, dict) or dossier.get("semantics") != "t45_research_dossier":
-        return False, "research_dossier.json semantics is invalid"
-    if dossier.get("status") != "formalized_after_novelty_pass":
-        return False, "research_dossier.json is not marked as an accepted audit result"
-    required = {
-        "candidate_id",
-        "selection_fingerprint",
-        "novelty_audit_verdict",
-        "central_thesis",
-        "research_problem",
-        "why_it_matters",
-        "contributions",
-        "hypotheses",
-        "evidence_boundary",
-        "novelty_boundary",
-        "risks_and_kill_criteria",
-        "traceability",
-    }
-    missing = sorted(key for key in required if key not in dossier)
-    if missing:
-        return False, "research_dossier.json is missing fields: " + ", ".join(missing)
-    why_it_matters = dossier.get("why_it_matters")
-    if not isinstance(why_it_matters, dict) or not {
-        "scholarly", "practical", "commercial", "stakeholders_or_processes"
-    }.issubset(why_it_matters):
-        return False, "research_dossier.json.why_it_matters is incomplete"
-    traceability = dossier.get("traceability")
-    if not isinstance(traceability, dict) or not isinstance(traceability.get("source_artifacts"), list):
-        return False, "research_dossier.json.traceability.source_artifacts is invalid"
+    review_ok, review_error = validate_orientation_review(workspace_dir)
+    if not review_ok:
+        return False, review_error
     return True, None
 
 
@@ -6659,14 +6608,13 @@ class StateMachine:
             "continue_to_t7",
         }
         if verdict_token in pass_tokens:
-            formal_ok, _formal_error = _validate_t45_post_novelty_formalization(workspace_dir, audit_path)
-            if not formal_ok:
-                return human_review
-            if "T5-REBOOST-GATE" in self.nodes:
-                return "T5-REBOOST-GATE"
-            if "T5-HANDOFF" in self.nodes:
-                return "T5-HANDOFF"
-            return "failed"
+            # Audit and formalization deliberately use independent model
+            # contexts.  A novelty pass only authorizes the unified blueprint
+            # stage; it never means the Proposal or experiment plan has been
+            # written or quality-checked yet.
+            if "T4.5-FORMALIZE" in self.nodes:
+                return "T4.5-FORMALIZE"
+            return human_review
         return human_review
 
     def _parse_t75_decision(self, workspace_dir: Path) -> str:

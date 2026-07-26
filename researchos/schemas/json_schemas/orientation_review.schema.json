@@ -1,0 +1,32 @@
+{
+  "$id": "https://researchos.dev/schemas/orientation_review.schema.json",
+  "type": "object",
+  "properties": {
+    "semantics": {"const": "t45_orientation_aware_review"},
+    "orientation": {"enum": ["utd", "ccf_a", "hybrid"]},
+    "status": {"enum": ["accepted", "requires_repair"]},
+    "scores": {
+      "type": "object",
+      "properties": {
+        "problem_significance": {"type": "number", "minimum": 0, "maximum": 5},
+        "technical_novelty": {"type": "number", "minimum": 0, "maximum": 5},
+        "technical_completeness": {"type": "number", "minimum": 0, "maximum": 5},
+        "design_rationale": {"type": "number", "minimum": 0, "maximum": 5},
+        "claim_clarity": {"type": "number", "minimum": 0, "maximum": 5},
+        "evaluation_rigor": {"type": "number", "minimum": 0, "maximum": 5},
+        "mechanism_validation": {"type": "number", "minimum": 0, "maximum": 5},
+        "theoretical_or_design_value": {"type": "number", "minimum": 0, "maximum": 5},
+        "practical_significance": {"type": "number", "minimum": 0, "maximum": 5},
+        "cross_artifact_consistency": {"type": "number", "minimum": 0, "maximum": 5},
+        "writing_quality": {"type": "number", "minimum": 0, "maximum": 5},
+        "cross_level_integration": {"type": "number", "minimum": 0, "maximum": 5}
+      },
+      "required": ["problem_significance", "technical_novelty", "technical_completeness", "design_rationale", "claim_clarity", "evaluation_rigor", "mechanism_validation", "theoretical_or_design_value", "practical_significance", "cross_artifact_consistency", "writing_quality"],
+      "additionalProperties": false
+    },
+    "issues": {"type": "array", "items": {"type": "object"}},
+    "repair_summary": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["semantics", "orientation", "status", "scores", "issues", "repair_summary"],
+  "additionalProperties": true
+}

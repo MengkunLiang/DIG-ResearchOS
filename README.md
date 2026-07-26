@@ -18,6 +18,7 @@ Choose the path that matches the state of your work. Do not edit `state.yaml` to
 | --- | --- | --- | --- |
 | Start a research project from zero | `init-workspace`, then `run` | Creates an independent workspace and begins at T1. Research scope and literature-coverage Gates will ask for your decisions. | Do not create or edit `state.yaml` first. |
 | Continue the same project after Ctrl+C, a Gate, or a transient service interruption | `resume --workspace <directory>` | Continues from durable state. At T2/T3, a light decision lets you keep the current scope or adjust it. | Do not call `run` again or write from a second terminal. |
+| Open an older project completed with the previous T4.5 contract | `resume --workspace <directory>` | If its passed novelty audit lacks the current blueprint/claim/review quality gate, ResearchOS preserves all old artifacts and reopens only `T4.5-FORMALIZE`; it does not rerun T4 or novelty search. | Do not edit the old Proposal or `state.yaml` by hand. |
 | Deliberately revisit T2, T3, or T4 in the same project | `resume --workspace <directory> --from-task T2` | Re-enters the chosen research decision surface after prerequisite checks. T2 opens full parameter selection; T3 reviews retrieval coverage first. | Do not substitute `run-task` for a normal workflow restart. |
 | Create a new project from another project's materials | `run --workspace <new-dir> --from <source-dir> --start-task T2` | Copies declared upstream material into a new workspace. The imported project gets its own T2/T3 parameter or coverage decision. | It does not merge the source `state.yaml`, history, or runtime logs. |
 | Do one focused job, such as a PDF note card or a field synthesis | `browse-skills`, then `run-skill` | Creates a standalone, resumable Skill session with its own declared inputs, outputs, and recovery command. | Do not start pipeline-owned or T5 executor Skills with `run-skill`. |
@@ -37,12 +38,12 @@ Longer names such as `T5-REBOOST-GATE`, `T5-PROTOCOL-GATE`, and `T3.6-SEC-INTRO`
 | T3.5 synthesis | Turn the literature into mechanisms, method differences, tensions, and research gaps. | Decide whether to take the optional Survey branch. | `literature/synthesis.md` |
 | T3.6 optional Survey | Write a field Survey only when the current evidence justifies it; otherwise it is skipped. | Skip, write from the present corpus, or request one targeted supplement. | `drafts/survey/` |
 | T4 research ideas | Generate, compare, and evolve multiple research directions. | Proceed, optimize, explore again, or inspect a Candidate only. | Candidate Cards, scores, evidence, and lineage under `ideation/` |
-| T4.5 novelty audit | Check similar work and mechanism differences; turn the selected direction into a formal research package. | Review the novelty verdict and required baselines. | `ideation/proposal/research_proposal.md`, `ideation/hypotheses.md`, `ideation/exp_plan.yaml` |
+| T4.5 novelty and formalization | First audit similar work and mechanism differences; then, in separate contexts, build one orientation-aware research blueprint and review it before T5. | Review a non-pass novelty verdict only; UTD/CCF-A/Hybrid is already inherited from T4 and is not asked again. | `ideation/research_blueprint.yaml`, `ideation/claim_registry.yaml`, `ideation/proposal/research_proposal.md` |
 | T5 external-execution preparation | Compile the T4.5 package into an executor handoff whose research constraints cannot be silently changed. | Resolve only settings that affect research boundaries; place existing resources or let the executor prepare public ones. | `external_executor/handoff_pack.json`, `resources/` |
 | T8 writing | Write, review, and revise using verified experimental facts. | Choose a writing style or template. | `drafts/` and experiment claim/evidence files |
 | T9 submission | Review, genuinely compile, and package the submission. | Only when an environment or compilation recovery is needed. | `submission/`, final PDF, and compile report |
 
-The two most important boundaries are these: T4.5 turns an interesting idea into a research plan with hypotheses, an experiment plan, and risk boundaries. T5 is not an experiment runner: it prepares and verifies an execution contract; an external Codex, Claude, or human executor then performs the real work in the same workspace.
+The two most important boundaries are these: T4.5 uses three logical steps—Novelty Audit, Research Formalization, and Orientation-Aware Review/Repair. The first step owns collision labels and required baselines; the second owns a shared blueprint, claims, experiment plan, and Proposal; the third rejects thin, audit-dominated, inconsistent, or untestable plans. UTD, CCF-A, and Hybrid use the same seven-section template, with different weights and review emphasis. T5 is not an experiment runner: it consumes only a passed T4.5 package and prepares a verified execution contract for an external Codex, Claude, or human executor.
 
 When T4.5 succeeds, the terminal displays a “key research files” table that points directly to the proposal, hypotheses, experiment plan, contribution/validation maps, stopping criteria, and novelty audit, with their next use. T5 consumes those files; you do not need to find them from memory.
 
@@ -50,11 +51,14 @@ When reviewing a T4.5 result yourself, read these files in this order. They are 
 
 | Read first | Why it matters | T5 use |
 | --- | --- | --- |
+| `ideation/research_blueprint.yaml` | Shared source of truth for the real-world problem, technical challenges, components, evaluation, contributions, and risks. | Primary structure for the executor handoff; prevents a long Markdown file from becoming the sole authority. |
+| `ideation/claim_registry.yaml` | Every active claim's mechanism, counterfactual, evaluation method, competing explanation, and falsification condition. | Keeps every executable test tied to a claim boundary. |
 | `ideation/proposal/research_proposal.md` | The complete research story: problem, mechanism, theoretical and practical implications, contribution, study design, risks, and limitations. | Preserves the research intent and boundaries behind the structured controls. |
 | `ideation/hypotheses.md` | Falsifiable central and supporting hypotheses, assumptions, expected observations, and alternatives. | Prevents an executor from turning a hypothesis into a reported result. |
 | `ideation/exp_plan.yaml` | Planned tasks, metrics, required baselines, datasets/benchmarks when known, and evaluation rules. | Becomes the core experimental constraint. |
 | `ideation/contribution_hypothesis_map.yaml` and `ideation/validation_map.yaml` | Which contribution depends on which hypothesis and what evidence could validate or refute it. | Becomes the claim/evidence boundary for implementation and T8. |
 | `ideation/kill_criteria.yaml` | Conditions that narrow, stop, or reject a claim. | Keeps negative results and invalidation paths visible. |
+| `ideation/orientation_review.json` | The UTD/CCF-A/Hybrid-weighted quality review and its targeted repairs. | T5 accepts the package only when this review is accepted. |
 | `ideation/novelty_audit.md` | Similar-work collisions, mechanism distinctions, required baselines, and unresolved gaps. | Defines the comparison and novelty boundary; unresolved gaps remain visible. |
 
 ## The Workspace Is The Project Record

@@ -12,6 +12,20 @@ import re
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+from ..schemas.validator import validate_record
+from .formalization import (
+    BLUEPRINT_REL_PATH,
+    CLAIM_REGISTRY_REL_PATH,
+    ORIENTATION_CONFIG_REL_PATH,
+    ORIENTATION_REVIEW_REL_PATH,
+    load_orientation_configuration,
+    validate_orientation_review,
+    validate_research_proposal_text,
+    validate_t45_formalization_core,
+)
+
 
 PROPOSAL_REL_PATH = "ideation/proposal/research_proposal.md"
 PROPOSAL_MANIFEST_REL_PATH = "ideation/proposal/proposal_manifest.json"
@@ -20,12 +34,16 @@ PROPOSAL_STATUS = "formalized_after_novelty_pass"
 
 PROPOSAL_REQUIRED_SOURCE_ARTIFACTS = (
     "ideation/selected/selected_candidate.json",
+    ORIENTATION_CONFIG_REL_PATH,
+    BLUEPRINT_REL_PATH,
+    CLAIM_REGISTRY_REL_PATH,
     "ideation/hypotheses.md",
     "ideation/research_dossier.json",
     "ideation/exp_plan.yaml",
     "ideation/novelty_audit.md",
     "ideation/validation_map.yaml",
     "ideation/kill_criteria.yaml",
+    ORIENTATION_REVIEW_REL_PATH,
 )
 
 _PASS_VERDICTS = {
@@ -38,36 +56,23 @@ _PASS_VERDICTS = {
 }
 
 PROPOSAL_SECTION_KEYS = (
-    "summary",
-    "motivation_and_positioning",
-    "mechanism_and_hypotheses",
-    "research_design",
-    "validation_and_baselines",
-    "contributions_and_implications",
-    "feasibility_risks_and_milestones",
-    "boundaries_and_traceability",
+    "motivation",
+    "gap_and_challenges",
+    "approach",
+    "claims",
+    "evaluation",
+    "contributions",
+    "risks",
 )
 
-_SECTION_PATTERNS = {
-    "summary": r"(?im)^#{1,3}\s*(?:摘要|执行摘要|研究摘要|executive summary|abstract)",
-    "motivation_and_positioning": r"(?im)^#{1,3}\s*(?:研究背景|研究意义|问题背景|文献定位|motivation|background|positioning)",
-    "mechanism_and_hypotheses": r"(?im)^#{1,3}\s*(?:理论机制|核心机制|研究问题与假设|正式假设|mechanism|hypotheses?|research questions?)",
-    "research_design": r"(?im)^#{1,3}\s*(?:研究设计|研究方法|实验设计|识别策略|research design|method(?:ology)?|experimental design|identification)",
-    "validation_and_baselines": r"(?im)^#{1,3}\s*(?:验证|基线|评估|对照|validation|baselines?|evaluation|comparisons?)",
-    "contributions_and_implications": r"(?im)^#{1,3}\s*(?:研究贡献|贡献与含义|现实.*含义|实践.*含义|管理.*含义|商业.*含义|contributions?|implications?)",
-    "feasibility_risks_and_milestones": r"(?im)^#{1,3}\s*(?:可行性|实施路线|风险|里程碑|资源与伦理|feasibility|implementation|risks?|milestones?|ethics?)",
-    "boundaries_and_traceability": r"(?im)^#{1,3}\s*(?:证据边界|新颖性约束|研究谱系|可追溯性|boundaries|traceability|lineage|novelty boundary)",
-}
-
 _DEFAULT_SECTION_SOURCES = {
-    "summary": ("ideation/hypotheses.md", "ideation/novelty_audit.md"),
-    "motivation_and_positioning": ("ideation/selected/selected_candidate.json", "literature/synthesis.md"),
-    "mechanism_and_hypotheses": ("ideation/hypotheses.md", "ideation/research_dossier.json"),
-    "research_design": ("ideation/exp_plan.yaml", "ideation/validation_map.yaml"),
-    "validation_and_baselines": ("ideation/validation_map.yaml", "ideation/novelty_audit.md"),
-    "contributions_and_implications": ("ideation/research_dossier.json", "ideation/contribution_hypothesis_map.yaml"),
-    "feasibility_risks_and_milestones": ("ideation/exp_plan.yaml", "ideation/kill_criteria.yaml"),
-    "boundaries_and_traceability": ("ideation/novelty_audit.md", "ideation/kill_criteria.yaml"),
+    "motivation": ("ideation/selected/selected_candidate.json", BLUEPRINT_REL_PATH, "literature/synthesis.md"),
+    "gap_and_challenges": (BLUEPRINT_REL_PATH, "literature/synthesis.md", "ideation/novelty_audit.md"),
+    "approach": (BLUEPRINT_REL_PATH, CLAIM_REGISTRY_REL_PATH),
+    "claims": (CLAIM_REGISTRY_REL_PATH, "ideation/hypotheses.md"),
+    "evaluation": (BLUEPRINT_REL_PATH, "ideation/exp_plan.yaml", "ideation/validation_map.yaml"),
+    "contributions": (BLUEPRINT_REL_PATH, "ideation/contribution_hypothesis_map.yaml"),
+    "risks": (BLUEPRINT_REL_PATH, "ideation/kill_criteria.yaml"),
 }
 
 
@@ -81,10 +86,11 @@ def proposal_artifact_paths(workspace: Path) -> dict[str, Path]:
 
 
 def _normalized_audit_verdict(audit_text: str) -> tuple[str, str]:
-    match = re.search(
+    matches = list(re.finditer(
         r"(?im)^\s*(?:#+\s*)?(?:\*\*)?\s*Final\s+Gate\s+Verdict\s*(?:\*\*)?\s*[:：]\s*(.+?)\s*$",
         audit_text,
-    )
+    ))
+    match = matches[-1] if matches else None
     raw_verdict = match.group(1).strip() if match else ""
     normalized = re.split(
         r"[^a-z0-9_]+",
@@ -134,6 +140,22 @@ def repair_t45_proposal_manifest(workspace: Path, audit_path: Path) -> tuple[boo
         return False, None
     if not audit_path.is_file() or audit_path.stat().st_size <= 0:
         return False, None
+    exp_plan_path = workspace / "ideation" / "exp_plan.yaml"
+    try:
+        exp_plan = yaml.safe_load(exp_plan_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return False, "cannot repair proposal manifest before exp_plan.yaml is readable"
+    if not isinstance(exp_plan, dict):
+        return False, "cannot repair proposal manifest before exp_plan.yaml is an object"
+    exp_plan_ok, _exp_plan_error = validate_record(exp_plan, "exp_plan")
+    if not exp_plan_ok:
+        return False, "cannot repair proposal manifest before exp_plan.yaml passes its schema"
+    formalization_ok, formalization_error = validate_t45_formalization_core(workspace)
+    if not formalization_ok:
+        return False, (
+            "cannot repair proposal manifest before the unified blueprint and claim registry pass validation"
+            + (f": {formalization_error}" if formalization_error else "")
+        )
     raw_verdict, normalized_verdict = _normalized_audit_verdict(
         audit_path.read_text(encoding="utf-8", errors="replace")
     )
@@ -229,7 +251,13 @@ def validate_t45_research_proposal(
     workspace: Path,
     audit_path: Path,
 ) -> tuple[bool, str | None]:
-    """Validate a proposal created after a successful T4.5 novelty audit."""
+    """Validate a researcher-facing Proposal against the unified blueprint.
+
+    The Proposal is intentionally not validated as an audit transcript.  The
+    novelty report remains authoritative for collision labels and nearest-work
+    evidence, while this function checks the actual research argument, its
+    structured sources, and the T5 handoff metadata.
+    """
 
     if not audit_path.exists() or audit_path.stat().st_size <= 0:
         return False, "novelty_audit.md is required before a post-novelty proposal"
@@ -237,6 +265,10 @@ def validate_t45_research_proposal(
     _raw_verdict, normalized_verdict = _normalized_audit_verdict(audit_text)
     if normalized_verdict not in _PASS_VERDICTS:
         return False, "research_proposal.md requires a passing Final Gate Verdict in novelty_audit.md"
+
+    formalization_ok, formalization_error = validate_t45_formalization_core(workspace)
+    if not formalization_ok:
+        return False, formalization_error
 
     paths = proposal_artifact_paths(workspace)
     missing = [name for name, path in paths.items() if not path.exists() or path.stat().st_size <= 0]
@@ -248,15 +280,21 @@ def validate_t45_research_proposal(
 
     proposal_path = paths["research_proposal"]
     proposal_text = proposal_path.read_text(encoding="utf-8", errors="replace")
-    if len(proposal_text.strip()) < 6_000:
-        return False, "research_proposal.md is too short for a comprehensive post-novelty proposal"
-    missing_sections = [
-        key for key, pattern in _SECTION_PATTERNS.items() if not re.search(pattern, proposal_text)
-    ]
-    if missing_sections:
-        return False, "research_proposal.md is missing sections: " + ", ".join(missing_sections)
-    if not re.search(r"(?im)^#{1,4}\s*H1\b", proposal_text):
-        return False, "research_proposal.md is missing a formal H1 heading"
+    try:
+        blueprint = yaml.safe_load((workspace / BLUEPRINT_REL_PATH).read_text(encoding="utf-8")) or {}
+        registry = yaml.safe_load((workspace / CLAIM_REGISTRY_REL_PATH).read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        return False, f"Cannot read blueprint or claim registry for Proposal validation: {exc}"
+    if not isinstance(blueprint, dict) or not isinstance(registry, dict):
+        return False, "research_blueprint.yaml and claim_registry.yaml must both contain objects"
+    proposal_error = validate_research_proposal_text(
+        proposal_text,
+        blueprint=blueprint,
+        registry=registry,
+        orientation=load_orientation_configuration(workspace),
+    )
+    if proposal_error:
+        return False, proposal_error
 
     manifest_path = paths["proposal_manifest"]
     try:
@@ -348,6 +386,9 @@ def validate_t45_research_proposal(
     required_preservation = {"required baselines", "claim boundaries", "kill criteria", "unknown fields"}
     if not required_preservation.issubset({str(item).strip().casefold() for item in preserved}):
         return False, "proposal_manifest.json t5_handoff must preserve baselines, claim boundaries, kill criteria, and unknown fields"
+    review_ok, review_error = validate_orientation_review(workspace)
+    if not review_ok:
+        return False, review_error
     return True, None
 
 

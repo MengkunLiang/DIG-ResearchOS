@@ -21,7 +21,6 @@
 from __future__ import annotations
 
 import re
-import json
 from pathlib import Path
 
 import yaml
@@ -33,7 +32,7 @@ from ..runtime.artifact_fingerprints import write_t45_fingerprint_report
 from ..runtime.bridge_catalog import load_bridge_catalog_summaries
 from ..runtime.prompts import render_prompt
 from ..literature_identity import is_paper_note_file
-from ..ideation.proposal import repair_t45_proposal_manifest, validate_t45_research_proposal
+from ..schemas.validator import validate_record
 from ._common import (
     prepend_resume_prefix,
     load_project,
@@ -65,8 +64,8 @@ class NoveltyAuditorAgent(Agent):
                         "compare_design_rationale_tuples",
                         "finish_task",
                     ],
-                    "max_steps": 60,
-                    "max_tokens_total": 150_000,
+                    "max_steps": 38,
+                    "max_tokens_total": 80_000,
                     "max_wall_seconds": 600,
                     "temperature": 0.3,
                     "allowed_read_prefixes": ["", "ideation/", "literature/"],
@@ -132,10 +131,9 @@ class NoveltyAuditorAgent(Agent):
             "外部检索出现超时、网络不可用、限流或本轮停止检索提示时，不得改写关键词重试，必须在审计中记录外部覆盖边界。"
             "先产出 ideation/novelty_audit.md；如果发现 High/Medium Overlap，"
             "还必须产出 ideation/collision_cases.md 归档潜在撞车案例。"
-            "只有在 audit 明确给出可通过的 Final Gate Verdict 后，才能基于 Pre-Novelty brief 和 selected_candidate.json 编译正式 "
-            "ideation/hypotheses.md、research_dossier.json、exp_plan.yaml、contribution_hypothesis_map.yaml、validation_map.yaml、kill_criteria.yaml、"
-            "proposal/research_proposal.md、proposal/proposal_manifest.json 和 post_novelty_formalization.json。"
-            "若 verdict 要求 reframe/drop/review，不得生成或更新这些正式执行产物。"
+            "本阶段只写 novelty_audit.md、条件 collision_cases.md 和两类 tuple 目录。"
+            "即便 verdict 可通过，也不得生成 hypotheses、experiment plan、Proposal、manifest 或其它正式化产物；"
+            "下一阶段会以新的模型上下文读取本审计并完成正式化。"
             ),
         )
 
@@ -246,11 +244,6 @@ class NoveltyAuditorAgent(Agent):
             if not any(signal in collision_text for signal in collision_signals):
                 return False, "novelty_audit.md 提到 High/Medium Overlap，但 collision_cases.md 未归档对应案例"
 
-        if _t45_verdict_is_pass(audit_text) and str(brief.get("status") or "") != "legacy_direct_existing_formal":
-            formal_ok, formal_error = _validate_post_novelty_formalization(ws, audit_path)
-            if not formal_ok:
-                return False, formal_error
-
         write_t45_fingerprint_report(ws)
         return True, None
 
@@ -333,10 +326,11 @@ def _load_pre_novelty_brief(workspace: Path) -> tuple[dict, str, list[str]]:
 
 
 def _t45_verdict_is_pass(text: str) -> bool:
-    match = re.search(
+    matches = list(re.finditer(
         r"(?im)^\s*(?:#+\s*)?(?:\*\*)?\s*Final\s+Gate\s+Verdict\s*(?:\*\*)?\s*[:：]\s*(.+?)\s*$",
         text,
-    )
+    ))
+    match = matches[-1] if matches else None
     verdict = match.group(1).strip().casefold().replace("-", "_").replace(" ", "_") if match else ""
     token = re.split(r"[^a-z0-9_]+", verdict, maxsplit=1)[0]
     pass_tokens = {
@@ -353,102 +347,39 @@ def _t45_verdict_is_pass(text: str) -> bool:
     return token in pass_tokens
 
 
-def _validate_post_novelty_formalization(workspace: Path, audit_path: Path) -> tuple[bool, str | None]:
-    manifest_path = workspace / "ideation" / "post_novelty_formalization.json"
-    repair_t45_proposal_manifest(workspace, audit_path)
-    required = {
-        "hypotheses": workspace / "ideation" / "hypotheses.md",
-        "research_dossier": workspace / "ideation" / "research_dossier.json",
-        "exp_plan": workspace / "ideation" / "exp_plan.yaml",
-        "contribution_hypothesis_map": workspace / "ideation" / "contribution_hypothesis_map.yaml",
-        "validation_map": workspace / "ideation" / "validation_map.yaml",
-        "kill_criteria": workspace / "ideation" / "kill_criteria.yaml",
-        "research_proposal": workspace / "ideation" / "proposal" / "research_proposal.md",
-        "proposal_manifest": workspace / "ideation" / "proposal" / "proposal_manifest.json",
-    }
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return False, f"T4.5 pass verdict requires post_novelty_formalization.json: {exc}"
-    if not isinstance(manifest, dict) or manifest.get("semantics") != "t45_post_novelty_formalization":
-        return False, "post_novelty_formalization.json semantics is invalid"
-    if manifest.get("status") != "formalized_after_novelty_pass":
-        return False, "post_novelty_formalization.json must state formalized_after_novelty_pass"
-    for name, path in required.items():
-        if not path.exists() or path.stat().st_size <= 0:
-            return False, f"T4.5 pass verdict requires {path.relative_to(workspace)}"
-        if path.stat().st_mtime < audit_path.stat().st_mtime:
-            return False, f"{path.relative_to(workspace)} must be written after novelty_audit.md"
-    artifacts = manifest.get("artifacts") if isinstance(manifest.get("artifacts"), dict) else {}
-    for name, path in required.items():
-        if artifacts.get(name) != path.relative_to(workspace).as_posix():
-            return False, f"post_novelty_formalization.json must list {name}"
-    hypotheses_text = read_text_file(workspace / "ideation" / "hypotheses.md", default="")
-    dossier_ok, dossier_error = _validate_t45_research_dossier(workspace, hypotheses_text)
-    if not dossier_ok:
-        return False, dossier_error
-    proposal_ok, proposal_error = validate_t45_research_proposal(workspace, audit_path)
-    if not proposal_ok:
-        return False, proposal_error
-    return True, None
+def _t45_exp_plan_recovery_instruction(workspace: Path) -> str:
+    """Compatibility diagnostic for a pre-blueprint T4.5 interruption.
 
+    The helper remains importable for old resume records, but new runs use the
+    dedicated T4.5-FORMALIZE phase and must restore the blueprint and claim
+    registry before writing the experiment plan or Proposal.
+    """
 
-def _validate_t45_research_dossier(workspace: Path, hypotheses_text: str) -> tuple[bool, str | None]:
-    """Keep the post-novelty dossier substantive without prescribing its prose."""
-
-    if len(hypotheses_text.strip()) < 3_000:
-        return False, "hypotheses.md 过短，正式研究档案至少需要3000字符的实质性说明"
-    required_markers = {
-        "摘要": r"(?im)^#{1,3}\s*(摘要|executive summary)\b",
-        "研究意义": r"(?im)^#{1,3}\s*(研究意义|why this matters|问题背景)",
-        "研究贡献": r"(?im)^#{1,3}\s*(研究贡献|contributions?)\b",
-        "现实或商业含义": r"(?im)^#{1,3}\s*(现实.*含义|实践.*含义|管理.*含义|商业.*含义|practical.*implications?|commercial.*implications?)",
-        "证据与新颖性边界": r"(?im)^#{1,3}\s*(证据边界|新颖性约束|evidence boundary|novelty boundary)",
-        "风险与停止条件": r"(?im)^#{1,3}\s*(风险.*停止|风险.*证伪|risks?.*(kill|falsification)|kill criteria)",
-        "研究谱系": r"(?im)^#{1,3}\s*(研究谱系|可追溯性|lineage|traceability)",
-    }
-    missing_markers = [label for label, pattern in required_markers.items() if not re.search(pattern, hypotheses_text)]
-    if missing_markers:
-        return False, "hypotheses.md 缺少正式研究档案章节: " + ", ".join(missing_markers)
-    if not re.search(r"(?im)^#{1,4}\s*H1\b", hypotheses_text):
-        return False, "hypotheses.md 必须包含正式 H1 标题"
-
-    path = workspace / "ideation" / "research_dossier.json"
-    try:
-        dossier = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return False, f"research_dossier.json 无法读取为 JSON: {exc}"
-    if not isinstance(dossier, dict) or dossier.get("semantics") != "t45_research_dossier":
-        return False, "research_dossier.json semantics 必须是 t45_research_dossier"
-    if dossier.get("status") != "formalized_after_novelty_pass":
-        return False, "research_dossier.json 必须标记 formalized_after_novelty_pass"
-    required = (
-        "candidate_id",
-        "selection_fingerprint",
-        "novelty_audit_verdict",
-        "central_thesis",
-        "research_problem",
-        "why_it_matters",
-        "contributions",
-        "hypotheses",
-        "evidence_boundary",
-        "novelty_boundary",
-        "risks_and_kill_criteria",
-        "traceability",
+    plan_path = workspace / "ideation" / "exp_plan.yaml"
+    if not plan_path.is_file() or plan_path.stat().st_size <= 0:
+        problem = "ideation/exp_plan.yaml 缺失"
+    else:
+        try:
+            payload = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            problem = f"ideation/exp_plan.yaml 无法解析: {exc}"
+        else:
+            if not isinstance(payload, dict):
+                problem = "ideation/exp_plan.yaml 顶层不是对象"
+            else:
+                valid, error = validate_record(payload, "exp_plan")
+                if valid:
+                    return ""
+                problem = f"ideation/exp_plan.yaml 未通过 exp_plan schema: {error or 'unknown error'}"
+    return (
+        "\n\n【当前恢复优先级】"
+        + problem
+        + "。不要再次改写 novelty_audit.md。请在独立的 T4.5-FORMALIZE 上下文中，先结构化写入 "
+        "ideation/research_blueprint.yaml（research_blueprint）和 ideation/claim_registry.yaml（claim_registry），"
+        "再调用 write_structured_file(path='ideation/exp_plan.yaml', schema_name='exp_plan', "
+        "format='yaml', data={'experiments': [...]})。若工具返回字段诊断，只修正同一个 data 对象并重试；"
+        "不要调用 write_file 写这些结构化来源。"
     )
-    missing = [key for key in required if key not in dossier]
-    if missing:
-        return False, "research_dossier.json 缺少字段: " + ", ".join(missing)
-    why_it_matters = dossier.get("why_it_matters")
-    if not isinstance(why_it_matters, dict) or any(
-        key not in why_it_matters
-        for key in ("scholarly", "practical", "commercial", "stakeholders_or_processes")
-    ):
-        return False, "research_dossier.json.why_it_matters 必须覆盖 scholarly、practical、commercial 和 stakeholders_or_processes"
-    traceability = dossier.get("traceability")
-    if not isinstance(traceability, dict) or not isinstance(traceability.get("source_artifacts"), list):
-        return False, "research_dossier.json.traceability.source_artifacts 必须是列表"
-    return True, None
 
 
 def _paper_card_inventory(workspace: Path) -> str:

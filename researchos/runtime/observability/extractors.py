@@ -35,7 +35,7 @@ def extract_stage_insights(task_id: str, workspace: Path, *, detailed: bool = Fa
         return _survey_insights(workspace, task_id=task_id)
     if task_id == "T4":
         return _t4_insights(workspace, detailed=detailed)
-    if task_id == "T4.5":
+    if task_id.startswith("T4.5"):
         return _t45_insights(workspace)
     if task_id.startswith("T5"):
         return _t5_insights(workspace, task_id=task_id)
@@ -408,7 +408,10 @@ def _t45_insights(workspace: Path) -> list[dict[str, Any]]:
     text = _read(workspace / "ideation" / "novelty_audit.md") or _read(workspace / "novelty" / "novelty_audit.md")
     scorecard = _read(workspace / "ideation" / "idea_scorecard.yaml")
     scorecard_data = _load_yaml(workspace / "ideation" / "idea_scorecard.yaml")
-    if not text and not scorecard:
+    blueprint = _load_yaml(workspace / "ideation" / "research_blueprint.yaml")
+    registry = _load_yaml(workspace / "ideation" / "claim_registry.yaml")
+    review = _load_json(workspace / "ideation" / "orientation_review.json")
+    if not text and not scorecard and not blueprint:
         return []
     verdict = _match(text, r"(?im)(?:verdict|判定)\s*[:：]\s*([^\n]+)") or "需阅读审计文件确认"
     baseline_count = len(re.findall(r"(?im)(?:required baseline|必须基线|baseline)\b", text))
@@ -421,7 +424,23 @@ def _t45_insights(workspace: Path) -> list[dict[str, Any]]:
         cdr = selected.get("cdr_tuple") if isinstance(selected.get("cdr_tuple"), dict) else {}
         if cdr:
             rows.append(("CDR tuple", _short(str(cdr.get("design_rationale") or cdr.get("artifact") or "recorded"), 100)))
-    return [_insight("Novelty & Collision Audit", "tuple、collision 与 baseline 是审计约束；它们限制可主张范围，而不是自动证明新颖性。", rows)]
+    insights = [_insight("Novelty & Collision Audit", "tuple、collision 与 baseline 是审计约束；它们限制可主张范围，而不是自动证明新颖性。", rows)]
+    if blueprint:
+        orientation = blueprint.get("orientation") if isinstance(blueprint.get("orientation"), dict) else {}
+        claims = blueprint.get("research_claims") if isinstance(blueprint.get("research_claims"), dict) else {}
+        challenges = blueprint.get("technical_problem") if isinstance(blueprint.get("technical_problem"), dict) else {}
+        claim_values = registry.get("claims") if isinstance(registry.get("claims"), list) else []
+        review_scores = review.get("scores") if isinstance(review.get("scores"), dict) else {}
+        formal_rows = [
+            ("Orientation", str(orientation.get("profile_type") or "pending")),
+            ("Key challenges", str(len(challenges.get("key_challenges") or []))),
+            ("Active claims", str(len(claim_values or claims.get("active_claim_ids") or []))),
+            ("Review", str(review.get("status") or "pending")),
+        ]
+        if review_scores:
+            formal_rows.append(("Technical completeness", str(review_scores.get("technical_completeness") or "not scored")))
+        insights.append(_insight("Research Formalization", "蓝图、claim registry 和实验计划共同定义 T5 可读取的研究约束；Proposal 负责完整论证，不替代这些结构化来源。", formal_rows))
+    return insights
 
 
 def _t5_insights(workspace: Path, *, task_id: str) -> list[dict[str, Any]]:

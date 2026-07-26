@@ -6912,12 +6912,40 @@ class AgentRunner:
             # _normalize_tool_call_arguments 中被窄范围地移除并留痕。
             parsed = tool.parameters_schema(**tool_arguments)
         except Exception as exc:
+            parameter_data: dict[str, Any] = {}
+            parameter_content = f"Parameter validation error: {exc}"
+            if tc.name == "write_structured_file":
+                attempted_path = tool_arguments.get("path")
+                parameter_data = {
+                    "path": attempted_path,
+                    "required_fields": ["path", "schema_name", "format", "data"],
+                    "repair_scope": "structured_file_parameter_validation",
+                    "repairable": True,
+                }
+                parameter_content = (
+                    "write_structured_file 参数无效。path 必须是非空 workspace 相对路径，"
+                    "schema_name 必须是字符串，format 必须是 yaml/json/jsonl，data 必须是对象。"
+                    f"本次 path={attempted_path!r}。"
+                )
+                if ctx.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"}:
+                    parameter_data.update(
+                        {
+                            "required_path": "ideation/research_blueprint.yaml",
+                            "required_schema": "research_blueprint",
+                            "required_format": "yaml",
+                        }
+                    )
+                    parameter_content += (
+                        "T4.5 正式化必须先以结构化调用依次写入 research_blueprint、claim_registry 和 exp_plan。"
+                        "当前先修正 path/schema_name/format/data，尤其不要使用 null path 或改用 write_file。"
+                    )
             tool_msg = Message.tool(
                 tool_call_id=tc.id,
                 name=tc.name,
-                content=f"Parameter validation error: {exc}",
+                content=parameter_content,
                 is_error=True,
                 step=step,
+                metadata={"data": parameter_data, "error": "parameter_validation"},
             )
             if run_logger is not None:
                 run_logger.tool_result(
@@ -6925,7 +6953,7 @@ class AgentRunner:
                     tc.arguments,
                     ok=False,
                     content=tool_msg.content,
-                    data={},
+                    data=parameter_data,
                     error="parameter_validation",
                     duration_ms=tool_msg.duration_ms,
                     metadata=tool_msg.metadata,

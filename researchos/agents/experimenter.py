@@ -122,6 +122,17 @@ def run_integrity_gate(ctx: ExecutionContext) -> tuple[bool, str | None]:
         if len(content.strip()) < 50:
             issues.append("ideation/hypotheses.md 内容过少")
 
+    # 1.5 T4.5 now publishes the formalization source of truth.  T5 must not
+    # reconstruct an executable study by guessing from a long Markdown file.
+    for rel_path in (
+        "ideation/orientation_config.yaml",
+        "ideation/research_blueprint.yaml",
+        "ideation/claim_registry.yaml",
+        "ideation/orientation_review.json",
+    ):
+        if not (ws / rel_path).is_file():
+            issues.append(f"缺少 {rel_path}（T4.5 正式化质量 gate 尚未完成）")
+
     # 2. 检查 novelty_audit.md（T4.5 通过标志）
     audit_path = ws / "ideation" / "novelty_audit.md"
     if not audit_path.exists():
@@ -1249,7 +1260,10 @@ class ExperimenterAgent(Agent):
                     "不要要求用户手动拉起 Codex CLI，不要执行实验、实现代码、选择执行器或写 result_pack。\n\n"
                     "系统 prompt 已加载 `skills/research-reboost` 的 Skill contract 和 references；"
                     "不要用 read_file 读取仓库级 `skills/...`、`references/...` 或 `scripts/...`。"
-                    "先读取当前 workspace 的 Pre-T5 源文件。若存在 `ideation/proposal/research_proposal.md`，"
+                    "先读取当前 workspace 的 `ideation/orientation_config.yaml`、`ideation/research_blueprint.yaml`、"
+                    "`ideation/claim_registry.yaml`、`ideation/orientation_review.json` 与 `ideation/exp_plan.yaml`；"
+                    "它们是 T4.5 已通过质量 gate 的结构化研究来源，优先于从长 Markdown 猜测研究任务。"
+                    "若存在 `ideation/proposal/research_proposal.md`，"
                     "必须同时读取 `ideation/proposal/proposal_manifest.json`，将其记录为 planning context，"
                     "保留其 required baselines、claim boundaries、kill criteria 和 unknown fields；不得把 Proposal 作为实验结果或最终论文事实。"
                     "然后由当前 LLM 编译完整 `handoff_pack` 对象。"
