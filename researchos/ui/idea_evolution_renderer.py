@@ -367,6 +367,11 @@ def _render_offspring_event(output: Console, *, status: str, payload: dict[str, 
             f"× {parent} 的 Child 未被采纳",
             "不符合已批准的演化计划约束；Parent 保留",
         ]
+    elif failure_kind == "provider_request_rejected":
+        parts = [
+            f"! {parent} 的 Child 请求被模型拒绝",
+            "这不是研究方向被否决，也不是已确认的上下文超限；Parent 保留",
+        ]
     else:
         parts = [
             f"! {parent} 的 Child 本轮未形成可用结果",

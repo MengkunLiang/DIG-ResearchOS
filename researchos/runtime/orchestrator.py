@@ -461,14 +461,191 @@ class AgentRunner:
         return 120
 
     @staticmethod
-    def _public_provider_error_message(exc: LLMProviderError) -> str:
-        """Return a safe CLI message without endpoint, key, or SDK details."""
+    def _provider_error_category(exc: LLMProviderError) -> str:
+        """Classify a provider failure without treating every HTTP 400 as context.
+
+        LiteLLM uses ``BadRequestError`` for several materially different
+        conditions: a context limit, an unsupported request parameter, a
+        model capability mismatch, and occasionally a provider-side policy
+        rejection.  The old UI collapsed all of them into a request to edit
+        context settings, which both misdirected the researcher and hid the
+        only useful distinction for T4 recovery.
+        """
 
         text = str(exc).casefold()
-        if any(marker in text for marker in ("authentication", "invalid_api_key", "unauthorized", "permissiondenied")):
+        if any(marker in text for marker in ("authentication", "invalid_api_key", "invalid api key", "unauthorized", "permissiondenied", "permission denied")):
+            return "authentication"
+        if any(
+            marker in text
+            for marker in (
+                "context_length",
+                "context length",
+                "context window",
+                "maximum context",
+                "maximum context length",
+                "prompt is too long",
+                "input is too long",
+                "too many tokens",
+            )
+        ):
+            return "context_limit"
+        if any(marker in text for marker in ("rate limit", "ratelimit", "too many requests", "status code: 429", "http 429")):
+            return "rate_limit"
+        if any(marker in text for marker in ("content policy", "content_filter", "safety policy", "responsible ai", "被内容安全")):
+            return "content_policy"
+        if any(
+            marker in text
+            for marker in (
+                "unsupported parameter",
+                "unsupported value",
+                "invalid_request_error",
+                "invalid request",
+                "response_format",
+                "json schema",
+                "does not support",
+                "not supported for this model",
+            )
+        ):
+            return "request_schema"
+        if any(marker in text for marker in ("badrequest", "bad request", "status code: 400", "http 400")):
+            return "bad_request"
+        if any(marker in text for marker in ("timeouterror", "timeout", "timed out", "readtimeout", "connecttimeout", "超时")):
+            return "timeout"
+        if any(marker in text for marker in ("connectionerror", "connection error", "server disconnected", "network")):
+            return "connection"
+        return "unknown"
+
+    @staticmethod
+    def _safe_provider_error_detail(exc: LLMProviderError) -> str:
+        """Keep an actionable provider detail without persisting credentials or URLs."""
+
+        detail = " ".join(str(exc).split())
+        detail = re.sub(
+            r"(?i)(api[_-]?key|authorization|bearer)\s*([=:])\s*[^,\s\]\)]+",
+            r"\1\2<redacted>",
+            detail,
+        )
+        detail = re.sub(r"(?i)api_base\s*=\s*[^,\s\]\)]+", "api_base=<redacted>", detail)
+        detail = re.sub(r"https?://[^\s,\]\)]+", "<endpoint>", detail)
+        return detail[:900]
+
+    @staticmethod
+    def _provider_http_status(exc: LLMProviderError) -> int | None:
+        match = re.search(r"(?:status(?:[_ ]code)?|http)\s*[:=]?\s*(\d{3})", str(exc), flags=re.IGNORECASE)
+        if match is None:
+            return None
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+
+    def _t4_role_request_metrics(
+        self,
+        *,
+        eff: EffectiveConfig,
+        messages: list[dict[str, object]],
+    ) -> dict[str, object]:
+        """Describe a typed T4 request without sending another provider call."""
+
+        try:
+            resolved = self.llm.resolve(
+                profile=eff.llm_profile,
+                tier=eff.llm_tier,
+                model_override=eff.llm_model_override,
+                endpoint_override=eff.llm_endpoint_override,
+                max_context_override=eff.llm_max_context_override,
+            )
+            if not resolved:
+                return {}
+            binding, endpoint = resolved[0]
+            context_info = self.llm.get_context_window_info(
+                binding,
+                endpoint,
+                explicit_override=eff.llm_max_context_override is not None,
+            )
+            return {
+                "estimated_input_tokens": self.llm.count_tokens(messages, binding),
+                "effective_context_window": self.llm.get_context_window(binding),
+                "context_window_source": context_info.source,
+                "response_reserve": "provider_default_not_explicitly_configured",
+            }
+        except Exception:
+            # Diagnostics must never become another T4 failure path.
+            return {}
+
+    def _record_t4_provider_failure_diagnostic(
+        self,
+        *,
+        ctx: ExecutionContext,
+        eff: EffectiveConfig,
+        messages: list[dict[str, object]],
+        exc: LLMProviderError,
+        failed_batches: int,
+    ) -> str:
+        """Persist a safe, request-scoped T4 rejection receipt.
+
+        The raw exception is intentionally not shown in the terminal because
+        LiteLLM can include endpoint hints.  This receipt provides the next
+        resume with enough evidence to distinguish a local schema mismatch
+        from an actual context or provider availability problem.
+        """
+
+        phase_key = str(ctx.extra.get("t4_heartbeat_phase_key") or "t4_role")
+        safe_phase = re.sub(r"[^a-zA-Z0-9_.-]+", "_", phase_key).strip("_") or "t4_role"
+        sequence = int(ctx.extra.get("t4_provider_failure_sequence") or 0) + 1
+        ctx.extra["t4_provider_failure_sequence"] = sequence
+        relative_path = f"ideation/evolution/diagnostics/provider_request_{sequence:03d}_{safe_phase}.json"
+        payload: dict[str, object] = {
+            "schema_version": "1.0.0",
+            "semantics": "t4_provider_request_diagnostic",
+            "phase": phase_key,
+            "failure_batch": max(1, failed_batches),
+            "error_category": self._provider_error_category(exc),
+            "http_status": self._provider_http_status(exc),
+            "safe_provider_detail": self._safe_provider_error_detail(exc),
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        payload.update(self._t4_role_request_metrics(eff=eff, messages=messages))
+        try:
+            T4ArtifactStore(ctx.workspace_dir).write_json(relative_path, payload)
+        except (OSError, ValueError):
+            return ""
+        return relative_path
+
+    def _t4_provider_pause(
+        self,
+        *,
+        ctx: ExecutionContext,
+        eff: EffectiveConfig,
+        messages: list[dict[str, object]],
+        exc: LLMProviderError,
+        failed_batches: int,
+    ) -> RecoverableRuntimePause:
+        diagnostic_path = self._record_t4_provider_failure_diagnostic(
+            ctx=ctx,
+            eff=eff,
+            messages=messages,
+            exc=exc,
+            failed_batches=failed_batches,
+        )
+        message = self._public_provider_error_message(exc)
+        if diagnostic_path:
+            message += f" 已写入脱敏诊断：{diagnostic_path}。"
+        return RecoverableRuntimePause(message)
+
+    @classmethod
+    def _public_provider_error_message(cls, exc: LLMProviderError) -> str:
+        """Return a safe, correctly scoped CLI message for a provider error."""
+
+        category = cls._provider_error_category(exc)
+        if category == "authentication":
             return "模型服务配置未通过验证；请检查已选择服务的凭据和模型名称后 resume。"
-        if any(marker in text for marker in ("context_length", "context window", "badrequest", "bad request")):
-            return "模型请求未被接受；请检查模型上下文设置或项目输入后 resume。"
+        if category == "context_limit":
+            return "模型明确拒绝了本次上下文长度；请核对该模型的真实上下文容量或缩小本次输入后 resume。"
+        if category in {"request_schema", "bad_request", "content_policy"}:
+            return "模型拒绝了本次请求（请求格式、模型能力或内容策略）；这不是已确认的上下文错误。"
+        if category == "rate_limit":
+            return "模型服务当前触发频率或配额限制；已保留进度，可稍后 resume。"
         return "模型服务暂时不可用；已保留当前进度，可稍后 resume。"
 
     async def _choose_llm_provider_recovery(
@@ -5030,6 +5207,10 @@ class AgentRunner:
     ) -> str:
         """Use the normal provider recovery policy for one typed T4 role call."""
 
+        request_messages: list[dict[str, object]] = [
+            {"role": "system", "content": system_contract},
+            {"role": "user", "content": user_prompt},
+        ]
         retry_batches, cooldown, long_cooldown = self._llm_provider_recovery_policy()
         native_t4_recovery = bool(
             self._is_t4_ideation_agent(ctx)
@@ -5056,10 +5237,7 @@ class AgentRunner:
                     ctx=ctx,
                     step=budget.steps,
                     progress_step_limit="unlimited" if budget.unlimited_budget else str(budget.max_steps),
-                    messages=[
-                        {"role": "system", "content": system_contract},
-                        {"role": "user", "content": user_prompt},
-                    ],
+                    messages=request_messages,
                     tools=None,
                     temperature=0.2,
                     tier=eff.llm_tier,
@@ -5073,7 +5251,13 @@ class AgentRunner:
                 )
             except LLMProviderError as exc:
                 if not self._is_recoverable_provider_error(exc):
-                    raise RecoverableRuntimePause(self._public_provider_error_message(exc)) from exc
+                    raise self._t4_provider_pause(
+                        ctx=ctx,
+                        eff=eff,
+                        messages=request_messages,
+                        exc=exc,
+                        failed_batches=failed_batches + 1,
+                    ) from exc
                 failed_batches += 1
                 if native_t4_recovery and failed_batches >= retry_batches:
                     phase_key = str(ctx.extra.get("t4_heartbeat_phase_key") or "t4_role")
@@ -5087,8 +5271,11 @@ class AgentRunner:
                                 "phase": phase_key,
                                 "automatic_retry_batches": retry_batches,
                                 "failed_batches": failed_batches,
-                                "error_category": "recoverable_provider_unavailable",
+                                "error_category": self._provider_error_category(exc),
                                 "error_summary": self._public_provider_error_message(exc),
+                                "safe_provider_detail": self._safe_provider_error_detail(exc),
+                                "http_status": self._provider_http_status(exc),
+                                **self._t4_role_request_metrics(eff=eff, messages=request_messages),
                                 "next_action": "resume_t4_from_durable_checkpoint",
                                 "recorded_at": datetime.now(timezone.utc).isoformat(),
                             },
@@ -5108,7 +5295,13 @@ class AgentRunner:
                     long_cooldown_seconds=long_cooldown,
                 )
                 if action != "retry":
-                    raise RecoverableRuntimePause(self._public_provider_error_message(exc)) from exc
+                    raise self._t4_provider_pause(
+                        ctx=ctx,
+                        eff=eff,
+                        messages=request_messages,
+                        exc=exc,
+                        failed_batches=failed_batches,
+                    ) from exc
                 await self._wait_before_llm_provider_retry(
                     ctx=ctx,
                     budget=budget,

@@ -2641,6 +2641,28 @@ def _normalize_candidate_dossier_payload(payload: dict[str, Any]) -> dict[str, A
     """
 
     normalized = dict(payload)
+
+    # Some providers habitually render a schema revision as ``"1.0.0"``
+    # even when the typed Candidate contract deliberately uses an integer.
+    # Converting only an integral dotted representation is lossless metadata
+    # normalization; it does not alter a Gene, contribution, lineage, or
+    # scientific claim. Non-integral versions stay untouched for validation.
+    def normalize_integral_version(value: object) -> object:
+        if isinstance(value, bool) or isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, str):
+            match = re.fullmatch(r"\s*(\d+)(?:\.0+)*\s*", value)
+            if match is not None:
+                try:
+                    return int(match.group(1))
+                except ValueError:
+                    return value
+        return value
+
+    if "version" in normalized:
+        normalized["version"] = normalize_integral_version(normalized.get("version"))
     raw_status = normalized.get("status")
     if isinstance(raw_status, str):
         status_key = re.sub(r"[\s-]+", "_", raw_status.strip().casefold())
@@ -2703,6 +2725,8 @@ def _normalize_candidate_dossier_payload(payload: dict[str, Any]) -> dict[str, A
     if not isinstance(genome, dict):
         return normalized
     normalized_genome = dict(genome)
+    if "version" in normalized_genome:
+        normalized_genome["version"] = normalize_integral_version(normalized_genome.get("version"))
     for gene_name in _GENOME_GENE_NAMES:
         gene = normalized_genome.get(gene_name)
         if not isinstance(gene, dict):

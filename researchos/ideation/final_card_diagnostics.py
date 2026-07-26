@@ -26,6 +26,8 @@ class FinalCardFailureKind(str, Enum):
     LLM_TIMEOUT = "llm_timeout"
     LLM_PROVIDER_FAILURE = "llm_provider_failure"
     LLM_CONFIGURATION_FAILURE = "llm_configuration_failure"
+    LLM_CONTEXT_LIMIT = "llm_context_limit"
+    LLM_REQUEST_REJECTED = "llm_request_rejected"
     LLM_EMPTY_RESPONSE = "llm_empty_response"
     RESPONSE_PARSE_FAILURE = "llm_response_parse_failure"
     SCHEMA_MISMATCH = "llm_card_schema_mismatch"
@@ -120,6 +122,30 @@ def classify_final_card_exception(
                 message="The Final Card LLM request was rejected by provider configuration or authorization, so another card call cannot repair it yet.",
                 recovery_action="ask_human_to_fix_provider_configuration_then_retry_final_card_compiler",
                 repair_prerequisite="Fix the configured model, credential, permission, or context setting before retrying the Card Compiler.",
+                repair_scheduled=False,
+                prior_failure=prior_failure,
+            )
+        if _contains_context_limit(provider_text):
+            return _diagnostic(
+                kind=FinalCardFailureKind.LLM_CONTEXT_LIMIT,
+                stage=stage,
+                candidate_ids=candidate_ids,
+                error=error,
+                message="The provider explicitly reported that this Final Card request exceeded its context limit.",
+                recovery_action="inspect_t4_provider_request_diagnostic_then_reduce_context_or_correct_capacity",
+                repair_prerequisite="Confirm the model's real context capacity or reduce the specific request; a generic BadRequest alone is not context evidence.",
+                repair_scheduled=False,
+                prior_failure=prior_failure,
+            )
+        if _contains_provider_request_rejection(provider_text):
+            return _diagnostic(
+                kind=FinalCardFailureKind.LLM_REQUEST_REJECTED,
+                stage=stage,
+                candidate_ids=candidate_ids,
+                error=error,
+                message="The provider rejected the Final Card request, but the available error does not prove a context overflow.",
+                recovery_action="inspect_t4_provider_request_diagnostic_then_retry_final_card_compiler",
+                repair_prerequisite="Inspect the request diagnostic for request-format, model-capability, or content-policy details before changing context settings.",
                 repair_scheduled=False,
                 prior_failure=prior_failure,
             )
@@ -305,10 +331,46 @@ def _contains_provider_configuration_failure(text: str) -> bool:
             "unauthorized",
             "permission denied",
             "permissiondenied",
+        )
+    )
+
+
+def _contains_context_limit(text: str) -> bool:
+    lowered = text.casefold()
+    return any(
+        marker in lowered
+        for marker in (
             "context_length",
+            "context length",
             "context window",
+            "maximum context",
+            "maximum context length",
+            "prompt is too long",
+            "input is too long",
+            "too many tokens",
+        )
+    )
+
+
+def _contains_provider_request_rejection(text: str) -> bool:
+    lowered = text.casefold()
+    return any(
+        marker in lowered
+        for marker in (
             "badrequest",
             "bad request",
+            "status code: 400",
+            "http 400",
+            "invalid_request_error",
+            "invalid request",
+            "unsupported parameter",
+            "unsupported value",
+            "response_format",
+            "json schema",
+            "does not support",
+            "content policy",
+            "content_filter",
+            "safety policy",
         )
     )
 
