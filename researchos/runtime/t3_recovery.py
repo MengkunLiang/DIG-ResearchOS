@@ -244,4 +244,13 @@ def prepare_t3_resume_artifacts(workspace_dir: Path, *, refresh_reason: str | No
         "incomplete_note_count": len(incomplete_entries),
         "missing_note_count": len(missing_entries),
         "completed_queue_entry_count": manifest.get("target_complete_count"),
+        "target_queue_count": len(target_entries(manifest)),
+        "pending_examples": [
+            {
+                "queue_rank": record.get("queue_rank"),
+                "original_queue_rank": record.get("original_queue_rank"),
+                "paper": str(record.get("title") or record.get("id") or record.get("paper_id") or "unknown"),
+            }
+            for record in pending_records[:3]
+        ],
     }

@@ -50,7 +50,12 @@ from .abstract_sweep import (
     run_abstract_sweep_with_reader,
     validate_abstract_sweep_coverage,
 )
-from .t2_config import get_effective_reader_read_params, load_t2_finalize_config
+from .t2_config import (
+    get_effective_reader_read_params,
+    load_deep_read_queue_config,
+    load_t2_finalize_config,
+    require_deep_read_target,
+)
 from .pdf_acquisition import acquire_retained_pdfs, attach_pdf_acquisition, repair_access_only_evidence_levels
 from .literature_contract import build_literature_manifest, iter_literature_note_cards
 from ..literature_resources import format_resource_discovery_notice
@@ -1625,6 +1630,20 @@ class AgentRunner:
                             success_message="[Scout Agent] T2 确定性收尾成功，继续校验输出",
                         )
                         run_logger.event("FINALIZE_DONE", task=ctx.task_id, mode="t2_finish_finalize")
+                    t3_continuation = self._t3_finish_preflight(ctx)
+                    if t3_continuation is not None:
+                        preflight = ctx.extra.get("t3_finish_preflight")
+                        run_logger.event(
+                            "T3_FINISH_DEFERRED",
+                            task=ctx.task_id,
+                            step=budget.steps,
+                            completed=(preflight or {}).get("completed") if isinstance(preflight, dict) else None,
+                            required=(preflight or {}).get("required") if isinstance(preflight, dict) else None,
+                            pending=(preflight or {}).get("pending") if isinstance(preflight, dict) else None,
+                        )
+                        messages.append(t3_continuation)
+                        trace.write_message(t3_continuation)
+                        continue
                     self.progress.validation_start(task_id=ctx.task_id)
                     # T3's abstract sweep is a deterministic post-read
                     # operation.  Let the deep-read validator complete this
@@ -3146,6 +3165,96 @@ class AgentRunner:
             )
         except Exception:  # pragma: no cover - refresh failure should not fail a completed T3
             self.log.exception("t3_resume_artifact_refresh_failed")
+
+    def _t3_finish_preflight(self, ctx: ExecutionContext) -> Message | None:
+        """Defer a premature production-Reader finish without failing validation.
+
+        A partially read T3 queue is not a malformed output.  Before the
+        Reader reaches its configured completion line, refresh the
+        deterministic manifest and pending queue, then send it back to the
+        remaining concrete work.  This deliberately has no validation-retry
+        counter: the filesystem state determines whether it can continue.
+
+        Once the count reaches the same threshold used by ``ReaderAgent``'s
+        validator, normal full validation still checks note structure,
+        protected papers, comparison rows, BibTeX, and later coverage work.
+        """
+
+        # Task labels are also used by generic runtime tests and extension
+        # agents.  The T3 literature lifecycle belongs only to the real
+        # Reader, just as the abstract-sweep lifecycle below does.
+        if ctx.task_id != "T3" or self.agent.spec.name != "reader":
+            return None
+
+        try:
+            recovery = prepare_t3_resume_artifacts(
+                ctx.workspace_dir,
+                refresh_reason="finish_requested_incomplete_queue",
+            )
+            queue_config = load_deep_read_queue_config(ctx.workspace_dir)
+            mode_params = get_effective_reader_read_params(ctx.workspace_dir)
+            target_queue_count = int(recovery.get("target_queue_count") or 0)
+            completed = int(recovery.get("completed_queue_entry_count") or 0)
+            pending = int(recovery.get("resume_queue_count") or 0)
+        except Exception:  # pragma: no cover - full validation provides the actionable failure
+            self.log.exception("t3_finish_preflight_failed")
+            return None
+
+        # An absent/empty queue must be diagnosed by the full validator rather
+        # than being hidden behind a continuation request with no actual work.
+        if target_queue_count <= 0:
+            return None
+
+        configured_requirement = (
+            queue_config.deep_read_target
+            if require_deep_read_target(mode_params)
+            else queue_config.deep_read_min
+        )
+        required = min(target_queue_count, configured_requirement)
+        if completed >= required:
+            return None
+        if pending <= 0:
+            return None
+
+        remaining = required - completed
+        examples = recovery.get("pending_examples")
+        example_lines: list[str] = []
+        if isinstance(examples, list):
+            for item in examples[:3]:
+                if not isinstance(item, dict):
+                    continue
+                rank = item.get("queue_rank")
+                original_rank = item.get("original_queue_rank")
+                paper = str(item.get("paper") or "unknown")
+                suffix = f"（原队列 rank {original_rank}）" if original_rank not in (None, "") else ""
+                example_lines.append(f"- pending rank {rank}: {paper}{suffix}")
+
+        ctx.extra["t3_finish_preflight"] = {
+            "completed": completed,
+            "required": required,
+            "target_queue_count": target_queue_count,
+            "pending": pending,
+            "remaining": remaining,
+            "queue_path": str(recovery.get("resume_queue_path") or "literature/deep_read_queue_pending.jsonl"),
+        }
+        self.progress.emit(
+            "[Reader Agent] T3 阅读队列未完成："
+            f"已完成 {completed}/{required}，仍需 {remaining}；"
+            f"已刷新剩余 {pending} 篇工作清单，继续从 pending rank 1 阅读。",
+            important=True,
+        )
+
+        example_block = "\n" + "\n".join(example_lines) if example_lines else ""
+        return Message.user(
+            "[Runtime] T3 深读队列尚未达到本轮完成门槛，尚未进入输出校验，也未消耗校验修复次数。\n"
+            f"当前已完成：{completed}/{required}；仍需：{remaining}。\n"
+            f"已刷新 `{recovery.get('resume_queue_path') or 'literature/deep_read_queue_pending.jsonl'}`，"
+            f"其中有 {pending} 篇尚未完成的论文。\n"
+            "请立即从该 pending queue 的 `queue_rank=1` 开始继续：逐篇调用 `lookup_paper_record`，"
+            "按证据可得性读取 PDF/章节并写入或修补结构合格的 note。"
+            "在上述机械进度达到门槛前，不要再次调用 `finish_task`。"
+            f"{example_block}"
+        )
 
     async def _maybe_run_t3_abstract_sweep(
         self,

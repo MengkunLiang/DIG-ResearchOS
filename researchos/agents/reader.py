@@ -35,7 +35,11 @@ from ..runtime.bridge_catalog import load_bridge_catalog_summaries
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_mode_params
 from ..runtime.prompts import render_prompt
-from ..runtime.t2_config import get_effective_reader_read_params, load_deep_read_queue_config
+from ..runtime.t2_config import (
+    get_effective_reader_read_params,
+    load_deep_read_queue_config,
+    require_deep_read_target,
+)
 from ..tools.bibtex import bibtex_internal_marker_issues, extract_bib_keys_from_text, parse_bib_entries
 from ._common import (
     cdr_schema_prompt_summary,
@@ -389,7 +393,7 @@ class ReaderAgent(Agent):
         min_required = queue_config.deep_read_min
         target_required = queue_config.deep_read_target
         mode_params = get_effective_reader_read_params(ctx.workspace_dir)
-        require_target_completion = _require_deep_read_target(mode_params)
+        require_target_completion = require_deep_read_target(mode_params)
         queue_path = ctx.workspace_dir / "literature" / "deep_read_queue.jsonl"
         queue_records = load_jsonl(queue_path) if queue_path.exists() else []
         queue_count = len(queue_records)
@@ -1003,17 +1007,9 @@ def _positive_int(value: object, *, default: int) -> int:
 
 
 def _require_deep_read_target(params: dict[str, object]) -> bool:
-    raw = params.get("require_deep_read_target")
-    if isinstance(raw, bool):
-        return raw
-    if raw is None:
-        return False
-    text = str(raw).strip().casefold()
-    if text in {"1", "true", "yes", "y", "on", "target", "目标", "读满"}:
-        return True
-    if text in {"0", "false", "no", "n", "off", "min", "最低"}:
-        return False
-    return bool(raw)
+    """Backward-compatible alias for the shared T3 completion policy."""
+
+    return require_deep_read_target(params)
 
 
 def _required_note_count(expected_count: int, ratio: float) -> int:

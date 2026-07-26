@@ -408,3 +408,24 @@ def load_deep_read_queue_config(workspace_dir: Path | str | None = None) -> Deep
         bridge_pool_cap=_as_int(params.get("bridge_pool_cap"), defaults.bridge_pool_cap, minimum=0),
         citation_hub_slots=_as_int(params.get("citation_hub_slots"), defaults.citation_hub_slots, minimum=0),
     )
+
+
+def require_deep_read_target(params: dict[str, object]) -> bool:
+    """Return whether T3 must reach its target instead of its minimum count.
+
+    The Reader validator and the runtime's deterministic finish preflight must
+    use one normalization rule.  Keeping it here prevents an early-finish
+    continuation loop from disagreeing with the final output contract.
+    """
+
+    raw = params.get("require_deep_read_target")
+    if isinstance(raw, bool):
+        return raw
+    if raw is None:
+        return False
+    text = str(raw).strip().casefold()
+    if text in {"1", "true", "yes", "y", "on", "target", "目标", "读满"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", "min", "最低"}:
+        return False
+    return bool(raw)
