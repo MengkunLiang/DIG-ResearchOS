@@ -8445,6 +8445,62 @@ class AgentRunner:
         return count
 
     @staticmethod
+    def _t36_citation_repair_context(workspace_dir: Path) -> str:
+        """Inject deterministic, evidence-bounded T3.6 repair facts into the writer.
+
+        The audit JSON remains the complete source of truth.  This compact
+        excerpt prevents a failed validation cycle from degenerating into a
+        vague instruction to "add more citations", while leaving the writer
+        responsible for note-level semantic verification.
+        """
+
+        audit_path = workspace_dir / "drafts" / "survey" / "survey_audit.json"
+        try:
+            audit = json.loads(audit_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return "未能读取结构化 citation repair guidance；先读取 `drafts/survey/survey_audit.json` 后再修复。"
+        if not isinstance(audit, dict):
+            return "citation repair guidance 格式无效；先读取 `drafts/survey/survey_audit.json` 后再修复。"
+        repair_guidance = audit.get("repair_guidance") if isinstance(audit.get("repair_guidance"), dict) else {}
+        diversity = repair_guidance.get("citation_diversity") if isinstance(repair_guidance.get("citation_diversity"), dict) else {}
+        contract = diversity.get("coverage_contract") if isinstance(diversity.get("coverage_contract"), dict) else {}
+        lines = ["以下是本轮审计直接注入的 citation coverage 修复事实："]
+        if contract:
+            lines.append(
+                "- 硬目标：{required} 个可追溯不同引用 / {eligible} 个可用条目（{ratio:.0%}）；当前 {current}，还差 {missing}。".format(
+                    required=int(contract.get("required_unique_citations") or 0),
+                    eligible=int(contract.get("eligible_traceable_keys") or 0),
+                    ratio=float(contract.get("minimum_coverage_ratio") or 0),
+                    current=int(contract.get("cited_traceable_keys") or 0),
+                    missing=int(contract.get("missing_unique_citations") or 0),
+                )
+            )
+        queue = diversity.get("section_review_queue") if isinstance(diversity.get("section_review_queue"), list) else []
+        if queue:
+            lines.append("- 必须逐节审阅下列队列；每一项均须先打开 source_file 核验，再判断是否能支撑已有句子：")
+            for item in queue:
+                if not isinstance(item, dict):
+                    continue
+                candidates = item.get("candidate_notes_to_verify") if isinstance(item.get("candidate_notes_to_verify"), list) else []
+                compact = "; ".join(
+                    "{key} [{level}; {path}]".format(
+                        key=str(candidate.get("bib_key") or "?"),
+                        level=str(candidate.get("evidence_level") or "UNKNOWN"),
+                        path=str(candidate.get("source_file") or "missing"),
+                    )
+                    for candidate in candidates[:6]
+                    if isinstance(candidate, dict)
+                )
+                lines.append(f"  - {item.get('section_id')}: {compact or '完整队列见 audit JSON'}")
+        warnings = repair_guidance.get("quality_warnings") if isinstance(repair_guidance.get("quality_warnings"), list) else []
+        if warnings:
+            lines.append("- 同时处理本轮可安全修复的 warning：")
+            for warning in warnings:
+                if isinstance(warning, dict):
+                    lines.append(f"  - {warning.get('check')}: {warning.get('action')}")
+        return "\n".join(lines)
+
+    @staticmethod
     def _validation_repair_feedback(
         *,
         ctx: ExecutionContext,
@@ -8507,15 +8563,19 @@ class AgentRunner:
                         "模板接口由 `assemble_survey` 负责：标准模板投影为 abstract 环境，INFORMS4 投影为 `\\ABSTRACT{...}`。"
                         "不要直接编辑派生的 `survey.tex`；只需保留/恢复模板中立的摘要正文后重新调用 assemble_survey 和 audit_survey_coverage。"
                     )
+                citation_context = AgentRunner._t36_citation_repair_context(ctx.workspace_dir)
                 return (
                     base
                     + "读取 `drafts/survey/survey_audit.md` 和 `drafts/survey/survey_audit.json`。"
-                    "若失败为 `citation_diversity`，读取 `repair_guidance.citation_diversity.over_repeated` 中的 key、次数和 section 分布；"
-                    "逐节核查这些引用对应的论断。先合并或删除重复表达，再仅在另一篇已核验文献确实支持该句的历史、比较、边界或方法主张时替换 citation。"
-                    "不得用 citation padding、无关文献、abstract-only 线索或新编造的事实来分散引用。"
+                    "若失败为 `citation_diversity`，coverage_contract 是硬性放行条件。必须逐节处理 section_review_queue，"
+                    "先打开每个候选的 source_file，逐句核验论文主题、对象、方法、证据等级和当前论断是否匹配。"
+                    "FULL/PARTIAL 仅在核验后支持具体论断；ABSTRACT-ONLY 仅可用于背景、趋势、范围或证据边界。"
+                    "先合并真正重复的表达，再使用确实支持已有历史、比较、边界或方法句的候选。不得用 citation padding、"
+                    "无关论文、abstract-only 线索支撑强论断或新编造事实来达到指标。"
                     "只编辑受影响的 `drafts/survey/sections/*.tex`，然后调用 assemble_survey 与 audit_survey_coverage；"
-                    "不要直接编辑派生的 `survey.tex`。若现有语料没有安全替代来源，写 `drafts/survey/survey_assemble_repair_plan.md`，"
-                    "说明需要补检的具体主题和为什么当前材料不足，再 finish_task 以进入人工恢复决策。"
+                    "不要直接编辑派生的 `survey.tex`。若逐节核验后仍没有安全替代来源，写 `drafts/survey/survey_assemble_repair_plan.md`，"
+                    "逐条记录拒用的 bib_key、source_file、原因、需要补检的具体主题和受影响 section，再 finish_task 以进入人工恢复决策。\n"
+                    + citation_context
                 )
             if ctx.task_id.startswith("T3.6-SEC-"):
                 return (

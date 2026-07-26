@@ -413,13 +413,13 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 对发展脉络采用“奠基 → 关键转折 → 当前前沿”的压缩叙事；每个阶段都必须解释它为何改变后续分类、比较或研究议程。没有这种后续作用的历史细节应删除或合并。
 - 如果一个 taxonomy class 只有 abstract-only 或 metadata-only 支撑，不要把它写成成熟主流方向；应写成 coverage boundary、emerging hint 或 resource upgrade need。
 - 引用必须逐字来自上方“可用 citation keys”或 `related_work.bib`。不确定 citation key 时，不要编造；宁可不引用或改写为不带 key 的范围描述。
-- 除 Abstract 和 Conclusion 外，每个 claim-bearing section 必须有足够的代表性引用：Background 至少 4 个 unique keys，Taxonomy 至少 4 个，Comparative Analysis 至少 5 个，Challenges/Future 至少 2 个，Introduction 至少 2 个。整篇综述还必须覆盖足够多的不同 citation keys：当 related_work.bib/notes 较多时，不要反复引用少数熟悉论文；优先轮换 citation pool 中 core/supporting、planned_for 当前 section、full/partial note 的论文，让不同研究流派、证据类型和边界条件都有代表文献。
+- 除 Abstract 和 Conclusion 外，每个 claim-bearing section 必须有足够的代表性引用：Background 至少 4 个 unique keys，Taxonomy 至少 4 个，Comparative Analysis 至少 5 个，Challenges/Future 至少 2 个，Introduction 至少 2 个。整篇综述还有硬性的全局覆盖契约：`audit_survey_coverage` 会按“有本地可回查 note、证据等级明确、且与保存的综述计划存在确定关联的 BibTeX 条目”计算分母，默认必须覆盖至少 50%（配置可提高但不得低于 50%）。与综述无确定关联的检索噪声不计入分母，也绝不能为凑数引用。写作时应让不同研究流派、证据类型和边界条件都有代表文献；不要反复引用少数熟悉论文。该契约不是 citation quota：每一个新增 key 都必须先回查其 note 并与具体句子语义匹配。
 - 单篇论文不应在全文中过度重复引用。若同一 key 已多次出现，除非它是定义性奠基文献且当前段落确实需要，否则应改用同一研究流派中的其它已读论文或把表述改成流派层面的综合判断。
 - 引用必须服务于概念、流派、比较、挑战或议程，不要机械堆 key；但也不能用少数 key 反复支撑不同 claim 来制造“看起来引用很多”的效果。
 - 每个 `\cite{...}` 必须支撑它所在句子或相邻短句的具体论断。引用前先核对 citation pool / paper note / BibTeX title：论文主题、方法、对象、证据类型和当前 claim 必须匹配。不要因为某篇文献“同属大领域”就拿来支撑不相关机制、效果、管理含义或研究缺口；多篇并列引用必须属于同一研究流派、同一比较维度或同一证据边界。
 - 不要把 citation bundle 堆在段末当 blanket support。若一句话包含强 claim（证明、显示、显著、因果、机制、实证、验证等），所引文献必须直接支持该 claim 类型；若文献只能支持背景/趋势/覆盖存在性，句子必须弱化为背景或趋势表述。
 - `abstract` 不写任何正式引用；具体 prior work attribution 放到 Introduction 或正文综述章节。
-- 对 abstract-only 文献，要标注 evidence 边界，不把 abstract claim 写成已验证机制。
+- 对 abstract-only 文献，要标注 evidence 边界，不把 abstract claim 写成已验证机制；它们只能用于背景、趋势、范围、taxonomy 覆盖或证据边界，不能单独支撑机制、因果、效果或比较结论。
 - 避免冒号/破折号模板化 prose。正文普通段落不要使用 “Challenge: ...”, “Implication: ...”, “Future direction: ...” 作为段落骨架；用自然 topic sentence 和流畅过渡承载综述判断。
 - 不要把正文写成连续 `\paragraph{...}` 标签。优先使用少量有论证关系的 `\subsection{...}`，段落以完整 topic sentence 开始；`\paragraph` 只可用于一节中至多一个确有必要的紧凑定义或列举。
 - 表格只在跨论文项目真正可比时使用。宽表必须包在模板可用的 `\resizebox{\textwidth}{!}{...}`（双栏跨栏表）或 `\resizebox{\columnwidth}{!}{...}`（单栏表）中；不能把不可比的指标、性能或筛选分数强行并列。
@@ -454,7 +454,7 @@ Venue-aware survey framing:
 
 如果 audit 返回 FAIL：
 - 读取 `drafts/survey/survey_audit.md`
-- 同时读取 `drafts/survey/survey_audit.json` 的 `repair_guidance`。当失败项是 `citation_diversity` 时，先定位每个 `over_repeated` key 在哪些 section 被重复使用；先合并同一篇论文被重复阐述的相邻论断、删除没有新增信息的重述，再判断是否存在**已经核验且确实支持该句主张**的其它文献可以承担不同的比较、边界或历史论断。绝不为了通过阈值给句子塞无关 citation，也不要把摘要或 metadata 线索升级成机制/结果证据。修复必须写回对应 `sections/*.tex`，不能直接编辑派生的 `survey.tex`。
+- 同时读取 `drafts/survey/survey_audit.json` 的 `repair_guidance`。当失败项是 `citation_diversity` 时，`coverage_contract` 是硬性放行条件：逐节处理 `section_review_queue`，并先打开每个候选的 `source_file`，核对主题、对象、方法、证据等级和目标句是否完全匹配。`unrepresented_candidates` 是待核查清单，不是自动替换表；FULL/PARTIAL note 只能在核验后支持具体论断，ABSTRACT-ONLY note 只能用于背景、趋势、范围或证据边界。再定位每个 `over_repeated` key 在哪些 section 被重复使用，先合并没有新增信息的重述。绝不为了通过阈值给句子塞无关 citation，也不要把摘要或 metadata 线索升级成机制/结果证据。若逐节核验后没有安全候选，写 `survey_assemble_repair_plan.md`，逐条记录拒用 key、原因、补检主题和受影响 section，而不是伪装为通过。修复必须写回对应 `sections/*.tex`，不能直接编辑派生的 `survey.tex`。
 - 定位具体 section 文件，修对应 section，不要重写整篇 survey.tex
 - 重新 assemble + audit
 - 如果失败项是 `compact_theme_content_absorbed`，不要恢复默认 skipped 的 theme 章；优先补 `taxonomy.tex` 和/或 `comparison.tex`，让所有 taxonomy classes 在框架与比较中都有实质覆盖。只有用户明确要求长综述并调整 `sectioning_policy` 时，才使用 standalone theme sections。

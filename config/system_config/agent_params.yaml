@@ -717,6 +717,13 @@ agents:
     # Section prose and citation concentration can require distinct repairs.
     # Exhaustion is handled by an explicit recovery gate, never by silent exit.
     max_validation_retries: 5
+    behavior:
+      # A completed survey must represent a broad, locally traceable and
+      # plan-scoped evidence base. This value may be raised for a stricter
+      # review, but 50% is the enforced floor: lowering it would permit a
+      # small-core citation collapse.
+      survey_citation_coverage:
+        minimum_traceable_ratio: 0.50
     tools:
       allowed_read_prefixes:
       - ''

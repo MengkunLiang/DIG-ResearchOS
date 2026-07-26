@@ -537,9 +537,9 @@ def _format_recovery_error(value: Any) -> str:
 def _format_t36_assemble_recovery_field(key: str, value: Any) -> str | None:
     """Render a Survey assembly recovery decision without dumping audit JSON.
 
-    The content is entirely deterministic diagnostic information.  It must not
-    manufacture a prose-repair recommendation or pretend that a quality
-    warning is evidence of a citation error.
+    The content is entirely deterministic diagnostic information. It explains
+    the hard traceable-coverage target without manufacturing a prose repair or
+    implying that a candidate note can be cited without semantic verification.
     """
 
     if key == "error_summary":
@@ -555,9 +555,23 @@ def _format_t36_assemble_recovery_field(key: str, value: Any) -> str | None:
     if not isinstance(diversity, dict):
         return "审计没有提供可自动定位的来源文件；继续时只应处理审计明确指出的问题。"
 
-    lines = [
-        "引用分布只是一项质量诊断，不代表引用失实，也不会要求用无关文献填充。",
-    ]
+    lines = ["引用覆盖未达到硬性放行要求；这不代表现有引用失实，但必须扩大到可追溯的本地证据范围。"]
+    contract = diversity.get("coverage_contract") if isinstance(diversity.get("coverage_contract"), dict) else {}
+    if contract:
+        lines.append(
+            "覆盖目标：与综述范围相关的可追溯条目 {eligible} 篇，至少使用 {required} 篇（{ratio:.0%}）；当前 {current} 篇，"
+            "还需安全补充 {missing} 篇。".format(
+                eligible=int(contract.get("eligible_traceable_keys") or 0),
+                required=int(contract.get("required_unique_citations") or 0),
+                ratio=float(contract.get("minimum_coverage_ratio") or 0),
+                current=int(contract.get("cited_traceable_keys") or 0),
+                missing=int(contract.get("missing_unique_citations") or 0),
+            )
+        )
+        lines.append(
+            "分母只包括已有 BibTeX key、能回查本地 note、证据等级明确且与已保存综述计划有确定关联的论文；"
+            "未知、无本地笔记或不在综述范围内的条目不会被拿来凑指标。"
+        )
     total = diversity.get("citation_use_count")
     repeat_limit = diversity.get("repeat_limit")
     concentration = diversity.get("concentration_limit")
@@ -570,6 +584,23 @@ def _format_t36_assemble_recovery_field(key: str, value: Any) -> str | None:
         facts.append(f"集中度提示阈值：{float(concentration):.0%}")
     if facts:
         lines.append("；".join(facts) + "。")
+    section_queue = diversity.get("section_review_queue")
+    if isinstance(section_queue, list) and section_queue:
+        lines.append("需逐节核查：")
+        for item in section_queue[:8]:
+            if not isinstance(item, dict):
+                continue
+            candidates = item.get("candidate_notes_to_verify") if isinstance(item.get("candidate_notes_to_verify"), list) else []
+            candidate_text = "、".join(
+                "{key}（{level}，{path}）".format(
+                    key=str(candidate.get("bib_key") or "?"),
+                    level=str(candidate.get("evidence_level") or "UNKNOWN"),
+                    path=str(candidate.get("source_file") or "缺少 note"),
+                )
+                for candidate in candidates[:4]
+                if isinstance(candidate, dict)
+            )
+            lines.append(f"- {item.get('section_id')}: {candidate_text or '完整候选见 audit JSON'}")
     offenders = diversity.get("over_repeated")
     if isinstance(offenders, list) and offenders:
         lines.append("需人工判断的集中使用来源：")
@@ -593,7 +624,13 @@ def _format_t36_assemble_recovery_field(key: str, value: Any) -> str | None:
                 suffix.append(f"涉及 {sections}")
             lines.append(f"- {source}" + ("：" + "；".join(suffix) if suffix else ""))
     else:
-        lines.append("未发现单篇来源异常集中使用；若仍需修复，请以 audit 中的具体失败项为准。")
+        lines.append("未发现单篇来源异常集中使用；仍须完成上述全局覆盖目标。")
+    warnings = value.get("quality_warnings")
+    if isinstance(warnings, list) and warnings:
+        lines.append("可一并处理的非阻断 warning：")
+        for item in warnings[:6]:
+            if isinstance(item, dict):
+                lines.append(f"- {item.get('check')}: {item.get('action')}")
     policy = " ".join(str(diversity.get("repair_policy") or "").split())
     if policy:
         lines.append("审计策略：" + policy)

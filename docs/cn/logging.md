@@ -92,7 +92,7 @@ python -m researchos.cli validate \
 
 | 失败类型 | 含义 | 修复范围 |
 | --- | --- | --- |
-| `citation_diversity` | 引用使用确实过于集中，或引用的不同键过少。重复上限会随着总引用次数而变化，因此，一份长篇 survey 不会仅因某篇基础论文超过固定次数就被拒绝。 | 在声明支持允许的情况下，添加相关的现有引用或移除冗余引用。 |
+| `citation_diversity` | 硬性放行检查：可回查本地笔记、证据等级明确且与综述计划存在确定关联的 BibTeX 条目，未达到配置的至少 50% 覆盖，或某个 key 确实过度集中。重复上限会随着总引用次数而变化，因此，一份长篇 survey 不会仅因某篇基础论文超过固定次数就被拒绝。 | 阅读 `repair_guidance.citation_diversity.coverage_contract`，逐节核查 `section_review_queue` 中 `source_file` 指向的笔记；只有逐句核验后才可加入/替换引用。FULL/PARTIAL 笔记可支持具体论断；ABSTRACT-ONLY 仅能用于背景、趋势、范围或边界。没有安全来源时写 repair plan，不能堆砌引用。 |
 | `bibliography_quality` | 某个被引用的 BibTeX 记录格式错误、包含占位符，或期刊/会议类型不正确。 | 修复 `literature/related_work.bib`，然后重新汇编一次，以便指纹更新。 |
 | `citation_claim_alignment` 或章节/深度检查 | 被引用的段落或指定章节不满足其实际契约。 | 仅修改受牵连的章节及其证据锚点；不要重写不相关的 Survey 章节。 |
 | `survey_graphics_layout` | 双栏 CCF 模板中包含一个普通的 `figure`，其图片使用了不安全的 `\\textwidth` 宽度。它可能编译成功，但会与第二栏文本重叠。 | 使用 `figure*` 来放置全宽的类图，或将普通图表改为 `\\columnwidth`/`\\linewidth`；重新汇编、审计并编译。 |

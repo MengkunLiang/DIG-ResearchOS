@@ -3561,7 +3561,9 @@ researchos audit-survey --workspace ./workspace/project-a
 researchos validate --task T3.6-ASSEMBLE --workspace ./workspace/project-a
 ```
 
-引用多样性同时检查可用 BibTeX 数量和单篇占全部引用出现次数的比例。小语料保留最小重复保护；长综述的阈值按总引用出现次数放大。因此 `13/104`（12.5%）不会再因固定 `>10` 规则被误判为集中。真正的 `bibliography_quality` 失败仍会阻塞，例如把 `Information Systems Research`、`Management Science` 或 `MIS Quarterly` 的期刊论文写成 `@inproceedings`；abstract sweep 现在优先识别显式 `journal` 元数据和常见期刊名称，生成 `@article`/`journal` 字段。
+引用多样性是硬性覆盖契约，不是无行动价值的 warning。分母只包含同时满足以下条件的 BibTeX 条目：有本地笔记卡、证据等级明确、且与已保存的综述计划存在确定范围关联（直接 taxonomy 链接、synthesis coverage plan 条目，或足够的实质性标题词重合）。检索噪声、未知证据和无链接条目会被明确排除。T3.6 放行前必须覆盖该范围内材料的至少 50%，或在更高时满足活跃章节下限。审计会将目标、缺口、排除条目、候选 `source_file`、证据限制和逐节核查队列写入 `repair_guidance`；校验修复 prompt 也会将同一组操作事实注入 Survey Writer。候选绝不是自动引用：FULL/PARTIAL 笔记必须逐句核验，ABSTRACT-ONLY 只能用于背景、趋势、范围或证据边界。没有安全候选时，Writer 必须记录 repair plan，不能堆砌无关引用。
+
+集中度是同一检查中的独立部分。小语料保留最小重复保护；长综述的阈值按总引用出现次数放大。因此 `13/104`（12.5%）不会再因固定 `>10` 规则被误判为集中。真正的 `bibliography_quality` 失败仍会阻塞，例如把 `Information Systems Research`、`Management Science` 或 `MIS Quarterly` 的期刊论文写成 `@inproceedings`；abstract sweep 会优先识别显式 `journal` 元数据和常见期刊名称，生成 `@article`/`journal` 字段。
 
 ### 11.2 T4：Evolutionary Idea Formation、Rich Gate1 与假设状态
 

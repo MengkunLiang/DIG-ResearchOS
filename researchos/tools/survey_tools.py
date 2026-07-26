@@ -35,6 +35,7 @@ from ..runtime.literature_contract import (
 )
 from ..literature_citations import citation_entry_for_id, citation_map_key_lookup, refresh_literature_citation_maps
 from ..runtime.pdf_acquisition import acquire_retained_pdfs, attach_pdf_acquisition
+from ..runtime.agent_params import get_agent_mode_params
 from ..literature_identity import record_note_id
 from ..literature_resources import format_resource_discovery_notice, refresh_resource_catalog
 from .base import Tool, ToolResult
@@ -368,8 +369,8 @@ SURVEY_SECTION_MIN_CITATIONS = {
     "future": 2,
 }
 
-_SURVEY_CITATION_DIVERSITY_RATIO = 0.35
-_SURVEY_CITATION_DIVERSITY_CAP = 32
+_SURVEY_CITATION_DIVERSITY_RATIO = 0.50
+_SURVEY_CITATION_COVERAGE_CONTRACT_VERSION = "traceable_bibliography_coverage.v1"
 _SURVEY_CITATION_CONCENTRATION_LIMIT = 0.16
 _SURVEY_CITATION_REPEAT_LIMIT = 10
 
@@ -1422,18 +1423,20 @@ class ExportSurveyForIdeationParams(BaseModel):
     summary_output_path: str = Field(default="drafts/survey/survey_summary.md")
 
 
-SURVEY_AUDIT_SCHEMA_VERSION = "survey_coverage_audit.v2"
+SURVEY_AUDIT_SCHEMA_VERSION = "survey_coverage_audit.v3"
 
 
 def upgrade_survey_audit_document(audit: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]]]:
     """Upgrade an old audit document to the current release semantics.
 
     This is a schema/data migration, not a quality-rule bypass. Numeric
-    citation breadth and prose/depth heuristics are visible quality warnings:
-    neither can establish that a citation is semantically false or that an
-    otherwise complete scholarly argument is invalid. Provenance, alignment,
-    bibliography, structure, fingerprint, language, and TeX checks retain
-    their hard status.
+    Prose/depth heuristics remain visible quality warnings: they cannot by
+    themselves establish that a scholarly argument is invalid. Traceable
+    citation coverage is different: it is a release requirement because a
+    survey built from a large accessible corpus must not silently collapse to
+    a handful of familiar works. Provenance, alignment, bibliography,
+    structure, fingerprint, language, TeX, and traceable citation coverage
+    retain their hard status.
     """
 
     normalized = json.loads(json.dumps(audit, ensure_ascii=False))
@@ -1446,7 +1449,6 @@ def upgrade_survey_audit_document(audit: dict[str, Any]) -> tuple[dict[str, Any]
         return normalized, migrations
 
     writing_diagnostic_checks = {
-        "citation_diversity",
         "has_sufficient_citations",
         "section_level_citation_density",
         "survey_section_depth",
@@ -1459,7 +1461,7 @@ def upgrade_survey_audit_document(audit: dict[str, Any]) -> tuple[dict[str, Any]
             migrations.append(
                 {
                     "id": f"{item.get('name')}_fail_to_warn",
-                    "reason": "Citation breadth and prose/depth heuristics are quality diagnostics, not evidence-validity failures.",
+                    "reason": "Citation-density and prose/depth heuristics are quality diagnostics, not evidence-validity failures.",
                     "from": "FAIL",
                     "to": "WARN",
                 }
@@ -1495,8 +1497,8 @@ def upgrade_survey_audit_document(audit: dict[str, Any]) -> tuple[dict[str, Any]
         normalized["schema_version"] = SURVEY_AUDIT_SCHEMA_VERSION
         migrations.append(
             {
-                "id": "survey_audit_schema_v2",
-                "reason": "Adopt explicit audit schema and quality-warning semantics.",
+                "id": "survey_audit_schema_v3",
+                "reason": "Adopt the traceable bibliography coverage contract and actionable quality guidance.",
                 "from": previous,
                 "to": SURVEY_AUDIT_SCHEMA_VERSION,
             }
@@ -1568,7 +1570,7 @@ def migrate_survey_audit_artifact(path: Path) -> tuple[dict[str, Any], list[dict
 
 
 def survey_audit_release_ready(audit: dict[str, Any]) -> tuple[bool, list[str], list[str]]:
-    """Classify a persisted survey audit without turning concentration into a block.
+    """Classify a persisted survey audit with hard traceable-citation coverage.
 
     Consumers call :func:`migrate_survey_audit_artifact` first.  This helper is
     intentionally strict over the resulting current schema and provides a
@@ -1581,13 +1583,19 @@ def survey_audit_release_ready(audit: dict[str, Any]) -> tuple[bool, list[str], 
 
     hard_failures: list[str] = []
     soft_warnings: list[str] = []
+    diversity_guidance = ((audit.get("repair_guidance") or {}).get("citation_diversity") or {})
+    coverage_contract = diversity_guidance.get("coverage_contract") if isinstance(diversity_guidance, dict) else {}
+    if not isinstance(coverage_contract, dict) or coverage_contract.get("version") != _SURVEY_CITATION_COVERAGE_CONTRACT_VERSION:
+        hard_failures.append(
+            "citation_diversity: audit lacks the current traceable citation-coverage contract; rerun audit_survey_coverage"
+        )
     for raw in raw_checks:
         if not isinstance(raw, dict) or raw.get("passed") is not False:
             continue
         name = str(raw.get("name") or "unnamed_check")
         detail = str(raw.get("detail") or "")
         if name == "citation_diversity":
-            soft_warnings.append(detail or name)
+            hard_failures.append(name + (f": {detail}" if detail else ""))
             continue
         level = str(raw.get("level") or "FAIL").upper()
         if level == "WARN":
@@ -2207,6 +2215,19 @@ class AuditSurveyCoverageTool(Tool):
             bibtex = source_bibtex
             bibliography_projection_matches = not expected_reconciliation
         bib_keys = set(extract_bib_keys_from_text(bibtex))
+        citation_inventory, citation_scope_diagnostics = _survey_traceable_citation_inventory(
+            self.policy.workspace_dir,
+            bibtex,
+            bib_keys,
+            survey_plan=plan,
+        )
+        citation_coverage_contract = _survey_citation_coverage_contract(
+            cited=cited,
+            bib_keys=bib_keys,
+            inventory=citation_inventory,
+            state=state,
+            scope_diagnostics=citation_scope_diagnostics,
+        )
         writing_language = _survey_state_writing_language(state, self.policy.workspace_dir)
         section_texts = _survey_section_texts(tex, state)
         visual_manifest = _read_optional_json(self.policy, "drafts/survey/figures/survey_visual_manifest.json")
@@ -2336,20 +2357,23 @@ class AuditSurveyCoverageTool(Tool):
                 level_if_fail="WARN",
             )
         )
-        citation_diversity_detail = _survey_citation_diversity_diagnostic(tex, section_texts)
-        citation_diversity_issues = _survey_citation_diversity_issues(tex, cited, bib_keys, state)
+        citation_diversity_detail = _survey_citation_diversity_diagnostic(
+            tex,
+            section_texts,
+            coverage_contract=citation_coverage_contract,
+            inventory=citation_inventory,
+            survey_plan=plan,
+        )
+        citation_diversity_issues = _survey_citation_diversity_issues(
+            tex,
+            cited,
+            citation_coverage_contract,
+        )
         checks.append(
             _check(
                 "citation_diversity",
                 not citation_diversity_issues,
                 "Citation diversity issues: " + "; ".join(citation_diversity_issues[:8]),
-                # Repetition can reveal that the corpus is narrow, but it is
-                # not evidence of a false citation.  Treating a proportional
-                # heuristic as a release blocker pressures the writer to add
-                # irrelevant citations merely to satisfy a formula.  Retain
-                # the full diagnostic and repair guidance as a visible quality
-                # warning; citation existence and claim alignment remain hard.
-                level_if_fail="WARN",
             )
         )
         citation_issues = _survey_section_citation_issues(section_texts, state)
@@ -2467,6 +2491,7 @@ class AuditSurveyCoverageTool(Tool):
             },
             "repair_guidance": {
                 "citation_diversity": citation_diversity_detail,
+                "quality_warnings": _survey_quality_warning_guidance(checks),
             },
             "compatibility_migrations": [],
         }
@@ -2575,10 +2600,9 @@ class ExportSurveyForIdeationTool(Tool):
                     if isinstance(item, dict) and item.get("level") == "WARN" and not item.get("passed")
                 ] + [
                     {
-                        "name": "citation_diversity",
+                        "name": "audit_warning",
                         "level": "WARN",
                         "detail": warning,
-                        "legacy_softened": audit.get("passed") is not True,
                     }
                     for warning in audit_warnings
                     if warning
@@ -5265,12 +5289,267 @@ def _survey_min_unique_citations(state: dict[str, Any]) -> int:
     return max(6, min(14, sum(SURVEY_SECTION_MIN_CITATIONS.get(sid, 0) for sid in active) // 2))
 
 
-def _survey_min_diverse_citations(bib_keys: set[str], state: dict[str, Any]) -> int:
-    section_floor = _survey_min_unique_citations(state)
-    if not bib_keys:
-        return section_floor
-    scaled = int(round(len(bib_keys) * _SURVEY_CITATION_DIVERSITY_RATIO))
-    return max(section_floor, min(_SURVEY_CITATION_DIVERSITY_CAP, scaled))
+def _survey_traceable_citation_inventory(
+    workspace: Path,
+    bibtex: str,
+    bib_keys: set[str],
+    *,
+    survey_plan: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    """Return one safely traceable citation record for each usable BibTeX key.
+
+    A bibliography entry alone is not enough to raise a hard survey coverage
+    requirement: the writer must have a local note card whose evidence level
+    and source file can be inspected *and* a deterministic link to the survey
+    plan. FULL/PARTIAL entries may support a claim after note verification;
+    ABSTRACT-ONLY entries may only support background, trend, scope, or
+    evidence-boundary prose. Unknown, unlinked, and out-of-scope entries are
+    intentionally excluded from the denominator.
+    """
+
+    parsed_titles = {
+        str(entry.get("key") or ""): str((entry.get("fields") or {}).get("title") or "").strip()
+        for entry in parse_bib_entries(bibtex)
+        if isinstance(entry, dict)
+    }
+    citation_map = refresh_literature_citation_maps(workspace, write=False).get("citation_map", {})
+    scope_context = _survey_citation_scope_context(workspace, survey_plan)
+    records: dict[str, dict[str, Any]] = {}
+    traceability_qualified: dict[str, dict[str, Any]] = {}
+    scope_excluded: dict[str, dict[str, Any]] = {}
+    citation_entries = citation_map.get("entries") if isinstance(citation_map, dict) else []
+    for item in citation_entries or []:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("bib_key") or "").strip()
+        if not key or key not in bib_keys:
+            continue
+        evidence_level = str(item.get("evidence_level") or "").strip().upper()
+        if evidence_level not in {"FULL_TEXT", "PARTIAL_TEXT", "FULL_OR_PARTIAL_TEXT", "ABSTRACT_ONLY"}:
+            continue
+        candidate = {
+            "bib_key": key,
+            "title": parsed_titles.get(key) or str(item.get("title") or "").strip(),
+            "evidence_level": evidence_level,
+            "source_file": (
+                f"literature/{str(item.get('source_file') or '').lstrip('/')}"
+                if str(item.get("source_file") or "").strip()
+                else ""
+            ),
+            "aliases": [str(alias) for alias in (item.get("aliases") or []) if str(alias).strip()],
+            "citation_role": (
+                "claim_evidence_after_note_verification"
+                if evidence_level in {"FULL_TEXT", "PARTIAL_TEXT", "FULL_OR_PARTIAL_TEXT"}
+                else "background_trend_or_boundary_only"
+            ),
+        }
+        previous_traceable = traceability_qualified.get(key)
+        if previous_traceable is None or _citation_evidence_rank(candidate["evidence_level"]) > _citation_evidence_rank(previous_traceable["evidence_level"]):
+            traceability_qualified[key] = candidate
+        relevance_reasons = _citation_scope_relevance(candidate, scope_context)
+        if not relevance_reasons:
+            scope_excluded.setdefault(
+                key,
+                {
+                    "bib_key": key,
+                    "title": candidate["title"],
+                    "evidence_level": evidence_level,
+                    "reason": "no_deterministic_link_to_survey_plan",
+                },
+            )
+            continue
+        candidate["scope_relevance"] = relevance_reasons
+        existing = records.get(key)
+        if existing is None or _citation_evidence_rank(candidate["evidence_level"]) > _citation_evidence_rank(existing["evidence_level"]):
+            records[key] = candidate
+    return records, {
+        "policy": (
+            "Eligible entries must have a local note, a known evidence level, and a deterministic link to the survey plan: "
+            "a direct taxonomy paper ID, a synthesis coverage-plan entry, or at least two substantive title terms shared with "
+            "the plan's question/scope/taxonomy. This excludes retrieval noise without asking the writer to judge relevance from a title alone."
+        ),
+        "traceability_qualified_keys": len(traceability_qualified),
+        "traceability_qualified_key_list": sorted(traceability_qualified),
+        "scope_excluded_entries": [
+            scope_excluded[key]
+            for key in sorted(scope_excluded)
+            if key not in records
+        ],
+    }
+
+
+_SURVEY_SCOPE_STOPWORDS = {
+    "about", "across", "also", "and", "analysis", "approach", "artificial", "become", "between", "beyond", "but", "can",
+    "conceptual", "design", "does", "evidence", "execution", "experts", "field", "for", "from", "how", "human", "intelligence",
+    "into", "its", "literature", "may", "method", "model", "models", "not", "outcome", "paper", "papers", "performance", "research",
+    "review", "search", "strategies", "strategy", "study", "studies", "system", "systems", "that", "the", "their", "these", "this",
+    "through", "use", "using", "what", "when", "where", "which", "will", "with", "you",
+}
+
+
+def _survey_citation_scope_context(workspace: Path, survey_plan: dict[str, Any]) -> dict[str, Any]:
+    """Build deterministic relevance anchors from the saved survey plan/workbench."""
+
+    scope_boundaries = survey_plan.get("scope_boundaries") if isinstance(survey_plan.get("scope_boundaries"), dict) else {}
+    taxonomy = survey_plan.get("taxonomy") if isinstance(survey_plan.get("taxonomy"), dict) else {}
+    scope_fragments = [
+        str(survey_plan.get("survey_title") or ""),
+        str(survey_plan.get("central_question") or ""),
+        str(taxonomy.get("dimension") or ""),
+        *[str(value) for value in scope_boundaries.get("included") or []],
+    ]
+    for node in taxonomy.get("tree") or []:
+        if isinstance(node, dict):
+            scope_fragments.extend([str(node.get("name") or ""), str(node.get("class_id") or "")])
+    plan_text = "\n".join(scope_fragments)
+    plan_terms = {
+        token
+        for token in re.findall(r"[A-Za-z][A-Za-z-]{2,}", plan_text.casefold())
+        if token not in _SURVEY_SCOPE_STOPWORDS
+    }
+    taxonomy_ids: set[str] = set()
+    for node in ((survey_plan.get("taxonomy") or {}).get("tree") or []):
+        if not isinstance(node, dict):
+            continue
+        for paper_id in node.get("paper_ids") or []:
+            normalized = normalize_paper_note_alias(str(paper_id or ""))
+            if normalized:
+                taxonomy_ids.add(normalized)
+
+    coverage_keys: set[str] = set()
+    workbench_path = workspace / "literature" / "synthesis_workbench.json"
+    try:
+        workbench = json.loads(workbench_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        workbench = {}
+    plan = workbench.get("citation_coverage_plan") if isinstance(workbench, dict) else {}
+    for field in ("coverage_refs", "main_claim_refs"):
+        items = plan.get(field) if isinstance(plan, dict) else []
+        for item in items or []:
+            if isinstance(item, dict) and str(item.get("bib_key") or "").strip():
+                coverage_keys.add(str(item["bib_key"]).strip())
+    return {
+        "plan_terms": plan_terms,
+        "taxonomy_ids": taxonomy_ids,
+        "coverage_keys": coverage_keys,
+    }
+
+
+def _citation_scope_relevance(candidate: dict[str, Any], scope_context: dict[str, Any]) -> list[str]:
+    """Return auditable plan-link reasons for a candidate, or no link."""
+
+    reasons: list[str] = []
+    key = str(candidate.get("bib_key") or "")
+    aliases = {
+        normalize_paper_note_alias(str(value))
+        for value in [key, *(candidate.get("aliases") or [])]
+        if str(value).strip()
+    }
+    taxonomy_ids = set(scope_context.get("taxonomy_ids") or [])
+    if aliases & taxonomy_ids:
+        reasons.append("taxonomy_direct_link")
+    if key in set(scope_context.get("coverage_keys") or []):
+        reasons.append("synthesis_coverage_plan")
+    title_terms = {
+        token
+        for token in re.findall(r"[A-Za-z][A-Za-z-]{2,}", str(candidate.get("title") or "").casefold())
+        if token not in _SURVEY_SCOPE_STOPWORDS
+    }
+    overlap = sorted(title_terms & set(scope_context.get("plan_terms") or []))
+    if len(overlap) >= 2:
+        reasons.append("plan_term_overlap:" + ",".join(overlap[:6]))
+    return reasons
+
+
+def _citation_evidence_rank(level: str) -> int:
+    return {
+        "FULL_TEXT": 3,
+        "PARTIAL_TEXT": 2,
+        "FULL_OR_PARTIAL_TEXT": 2,
+        "ABSTRACT_ONLY": 1,
+    }.get(str(level or "").upper(), 0)
+
+
+def _survey_citation_coverage_settings() -> dict[str, Any]:
+    """Load the user-visible hard citation coverage policy.
+
+    The denominator is deliberately limited to bibliography entries that have
+    a local note card, a known evidence level, and a deterministic survey-plan
+    link. The configuration may make the contract stricter, but it may not
+    lower the 50% minimum: lowering it would recreate the small-core citation
+    collapse this policy prevents.
+    """
+
+    configured: dict[str, Any] = {}
+    try:
+        params = get_agent_mode_params("survey_writer", "survey_assemble")
+        raw = params.get("survey_citation_coverage") if isinstance(params, dict) else {}
+        configured = raw if isinstance(raw, dict) else {}
+    except (FileNotFoundError, KeyError, TypeError, ValueError):
+        # Audits must stay deterministic and usable when a deployment has not
+        # yet adopted the checked-in configuration field.
+        configured = {}
+    try:
+        requested_ratio = float(configured.get("minimum_traceable_ratio", _SURVEY_CITATION_DIVERSITY_RATIO))
+    except (TypeError, ValueError):
+        requested_ratio = _SURVEY_CITATION_DIVERSITY_RATIO
+    ratio = min(1.0, max(_SURVEY_CITATION_DIVERSITY_RATIO, requested_ratio))
+    return {
+        "minimum_traceable_ratio": ratio,
+        "configuration_path": "config/system_config/agent_params.yaml:agents.survey_writer.behavior.survey_citation_coverage",
+    }
+
+
+def _survey_citation_coverage_contract(
+    *,
+    cited: set[str],
+    bib_keys: set[str],
+    inventory: dict[str, dict[str, Any]],
+    state: dict[str, Any],
+    scope_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the hard global citation-coverage contract for a survey audit."""
+
+    settings = _survey_citation_coverage_settings()
+    ratio = float(settings["minimum_traceable_ratio"])
+    eligible_keys = set(inventory)
+    traceability_qualified_keys = {
+        str(key)
+        for key in (scope_diagnostics or {}).get("traceability_qualified_key_list") or []
+        if str(key).strip()
+    }
+    required = max(
+        _survey_min_unique_citations(state),
+        math.ceil(len(eligible_keys) * ratio),
+    ) if eligible_keys else 0
+    required = min(required, len(eligible_keys))
+    cited_eligible = cited & eligible_keys
+    evidence_counts: dict[str, int] = {}
+    for item in inventory.values():
+        level = str(item.get("evidence_level") or "UNKNOWN")
+        evidence_counts[level] = evidence_counts.get(level, 0) + 1
+    return {
+        "version": _SURVEY_CITATION_COVERAGE_CONTRACT_VERSION,
+        "minimum_coverage_ratio": ratio,
+        "configuration_path": settings["configuration_path"],
+        "available_bib_keys": len(bib_keys),
+        "traceability_qualified_bib_keys": int((scope_diagnostics or {}).get("traceability_qualified_keys") or len(eligible_keys)),
+        "eligible_traceable_keys": len(eligible_keys),
+        "eligible_evidence_counts": evidence_counts,
+        "untraceable_or_unknown_bib_keys": sorted(bib_keys - traceability_qualified_keys),
+        "scope_excluded_traceable_entries": list((scope_diagnostics or {}).get("scope_excluded_entries") or []),
+        "scope_relevance_policy": str((scope_diagnostics or {}).get("policy") or ""),
+        "required_unique_citations": required,
+        "cited_traceable_keys": len(cited_eligible),
+        "missing_unique_citations": max(0, required - len(cited_eligible)),
+        "cited_keys_without_traceable_note": sorted(cited - eligible_keys),
+        "policy": (
+            f"At least {ratio:.0%} of scoped, traceable, evidence-qualified bibliography entries must be represented. "
+            "FULL/PARTIAL notes may support claims after note verification; ABSTRACT-ONLY entries may only support "
+            "background, trend, scope, or evidence-boundary statements. Unlinked or UNKNOWN entries are excluded "
+            "rather than forcing unverifiable citations."
+        ),
+    }
 
 
 def _latex_cite_key_occurrences(text: str) -> list[str]:
@@ -5419,13 +5698,18 @@ def _ordinary_figure_width_overflows_column(width: str) -> bool:
 def _survey_citation_diversity_issues(
     tex: str,
     cited: set[str],
-    bib_keys: set[str],
-    state: dict[str, Any],
+    coverage_contract: dict[str, Any],
 ) -> list[str]:
     issues: list[str] = []
-    minimum = _survey_min_diverse_citations(bib_keys, state)
-    if minimum and len(cited) < minimum:
-        issues.append(f"survey uses {len(cited)} unique citation keys; diversity minimum={minimum} for {len(bib_keys)} available bib entries")
+    required = int(coverage_contract.get("required_unique_citations") or 0)
+    cited_traceable = int(coverage_contract.get("cited_traceable_keys") or 0)
+    eligible = int(coverage_contract.get("eligible_traceable_keys") or 0)
+    if required and cited_traceable < required:
+        issues.append(
+            f"survey uses {cited_traceable}/{eligible} scoped traceable unique citation keys; "
+            f"required={required} ({float(coverage_contract.get('minimum_coverage_ratio') or 0):.0%} coverage), "
+            f"missing={int(coverage_contract.get('missing_unique_citations') or 0)}"
+        )
     diagnostic = _survey_citation_diversity_diagnostic(tex)
     total = int(diagnostic["citation_use_count"])
     if not total:
@@ -5452,8 +5736,12 @@ def _survey_citation_diversity_issues(
 def _survey_citation_diversity_diagnostic(
     tex: str,
     section_texts: dict[str, str] | None = None,
+    *,
+    coverage_contract: dict[str, Any] | None = None,
+    inventory: dict[str, dict[str, Any]] | None = None,
+    survey_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Return actionable, non-prescriptive citation concentration facts.
+    """Return evidence-bounded citation coverage and concentration guidance.
 
     The audit can say where a foundation paper dominates the prose, but it
     cannot know which other paper supports a particular sentence.  It reports
@@ -5492,16 +5780,194 @@ def _survey_citation_diversity_diagnostic(
                 "section_counts": section_counts,
             }
         )
+    cited = set(uses)
+    inventory = inventory or {}
+    taxonomy_classes = _citation_taxonomy_classes(survey_plan or {}, inventory)
+    candidates: list[dict[str, Any]] = []
+    for key, record in sorted(
+        inventory.items(),
+        key=lambda item: (-_citation_evidence_rank(str(item[1].get("evidence_level") or "")), item[0]),
+    ):
+        if key in cited:
+            continue
+        candidate = dict(record)
+        # Alias sets are lookup machinery, not a writer instruction.  Keeping
+        # them out of the repair artifact makes the actionable source/evidence
+        # contract readable and avoids suggesting that aliases are citations.
+        candidate.pop("aliases", None)
+        candidate["taxonomy_classes"] = taxonomy_classes.get(key, [])
+        candidates.append(candidate)
+    section_queue = _citation_section_review_queue(
+        section_texts or {},
+        candidates,
+        survey_plan or {},
+    )
     return {
         "citation_use_count": total,
         "repeat_limit": repeat_limit,
         "concentration_limit": _SURVEY_CITATION_CONCENTRATION_LIMIT,
         "over_repeated": offenders,
+        "coverage_contract": coverage_contract or {},
+        "unrepresented_candidates": candidates,
+        "section_review_queue": section_queue,
         "repair_policy": (
-            "First consolidate redundant claims. Replace a citation only when the replacement is semantically relevant "
-            "and already verified for that claim; do not add citation padding."
+            "Meet the coverage contract by reviewing every listed section. Before adding or replacing a citation, inspect the "
+            "candidate note at source_file and confirm that its topic, method, object, evidence level, and claim type match the "
+            "target sentence. FULL/PARTIAL candidates may support claims only after that verification. ABSTRACT-ONLY candidates "
+            "may be used only for background, trend, scope, or evidence-boundary prose. Consolidate duplicated claims first; do not "
+            "use unrelated citations, citation padding, or fabricated facts."
         ),
     }
+
+
+def _citation_taxonomy_classes(
+    survey_plan: dict[str, Any],
+    inventory: dict[str, dict[str, Any]],
+) -> dict[str, list[str]]:
+    """Map traceable BibTeX keys to explicit taxonomy classes when possible."""
+
+    classes_by_key: dict[str, list[str]] = {}
+    if not inventory:
+        return classes_by_key
+    for node in ((survey_plan.get("taxonomy") or {}).get("tree") or []):
+        if not isinstance(node, dict):
+            continue
+        class_label = str(node.get("class_id") or node.get("name") or "").strip()
+        paper_ids = node.get("paper_ids") if isinstance(node.get("paper_ids"), list) else []
+        for raw in paper_ids:
+            candidate_id = str(raw or "").strip()
+            for key, record in inventory.items():
+                aliases = {key, *[str(alias) for alias in (record.get("aliases") or [])]}
+                if candidate_id in aliases:
+                    classes_by_key.setdefault(key, []).append(class_label)
+    return classes_by_key
+
+
+def _citation_section_review_queue(
+    section_texts: dict[str, str],
+    candidates: list[dict[str, Any]],
+    survey_plan: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Give the repair agent a compact per-section review queue, not substitutions."""
+
+    section_terms = _survey_section_scope_terms(survey_plan)
+    queue: list[dict[str, Any]] = []
+    for section_id, text in section_texts.items():
+        if section_id in {"abstract", "conclusion"} or not str(text or "").strip():
+            continue
+        current = sorted(_extract_latex_cites(text))
+        terms = section_terms.get(section_id, set())
+        ordered = sorted(
+            candidates,
+            key=lambda item: (
+                -_citation_section_relevance_score(item, section_id, terms),
+                -_citation_evidence_rank(str(item.get("evidence_level") or "")),
+                str(item.get("bib_key") or ""),
+            ),
+        )
+        queue.append(
+            {
+                "section_id": section_id,
+                "current_unique_citations": current,
+                "candidate_keys_to_verify": [str(item.get("bib_key") or "") for item in ordered[:12]],
+                "candidate_notes_to_verify": [
+                    {
+                        "bib_key": str(item.get("bib_key") or ""),
+                        "source_file": str(item.get("source_file") or ""),
+                        "evidence_level": str(item.get("evidence_level") or "UNKNOWN"),
+                        "citation_role": str(item.get("citation_role") or ""),
+                        "taxonomy_classes": list(item.get("taxonomy_classes") or []),
+                    }
+                    for item in ordered[:12]
+                ],
+                "required_review": (
+                    "Review these candidate notes against existing claim-bearing sentences. Do not insert a key unless its note "
+                    "supports that exact sentence and the evidence-level restriction permits that use."
+                ),
+            }
+        )
+    return queue
+
+
+def _survey_section_scope_terms(survey_plan: dict[str, Any]) -> dict[str, set[str]]:
+    """Extract lightweight lexical routing hints from the saved section outline."""
+
+    terms_by_section: dict[str, set[str]] = {}
+    for item in survey_plan.get("outline") or []:
+        if not isinstance(item, dict):
+            continue
+        section_id = str(item.get("section_id") or "").strip()
+        if not section_id:
+            continue
+        source = " ".join(
+            str(item.get(field) or "")
+            for field in ("title", "reader_question", "section_argument")
+        )
+        terms_by_section[section_id] = {
+            token
+            for token in re.findall(r"[A-Za-z][A-Za-z-]{2,}", source.casefold())
+            if token not in _SURVEY_SCOPE_STOPWORDS
+        }
+    return terms_by_section
+
+
+def _citation_section_relevance_score(
+    candidate: dict[str, Any],
+    section_id: str,
+    section_terms: set[str],
+) -> int:
+    """Rank a review queue without inferring that a citation is semantically valid."""
+
+    title_terms = {
+        token
+        for token in re.findall(r"[A-Za-z][A-Za-z-]{2,}", str(candidate.get("title") or "").casefold())
+        if token not in _SURVEY_SCOPE_STOPWORDS
+    }
+    score = len(title_terms & section_terms) * 10
+    # Prioritize claim-capable notes for review when lexical routing is close.
+    # This changes queue order only; it never authorizes a citation without an
+    # exact sentence-level support check.
+    score += _citation_evidence_rank(str(candidate.get("evidence_level") or "")) * 12
+    if section_id in {"taxonomy", "comparison"} and candidate.get("taxonomy_classes"):
+        score += 100
+    scope_relevance = candidate.get("scope_relevance") if isinstance(candidate.get("scope_relevance"), list) else []
+    if "taxonomy_direct_link" in scope_relevance:
+        score += 20
+    if "synthesis_coverage_plan" in scope_relevance:
+        score += 5
+    return score
+
+
+def _survey_quality_warning_guidance(checks: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Keep non-blocking quality warnings actionable and visible to writers."""
+
+    actions_by_check = {
+        "empty_taxonomy_classes_declared": (
+            "Read survey_plan.json and the named taxonomy class. Either add only note-verified coverage, or retain the class as a declared "
+            "coverage boundary and use the corpus-expansion route; do not fabricate representative citations."
+        ),
+        "has_sufficient_citations": (
+            "Review the traceable coverage contract and its per-section note queue. Expand only with note-verified, scope-linked citations; do not add a citation bundle."
+        ),
+        "section_level_citation_density": (
+            "Read every section named in the detail. Where its existing claim needs evidence, inspect the section's local note queue and add only a semantically matching source; otherwise narrow or remove the unsupported sentence."
+        ),
+        "survey_section_depth": (
+            "Read the named section and replace paper-by-paper summary with evidence-backed synthesis, comparison, and boundaries."
+        ),
+    }
+    guidance: list[dict[str, str]] = []
+    for check in checks:
+        if not isinstance(check, dict) or check.get("passed") or check.get("level") != "WARN":
+            continue
+        name = str(check.get("name") or "quality_warning")
+        detail = str(check.get("detail") or "")
+        action = actions_by_check.get(
+            name,
+            "Read the audit detail, inspect the implicated source artifact, and repair it when the available evidence permits; preserve evidence boundaries rather than weakening the audit signal.",
+        )
+        guidance.append({"check": name, "detail": detail, "action": action})
+    return guidance
 
 
 def _survey_section_citation_issues(section_texts: dict[str, str], state: dict[str, Any]) -> list[str]:
@@ -5646,21 +6112,101 @@ def _audit_markdown(audit: dict[str, Any]) -> str:
         marker = "PASS" if item.get("passed") else item.get("level", "FAIL")
         lines.append(f"- [{marker}] {item.get('name')}: {item.get('detail')}")
     diversity = ((audit.get("repair_guidance") or {}).get("citation_diversity") or {})
-    offenders = diversity.get("over_repeated") if isinstance(diversity, dict) else []
-    if isinstance(offenders, list) and offenders:
-        lines.extend(["", "## Citation Diversity Repair Guidance"])
-        lines.append(
-            "These are concentration diagnostics, not automatic substitution instructions. "
-            "First remove repeated claims; only cite another already verified source when it supports that exact claim."
-        )
-        for item in offenders:
+    if isinstance(diversity, dict):
+        contract = diversity.get("coverage_contract") if isinstance(diversity.get("coverage_contract"), dict) else {}
+        if contract:
+            lines.extend(["", "## Traceable Citation Coverage Contract"])
+            evidence_counts = contract.get("eligible_evidence_counts") if isinstance(contract.get("eligible_evidence_counts"), dict) else {}
+            evidence_text = ", ".join(
+                f"{level}={count}" for level, count in sorted(evidence_counts.items())
+            ) or "none"
+            lines.extend(
+                [
+                    f"- traceability-qualified entries before scope filter: {contract.get('traceability_qualified_bib_keys', 0)}",
+                    f"- scoped traceable eligible bibliography entries: {contract.get('eligible_traceable_keys', 0)} ({evidence_text})",
+                    f"- excluded from this denominator as out of scope: {len(contract.get('scope_excluded_traceable_entries') or [])}",
+                    f"- hard target: {contract.get('required_unique_citations', 0)} distinct entries "
+                    f"({float(contract.get('minimum_coverage_ratio') or 0):.0%})",
+                    f"- currently represented: {contract.get('cited_traceable_keys', 0)}; remaining: {contract.get('missing_unique_citations', 0)}",
+                    f"- configuration: `{contract.get('configuration_path', 'built-in policy')}`",
+                    "- safety rule: FULL/PARTIAL notes require exact note-level claim verification; ABSTRACT-ONLY notes may only support background, trend, scope, or evidence-boundary prose.",
+                ]
+            )
+            scope_policy = " ".join(str(contract.get("scope_relevance_policy") or "").split())
+            if scope_policy:
+                lines.append("- scope policy: " + scope_policy)
+
+            excluded = contract.get("scope_excluded_traceable_entries")
+            if isinstance(excluded, list) and excluded:
+                lines.extend(["", "## Excluded From Citation Coverage Denominator"])
+                lines.append("These entries are locally traceable but lack a deterministic link to the saved survey plan, so the writer must not use them merely to meet coverage.")
+                for item in excluded:
+                    if isinstance(item, dict):
+                        lines.append(
+                            f"- `{item.get('bib_key')}` [{item.get('evidence_level', 'UNKNOWN')}]: "
+                            f"{item.get('title') or 'untitled'}; reason: {item.get('reason') or 'out_of_scope'}."
+                        )
+
+        candidates = diversity.get("unrepresented_candidates")
+        if isinstance(candidates, list) and candidates:
+            lines.extend(["", "## Citation Candidates Requiring Note Review"])
+            lines.append(
+                "These are review candidates, not automatic replacements. Add a citation only after its local note supports the exact target sentence and its evidence restriction permits that sentence type."
+            )
+            for item in candidates:
+                if not isinstance(item, dict):
+                    continue
+                classes = item.get("taxonomy_classes") if isinstance(item.get("taxonomy_classes"), list) else []
+                class_text = f"; taxonomy={', '.join(str(value) for value in classes if str(value).strip())}" if classes else ""
+                scope_relevance = item.get("scope_relevance") if isinstance(item.get("scope_relevance"), list) else []
+                scope_text = f"; scope={', '.join(str(value) for value in scope_relevance if str(value).strip())}" if scope_relevance else ""
+                lines.append(
+                    f"- `{item.get('bib_key')}` [{item.get('evidence_level', 'UNKNOWN')}; {item.get('citation_role', '')}] "
+                    f"{item.get('title') or 'untitled'}; note: `{item.get('source_file') or 'missing'}`{scope_text}{class_text}."
+                )
+
+        section_queue = diversity.get("section_review_queue")
+        if isinstance(section_queue, list) and section_queue:
+            lines.extend(["", "## Mandatory Per-Section Citation Review"])
+            lines.append(
+                "Review every listed section before retrying the audit. The queue prioritizes candidates; it does not override semantic fit or evidence boundaries."
+            )
+            for item in section_queue:
+                if not isinstance(item, dict):
+                    continue
+                current = ", ".join(f"`{key}`" for key in item.get("current_unique_citations") or []) or "none"
+                proposed = item.get("candidate_notes_to_verify") if isinstance(item.get("candidate_notes_to_verify"), list) else []
+                candidate_text = ", ".join(
+                    f"`{candidate.get('bib_key')}` ({candidate.get('evidence_level')}, `{candidate.get('source_file')}`)"
+                    for candidate in proposed
+                    if isinstance(candidate, dict) and candidate.get("bib_key")
+                ) or "none"
+                lines.append(f"- `{item.get('section_id')}`: current={current}; inspect={candidate_text}.")
+
+        offenders = diversity.get("over_repeated")
+        if isinstance(offenders, list) and offenders:
+            lines.extend(["", "## Citation Concentration Facts"])
+            lines.append("Consolidate duplicated claims first. Never replace a citation with an unrelated source simply to reduce repetition.")
+            for item in offenders:
+                if not isinstance(item, dict):
+                    continue
+                sections = item.get("section_counts") if isinstance(item.get("section_counts"), dict) else {}
+                section_text = ", ".join(f"{key}={value}" for key, value in sorted(sections.items())) or "section unknown"
+                lines.append(
+                    f"- `{item.get('key')}`: {item.get('count')}/{diversity.get('citation_use_count')} uses "
+                    f"({float(item.get('ratio') or 0):.1%}); sections: {section_text}."
+                )
+
+    warning_guidance = ((audit.get("repair_guidance") or {}).get("quality_warnings") or [])
+    if isinstance(warning_guidance, list) and warning_guidance:
+        lines.extend(["", "## Actionable Quality Warnings"])
+        lines.append("Warnings do not block release by themselves, but each warning carries a concrete review action.")
+        for item in warning_guidance:
             if not isinstance(item, dict):
                 continue
-            sections = item.get("section_counts") if isinstance(item.get("section_counts"), dict) else {}
-            section_text = ", ".join(f"{key}={value}" for key, value in sorted(sections.items())) or "section unknown"
             lines.append(
-                f"- `{item.get('key')}`: {item.get('count')}/{diversity.get('citation_use_count')} uses "
-                f"({float(item.get('ratio') or 0):.1%}); sections: {section_text}."
+                f"- `{item.get('check', 'quality_warning')}`: {item.get('detail', '')} "
+                f"Action: {item.get('action', '')}"
             )
     lines.append("")
     return "\n".join(lines)

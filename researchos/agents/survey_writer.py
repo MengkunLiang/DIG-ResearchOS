@@ -299,9 +299,14 @@ class SurveyWriterAgent(Agent):
                 "section/bib/plan/state 输入。未修改相关输入前严禁再次 assemble 或 audit。若失败原因无法从 "
                 "当前可读证据安全修复，写 drafts/survey/survey_assemble_repair_plan.md，说明失败检查、受影响文件、"
                 "所需证据和下一步，然后 finish_task；不要反复重写无关 section 或循环调用 assemble。"
-                "citation_diversity 是可见的质量告警，不是放行阻断：若时间和语料允许，可阅读 survey_audit.json 的"
-                "repair_guidance.citation_diversity，合并真正重复的论断，或仅用已核验且语义支持该句的来源替换引用。"
-                "不得用无关论文、abstract-only 线索或 citation padding 降低重复率；没有安全替代来源时保留告警并继续。"
+                "citation_diversity 是硬性放行条件：必须读取 survey_audit.json 的 "
+                "repair_guidance.citation_diversity.coverage_contract、unrepresented_candidates 与 section_review_queue，"
+                "逐一审阅 queue 中每个 section。候选只是一份待核查清单，不是可直接粘贴的引用：先读取其 source_file，"
+                "确认主题、对象、方法、证据等级和目标句完全匹配后才可加入或替换 citation。FULL/PARTIAL note 只能在核验后支持"
+                "具体论断；ABSTRACT-ONLY note 只能用于背景、趋势、范围或证据边界。不得用无关论文、abstract-only 线索支撑"
+                "强论断、citation padding 或新编造的事实来达到覆盖数。若逐节核查后仍无法安全满足 target，写 "
+                "survey_assemble_repair_plan.md，逐条记录拒用的候选、原因、需要补检的主题和受影响 section，然后 finish_task 进入恢复决策。"
+                "同时读取 repair_guidance.quality_warnings；每个 warning 都有具体 action，能安全处理的必须在本轮一并修复。"
             )
             recovery = ctx.extra.get("t36_assemble_recovery")
             if isinstance(recovery, dict) and recovery.get("action") == "retry_survey_repair":

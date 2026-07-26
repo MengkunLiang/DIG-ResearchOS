@@ -3152,11 +3152,12 @@ class StateMachine:
     ) -> StateYaml:
         """Turn an exhausted Survey assembly audit into a durable decision.
 
-        A citation-diversity FAIL is neither a bibliography fabrication request
-        nor a reason to discard the assembled Survey.  The audit already
-        records the exact over-concentrated keys and sections.  Preserve that
-        context in a Gate so the researcher can grant another bounded repair
-        window, inspect the saved diagnosis, or pause without losing prose.
+        A citation-coverage FAIL is neither a bibliography fabrication request
+        nor a reason to discard the assembled Survey. The audit records the
+        hard traceable-coverage contract, per-section note-review queue, and
+        evidence restrictions. Preserve that context in a Gate so the
+        researcher can grant another bounded repair window, inspect the saved
+        diagnosis, or pause without losing prose.
         """
 
         repair_guidance: dict[str, Any] = {}
@@ -3177,7 +3178,7 @@ class StateMachine:
                 "_title": "综述拼装审计需要决策",
                 "_description": (
                     "已保存所有 section、survey.tex 和审计结果。请选择是否追加一轮定向修复；"
-                    "系统只会修复审计指出的来源文件，不会用无关引用或虚构内容强行通过。"
+                    "系统会按审计的逐节 note 核查队列修复硬性引用覆盖，不会用无关引用或虚构内容强行通过。"
                 ),
                 "error_summary": " ".join(str(error).split())[:1000],
                 "audit_path": "drafts/survey/survey_audit.json",
