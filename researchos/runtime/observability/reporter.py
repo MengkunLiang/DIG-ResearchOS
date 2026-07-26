@@ -530,7 +530,11 @@ class StageReporter:
                 if statuses.get(key) in {"created", "updated", "reused"}
             ]
             label = stage_display_name(task_id)
-            receipt_label = label if label.startswith("T3.6") else f"T3.6 · {label}"
+            receipt_label = (
+                f"综述章节 · {_t36_section_label(task_id)}"
+                if task_id.startswith("T3.6-SEC-")
+                else label if label.startswith("T3.6") else f"T3.6 · {label}"
+            )
             if ready_paths:
                 self._render(Text(f"✓ {receipt_label} 完成 · 已生成：{'、'.join(ready_paths[:2])}", style="green", overflow="fold"))
                 remaining = len(ready_paths) - 2
