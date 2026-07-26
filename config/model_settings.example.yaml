@@ -31,7 +31,6 @@ api_key: "${DEEPSEEK_API_KEY}"
 model: deepseek-v4-pro
 
 # provider 无法报告真实 context window 时使用的总上下文容量（token）。它由
-# system prompt、研究材料、历史、Tool 输入/结果和回复空间共同使用，不是单次输入上限。
 # provider 报告可核验的真实容量时会优先使用真实值。通常保留默认值。
 # Total context capacity fallback (tokens) when the provider cannot report a
 # real window. It is shared by prompts, research material, history, Tool I/O,
