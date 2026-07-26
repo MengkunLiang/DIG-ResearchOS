@@ -8498,6 +8498,15 @@ class AgentRunner:
                     )
                 return base + proposal_context + "根据上述具体校验原因修复唯一受影响的 T4.5 artifact。"
             if ctx.task_id == "T3.6-ASSEMBLE":
+                if "has_abstract_environment" in error:
+                    return (
+                        base
+                        + "这是模板接口校验，不是让你把摘要环境手工塞进 section 的请求。"
+                        "`drafts/survey/sections/abstract.tex` 只能保存摘要正文，所有其它 section 也不得包含 "
+                        "`\\begin{abstract}`、`\\end{abstract}` 或 `\\ABSTRACT{...}`。"
+                        "模板接口由 `assemble_survey` 负责：标准模板投影为 abstract 环境，INFORMS4 投影为 `\\ABSTRACT{...}`。"
+                        "不要直接编辑派生的 `survey.tex`；只需保留/恢复模板中立的摘要正文后重新调用 assemble_survey 和 audit_survey_coverage。"
+                    )
                 return (
                     base
                     + "读取 `drafts/survey/survey_audit.md` 和 `drafts/survey/survey_audit.json`。"

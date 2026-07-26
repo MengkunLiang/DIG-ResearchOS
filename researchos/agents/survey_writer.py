@@ -286,6 +286,11 @@ class SurveyWriterAgent(Agent):
                 "读取其它 section 前先 list_files 或查看 survey_state 确认文件存在；不要 read_file 尚未生成的 later section。"
                 "写完后调用 update_survey_section_state。"
             )
+            if section_id == "abstract":
+                message += (
+                    "摘要文件只能写摘要正文，不能包含 `\\begin{abstract}`、`\\end{abstract}`、`\\ABSTRACT{...}`、"
+                    "`\\documentclass` 或 `\\begin{document}`；assemble_survey 会按选定模板自动投影正确的摘要接口。"
+                )
         elif phase == "survey_assemble":
             message = (
                 "请执行 T3.6-ASSEMBLE：先调用 assemble_survey 拼装 survey.tex，再调用 "
@@ -1500,6 +1505,8 @@ def _missing_survey_audit_fingerprints(audit: dict[str, Any]) -> list[str]:
         "survey_state",
         "survey_tex",
         "related_work_bib",
+        "survey_references_bib",
+        "bibliography_reconciliation",
         "citation_map",
         "deep_read_notes_dir",
         "shallow_read_notes_dir",

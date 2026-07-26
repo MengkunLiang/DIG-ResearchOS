@@ -41,7 +41,10 @@ from .base import Tool, ToolResult
 from .bibtex import (
     bibtex_quality_issues,
     dedupe_bibtex_entries,
+    escape_bibtex_value,
     extract_bib_keys_from_text,
+    parse_bib_entries,
+    stable_bib_key,
     strip_internal_bibtex_notes,
 )
 from .citation_alignment import citation_alignment_issues, citation_support_text_by_key
@@ -2011,6 +2014,8 @@ class AssembleSurveyTool(Tool):
         body_sections: list[str] = []
 
         active_sections = _active_survey_sections(state)
+        abstract_source_interface_issues: list[str] = []
+        body_source_interface_issues: list[str] = []
         if "abstract" in active_sections:
             abstract_text, abstract_missing = _read_survey_section_text(
                 self.policy,
@@ -2019,7 +2024,8 @@ class AssembleSurveyTool(Tool):
             )
             if abstract_missing:
                 missing.append(abstract_missing)
-            elif abstract_text.strip():
+            elif _latex_has_meaningful_content(abstract_text):
+                abstract_source_interface_issues = _survey_abstract_interface_source_issues(abstract_text)
                 abstract_body = _strip_survey_section_heading(abstract_text, "abstract").strip()
                 included.append("abstract")
             else:
@@ -2046,15 +2052,36 @@ class AssembleSurveyTool(Tool):
             if not text:
                 missing.append(f"drafts/survey/sections/{section_id}.tex")
                 continue
+            body_interface_issues = _survey_abstract_interface_source_issues(text)
+            if body_interface_issues:
+                body_source_interface_issues.extend(
+                    f"{section_id}: {issue}" for issue in body_interface_issues
+                )
             body_sections.append(_strip_generated_section_comments(text).strip())
             included.append(section_id)
+        source_interface_issues = abstract_source_interface_issues + body_source_interface_issues
+        if source_interface_issues:
+            return ToolResult(
+                ok=False,
+                content=(
+                    "Survey section sources must contain abstract prose only; the selected template interface is "
+                    "owned by assemble_survey. Invalid abstract wrappers: "
+                    + "; ".join(source_interface_issues[:8])
+                ),
+                error="invalid_abstract_section_interface",
+            )
         cited_keys = set()
         if abstract_body:
             cited_keys.update(_extract_latex_cites(abstract_body))
         for piece in body_sections:
             cited_keys.update(_extract_latex_cites(piece))
         bib_text = bib_path.read_text(encoding="utf-8", errors="replace")
-        blocking_bib_issues = _blocking_bibtex_quality_issues(bib_text, cited_keys)
+        effective_bib_text, bibliography_reconciliation = _reconcile_survey_bibliography_authors(
+            self.policy.workspace_dir,
+            bib_text,
+            cited_keys,
+        )
+        blocking_bib_issues = _blocking_bibtex_quality_issues(effective_bib_text, cited_keys)
         if blocking_bib_issues:
             return ToolResult(
                 ok=False,
@@ -2082,7 +2109,36 @@ class AssembleSurveyTool(Tool):
         )
         output_path.write_text(tex, encoding="utf-8")
         _copy_latex_template_support_files(template_path, output_path.parent)
-        _copy_bibliography_for_survey(self.policy, params.related_work_bib_path, output_path.parent / "references.bib")
+        references_path = output_path.parent / "references.bib"
+        _copy_bibliography_for_survey(
+            self.policy,
+            params.related_work_bib_path,
+            references_path,
+            source_text=effective_bib_text,
+        )
+        reconciliation_path = output_path.parent / "bibliography_reconciliation.json"
+        reconciliation_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "semantics": "deterministic_survey_bibliography_metadata_reconciliation",
+                    "source_bibliography": params.related_work_bib_path,
+                    "source_bibliography_sha256": _sha256_text(bib_text),
+                    "effective_bibliography": "drafts/survey/references.bib",
+                    "effective_bibliography_sha256": _sha256_text(strip_internal_bibtex_notes(effective_bib_text)),
+                    "cited_keys": sorted(cited_keys),
+                    "author_repairs": bibliography_reconciliation,
+                    "policy": (
+                        "Only fills a missing author field from an exact DOI/key match in an existing local literature record; "
+                        "never invents anonymous or placeholder authors and never changes the canonical literature bibliography."
+                    ),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         assembly_manifest = {
             "semantics": "survey_assembly_input_fingerprints",
             "input_fingerprints": _input_fingerprints(
@@ -2094,6 +2150,7 @@ class AssembleSurveyTool(Tool):
                     "survey_visual_manifest": "drafts/survey/figures/survey_visual_manifest.json",
                     "survey_tex": params.output_path,
                     "references_bib": "drafts/survey/references.bib",
+                    "bibliography_reconciliation": "drafts/survey/bibliography_reconciliation.json",
                     **{f"section_{sid}": str(((state.get("sections") or {}).get(sid) or {}).get("file") or "") for sid in included},
                 },
             ),
@@ -2133,9 +2190,23 @@ class AuditSurveyCoverageTool(Tool):
         except (ToolAccessDenied, FileNotFoundError, ValueError) as exc:
             return ToolResult(ok=False, content=str(exc), error="invalid_input")
 
-        bibtex = _bibtex_optional(self.policy, params.related_work_bib_path)
-        bib_keys = set(extract_bib_keys_from_text(bibtex))
         cited = _cited_keys(tex)
+        source_bibtex = _bibtex_optional(self.policy, params.related_work_bib_path)
+        effective_bibtex, expected_reconciliation = _reconcile_survey_bibliography_authors(
+            self.policy.workspace_dir,
+            source_bibtex,
+            cited,
+        )
+        rendered_bibtex = _bibtex_optional(self.policy, "drafts/survey/references.bib")
+        expected_rendered_bibtex = dedupe_bibtex_entries(strip_internal_bibtex_notes(effective_bibtex))
+        uses_assembled_bibliography = bool(rendered_bibtex.strip())
+        if uses_assembled_bibliography:
+            bibtex = rendered_bibtex
+            bibliography_projection_matches = rendered_bibtex == expected_rendered_bibtex
+        else:
+            bibtex = source_bibtex
+            bibliography_projection_matches = not expected_reconciliation
+        bib_keys = set(extract_bib_keys_from_text(bibtex))
         writing_language = _survey_state_writing_language(state, self.policy.workspace_dir)
         section_texts = _survey_section_texts(tex, state)
         visual_manifest = _read_optional_json(self.policy, "drafts/survey/figures/survey_visual_manifest.json")
@@ -2213,6 +2284,17 @@ class AuditSurveyCoverageTool(Tool):
         )
         missing_cites = sorted(cited - bib_keys) if bib_keys else []
         checks.append(_check("all_citations_in_bib", not missing_cites, f"Citation keys missing from bib: {missing_cites}"))
+        checks.append(
+            _check(
+                "survey_bibliography_projection",
+                bibliography_projection_matches,
+                (
+                    "Rendered references.bib matches the deterministic local-metadata reconciliation."
+                    if bibliography_projection_matches
+                    else "Rendered references.bib is stale or differs from the deterministic local-metadata reconciliation; rerun assemble_survey."
+                ),
+            )
+        )
         missing_graphics = _missing_survey_graphics(tex, tex_path.parent)
         checks.append(
             _check(
@@ -2356,6 +2438,8 @@ class AuditSurveyCoverageTool(Tool):
                     "survey_state": params.state_path,
                     "survey_tex": params.survey_tex_path,
                     "related_work_bib": params.related_work_bib_path,
+                    "survey_references_bib": "drafts/survey/references.bib",
+                    "bibliography_reconciliation": "drafts/survey/bibliography_reconciliation.json",
                     "citation_map": "literature/citation_map.json",
                     "deep_read_notes_dir": "literature/deep_read_notes",
                     "shallow_read_notes_dir": "literature/shallow_read_notes",
@@ -4368,6 +4452,8 @@ def _copy_bibliography_for_survey(
     policy: WorkspaceAccessPolicy,
     rel_bib_path: str,
     target_path: Path,
+    *,
+    source_text: str | None = None,
 ) -> None:
     try:
         bib_path = policy.resolve_read(rel_bib_path)
@@ -4376,8 +4462,132 @@ def _copy_bibliography_for_survey(
     if not bib_path.exists():
         return
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    cleaned = strip_internal_bibtex_notes(bib_path.read_text(encoding="utf-8", errors="replace"))
+    raw = source_text if source_text is not None else bib_path.read_text(encoding="utf-8", errors="replace")
+    cleaned = strip_internal_bibtex_notes(raw)
     target_path.write_text(dedupe_bibtex_entries(cleaned), encoding="utf-8")
+
+
+def _reconcile_survey_bibliography_authors(
+    workspace: Path,
+    bibtex: str,
+    cited_keys: set[str],
+) -> tuple[str, list[dict[str, Any]]]:
+    """Fill only missing cited authors from exact, local recovered metadata.
+
+    Paper metadata can be backfilled after an early T3 sweep has already
+    written its BibTeX entry.  A survey must never manufacture ``Anonymous``
+    authors to pass a formatter, but it can safely project a verified author
+    list already stored in a local literature record.  The canonical
+    bibliography stays untouched because this is a T3.6 publication
+    projection; the generated references and reconciliation receipt make each
+    repair auditable.
+    """
+
+    entries = parse_bib_entries(bibtex)
+    if not entries or not cited_keys:
+        return bibtex, []
+    authors_by_key = _local_author_metadata_by_bib_key(workspace)
+    repairs: list[dict[str, Any]] = []
+    replacements: dict[str, str] = {}
+    for entry in entries:
+        key = str(entry.get("key") or "").strip()
+        fields = entry.get("fields") if isinstance(entry.get("fields"), dict) else {}
+        existing_credit = str(fields.get("author") or fields.get("editor") or fields.get("organization") or "").strip()
+        if key not in cited_keys or existing_credit:
+            continue
+        metadata = authors_by_key.get(key)
+        if not metadata:
+            continue
+        authors = metadata.get("authors") if isinstance(metadata.get("authors"), list) else []
+        if not authors:
+            continue
+        replacements[key] = _append_bibtex_author_field(str(entry.get("raw") or ""), authors)
+        repairs.append(
+            {
+                "bib_key": key,
+                "doi": str(metadata.get("doi") or ""),
+                "authors": authors,
+                "source_record": str(metadata.get("source_record") or ""),
+            }
+        )
+    if not replacements:
+        return bibtex, []
+    projected = "\n\n".join(
+        replacements.get(str(entry.get("key") or ""), str(entry.get("raw") or "")).strip()
+        for entry in entries
+        if str(entry.get("raw") or "").strip()
+    )
+    return projected.rstrip() + "\n", repairs
+
+
+def _local_author_metadata_by_bib_key(workspace: Path) -> dict[str, dict[str, Any]]:
+    """Index recovered local records by their stable BibTeX key."""
+
+    index: dict[str, dict[str, Any]] = {}
+    # ``papers_verified`` comes last so it wins when the same record appears
+    # in several retained JSONL files.
+    for relative in (
+        "literature/papers_raw.jsonl",
+        "literature/papers_dedup.jsonl",
+        "literature/papers_backlog.jsonl",
+        "literature/papers_verified.jsonl",
+    ):
+        path = workspace / relative
+        if not path.is_file():
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                record = json.loads(line)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(record, dict):
+                continue
+            authors = _normalized_local_author_names(record.get("authors"))
+            if not authors:
+                continue
+            doi = str(record.get("doi") or "").strip()
+            key_seed = doi or str(record.get("arxiv_id") or record.get("id") or record.get("canonical_id") or "").strip()
+            if not key_seed:
+                continue
+            key = stable_bib_key(key_seed, fallback="abstract_note")
+            index[key] = {"authors": authors, "doi": doi, "source_record": relative}
+    return index
+
+
+def _normalized_local_author_names(value: Any) -> list[str]:
+    raw_items = value if isinstance(value, list) else [value]
+    names: list[str] = []
+    for item in raw_items:
+        if isinstance(item, dict):
+            candidate = str(item.get("name") or item.get("display_name") or "").strip()
+        else:
+            candidate = str(item or "").strip()
+        if not candidate or candidate.casefold() in {"unknown", "anonymous", "n/a"}:
+            continue
+        if candidate not in names:
+            names.append(candidate)
+    return names[:10]
+
+
+def _append_bibtex_author_field(raw: str, authors: list[str]) -> str:
+    """Return one parsed entry with a verified ``author`` field appended."""
+
+    closing = raw.rfind("}")
+    if closing < 0:
+        return raw
+    author_value = " and ".join(escape_bibtex_value(name) for name in authors)
+    prefix = raw[:closing].rstrip()
+    if not prefix.endswith(","):
+        prefix += ","
+    return prefix + f"\n  author = {{{author_value}}},\n" + raw[closing:]
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
 
 
 def _repo_root() -> Path:
@@ -4562,6 +4772,39 @@ def _strip_generated_section_comments(text: str) -> str:
         "",
         text or "",
     )
+
+
+def _latex_has_meaningful_content(text: str) -> bool:
+    """Return whether a section source has content beyond comments and whitespace.
+
+    Generated section placeholders are often a single ``% ...`` comment.  Such
+    a file must not become an apparently-present abstract merely because the
+    comment is non-empty: the assembled TeX would contain no abstract text.
+    """
+
+    without_comments = re.sub(r"(?m)^\s*%.*(?:\n|$)", "", text or "")
+    return bool(without_comments.strip())
+
+
+def _survey_abstract_interface_source_issues(text: str) -> list[str]:
+    """Reject template-owned abstract commands from section source files.
+
+    ``sections/abstract.tex`` is deliberately template-neutral prose.  The
+    assembler projects that prose through the selected template: standard
+    templates receive ``abstract`` while INFORMS4 receives ``\\ABSTRACT``.
+    Letting a writer put either wrapper into a section can duplicate an
+    environment or, worse, put the standard environment into INFORMS where it
+    is undefined.  The same check on body sections prevents an apparent audit
+    fix that merely relocates the abstract into ``introduction.tex``.
+    """
+
+    issues: list[str] = []
+    source = text or ""
+    if re.search(r"\\begin\s*\{\s*abstract\s*\}|\\end\s*\{\s*abstract\s*\}", source, flags=re.IGNORECASE):
+        issues.append("contains \\begin{abstract} or \\end{abstract}")
+    if re.search(r"\\ABSTRACT\s*\{", source, flags=re.IGNORECASE):
+        issues.append("contains \\ABSTRACT{...}")
+    return issues
 
 
 def _fallback_survey_document(
@@ -5296,12 +5539,21 @@ def _extract_survey_abstract(tex: str) -> str:
     """
 
     text = tex or ""
+    # INFORMS4 deliberately does not define the standard `abstract`
+    # environment.  Check its native macro first and *do not* fall back to a
+    # syntactically present-but-uncompilable environment.  This makes the
+    # audit agree with the actual template contract rather than rewarding a
+    # source edit that will fail at LaTeX compilation.
+    if _is_informs4_document(text):
+        return _strip_leading_latex_comments(_extract_latex_macro_argument(text, "ABSTRACT")).strip()
     match = re.search(r"\\begin\{abstract\}(.*?)\\end\{abstract\}", text, flags=re.DOTALL | re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-    if not _is_informs4_document(text):
-        return ""
-    return _extract_latex_macro_argument(text, "ABSTRACT").strip()
+    return _strip_leading_latex_comments(match.group(1)).strip() if match else ""
+
+
+def _strip_leading_latex_comments(text: str) -> str:
+    """Remove comment-only prefix lines from a template-owned macro body."""
+
+    return re.sub(r"\A(?:\s*%[^\n]*(?:\n|$))*", "", text or "")
 
 
 def _is_informs4_document(tex: str) -> bool:

@@ -32,7 +32,13 @@ from ..literature_resources import (
     resource_records_from_paper_metadata,
 )
 from ..tools.paper_utils import deduplicate_papers
-from ..tools.bibtex import dedupe_bibtex_entries, escape_bibtex_value, extract_bib_keys_from_text, stable_bib_key
+from ..tools.bibtex import (
+    dedupe_bibtex_entries,
+    escape_bibtex_value,
+    extract_bib_keys_from_text,
+    parse_bib_entries,
+    stable_bib_key,
+)
 from .progress import format_cli_message
 
 
@@ -2284,17 +2290,46 @@ def _append_csv_rows(path: Path, rows: list[str]) -> None:
 
 
 def _append_bib_entries(path: Path, entries: list[str]) -> None:
-    """追加 BibTeX 条目。"""
+    """Append BibTeX entries and upgrade stale author-less metadata.
+
+    Metadata backfill can learn authors after an earlier sweep already wrote a
+    record with the same stable key.  Preserve that key and its ordering, but
+    replace an incomplete entry when the later record contributes real
+    author/editor/organization metadata.  Do not guess or overwrite any other
+    bibliographic field.
+    """
+
     existing = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
-    existing_keys = set(extract_bib_keys_from_text(existing))
-    new_entries: list[str] = []
-    for entry in entries:
-        keys = extract_bib_keys_from_text(entry)
-        if not keys or keys[0] in existing_keys:
+    existing_entries = parse_bib_entries(existing)
+    ordered = [str(entry.get("raw") or "").strip() for entry in existing_entries]
+    positions = {str(entry.get("key") or ""): index for index, entry in enumerate(existing_entries)}
+    changed = False
+    for candidate_raw in entries:
+        parsed = parse_bib_entries(candidate_raw)
+        if not parsed:
             continue
-        existing_keys.add(keys[0])
-        new_entries.append(entry.strip())
-    if not new_entries:
+        candidate = parsed[0]
+        key = str(candidate.get("key") or "").strip()
+        if not key:
+            continue
+        candidate_text = str(candidate.get("raw") or "").strip()
+        position = positions.get(key)
+        if position is None:
+            positions[key] = len(ordered)
+            ordered.append(candidate_text)
+            changed = True
+            continue
+        current = existing_entries[position]
+        current_fields = current.get("fields") if isinstance(current.get("fields"), dict) else {}
+        candidate_fields = candidate.get("fields") if isinstance(candidate.get("fields"), dict) else {}
+        current_credit = str(current_fields.get("author") or current_fields.get("editor") or current_fields.get("organization") or "").strip()
+        candidate_credit = str(candidate_fields.get("author") or candidate_fields.get("editor") or candidate_fields.get("organization") or "").strip()
+        if not current_credit and candidate_credit:
+            ordered[position] = candidate_text
+            changed = True
+    if not changed:
         return
-    combined = existing.rstrip() + "\n\n" + "\n\n".join(new_entries) + "\n"
-    path.write_text(dedupe_bibtex_entries(combined), encoding="utf-8")
+    path.write_text(
+        dedupe_bibtex_entries("\n\n".join(item for item in ordered if item) + "\n"),
+        encoding="utf-8",
+    )

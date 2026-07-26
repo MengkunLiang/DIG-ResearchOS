@@ -3242,30 +3242,38 @@ class StateMachine:
                 "drafts/survey/survey_audit.json",
             ):
                 artifacts[relative_path] = (workspace_dir / relative_path).is_file()
-        state.pending_gate = GateState(
-            gate_id="t36_compile_recovery_gate",
-            presented_at=_now_iso(),
-            presentation={
-                "_title": "综述 PDF 编译需要决策",
-                "_description": (
-                    "编译阶段未改写任何综述正文，已保留 TeX、section、审计和 compile report。"
-                    "请选择重试确定性编译、回到 Review 修复来源文件，或暂停检查环境。"
-                ),
-                "error_summary": " ".join(str(error).split())[:1200],
-                "compile_report_path": "drafts/survey/survey_compile_report.json",
-                "artifacts_present": artifacts,
-            },
-            options=[
+        direct_retry_supported = self._t36_compile_direct_retry_supported(workspace_dir, error)
+        if direct_retry_supported:
+            description = (
+                "编译阶段未改写任何综述正文，已保留 TeX、section、审计和 compile report。"
+                "当前是环境/工具链类问题；修复环境后可重试确定性编译，或暂停检查。"
+            )
+            options = [
                 {
                     "id": "retry_compile",
-                    "label": "重试编译",
+                    "label": "环境已修复，重试编译",
                     "description": "不调用模型，不改写正文；重新执行 latex_compile 并验证 PDF、log 和 report。",
                 },
                 {
                     "id": "return_to_review",
                     "label": "回到 Review 修复来源文件",
-                    "description": "调用 Survey Writer 只修复 compile report 指向的 section、引用或模板来源；随后重新拼装、审计和编译。",
+                    "description": "仅在编译报告明确指向 section、引用或模板来源时使用；随后重新拼装、审计和编译。",
                 },
+            ]
+        else:
+            description = (
+                "编译报告表明当前 TeX 或其依赖存在来源级错误。对未修改的同一份 TeX 重试没有意义，"
+                "并会被编译缓存拒绝；请回到 Review 修复报告指向的来源文件。"
+            )
+            options = [
+                {
+                    "id": "return_to_review",
+                    "label": "回到 Review 修复来源文件（推荐）",
+                    "description": "读取 compile report 和 log，只修复实际涉及的 section、引用或模板输入；随后重新拼装、审计和编译。",
+                },
+            ]
+        options.extend(
+            [
                 {
                     "id": "pause_review",
                     "label": "暂停并检查编译报告",
@@ -3276,11 +3284,56 @@ class StateMachine:
                     "label": "结束本次综述运行",
                     "description": "停止当前运行，不删除任何 survey artifact。",
                 },
-            ],
+            ]
+        )
+        state.pending_gate = GateState(
+            gate_id="t36_compile_recovery_gate",
+            presented_at=_now_iso(),
+            presentation={
+                "_title": "综述 PDF 编译需要决策",
+                "_description": description,
+                "error_summary": " ".join(str(error).split())[:1200],
+                "compile_report_path": "drafts/survey/survey_compile_report.json",
+                "artifacts_present": artifacts,
+                "direct_retry_supported": direct_retry_supported,
+            },
+            options=options,
         )
         state.status = "WAITING_HUMAN"
         state.paused_at = _now_iso()
         return state
+
+    @staticmethod
+    def _t36_compile_direct_retry_supported(workspace_dir: Path | None, error: str | None) -> bool:
+        """Whether compiling unchanged TeX can plausibly change the outcome.
+
+        Source-level ``nonzero_exit`` failures are intentionally cached by the
+        compiler.  Exposing a generic retry for them creates a second, less
+        useful ``same hash`` error.  Environment waits are different: after a
+        TeX package, executable, or daemon is repaired, the exact same source
+        should be retried without an artificial edit.
+        """
+
+        text = str(error or "").casefold()
+        report_error = ""
+        if workspace_dir is not None:
+            report_path = workspace_dir / "drafts" / "survey" / "survey_compile_report.json"
+            try:
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                report = {}
+            if isinstance(report, dict):
+                if bool(report.get("success")):
+                    # A user may already be looking at a Gate created from an
+                    # earlier failed attempt while a deterministic repair (or
+                    # another approved compile path) has since produced a
+                    # current PDF.  Let the old Gate's retry action consume
+                    # that verified success instead of sending the work back
+                    # through an unnecessary model Review cycle.
+                    return True
+                report_error = str(report.get("error") or "").casefold()
+        combined = f"{text} {report_error}"
+        return "waiting_environment" in combined or "latexmk_missing" in combined or "tectonic_missing" in combined
 
     @staticmethod
     def _is_t36_compile_recoverable_error(error: str | None) -> bool:
@@ -4531,6 +4584,14 @@ class StateMachine:
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "pause_review")
             recovery_presentation = dict(state.pending_gate.presentation or {})
             state.pending_gate = None
+            # Older workspaces may still display a Gate created before the
+            # source-vs-environment distinction.  Preserve their choice but
+            # route an impossible retry to the useful source-repair path.
+            if option_id == "retry_compile" and not self._t36_compile_direct_retry_supported(
+                workspace_dir,
+                str(recovery_presentation.get("error_summary") or state.last_error or ""),
+            ):
+                option_id = "return_to_review"
             if option_id == "retry_compile":
                 state.current_task = "T3.6-COMPILE"
                 state.status = "RUNNING"
