@@ -119,6 +119,19 @@ class StageReporter:
                 "expected_outputs": {key: relative_path(self.workspace, value) for key, value in outputs.items()},
             },
         )
+        if task_id.startswith("T3.6-SEC-"):
+            # Survey sections are sequential substeps of one writing branch.
+            # A full research-stage panel for every .tex file drowns out the
+            # useful write/validation receipts that immediately follow.
+            section_label = _t36_section_label(task_id)
+            section_path = outputs.get("section")
+            destination = relative_path(self.workspace, section_path) if section_path is not None else "章节文件"
+            message = f"◆ 综述章节 · {section_label} · 正在撰写 → {destination}"
+            if self.quiet:
+                self._plain("[Stage] " + message)
+            else:
+                self._render(Text(message, style="bright_cyan", overflow="fold"))
+            return
         if self.quiet:
             self._plain(f"[Stage] {stage_display_name(task_id)} · {profile.goal}")
             return
@@ -1532,6 +1545,27 @@ def _default_public_activity(task_id: str) -> str:
     if normalized.startswith("SKILL_"):
         return "正在处理已提供材料"
     return "正在处理当前工作"
+
+
+def _t36_section_label(task_id: str) -> str:
+    """Return a compact label for a Survey prose substep."""
+
+    section_id = task_id.removeprefix("T3.6-SEC-").upper()
+    labels = {
+        "BACKGROUND": "研究背景",
+        "TAXONOMY": "分类框架",
+        "THEME-1": "主题 1",
+        "THEME-2": "主题 2",
+        "THEME-3": "主题 3",
+        "THEME-4": "主题 4",
+        "COMPARISON": "比较分析",
+        "CHALLENGES": "研究挑战",
+        "FUTURE": "未来研究",
+        "INTRO": "引言",
+        "CONCLUSION": "结论",
+        "ABSTRACT": "摘要",
+    }
+    return labels.get(section_id, section_id.replace("-", " ").title())
 
 
 def _tool_label(tool_name: str) -> str:

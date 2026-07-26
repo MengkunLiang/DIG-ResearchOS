@@ -872,6 +872,8 @@ class CliProgressEmitter:
         from_task: str,
         to_task: str,
     ) -> None:
+        if from_task.startswith("T3.6-SEC-") and to_task.startswith("T3.6-SEC-"):
+            return
         self.emit(f"{self.SEPARATOR}\n[Pipeline] {from_task} -> {to_task}", important=True)
 
     def legacy_agent_done(
@@ -915,6 +917,8 @@ class CliProgressEmitter:
         to_task: str,
         reason: str,
     ) -> None:
+        if from_task.startswith("T3.6-SEC-") and to_task.startswith("T3.6-SEC-"):
+            return
         if self.verbose:
             self.emit(
                 f"{self.SEPARATOR}\n[Pipeline] {from_task} 已结束，系统进入 {to_task}。原因：{_compact_text(reason, 160)}",
