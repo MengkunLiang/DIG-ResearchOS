@@ -2147,7 +2147,13 @@ class AuditSurveyCoverageTool(Tool):
         abstract_text = _extract_survey_abstract(tex)
         if abstract_text.strip():
             section_texts.setdefault("abstract", abstract_text)
-        checks.append(_check("has_abstract_environment", bool(abstract_text.strip()), "Survey should place abstract text in a LaTeX abstract environment."))
+        checks.append(
+            _check(
+                "has_abstract_environment",
+                bool(abstract_text.strip()),
+                "Survey should contain abstract text through the selected template's supported abstract interface.",
+            )
+        )
         checks.append(
             _check(
                 "abstract_no_formal_citation",
@@ -2160,7 +2166,7 @@ class AuditSurveyCoverageTool(Tool):
             _check(
                 "no_abstract_section_heading",
                 not abstract_section_heading,
-                "Abstract should be in \\begin{abstract}...\\end{abstract}, not as a body section.",
+                "Abstract should use its template's abstract interface, not a body section heading.",
             )
         )
         intro_pos = _survey_section_position(tex, "Introduction")
@@ -5281,8 +5287,59 @@ def _survey_runtime_process_issues(section_texts: dict[str, str]) -> list[str]:
 
 
 def _extract_survey_abstract(tex: str) -> str:
-    match = re.search(r"\\begin\{abstract\}(.*?)\\end\{abstract\}", tex or "", flags=re.DOTALL | re.IGNORECASE)
-    return match.group(1).strip() if match else ""
+    """Extract an abstract from standard LaTeX or the native INFORMS macro.
+
+    INFORMS4 documents use ``\\ABSTRACT{...}``, while most templates use the
+    standard ``abstract`` environment.  The assembly tool deliberately emits
+    the former for the official INFORMS template, so treating only the latter
+    as an abstract made a successfully compiled paper fail its own audit.
+    """
+
+    text = tex or ""
+    match = re.search(r"\\begin\{abstract\}(.*?)\\end\{abstract\}", text, flags=re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    if not _is_informs4_document(text):
+        return ""
+    return _extract_latex_macro_argument(text, "ABSTRACT").strip()
+
+
+def _is_informs4_document(tex: str) -> bool:
+    return bool(
+        re.search(
+            r"\\documentclass(?:\s*\[[^\]]*\])?\s*\{\s*informs4\s*\}",
+            tex or "",
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _extract_latex_macro_argument(tex: str, macro_name: str) -> str:
+    """Read one braced LaTeX macro argument while preserving nested markup."""
+
+    match = re.search(rf"\\{re.escape(macro_name)}\s*\{{", tex or "", flags=re.IGNORECASE)
+    if match is None:
+        return ""
+    start = match.end()
+    depth = 1
+    index = start
+    while index < len(tex):
+        char = tex[index]
+        if char == "%":
+            newline = tex.find("\n", index + 1)
+            index = len(tex) if newline < 0 else newline + 1
+            continue
+        if char == "\\" and index + 1 < len(tex) and tex[index + 1] in {"{", "}"}:
+            index += 2
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return tex[start:index]
+        index += 1
+    return ""
 
 
 def _survey_section_position(tex: str, title: str) -> int:
