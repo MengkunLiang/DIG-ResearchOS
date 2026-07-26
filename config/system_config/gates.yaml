@@ -304,14 +304,6 @@ gates:
       survey_plan:
         from_file: drafts/survey/survey_plan.json
         max_chars: 5000
-      current_notes:
-        from_dir: literature/deep_read_notes
-        glob: "*.md"
-        max_items: 20
-      shallow_read_notes:
-        from_dir: literature/shallow_read_notes
-        glob: "*.md"
-        max_items: 20
     options:
       - id: conservative
         label: "使用现有语料"

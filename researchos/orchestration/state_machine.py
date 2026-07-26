@@ -2741,6 +2741,7 @@ class StateMachine:
         elif node.task_id in _CCF_TEMPLATE_GATE_TASKS:
             options = _ccf_template_gate_options(task_id=node.task_id)
         elif node.task_id == "T3.6-GATE-CORPUS" and workspace_dir is not None:
+            presentation["corpus_inventory"] = _t36_corpus_inventory(workspace_dir)
             presentation["supplement_recommendation"] = _t36_supplement_recommendation(workspace_dir)
         elif node.task_id == "T5-PROTOCOL-GATE" and workspace_dir is not None:
             presentation["protocol_readiness"] = self._t5_protocol_gate_summary(workspace_dir)
@@ -7284,6 +7285,51 @@ class StateMachine:
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def _t36_corpus_inventory(workspace_dir: Path) -> dict[str, Any]:
+    """Return the canonical, de-duplicated survey evidence inventory.
+
+    Directory listings cannot be used as counts here: they include guides,
+    aliases, and do not show bridge notes.  ``literature_manifest.json`` is
+    the shared T3/T3.6 evidence contract, so its note-card index is the only
+    count shown to a researcher deciding whether to supplement the corpus.
+    """
+
+    manifest_path = workspace_dir / "literature" / "literature_manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        manifest = {}
+    cards = manifest.get("note_cards") if isinstance(manifest, dict) else []
+    cards = [item for item in cards if isinstance(item, dict)] if isinstance(cards, list) else []
+
+    def _cards_for(root_type: str) -> list[dict[str, Any]]:
+        return [item for item in cards if str(item.get("root_type") or "") == root_type]
+
+    deep_cards = _cards_for("deep_read_notes")
+    bridge_cards = _cards_for("bridge_notes")
+    shallow_cards = _cards_for("shallow_read_notes")
+    claim_cards = [
+        item
+        for item in cards
+        if str(item.get("evidence_level") or "") == "FULL_OR_PARTIAL_TEXT"
+    ]
+
+    def _examples(items: list[dict[str, Any]]) -> list[str]:
+        return [Path(str(item.get("path") or "")).name for item in items[:4] if str(item.get("path") or "")]
+
+    return {
+        "manifest_path": "literature/literature_manifest.json",
+        "canonical_note_cards": len(cards),
+        "claim_usable_notes": len(claim_cards),
+        "mainline_deep_notes": len(deep_cards),
+        "bridge_notes": len(bridge_cards),
+        "abstract_notes": len(shallow_cards),
+        "mainline_examples": _examples(deep_cards),
+        "bridge_examples": _examples(bridge_cards),
+        "abstract_examples": _examples(shallow_cards),
+    }
+
+
 def _t36_supplement_recommendation(workspace_dir: Path) -> dict[str, Any]:
     """Recommend a supplement target from visible survey coverage."""
 
@@ -7295,14 +7341,23 @@ def _t36_supplement_recommendation(workspace_dir: Path) -> dict[str, Any]:
     taxonomy = ((plan.get("taxonomy") or {}).get("tree") if isinstance(plan, dict) and isinstance(plan.get("taxonomy"), dict) else []) or []
     outline = plan.get("outline") if isinstance(plan, dict) and isinstance(plan.get("outline"), list) else []
     weak = ((plan.get("coverage_selfcheck") or {}).get("classes_needing_more_lit") if isinstance(plan, dict) and isinstance(plan.get("coverage_selfcheck"), dict) else []) or []
-    deep_notes = len(list((workspace_dir / "literature" / "deep_read_notes").glob("*.md")))
+    inventory = _t36_corpus_inventory(workspace_dir)
+    claim_usable_notes = int(inventory.get("claim_usable_notes") or 0)
     base = 8 + min(4, len(outline)) + min(8, 2 * len(weak)) + min(6, len(taxonomy) // 2)
-    if deep_notes >= 20:
+    if claim_usable_notes >= 20:
         base -= 4
     suggested = max(8, min(30, base))
     return {
         "suggested_target_records": suggested,
-        "basis": {"deep_note_count": deep_notes, "taxonomy_class_count": len(taxonomy), "outline_section_count": len(outline), "explicit_weak_class_count": len(weak)},
+        "basis": {
+            "claim_usable_note_count": claim_usable_notes,
+            "mainline_deep_note_count": int(inventory.get("mainline_deep_notes") or 0),
+            "bridge_note_count": int(inventory.get("bridge_notes") or 0),
+            "abstract_note_count": int(inventory.get("abstract_notes") or 0),
+            "taxonomy_class_count": len(taxonomy),
+            "outline_section_count": len(outline),
+            "explicit_weak_class_count": len(weak),
+        },
         "coverage_purpose": ["historical development", "frontier progress", "weak taxonomy classes", "confirmed Cross-domain bridges"],
         "boundary": "This is a retrieval target, not a citation quota. Records with abstracts become canonical shallow reading notes; full/partial notes remain required for substantive claims.",
     }

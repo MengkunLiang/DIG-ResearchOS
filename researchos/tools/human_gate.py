@@ -504,6 +504,7 @@ def _humanize_presentation_key(key: str) -> str:
         "weak_evidence_preview": "弱证据提示",
         "survey_compile_report": "编译报告",
         "survey_insights": "综述洞察",
+        "corpus_inventory": "当前可用文献语料（去重后）",
         "supplement_recommendation": "补充检索建议",
         "how_to_choose": "如何选择",
         "task_id": "任务",
@@ -3726,6 +3727,8 @@ def _format_t36_corpus_gate_field(key: str, value: Any) -> str | None:
         return _format_t36_note_inventory(value, directory="literature/deep_read_notes", label="全文/部分阅读笔记")
     if key == "shallow_read_notes":
         return _format_t36_note_inventory(value, directory="literature/shallow_read_notes", label="摘要级阅读笔记")
+    if key == "corpus_inventory":
+        return _format_t36_corpus_inventory(value)
     if key == "supplement_recommendation":
         return _format_t36_supplement_recommendation(value)
     return None
@@ -3767,6 +3770,35 @@ def _format_t36_note_inventory(value: Any, *, directory: str, label: str) -> str
     return "\n".join(lines)
 
 
+def _format_t36_corpus_inventory(value: Any) -> str:
+    """Render canonical note-card counts without exposing a directory dump."""
+
+    if not isinstance(value, dict):
+        return "暂时无法读取 literature_manifest.json；可选择使用现有语料，或先执行定向补检。"
+    claim_usable = int(value.get("claim_usable_notes") or 0)
+    mainline = int(value.get("mainline_deep_notes") or 0)
+    bridge = int(value.get("bridge_notes") or 0)
+    abstract = int(value.get("abstract_notes") or 0)
+    total = int(value.get("canonical_note_cards") or 0)
+    lines = [
+        f"去重后的论文卡总数: {total} 份",
+        f"可支撑实质性论断的全文/部分笔记: {claim_usable} 份（主线精读 {mainline} + Cross-domain bridge {bridge}）",
+        f"摘要级背景/趋势笔记: {abstract} 份（不能单独支撑机制或因果主张）",
+        "来源: literature/literature_manifest.json；这里按 canonical paper card 去重，不把目录说明文件或同一论文的别名重复计数。",
+    ]
+    examples = (
+        ("主线示例", value.get("mainline_examples")),
+        ("bridge 示例", value.get("bridge_examples")),
+        ("摘要示例", value.get("abstract_examples")),
+    )
+    for label, raw_examples in examples:
+        if isinstance(raw_examples, list):
+            names = [str(item) for item in raw_examples[:4] if str(item).strip()]
+            if names:
+                lines.append(f"{label}: " + "、".join(names))
+    return "\n".join(lines)
+
+
 def _format_t36_supplement_recommendation(value: Any) -> str:
     """Turn the corpus-gap calculation into a researcher decision aid.
 
@@ -3786,8 +3818,12 @@ def _format_t36_supplement_recommendation(value: Any) -> str:
     ]
     if basis:
         lines.append(
-            "依据：已有全文阅读 {} 篇；taxonomy 类 {} 个；计划章节 {} 个；明确薄弱类 {} 个。".format(
-                basis.get("deep_note_count", 0),
+            "依据：可支撑实质论断的全文/部分笔记 {} 篇（主线 {} + bridge {}）；摘要级 {} 篇；"
+            "taxonomy 类 {} 个；计划章节 {} 个；明确薄弱类 {} 个。".format(
+                basis.get("claim_usable_note_count", 0),
+                basis.get("mainline_deep_note_count", 0),
+                basis.get("bridge_note_count", 0),
+                basis.get("abstract_note_count", 0),
                 basis.get("taxonomy_class_count", 0),
                 basis.get("outline_section_count", 0),
                 basis.get("explicit_weak_class_count", 0),
