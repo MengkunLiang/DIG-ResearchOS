@@ -487,7 +487,11 @@ class CompletePipelineRunner:
                     gate_id=state.pending_gate.gate_id if state.pending_gate else "",
                     mode="immediate_gate_present",
                 )
-                continue
+                # An immediate gate is a user-facing boundary.  Returning to
+                # this loop used to recreate the same gate indefinitely
+                # without ever asking for input, which looked like a frozen
+                # resume and generated unbounded state/log writes.
+                return await self._present_pending_gate(state, state_path)
             break
 
         if state.current_task == "T3":
@@ -741,6 +745,12 @@ class CompletePipelineRunner:
             state,
             workspace_dir=self.workspace,
         )
+        # Refreshing a durable Gate may deterministically consume it.  T4 uses
+        # this when a confirmed directive can resume as a queued operation.
+        # Do not dereference the old Gate below; return so the outer runner can
+        # execute the newly selected task instead.
+        if state.pending_gate is None:
+            return state
         # A legacy T4 recovery gate can survive an upgrade that introduced the
         # shared shallow-reading contract.  Compatibility-record repair is
         # meaningless while the evidence set itself is incomplete: accepting
