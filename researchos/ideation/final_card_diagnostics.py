@@ -26,6 +26,7 @@ class FinalCardFailureKind(str, Enum):
     LLM_TIMEOUT = "llm_timeout"
     LLM_PROVIDER_FAILURE = "llm_provider_failure"
     LLM_CONFIGURATION_FAILURE = "llm_configuration_failure"
+    LLM_ACCOUNT_BALANCE = "llm_account_balance"
     LLM_CONTEXT_LIMIT = "llm_context_limit"
     LLM_REQUEST_REJECTED = "llm_request_rejected"
     LLM_EMPTY_RESPONSE = "llm_empty_response"
@@ -122,6 +123,18 @@ def classify_final_card_exception(
                 message="The Final Card LLM request was rejected by provider configuration or authorization, so another card call cannot repair it yet.",
                 recovery_action="ask_human_to_fix_provider_configuration_then_retry_final_card_compiler",
                 repair_prerequisite="Fix the configured model, credential, permission, or context setting before retrying the Card Compiler.",
+                repair_scheduled=False,
+                prior_failure=prior_failure,
+            )
+        if _contains_account_balance_failure(provider_text):
+            return _diagnostic(
+                kind=FinalCardFailureKind.LLM_ACCOUNT_BALANCE,
+                stage=stage,
+                candidate_ids=candidate_ids,
+                error=error,
+                message="The model account rejected the Final Card request because its balance or credit quota is insufficient.",
+                recovery_action="restore_provider_balance_or_authorized_quota_then_retry_final_card_compiler",
+                repair_prerequisite="Restore account balance/credit or select another authorized model connection; context settings cannot resolve an insufficient-balance rejection.",
                 repair_scheduled=False,
                 prior_failure=prior_failure,
             )
@@ -348,6 +361,23 @@ def _contains_context_limit(text: str) -> bool:
             "prompt is too long",
             "input is too long",
             "too many tokens",
+        )
+    )
+
+
+def _contains_account_balance_failure(text: str) -> bool:
+    lowered = text.casefold()
+    return any(
+        marker in lowered
+        for marker in (
+            "insufficient balance",
+            "insufficient credit",
+            "insufficient funds",
+            "credit balance",
+            "billing balance",
+            "quota exhausted",
+            "余额不足",
+            "额度不足",
         )
     )
 

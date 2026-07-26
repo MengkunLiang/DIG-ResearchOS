@@ -478,6 +478,20 @@ class AgentRunner:
         if any(
             marker in text
             for marker in (
+                "insufficient balance",
+                "insufficient credit",
+                "insufficient funds",
+                "credit balance",
+                "billing balance",
+                "quota exhausted",
+                "余额不足",
+                "额度不足",
+            )
+        ):
+            return "account_balance"
+        if any(
+            marker in text
+            for marker in (
                 "context_length",
                 "context length",
                 "context window",
@@ -640,6 +654,8 @@ class AgentRunner:
         category = cls._provider_error_category(exc)
         if category == "authentication":
             return "模型服务配置未通过验证；请检查已选择服务的凭据和模型名称后 resume。"
+        if category == "account_balance":
+            return "模型服务账户余额或信用额度不足；请充值、恢复配额或更换已获授权的模型连接后 resume。"
         if category == "context_limit":
             return "模型明确拒绝了本次上下文长度；请核对该模型的真实上下文容量或缩小本次输入后 resume。"
         if category in {"request_schema", "bad_request", "content_policy"}:

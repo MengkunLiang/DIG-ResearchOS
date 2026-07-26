@@ -118,12 +118,14 @@ def _classify_offspring_failure(error: Exception) -> str:
     if any(
         marker in message
         for marker in (
+            "账户余额或信用额度不足",
+            "余额或信用额度不足",
             "模型拒绝了本次请求",
             "请求格式、模型能力或内容策略",
             "模型明确拒绝了本次上下文长度",
         )
     ):
-        return "provider_request_rejected"
+        return "provider_account_or_request_rejected"
     return "generation_or_repair"
 
 

@@ -26,6 +26,26 @@ def test_explicit_context_limit_has_its_own_public_category() -> None:
     assert "上下文长度" in AgentRunner._public_provider_error_message(error)
 
 
+def test_insufficient_balance_is_never_reported_as_a_context_or_schema_error() -> None:
+    error = LLMProviderError("litellm.BadRequestError: OpenAIException - Insufficient Balance")
+
+    assert AgentRunner._provider_error_category(error) == "account_balance"
+    assert "余额或信用额度不足" in AgentRunner._public_provider_error_message(error)
+
+    try:
+        raise RecoverableRuntimePause("模型服务账户余额或信用额度不足；请充值、恢复配额或更换已获授权的模型连接后 resume。") from error
+    except RecoverableRuntimePause as pause:
+        diagnostic = classify_final_card_exception(
+            pause,
+            stage="initial_generation",
+            candidate_ids=["C1"],
+        )
+
+    assert diagnostic.kind == FinalCardFailureKind.LLM_ACCOUNT_BALANCE
+    assert diagnostic.repair_scheduled is False
+    assert "balance or credit quota" in diagnostic.message
+
+
 def test_final_card_classification_preserves_bad_request_distinction() -> None:
     provider = LLMProviderError("BadRequestError('unsupported parameter: response_format')")
     try:
