@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from researchos.cli_runners.complete_pipeline import CompletePipelineRunner
+from researchos.orchestration.state_machine import StateMachine
 from researchos.runtime.config import RuntimeSettings
 from researchos.schemas.state import GateState, StateYaml
 
@@ -112,3 +113,31 @@ def test_consumed_gate_refresh_returns_new_t4_state_without_rendering_stale_gate
     assert result.current_task == "T4"
     assert result.status == "RUNNING"
     assert result.pending_gate is None
+    persisted = StateYaml.load_yaml(tmp_path / "state.yaml")
+    assert persisted.current_task == "T4"
+    assert persisted.status == "RUNNING"
+
+
+def test_selection_score_recovery_is_not_mistaken_for_legacy_evolution() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    state_machine = StateMachine(
+        repo_root / "config/system_config/state_machine.yaml",
+        repo_root / "config/system_config/gates.yaml",
+    )
+    state = StateYaml(
+        project_id="test",
+        current_task="T4",
+        status="RUNNING",
+        task_context={
+            "t4_operation_request": {
+                "action": "recover_selection_score",
+                "directive": {
+                    "action": "select_candidate",
+                    "raw_user_input": "推进 D2",
+                    "target_candidate_ids": ["candidate-2"],
+                },
+            }
+        },
+    )
+
+    assert state_machine.should_pause_for_immediate_gate(state, workspace_dir=repo_root) is False

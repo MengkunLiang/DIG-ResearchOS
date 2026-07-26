@@ -750,6 +750,11 @@ class CompletePipelineRunner:
         # Do not dereference the old Gate below; return so the outer runner can
         # execute the newly selected task instead.
         if state.pending_gate is None:
+            # The refresh may have reconstructed a confirmed T4 operation.
+            # Persist that transition before returning: a signal or terminal
+            # close between Gate refresh and the next task step must not erase
+            # the queued operation and reopen Gate1 on the following resume.
+            state.dump_yaml(state_path)
             return state
         # A legacy T4 recovery gate can survive an upgrade that introduced the
         # shared shallow-reading contract.  Compatibility-record repair is

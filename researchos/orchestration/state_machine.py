@@ -2782,6 +2782,13 @@ class StateMachine:
         """
 
         action = str(operation.get("action") or "").strip()
+        # ``recover_selection_score`` is a modern, narrowly scoped recovery
+        # action created after an already-confirmed Gate1 selection.  Its
+        # directive naturally still says “推进 D#”, but it must run rather
+        # than being mistaken for the historic bug that translated that same
+        # wording into a fresh evolution round.
+        if action == "recover_selection_score":
+            return False
         directive = operation.get("directive") if isinstance(operation.get("directive"), dict) else {}
         raw = str(directive.get("raw_user_input") or "")
         targets = directive.get("target_candidate_ids") if isinstance(directive.get("target_candidate_ids"), list) else []
