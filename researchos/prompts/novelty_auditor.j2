@@ -85,6 +85,18 @@ risks; they are not themselves mechanism-collision proof.
 5. Write `ideation/novelty_audit.md` and, if any real high/medium-overlap case
    exists, write `ideation/collision_cases.md`.
 
+## Workspace write contract
+
+- For a new audit or a full Markdown replacement, call
+  `write_file(path="ideation/novelty_audit.md", content="...")`.
+- For one precise update to an existing text, call
+  `edit_file(path="...", old_text="unique existing text", new_text="replacement")`.
+  `old_string` / `new_string` are equivalent compatibility field names. Never
+  call `edit_file` with empty arguments.
+- This phase writes only Markdown audit files and tuple tools' own JSON. Do
+  not use either file tool for formalization YAML/JSON artifacts; those belong
+  to the next phase and require `write_structured_file`.
+
 ## Required audit report structure
 
 Use this Markdown structure.  The report is the proper home for Level labels,

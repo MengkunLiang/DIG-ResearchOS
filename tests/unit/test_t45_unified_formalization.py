@@ -58,6 +58,33 @@ class _RepeatedT45RepairAgent(Agent):
         return False, "research_proposal.md is too short for hybrid proposal (120/1900 words)"
 
 
+class _EditCompatibilityAgent(Agent):
+    """Agent fixture that deliberately uses the common legacy edit name."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            AgentSpec(
+                name="edit-compatibility-test",
+                model_tier="light",
+                tool_names=["write_file", "finish_task"],
+                allowed_read_prefixes=["ideation/"],
+                allowed_write_prefixes=["ideation/"],
+            )
+        )
+
+    def system_prompt(self, ctx: ExecutionContext) -> str:
+        return "Test the policy-bound edit_file compatibility tool."
+
+    def initial_user_message(self, ctx: ExecutionContext) -> str:
+        return "Replace exactly one known text fragment, then finish."
+
+    def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
+        path = ctx.workspace_dir / "ideation" / "compatibility.md"
+        if path.read_text(encoding="utf-8") == "after\n":
+            return True, None
+        return False, "edit_file compatibility replacement was not applied"
+
+
 def _finish_response(summary: str) -> FakeRawCompletion:
     return FakeRawCompletion(
         message=FakeLLMMessage(
@@ -80,6 +107,56 @@ def _proposal_write_response(iteration: int) -> FakeRawCompletion:
             ]
         )
     )
+
+
+def test_write_capable_agent_can_use_safe_edit_file_compatibility(tmp_path: Path) -> None:
+    """A model's familiar edit call must not become an unknown-tool retry."""
+
+    target = tmp_path / "ideation" / "compatibility.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("before\n", encoding="utf-8")
+    llm = MockLLMClient(
+        [
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[
+                        FakeToolCall(
+                            name="edit_file",
+                            arguments={
+                                "path": "ideation/compatibility.md",
+                                "old_string": "before",
+                                "new_string": "after",
+                            },
+                        )
+                    ]
+                )
+            ),
+            _finish_response("exact replacement complete"),
+        ]
+    )
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    runner = AgentRunner(
+        _EditCompatibilityAgent(),
+        registry,
+        llm,
+        MockHumanInterface(),
+        RuntimeSettings(),
+    )
+
+    result = asyncio.run(
+        runner.run(
+            ExecutionContext(
+                workspace_dir=tmp_path,
+                project_id="edit-compatibility",
+                task_id="T1",
+                run_id="edit-compatibility-run",
+            )
+        )
+    )
+
+    assert result.ok is True, result.error or result.message
+    assert target.read_text(encoding="utf-8") == "after\n"
 
 
 def test_one_unified_template_accepts_all_three_orientations(tmp_path: Path) -> None:

@@ -6,7 +6,7 @@ from pathlib import Path
 from researchos.agents.novelty_auditor import _t45_exp_plan_recovery_instruction
 from researchos.ideation.proposal import repair_t45_proposal_manifest
 from researchos.runtime.progress import summarize_tool_result
-from researchos.tools.filesystem import WriteFileTool
+from researchos.tools.filesystem import EditFileTool, WriteFileTool
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
 from tests.unit.t45_unified_fixture import populate_valid_t45_workspace
 
@@ -53,6 +53,23 @@ def test_t45_allows_formalization_after_valid_exp_plan(tmp_path: Path) -> None:
 
     assert result.ok is True
     assert (tmp_path / "ideation/post_novelty_formalization.json").is_file()
+
+
+def test_edit_file_cannot_bypass_t45_structured_output_guard(tmp_path: Path) -> None:
+    """The compatibility surface must retain WriteFileTool's schema boundary."""
+
+    populate_valid_t45_workspace(tmp_path)
+    tool = EditFileTool(_policy(tmp_path))
+
+    result = asyncio.run(
+        tool.execute(
+            path="ideation/exp_plan.yaml",
+            content="not a schema-valid experiment plan",
+        )
+    )
+
+    assert result.ok is False
+    assert result.error == "structured_output_requires_write_structured_file"
 
 
 def test_proposal_manifest_repair_does_not_legalize_missing_exp_plan(tmp_path: Path) -> None:

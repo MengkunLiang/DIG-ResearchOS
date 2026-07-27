@@ -29,7 +29,7 @@ from .external_experiment import (
     SpecializeExecutorSkillsTool,
     WaitForExternalExecutorResultTool,
 )
-from .filesystem import InspectUserSeedsTool, ListFilesTool, ReadFileTool, WriteFileTool
+from .filesystem import EditFileTool, InspectUserSeedsTool, ListFilesTool, ReadFileTool, WriteFileTool
 from .finish_task import FinishTaskTool
 from .structured_file import WriteStructuredFileTool
 from .survey_tools import (
@@ -129,6 +129,7 @@ def register_builtin_tools(
         ),
     )
     registry.register("write_file", lambda ctx: WriteFileTool(ctx.policy))
+    registry.register("edit_file", lambda ctx: EditFileTool(ctx.policy))
     registry.register("write_structured_file", lambda ctx: WriteStructuredFileTool(ctx.policy))
     registry.register("append_file", lambda ctx: AppendFileTool(ctx.policy))
     registry.register("list_files", lambda ctx: ListFilesTool(ctx.policy))

@@ -666,6 +666,136 @@ class WriteFileTool(Tool):
         return '\n'.join(fixed_lines)
 
 
+class EditFileParams(BaseModel):
+    """Compatibility schema for exact text edits and full replacements.
+
+    ``path`` is the canonical field. ``file_path`` and the ``*_string`` pair
+    are accepted because OpenAI-compatible models commonly emit those names
+    for an edit operation.
+    """
+
+    path: str | None = Field(None, description="相对 workspace 的目标路径")
+    file_path: str | None = Field(None, description="path 的兼容别名")
+    content: str | dict[str, Any] | list[Any] | None = Field(
+        None,
+        description="完整替换文件内容；提供时不应同时提供 old_text/new_text",
+    )
+    old_text: str | None = Field(None, description="要精确替换的唯一旧文本")
+    new_text: str | None = Field(None, description="替换后的新文本；允许为空字符串")
+    old_string: str | None = Field(None, description="old_text 的兼容别名")
+    new_string: str | None = Field(None, description="new_text 的兼容别名")
+
+
+class EditFileTool(Tool):
+    """Safely support the familiar ``edit_file`` model-tool convention.
+
+    The runtime historically offered only ``write_file``. Some
+    OpenAI-compatible models nevertheless emit ``edit_file`` after reading a
+    document, which used to become an unhelpful unknown-tool failure. This
+    tool intentionally delegates every write to :class:`WriteFileTool`, so
+    structured-output, task-specific and workspace-policy guards cannot be
+    bypassed through the compatibility surface.
+    """
+
+    name = "edit_file"
+    description = (
+        "安全修改一个 workspace 文本文件。传 path 和 old_text/new_text（或 old_string/new_string）"
+        "可精确替换唯一出现的一段文本；传 path 和 content 则完整替换文件，并遵守 write_file 的全部限制。"
+        "不要空调用；结构化 YAML/JSON 请使用 write_structured_file。"
+    )
+    parameters_schema = EditFileParams
+    timeout_seconds = 10.0
+
+    def __init__(self, policy: WorkspaceAccessPolicy):
+        self.policy = policy
+        self._writer = WriteFileTool(policy)
+
+    @staticmethod
+    def _first_text(kwargs: dict[str, Any], *names: str) -> str | None:
+        for name in names:
+            value = kwargs.get(name)
+            if value is not None:
+                return str(value)
+        return None
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        path = self._first_text(kwargs, "path", "file_path")
+        if not path or not path.strip():
+            return ToolResult(
+                ok=False,
+                content=(
+                    "edit_file 需要非空 path。完整替换请传 path 和 content；精确修改请传 path、"
+                    "old_text（或 old_string）和 new_text（或 new_string）。"
+                ),
+                error="invalid_edit_request",
+            )
+
+        content = kwargs.get("content")
+        old_text = self._first_text(kwargs, "old_text", "old_string")
+        new_text = self._first_text(kwargs, "new_text", "new_string")
+        if content is not None:
+            if old_text is not None or new_text is not None:
+                return ToolResult(
+                    ok=False,
+                    content="edit_file 只能使用一种模式：path+content 完整替换，或 path+old_text+new_text 精确替换。",
+                    error="ambiguous_edit_request",
+                )
+            result = await self._writer.execute(path=path, content=content)
+            result.data = {**result.data, "edit_mode": "full_replacement", "requested_tool": self.name}
+            return result
+
+        if old_text is None or new_text is None:
+            return ToolResult(
+                ok=False,
+                content=(
+                    "edit_file 缺少编辑内容。请传 path+content 完整替换，或 path+old_text+new_text "
+                    "（也可使用 old_string/new_string）进行唯一精确替换。"
+                ),
+                error="invalid_edit_request",
+            )
+        if not old_text:
+            return ToolResult(
+                ok=False,
+                content="edit_file 不允许替换空 old_text；请提供一个非空、唯一匹配的原始文本片段。",
+                error="invalid_edit_request",
+            )
+
+        try:
+            source = self.policy.resolve_read(path).read_text(encoding="utf-8")
+        except ToolAccessDenied as exc:
+            return ToolResult(ok=False, content=str(exc), error="access_denied")
+        except FileNotFoundError:
+            return ToolResult(ok=False, content=f"File not found: {path}", error="not_found")
+        except IsADirectoryError:
+            return ToolResult(ok=False, content=f"Path is a directory, not a file: {path}", error="is_directory")
+        except UnicodeDecodeError:
+            return ToolResult(ok=False, content=f"File is not UTF-8 text: {path}", error="not_text")
+
+        match_count = source.count(old_text)
+        if match_count != 1:
+            qualifier = "不存在" if match_count == 0 else f"出现了 {match_count} 次"
+            return ToolResult(
+                ok=False,
+                content=(
+                    f"edit_file 无法安全替换：old_text 在 {path} 中{qualifier}。"
+                    "请读取当前文件后提供唯一的原始文本片段，或使用 write_file 的完整 content。"
+                ),
+                data={"path": path, "match_count": match_count, "edit_mode": "exact_replacement"},
+                error="edit_target_not_unique",
+            )
+
+        result = await self._writer.execute(path=path, content=source.replace(old_text, new_text, 1))
+        result.data = {
+            **result.data,
+            "edit_mode": "exact_replacement",
+            "requested_tool": self.name,
+            "match_count": match_count,
+        }
+        if result.ok:
+            result.content = f"Edited one exact occurrence in {path}. {result.content}"
+        return result
+
+
 class ListFilesParams(BaseModel):
     path: str = Field(".", description="相对 workspace 的目录路径")
     recursive: bool = Field(False, description="是否递归列出子目录")

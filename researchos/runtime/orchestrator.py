@@ -793,6 +793,13 @@ class AgentRunner:
             # augment, rather than replace, the capability contract declared by
             # the Agent or Skill.
             eff.tool_names = list(dict.fromkeys([*eff.tool_names, *dynamic_tool_names]))
+        if "write_file" in eff.tool_names and self.tool_registry.has("edit_file"):
+            # OpenAI-compatible providers often choose the familiar
+            # ``edit_file`` name after reading an existing document. Expose a
+            # policy-bound compatibility tool whenever the Agent may already
+            # write files. It delegates to WriteFileTool, so this does not
+            # grant a new path capability or bypass structured-output guards.
+            eff.tool_names = list(dict.fromkeys([*eff.tool_names, "edit_file"]))
         max_agent_runtime = int(self.global_timeout.get("max_agent_runtime") or 0)
         effective_wall_seconds = eff.max_wall_seconds
         if max_agent_runtime > 0:
