@@ -23,12 +23,14 @@ from researchos.ideation.formalization import (
     validate_t45_formalization_core,
 )
 from researchos.ideation.proposal import validate_t45_research_proposal
+from researchos.ideation.prompt_composer import compose_t4_role_prompt
 from researchos.orchestration.state_machine import StateMachine
 from researchos.orchestration.task_io_contract import task_import_paths
 from researchos.runtime.agent import Agent, AgentSpec, ExecutionContext, resolve_effective_config
 from researchos.runtime.orchestrator import AgentRunner
 from researchos.runtime.config import RuntimeSettings
 from researchos.runtime.observability.extractors import extract_stage_insights
+from researchos.runtime.prompts import get_prompt_env
 from researchos.schemas.state import GateState, StateYaml
 from researchos.testing.mocks import FakeLLMMessage, FakeRawCompletion, FakeToolCall, MockHumanInterface, MockLLMClient
 from researchos.tools.builtin import register_builtin_tools
@@ -72,6 +74,7 @@ def test_formalizer_uses_explicit_chinese_research_facing_language(tmp_path: Pat
     project_path = tmp_path / "project.yaml"
     project = yaml.safe_load(project_path.read_text(encoding="utf-8"))
     project.setdefault("metadata", {})["formalization_language"] = "zh"
+    project["research_direction"] = "From Copilot to Crutch: Dynamic Fading Script Scaffolding for AI advice"
     write_yaml(project_path, project)
     ctx = ExecutionContext(
         workspace_dir=tmp_path,
@@ -86,6 +89,33 @@ def test_formalizer_uses_explicit_chinese_research_facing_language(tmp_path: Pat
     assert "formalization language: zh" in prompt
     assert "所有研究者可读的正文和结构化字段值均使用中文" in prompt
     assert "# 研究主张与假设" in prompt
+    assert "From Copilot to Crutch" in prompt
+    assert "English Canonical Title（简洁中文释义）" in prompt
+    assert "Pilot" in prompt
+    assert "From Copilot to Crutch（从辅助到依赖）" in prompt
+
+
+def test_t4_role_prompts_preserve_canonical_english_names_in_chinese_explanations() -> None:
+    """All researcher-facing T4 roles share the bilingual naming guardrail."""
+
+    system, _ = compose_t4_role_prompt(
+        prompt_name="idea_interaction_reviewer.j2",
+        role_contract="Return only the required JSON.",
+        rendered_task="{}",
+        payload={},
+        target_profile=None,
+    )
+    assert "Research-Facing Chinese Naming" in system
+    assert "English canonical term（中文释义）" in system
+    assert "From Copilot to Crutch" in system
+    assert "concise Chinese interpretation" in system
+    assert "Dynamic Fading Script Scaffolding" in system
+
+    compiler_template = get_prompt_env().get_template("idea_final_card_compiler.j2").render(payload_json="{}")
+    repair_template = get_prompt_env().get_template("idea_final_card_semantic_repair.j2").render(payload_json="{}")
+    assert "English Canonical Title（简洁中文释义）" in compiler_template
+    assert "mechanically translate a metaphorical English title" in compiler_template
+    assert "English Canonical Title（简洁中文释义）" in repair_template
 
 
 def test_formalizer_does_not_rewrite_valid_structured_sources_before_prose(tmp_path: Path) -> None:

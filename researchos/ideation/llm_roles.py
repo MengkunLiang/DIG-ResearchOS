@@ -148,7 +148,8 @@ class LLMIdeaGenerator(IdeaGeneratorPort):
                 "and structural cross-domain analogy to discover non-obvious research opportunities. Do not score, rank, select, or delete ideas. "
                 "Mark parametric-knowledge or analogy-driven opportunities as verification_required and never turn synthesis inference or abstract-only "
                 "material into an established fact. "
-                "Write researcher-facing opportunity prose in clear Chinese, retaining established academic terms in English where they are more precise."
+                "Write researcher-facing opportunity prose in clear Chinese. Follow the shared Research-Facing Chinese Naming policy: preserve canonical "
+                "English titles and named constructs rather than translating them mechanically, and use English canonical term（中文释义） at first mention."
             ),
             payload=payload,
         )
@@ -258,7 +259,9 @@ class LLMIdeaGenerator(IdeaGeneratorPort):
                 "evaluation_or_metric_bridge, baseline_or_dataset_relevance, or adjacent_application; keep any richer explanation in the "
                 "candidate's readable presentation fields. "
                 "If the normal Route cannot be supported, return status=unsupported with a concrete reason instead of fabricating a candidate. "
-                "When a legacy CandidatePresentation is included, write its available fields in clear Chinese, but it is optional enrichment and "
+                "When a legacy CandidatePresentation is included, write explanatory fields in clear Chinese, but preserve established English titles, "
+                "constructs, frameworks, methods, systems, metrics, and experiment names. Use English canonical term（中文释义） at first mention and "
+                "never mechanically translate an English metaphorical title into a Chinese headline. This presentation is optional enrichment and "
                 "must never substitute for Final Card LLM explanations or block a usable Seed. Retain established academic terms such as Evidence Permission, "
                 "Idea Family, Mutation Child, and Crossover Child when they improve precision."
                 + repair_instruction
@@ -417,7 +420,9 @@ class LLMCandidateEnricher(IdeaEnricherPort):
                 "in supplied workspace material as conjectural and verification-required. Never invent papers, citations, datasets, metrics, "
                 "empirical results, costs, or external-novelty conclusions. Do not elevate an Evidence Permission or add a source path not already "
                 "present in the Candidate. A partial enrichment is acceptable: retain Seed maturity and state unresolved upgrades rather than fabricating detail. "
-                "Write researcher-facing prose in clear Chinese."
+                "Write researcher-facing explanations in clear Chinese while preserving established English titles, constructs, frameworks, methods, "
+                "systems, metrics, and experiment names. Use English canonical term（中文释义） at first mention; never mechanically translate an English "
+                "metaphorical title into a Chinese headline."
                 + repair_instruction
             ),
             payload=payload,
@@ -530,8 +535,8 @@ class LLMIdeaScorer(IdeaScoringPort):
                 "ranking summary from the three core dimensions. Evidence, validation, Profile Fit, scientific upside, evolution potential, "
                 "and uncertainty are optional qualitative diagnostics only. A high-upside Wildcard remains a human-comparison signal, never a "
                 "certification of evidence or selection readiness. Give each supplied core rationale a candidate-specific explanation when possible. "
-                "Write all researcher-facing rationales, strengths, bottlenecks, and diagnostic explanations in clear Chinese; retain standard academic "
-                "terms in English where they are more precise."
+                "Write all researcher-facing rationales, strengths, bottlenecks, and diagnostic explanations in clear Chinese. Preserve canonical English "
+                "titles and named constructs under the shared Research-Facing Chinese Naming policy; do not mechanically translate them."
                 + repair_instruction
             ),
             payload=payload,
@@ -663,7 +668,8 @@ class LLMIdeaScorer(IdeaScoringPort):
                 "You are IdeaScoringAgent in a bounded score-repair mode. Return only one JSON object with a `repairs` array. "
                 "Do not score, rank, generate, rewrite, select, or delete Candidates. For each requested Candidate, write only the "
                 "named core-score rationales. Each rationale must be a candidate-specific Chinese explanation grounded in supplied Candidate "
-                "content. Do not write evidence audits, external novelty claims, validation guarantees, generic praise, placeholder wording, "
+                "content, while preserving canonical English titles and named constructs under the shared Research-Facing Chinese Naming policy. "
+                "Do not write evidence audits, external novelty claims, validation guarantees, generic praise, placeholder wording, "
                 "Markdown, or any field that was not requested."
             ),
             payload=payload,
@@ -759,7 +765,8 @@ class LLMIdeaScorer(IdeaScoringPort):
                 "Interpret only the supplied deterministic Candidate-pair shortlist. Do not score, rank, select, delete, merge, "
                 "or rewrite any Candidate. For each review, explain shared core, meaningful difference, peer challenge, transferable "
                 "element, differentiation need, and crossover potential/risk. A `parallel` relationship is fully valid. Do not treat lexical "
-                "similarity as evidence or claim that a crossover must occur. Preserve uncertainty and write researcher-facing explanations in Chinese."
+                "similarity as evidence or claim that a crossover must occur. Preserve uncertainty and write researcher-facing explanations in Chinese "
+                "while following the shared Research-Facing Chinese Naming policy for canonical English titles and named constructs."
             ),
             payload={"prompt_version": "1.0.0", "pairs": pairs},
         )
@@ -1073,8 +1080,10 @@ class LLMFinalIdeaCardCompiler:
                 system_contract=(
                     "You are the Final Idea Card Compiler. Return only JSON with a `cards` array. You translate only the "
                     "selected Portfolio Candidates into readable impact cards; you do not generate, score, select, or modify a Candidate. "
-                    "Preserve scientific content exactly and label implications by their actual Evidence Status. Write the card in clear Chinese for the researcher, "
-                    "retaining standard academic terms in English where they are more precise. Treat innovation wording as a proposal-relative delta, not an "
+                    "Preserve scientific content exactly and label implications by their actual Evidence Status. Write explanatory card prose in clear Chinese, "
+                    "while retaining canonical English titles and established English constructs, frameworks, methods, systems, metrics, and experiment names. "
+                    "When an English title exists, render short_title as English Canonical Title（简洁中文释义） rather than a literal Chinese metaphor. "
+                    "Treat innovation wording as a proposal-relative delta, not an "
                     "externally verified novelty conclusion: without direct verified novelty evidence, do not use priority claims such as 'first', '首次', "
                     "'no existing method', or equivalents. When repair_context is supplied, address its exact previous contract failure and return a complete "
                     "replacement deck for the stated current profile; do not repeat the failed field shape or revive a prior publication orientation."
@@ -1221,8 +1230,9 @@ class LLMFinalIdeaCardCompiler:
                 "synthesizing the supplied Candidate genome, contributions, hypotheses, risks, evidence permissions, and Portfolio context. "
                 "This is a presentation translation, not authority to add a mechanism, contribution, hypothesis, source, citation, dataset, "
                 "metric, experiment result, stakeholder effect, business value, evidence upgrade, or novelty claim. If a required card cannot "
-                "be reconstructed without such an addition, leave it incomplete for the deterministic validator rather than fabricating it. Rewrite any "
-                "unsupported priority novelty wording as a conditional Candidate-relative innovation explanation."
+                "be reconstructed without such an addition, leave it incomplete for the deterministic validator rather than fabricating it. Preserve canonical "
+                "English titles and established English constructs; when an English title exists, render short_title as English Canonical Title（简洁中文释义） "
+                "rather than a literal Chinese metaphor. Rewrite any unsupported priority novelty wording as a conditional Candidate-relative innovation explanation."
             ),
             payload={
                 "candidates": [model_dump(candidate, mode="json") for candidate in candidates],

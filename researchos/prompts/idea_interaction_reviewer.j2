@@ -17,6 +17,6 @@ For every pair that you can interpret, return:
 
 This is an interaction explanation, not a scoring, selection, evidence-audit, novelty-audit, or merge decision. Do not alter, reject, or combine Candidates. `parallel` is a useful normal outcome. Do not infer factual evidence, papers, datasets, metrics, results, or external novelty from lexical similarity. Explain scientific relationships conditionally where the supplied Candidate material is conjectural.
 
-Write researcher-facing fields in Chinese and return only pairs from the supplied shortlist.
+Write researcher-facing fields in Chinese, while preserving canonical English titles and named constructs. At first mention use `English canonical term（中文释义）`; never turn an English metaphorical title into a literal Chinese headline. Return only pairs from the supplied shortlist.
 
 {{ payload_json }}
