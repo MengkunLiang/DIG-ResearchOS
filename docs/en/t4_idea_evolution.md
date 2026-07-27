@@ -667,9 +667,9 @@ Gate1 is a persistent research conversation, not a one-line command. A researche
 
 The path depends on that confirmed action. Selecting one ready Candidate follows `T4 -> T4-GATE1 -> T4.5` and writes a pre-novelty selection receipt. It does not rerun T4. Evolution, focus, route regeneration, or an approved composition follows `T4 -> T4-GATE1 -> T4` and creates a new preserved version before returning to Gate1. A read-only action stays at Gate1. EOF with no submitted text pauses the workspace with its Gate intact. EOF while an operation plan awaits confirmation preserves that draft and never executes it. `resume` reopens the same durable Gate and does not repeat a completed T4 model run.
 
-### 9.5 Selection Boundary for T4.5
+### 9.5 Selection Boundary for T4.5 Research-plan Audit and Formalization
 
-A candidate selected for T4.5 must be current, independently scored, traceable, and bound to a current selection fingerprint. It needs a complete LLM Final Card and at least one LLM-authored falsifiable draft hypothesis; a Seed satisfying those inputs is explicitly provisional, not mature by implication. T4.5 receives a Pre-Novelty brief and search targets; this is not a declaration that novelty has already passed external audit.
+A candidate selected for T4.5 research-plan audit and formalization must be current, independently scored, traceable, and bound to a current selection fingerprint. It needs a complete LLM Final Card and at least one LLM-authored falsifiable draft hypothesis; a Seed satisfying those inputs is explicitly provisional, not mature by implication. T4.5 first receives a Pre-Novelty brief and search targets for its similarity-work audit; this is not a declaration that novelty has already passed external audit or that formalization is complete.
 
 ### 9.6 Pass2 Visibility and Evidence-needing Candidates
 

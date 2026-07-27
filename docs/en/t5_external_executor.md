@@ -4,7 +4,7 @@
 
 This guide explains how to start, debug, and hand back a T5 external experiment. Commands run from the ResearchOS repository root. The examples use `./workspace/project-a`; artifact paths without that prefix are relative to the workspace.
 
-T5 starts only after T4.5 passes its novelty audit and formalizes the research package. It gives an external executor the research question, hypotheses, experiment constraints, and evidence boundaries. It does not turn plans, resource leads, or unverified hypotheses into results.
+T5 starts only after T4.5's research-plan audit and formalization package passes: the novelty/collision audit, blueprint, claims, experiment plan, Proposal, and orientation-aware review must all agree. It gives an external executor the research question, hypotheses, experiment constraints, and evidence boundaries. It does not turn plans, resource leads, or unverified hypotheses into results.
 
 ## Short Path
 

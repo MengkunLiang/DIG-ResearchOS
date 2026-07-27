@@ -308,7 +308,7 @@ ResearchOS 的核心设计是：**进度靠文件恢复，不靠模型记忆恢�
 | `T3.6-PLAN` 到 `T3.6-FEED` | `SurveyWriterAgent` | survey 系列 | 可选综述论文支线：taxonomy 规划、人工确认、逐 section 写作、拼装、综述模式 review、编译、导出 T4 idea fuel | `drafts/survey/survey_plan.json`, `survey_state.json`, `sections/*.tex`, `survey.tex`, `survey_review.md`, `survey.pdf`, `ideation/survey_insights.json` |
 | `T4` | `IdeationAgent` + 内部 evolution controller | - | pre-run confirmation、Evidence Routing、非对称 P0、职责分离的评分、P0->P1 Evolution 与 Gate1-compatible projection；选择完整 Candidate 后只编译 Pre-Novelty 材料 | `evidence/`、`populations/P0.json`、`populations/P1.json`、`genomes/`、`families/`、`scoring/`、`evolution/`、`candidates/`、`archive/`、保留的 Pass1/Pass2/Gate1 projection、`hypothesis_brief.yaml`、`selected/t45_search_targets.json` |
 | `T4-GATE1` | runtime gate | - | 状态机级决策面板：选择 Portfolio、保留并行方向、继续 Evolution、聚焦、Crossover、组件组合、查看详情、重跑 Route、rollback 或 pause；来源版本保持不变 | `ideation/human_directives/`、`human_compositions/`、`_gate1_user_selection.json` |
-| `T4.5` | `NoveltyAuditorAgent` | - | 对已选 Pre-Novelty idea 做 novelty/collision audit；非通过 verdict 进入人工决策 gate，通过后编译正式 hypothesis 与执行 bundle | `novelty_audit.md`、collision record、`hypotheses.md`、`exp_plan.yaml`、Contribution-Hypothesis Mapping、Validation Map、Kill Criteria、formalization manifest |
+| `T4.5` | `NoveltyAuditorAgent` + `ResearchFormalizerAgent` | audit → formalize → review | 对已选 Pre-Novelty idea 做 novelty/collision audit，再生成并独立审阅来源一致的研究包；非通过 audit verdict 进入人工决策 gate | `novelty_audit.md`、蓝图、claim registry、hypotheses、Proposal、实验计划、Contribution/Validation Map、Kill Criteria、orientation review、formalization manifest |
 | `T5-REBOOST-GATE` | `SkillAgent(research-reboost)` | `reboost` | 用已配置模型编译并校验受来源约束的实验 handoff；不运行真实实验、不选择执行器、不发布 executor Skill Suite，也不写执行器专属 prompt | `external_executor/handoff_pack.json`、`external_executor/report/reboost_report.json`、`external_executor/report/reboost_validation_report.json`、`paper_card_evidence_index.json`、`expected_outputs_schema.json`、`allowed_paths.txt`、`AGENTS.md`、`CLAUDE.md` |
 | `T5-SPECIALIZE-EXECUTOR-SKILLS` | `ProjectSkillSpecializationAgent` | `build` | 运行仓库内的项目专属化 Skill，原子发布 13 个完整 executor Skill 目录，独立校验并记录可用于 resume 的输入 fingerprint | `project_skill_context.yaml`、`schemas/project_skill_context.schema.json`、`skills/`、`report/skill_specialization_report.json`、`report/skill_specialization_execution.json` |
 | `T5-HANDOFF` | `ExperimenterAgent` | `handoff` | legacy-compatible 协议编译入口；用于旧 workspace 或显式恢复路径，保持同一外部执行器契约 | `external_executor/handoff_pack.json` 与外部执行器控制文件 |
@@ -2599,7 +2599,11 @@ researchos run-task T4 --workspace ./workspace/local-test2
 
 ---
 
-## 6.8 T4.5：NoveltyAuditorAgent
+## 6.8 T4.5：研究方案审计与正式化
+
+T4.5 是由三个独立上下文组成的研究方案阶段，不只是新颖性检查。第一阶段审计相似工作、撞车边界和必需 baseline；审计通过后，第二阶段将已选 Candidate 正式化为统一蓝图、主张、假设、实验计划和 Proposal；第三阶段按从 T4 继承的 UTD、CCF-A 或 Hybrid 取向独立审阅该研究包。三阶段均通过并写入正式化回执后，T5 才能消费该研究包。
+
+### 第一阶段：NoveltyAuditorAgent
 
 ### 角色
 
@@ -2647,7 +2651,7 @@ T4.5 可以围绕已选 Candidate 的 `t45_search_targets.json` 调用 `search_p
 | `design_rationale_tuples_dir` | `ideation/_design_rationale_tuples/` | 每个假设的 CDR design-rationale tuple JSON 文件 |
 | - | `ideation/collision_cases.md` | 可选归档；有 High/Medium Overlap 时必须生成并记录潜在撞车案例 |
 
-### T4.5 到底审计什么
+### 第一阶段：新颖性审计到底检查什么
 
 它审计的是：
 
@@ -2655,7 +2659,7 @@ T4.5 可以围绕已选 Candidate 的 `t45_search_targets.json` 调用 `search_p
 - 哪些假设只是增量
 - 哪些假设可能需要在 T6 前后继续重点复核
 
-### T4.5 怎样搜相关工作
+### 第一阶段：怎样检索相关工作
 
 当前 prompt 设定是：
 
@@ -2678,7 +2682,7 @@ T4.5 可以围绕已选 Candidate 的 `t45_search_targets.json` 调用 `search_p
 - `Low Overlap`
 - `No Overlap`
 
-### 实际执行过程
+### 第一阶段：实际执行过程
 
 `NoveltyAuditorAgent` 先读 `ideation/hypotheses.md`，用 `H1/H2/...` anchor 切分每个假设；再读 `literature/synthesis.md`、`literature/comparison_table.csv` 和 `ideation/idea_scorecard.yaml`，拿到已有方法家族、baseline、指标上下文和 mechanism 字段。对每个假设，它从假设标题、方法关键词、目标场景和预期机制中抽出 3-4 组 query（包括第 4 类 mechanism 关键词 query），然后调用 `search_papers(query=..., source="auto", max_results=30, year_from=<运行时近一年起始年>)` 搜近期工作；`search_papers` 的 schema 是单数 `source`，不是 `sources`。必要时用 `fetch_paper_metadata` 回查疑似撞车论文。
 
@@ -2690,18 +2694,18 @@ T4.5 可以围绕已选 Candidate 的 `t45_search_targets.json` 调用 `search_p
 
 审计时它把搜索结果、synthesis、comparison table 和 mechanism hint 对齐，由 LLM 判断相似点、差异点、证据强度、是否需要补 baseline，以及最终标签 `true_collision / mechanism_collision / explanatory_competition / safe`。只有 LLM 确认机制、任务边界和贡献点都高度一致时，才把对应假设降为 Level 0。最后用 `write_file(“ideation/novelty_audit.md”, ...)` 写每个假设的 Level 0-3 判定。如果报告中出现真实 High/Medium Overlap，它还必须写 `ideation/collision_cases.md`，记录论文、相似点、差异点和处理建议；validator 会区分”High Overlap: none”这种空标题和真实案例，只有真实案例才强制 collision 文件。
 
-### T4.5 的新颖性等级
+### 第一阶段：新颖性等级
 
 - `Level 3`：高度新颖
 - `Level 2`：中度新颖
 - `Level 1`：低度新颖
 - `Level 0`：无新颖性 / 明确撞车
 
-### T4.5 非通过 verdict 的人工决策
+### 第一阶段：非通过 verdict 的人工决策
 
 T4.5 不再在 `return_to_T4_reframe` 或 `drop_due_to_collision` 时自动回退/失败。现在的分支语义是：
 
-- `pass_to_experiment` / `pass_with_required_baselines`：进入 `T5-REBOOST-GATE`，由 `research-reboost` 编译并校验实验 handoff、发布 Skill Suite，随后再选择外部执行器；只有真实 Codex/Claude/manual 执行器完成 writer handoff 后才会进入 `T8-STYLE-GATE`。mock dry-run 完成后返回执行器选择，始终不能作为论文证据。
+- `pass_to_experiment` / `pass_with_required_baselines`：先进入 `T4.5-FORMALIZE`，而不是直接进入 T5。已选 Candidate 仍需形成来源一致的蓝图、主张、假设、实验计划、Proposal 与已接受的 orientation review；只有最终研究包通过后才进入 `T5-REBOOST-GATE`。
 - `return_to_T4_reframe`、`drop_due_to_collision`、`reject`、`collision`、`fail`：进入 `T4.5-HUMAN-REVIEW`。
 
 `T4.5-HUMAN-REVIEW` 是 gate-only 节点，`state_machine` 会直接进入 `WAITING_HUMAN`，不会再启动一次 `NoveltyAuditorAgent`。gate 展示：
@@ -2719,7 +2723,7 @@ T4.5 不再在 `return_to_T4_reframe` 或 `drop_due_to_collision` 时自动回�
 
 选择结果会写入 `ideation/novelty_human_review.json`，语义是 `human_decision_over_agent_recommendation`。这样 Novelty Auditor 可以提出 reframe/drop 建议，但最终判断权在用户手里，避免 T4.5 与 T4 之间自动循环，也避免系统自动拒绝仍有价值但需要重新 framing 的 idea。
 
-### T4.5 的成功标准
+### 第一阶段：新颖性审计成功标准
 
 validator 会检查：
 
@@ -2730,6 +2734,16 @@ validator 会检查：
 - 如果审计报告明确写出最终确认的 true_collision（high confidence），对应假设必须为 Level 0；工具返回的 `possible_true_collision` 只会触发人工/LLM复核，不会自动降级
 - 如果 audit 中列出 High/Medium Overlap，`collision_cases.md` 必须存在并归档对应案例；没有 High/Medium Overlap 时可以不生成该文件。状态机里 `collision_cases` 是 `optional_outputs` 条件产物，不会被基础 outputs 校验无条件强制。
 - 恢复运行时，如果 `novelty_audit.md` 与 `_mechanism_tuples/` 已存在并通过 `NoveltyAuditorAgent.validate_outputs()`，runtime 会执行 `t45_resume_prefinalize`，跳过 LLM 续跑；若 audit 提到 High/Medium Overlap，仍必须由 agent validator 要求 `collision_cases.md`
+
+### 第二阶段：研究正式化
+
+`T4.5-FORMALIZE` 使用新的 `ResearchFormalizerAgent` 上下文，只生成或修复构成同一研究方案所需的 source artifact：`research_blueprint.yaml`、`claim_registry.yaml`、`hypotheses.md`、`exp_plan.yaml` 和七部分 Proposal。运行时随后确定性编译 contribution-hypothesis map、validation map、kill criteria、research dossier 与 proposal manifest。Formalizer 不能把计划结果提升为实证结果，也不能覆盖 novelty audit。
+
+### 第三阶段：orientation-aware 质量审阅与最终研究包
+
+`T4.5-REVIEW` 在另一个 `ResearchFormalizerAgent` 上下文中，按继承的 orientation 审阅同一研究包。它要求 claim 到实验的映射、组件的 ablation 或 mechanism test、与取向相称的实质技术贡献、连贯 Proposal 和 `orientation_review.json` 的 accepted 状态。通过后运行时写入 `post_novelty_formalization.json`，将研究包绑定到当前 Candidate 和 selection fingerprint。
+
+只有在这个最终边界，CLI 才显示 Rich 的**研究方案审计与正式化已完成**表，列出每个核心产物、路径、它定义的研究约束、下游用途与已通过质量门状态。T5 读取的是这份研究包；它是计划与证伪契约，不是实验结果。
 
 ### mechanism tuple 工具
 
@@ -3641,8 +3655,8 @@ flowchart TD
     C12[P1 Population Update]
     C13[MMR Portfolio]
     C16[Pre-Novelty Hypothesis Brief]
-    C17[T4.5 Novelty and Collision Audit]
-    C18[Formal Hypotheses and Experiment Plan]
+    C17[T4.5 Research-plan Audit and Formalization]
+    C18[Accepted Blueprint, Claims, Proposal and Experiment Plan]
   end
   subgraph Generator[IdeaGeneratorAgent]
     G0[Multi-route P0: Literature, Brainstorm, supplements, Bridge]

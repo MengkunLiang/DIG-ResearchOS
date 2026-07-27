@@ -6,7 +6,7 @@ ResearchOS is an artifact-first research runtime for auditable literature work, 
 
 ```text
 T1 scope -> T2 discover -> T3 read -> T3.5 synthesize
-  -> optional T3.6 survey -> T4 ideas -> T4.5 novelty
+  -> optional T3.6 survey -> T4 ideas -> T4.5 research-plan audit & formalization
   -> T5 external execution -> T8 manuscript -> T9 submission bundle
 ```
 
@@ -26,7 +26,7 @@ Choose the path that matches the state of your work. Do not edit `state.yaml` to
 
 ## Understand The Flow Before Internal Names
 
-`T` is a workflow-stage label, not a command you need to type every day. In normal use, start a new project with `run` and continue a paused one with `resume`. ResearchOS stops at a `Gate` only when a research decision needs your input and explains the next action. `T3.5` is the synthesis after T3 reading, `T3.6` is the optional Survey branch, and `T4.5` is the novelty audit after T4 ideation, not a separate “half task” to run manually.
+`T` is a workflow-stage label, not a command you need to type every day. In normal use, start a new project with `run` and continue a paused one with `resume`. ResearchOS stops at a `Gate` only when a research decision needs your input and explains the next action. `T3.5` is the synthesis after T3 reading, `T3.6` is the optional Survey branch, and `T4.5` is the research-plan audit and formalization stage after T4 ideation, not a separate “half task” to run manually.
 
 Longer names such as `T5-REBOOST-GATE`, `T5-PROTOCOL-GATE`, and `T3.6-SEC-INTRO` are internal checkpoints used in terminal status and targeted debugging. First-time users do not need to memorize them; use the table below to see which part of the research workflow they belong to. There is no user-facing T6/T7 in the current main path: identically named old nodes exist only for historical-workspace compatibility, while real experiments use T5's external-executor path.
 
@@ -38,14 +38,14 @@ Longer names such as `T5-REBOOST-GATE`, `T5-PROTOCOL-GATE`, and `T3.6-SEC-INTRO`
 | T3.5 synthesis | Turn the literature into mechanisms, method differences, tensions, and research gaps. | Decide whether to take the optional Survey branch. | `literature/synthesis.md` |
 | T3.6 optional Survey | Write a field Survey only when the current evidence justifies it; otherwise it is skipped. | Skip, write from the present corpus, or request one targeted supplement. | `drafts/survey/` |
 | T4 research ideas | Generate, compare, and evolve multiple research directions. | Proceed, optimize, explore again, or inspect a Candidate only. | Candidate Cards, scores, evidence, and lineage under `ideation/` |
-| T4.5 novelty and formalization | First audit similar work and mechanism differences; then, in separate contexts, build one orientation-aware research blueprint and review it before T5. | Review a non-pass novelty verdict only; UTD/CCF-A/Hybrid is already inherited from T4 and is not asked again. | `ideation/research_blueprint.yaml`, `ideation/claim_registry.yaml`, `ideation/proposal/research_proposal.md` |
+| T4.5 research-plan audit and formalization | Audit similar work and mechanism differences; then, in separate contexts, build one orientation-aware research blueprint, claims, experiment plan, Proposal, and final quality review before T5. | Review a non-pass novelty verdict only; UTD/CCF-A/Hybrid is already inherited from T4 and is not asked again. | `ideation/research_blueprint.yaml`, `ideation/claim_registry.yaml`, `ideation/proposal/research_proposal.md`, `ideation/orientation_review.json` |
 | T5 external-execution preparation | Compile the T4.5 package into an executor handoff whose research constraints cannot be silently changed. | Resolve only settings that affect research boundaries; place existing resources or let the executor prepare public ones. | `external_executor/handoff_pack.json`, `resources/` |
 | T8 writing | Write, review, and revise using verified experimental facts. | Choose a writing style or template. | `drafts/` and experiment claim/evidence files |
 | T9 submission | Review, genuinely compile, and package the submission. | Only when an environment or compilation recovery is needed. | `submission/`, final PDF, and compile report |
 
 The two most important boundaries are these: T4.5 uses three logical steps—Novelty Audit, Research Formalization, and Orientation-Aware Review/Repair. The first step owns collision labels and required baselines; the second owns a shared blueprint, claims, experiment plan, and Proposal; the third rejects thin, audit-dominated, inconsistent, or untestable plans. UTD, CCF-A, and Hybrid use the same seven-section template, with different weights and review emphasis. T5 is not an experiment runner: it consumes only a passed T4.5 package and prepares a verified execution contract for an external Codex, Claude, or human executor.
 
-When T4.5 succeeds, the terminal displays a “key research files” table that points directly to the proposal, hypotheses, experiment plan, contribution/validation maps, stopping criteria, and novelty audit, with their next use. T5 consumes those files; you do not need to find them from memory.
+Only after T4.5's final orientation-aware review accepts the package, the terminal displays a Rich “research-plan audit and formalization complete” table. It lists the proposal, hypotheses, blueprint, experiment plan, contribution/validation maps, stopping criteria, novelty audit, review record, and formalization receipt, together with each file's role and next use. T5 consumes that accepted package; you do not need to find it from memory.
 
 When reviewing a T4.5 result yourself, read these files in this order. They are a plan and a falsification contract, not experimental findings.
 

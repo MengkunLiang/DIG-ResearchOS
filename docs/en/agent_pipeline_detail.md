@@ -308,7 +308,7 @@ Therefore, the resume semantics of ResearchOS are essentially:
 | `T3.6-PLAN` to `T3.6-FEED` | `SurveyWriterAgent` | survey series | Optional survey paper branch: taxonomy planning, human confirmation, per-section writing, assembly, survey-mode review, compilation, export T4 idea fuel | `drafts/survey/survey_plan.json`, `survey_state.json`, `sections/*.tex`, `survey.tex`, `survey_review.md`, `survey.pdf`, `ideation/survey_insights.json` |
 | `T4` | `IdeationAgent` + internal evolution controller | - | Pre-run confirmation, Evidence Routing, asymmetric P0, role-separated scoring, P0->P1 evolution, and Gate1-compatible projection; after a complete selection, compile Pre-Novelty material only | `evidence/`, `populations/P0.json`, `populations/P1.json`, `genomes/`, `families/`, `scoring/`, `evolution/`, `candidates/`, `archive/`, retained Pass1/Pass2/Gate1 projections, `hypothesis_brief.yaml`, `selected/t45_search_targets.json` |
 | `T4-GATE1` | runtime gate | - | State-machine-level decision panel for Portfolio selection, parallel tracks, continued Evolution, focus, Crossover, component composition, inspection, Route regeneration, rollback, and pause; source versions remain preserved | `ideation/human_directives/`, `human_compositions/`, `_gate1_user_selection.json` |
-| `T4.5` | `NoveltyAuditorAgent` | - | Audit the selected Pre-Novelty idea for novelty/collisions; a non-pass verdict goes to the human gate, while a pass compiles the formal hypothesis and execution bundle | `novelty_audit.md`, collision records, `hypotheses.md`, `exp_plan.yaml`, Contribution-Hypothesis Mapping, Validation Map, Kill Criteria, formalization manifest |
+| `T4.5` | `NoveltyAuditorAgent` + `ResearchFormalizerAgent` | audit → formalize → review | Audit the selected Pre-Novelty idea for novelty/collisions, then create and independently review a source-consistent research package; a non-pass audit verdict goes to the human gate | `novelty_audit.md`, blueprint, claim registry, hypotheses, Proposal, experiment plan, contribution/validation maps, kill criteria, orientation review, formalization manifest |
 | `T5-REBOOST-GATE` | `SkillAgent(research-reboost)` | `reboost` | Use the configured model to compile and validate a source-bounded experiment handoff; does not run real experiments, choose an executor, publish the executor Skill Suite, or write executor-specific prompts | `external_executor/handoff_pack.json`, `external_executor/report/reboost_report.json`, `external_executor/report/reboost_validation_report.json`, `paper_card_evidence_index.json`, `expected_outputs_schema.json`, `allowed_paths.txt`, `AGENTS.md`, `CLAUDE.md` |
 | `T5-SPECIALIZE-EXECUTOR-SKILLS` | `ProjectSkillSpecializationAgent` | `build` | Run the repository project-specialization Skill, atomically publish the 13 complete project-specific executor Skill directories, independently validate them, and record the input fingerprint for resume | `project_skill_context.yaml`, `schemas/project_skill_context.schema.json`, `skills/`, `report/skill_specialization_report.json`, `report/skill_specialization_execution.json` |
 | `T5-HANDOFF` | `ExperimenterAgent` | `handoff` | Legacy-compatible protocol compiler; retains the same external-executor contract for an older workspace or explicit recovery path | `external_executor/handoff_pack.json` and the external-executor control files |
@@ -2597,7 +2597,11 @@ researchos run-task T4 --workspace ./workspace/local-test2
 
 ---
 
-## 6.8 T4.5: NoveltyAuditorAgent
+## 6.8 T4.5: Research-plan Audit and Formalization
+
+T4.5 is a three-context research-plan stage, not a novelty check alone. Phase 1 audits similar work, collision boundaries, and required baselines. A passing audit starts Phase 2, which formalizes the selected Candidate into a shared blueprint, claims, hypotheses, experiment plan, and Proposal. Phase 3 independently reviews that package under the inherited UTD, CCF-A, or Hybrid orientation. T5 can consume the package only after all three phases pass and the formalization receipt is written.
+
+### Phase 1: NoveltyAuditorAgent
 
 ### Role
 
@@ -2645,7 +2649,7 @@ T4.5 may call `search_papers` and `fetch_paper_metadata` against the selected Ca
 | `design_rationale_tuples_dir` | `ideation/_design_rationale_tuples/` | CDR design-rationale tuple JSON file per hypothesis |
 | - | `ideation/collision_cases.md` | Optional archive; must be generated when High/Medium Overlap exists, recording potential collision cases |
 
-### What T4.5 Actually Audits
+### Phase 1: What the novelty audit actually checks
 
 It audits:
 
@@ -2653,7 +2657,7 @@ It audits:
 - Which hypotheses are merely incremental
 - Which hypotheses may require focused re-review around T6
 
-### How T4.5 Searches Related Work
+### Phase 1: How related work is searched
 
 The current prompt sets:
 
@@ -2676,7 +2680,7 @@ Then categorizes by similarity:
 - `Low Overlap`
 - `No Overlap`
 
-### Actual Execution Process
+### Phase 1: Actual execution process
 
 `NoveltyAuditorAgent` first reads `ideation/hypotheses.md`, splits each hypothesis using the `H1/H2/...` anchor; then reads `literature/synthesis.md`, `literature/comparison_table.csv`, and `ideation/idea_scorecard.yaml` to obtain existing method families, baselines, metric context, and mechanism fields. For each hypothesis, it extracts 3-4 query groups (including the 4th type of mechanism keyword query) from the hypothesis title, method keywords, target scenario, and expected mechanism, then calls `search_papers(query=..., source="auto", max_results=30, year_from=<runtime~1 year ago>)` to search for recent work; `search_papers` schema uses singular `source`, not `sources`. If necessary, use `fetch_paper_metadata` to double-check potentially overlapping papers.
 
@@ -2688,18 +2692,18 @@ At the same time, it loads the `novelty-audit` guidance, uses an LLM to extract 
 
 During auditing, it aligns the search results, synthesis, comparison table, and mechanism hint; the LLM judges similarities, differences, evidence strength, whether a baseline needs to be added, and the final label `true_collision / mechanism_collision / explanatory_competition / safe`. Only when the LLM confirms that the mechanism, task boundaries, and contribution points are highly consistent, is the corresponding hypothesis downgraded to Level 0. Finally, use `write_file("ideation/novelty_audit.md", ...)` to write the Level 0-3 determination for each hypothesis. If the report actually shows real High/Medium Overlap, it must also write `ideation/collision_cases.md`, recording the paper, similarities, differences, and handling suggestions; the validator distinguishes between empty headings like "High Overlap: none" and real cases; only real cases force the collision file.
 
-### T4.5 novelty levels
+### Phase 1: Novelty levels
 
 - `Level 3`: Highly novel
 - `Level 2`: Moderately novel
 - `Level 1`: Low novelty
 - `Level 0`: No novelty / clear collision
 
-### T4.5 non-pass verdict human decisions
+### Phase 1: Non-pass verdict human decisions
 
 T4.5 no longer automatically falls back/fails on `return_to_T4_reframe` or `drop_due_to_collision`. The branch semantics are now:
 
-- `pass_to_experiment` / `pass_with_required_baselines`: enters `T5-REBOOST-GATE`, where `research-reboost` compiles and validates the experimental handoff, publishes the Skill Suite, and then reaches executor selection. Only a real Codex/Claude/manual executor that completes writer handoff can enter `T8-STYLE-GATE`; a mock dry run returns to executor selection and never supports paper evidence.
+- `pass_to_experiment` / `pass_with_required_baselines`: enters `T4.5-FORMALIZE`, not T5 directly. The selected Candidate must still become a source-consistent blueprint, claims, hypotheses, experiment plan, Proposal, and accepted orientation review. Only that final accepted package enters `T5-REBOOST-GATE`.
 - `return_to_T4_reframe`, `drop_due_to_collision`, `reject`, `collision`, `fail`: enters `T4.5-HUMAN-REVIEW`.
 
 `T4.5-HUMAN-REVIEW` is a gate-only node; the `state_machine` directly enters `WAITING_HUMAN` and does not start `NoveltyAuditorAgent` again. The gate displays:
@@ -2717,7 +2721,7 @@ The user can choose:
 
 The selection result is written to `ideation/novelty_human_review.json`, with the semantics of `human_decision_over_agent_recommendation`. In this way, the Novelty Auditor can suggest reframing/dropping, but the final judgment is in the hands of the user, avoiding automatic loops between T4.5 and T4, and also preventing the system from automatically rejecting ideas that still have value but need reframing.
 
-### T4.5 success criteria
+### Phase 1: Novelty-audit success criteria
 
 The validator checks:
 
@@ -2728,6 +2732,16 @@ The validator checks:
 - If the audit report explicitly writes a final confirmed true_collision (high confidence), the corresponding hypothesis must be Level 0; a `possible_true_collision` returned by the tool only triggers human/LLM review, not automatic downgrade
 - If the audit lists High/Medium Overlap, `collision_cases.md` must exist and archive the corresponding cases; if there is no High/Medium Overlap, the file can be omitted. In the state machine, `collision_cases` is a conditional output of `optional_outputs` and is not unconditionally enforced by the basic outputs check.
 - On resume, if `novelty_audit.md` and `_mechanism_tuples/` already exist and pass `NoveltyAuditorAgent.validate_outputs()`, the runtime executes `t45_resume_prefinalize`, skipping LLM continuation; if the audit mentions High/Medium Overlap, the agent validator must still require `collision_cases.md`
+
+### Phase 2: Research formalization
+
+`T4.5-FORMALIZE` runs in a fresh `ResearchFormalizerAgent` context. It creates or repairs only the source artifacts needed to form one consistent research plan: `research_blueprint.yaml`, `claim_registry.yaml`, `hypotheses.md`, `exp_plan.yaml`, and the seven-section Proposal. The runtime then deterministically derives the contribution-hypothesis map, validation map, kill criteria, research dossier, and proposal manifest. The Formalizer cannot promote planned results into empirical findings or overwrite the novelty audit.
+
+### Phase 3: Orientation-aware quality review and final package
+
+`T4.5-REVIEW` uses another `ResearchFormalizerAgent` context to test the same package against the inherited orientation. It requires claim-to-experiment mapping, component ablation or mechanism tests, a substantive orientation-appropriate technical contribution, a coherent Proposal, and an accepted `orientation_review.json`. On success, the runtime writes `post_novelty_formalization.json`, binding the package to the current Candidate and selection fingerprint.
+
+Only at this final boundary does the CLI show the Rich **Research-plan Audit and Formalization Complete** table. It names every core artifact, its path, the research constraint it defines, its downstream use, and the passed quality-gate state. This is the package T5 reads; it is a plan and falsification contract, not experimental evidence.
 
 ### Mechanism tuple tools
 
@@ -3635,8 +3649,8 @@ flowchart TD
     C12[P1 Population Update]
     C13[MMR Portfolio]
     C16[Pre-Novelty Hypothesis Brief]
-    C17[T4.5 Novelty and Collision Audit]
-    C18[Formal Hypotheses and Experiment Plan]
+    C17[T4.5 Research-plan Audit and Formalization]
+    C18[Accepted Blueprint, Claims, Proposal and Experiment Plan]
   end
   subgraph Generator[IdeaGeneratorAgent]
     G0[Multi-route P0: Literature, Brainstorm, supplements, Bridge]

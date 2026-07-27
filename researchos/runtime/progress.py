@@ -1184,7 +1184,7 @@ def describe_task_artifacts(task_id: str) -> str:
         "T3.6-GATE-SURVEY": "综述阶段产物确认、写作/结束选择与后续路径决策",
         "T4": "候选研究方向、排序依据、实验计划、风险清单和候选比较材料",
         "T4-GATE1": "供你选择的候选方向卡片、候选摘要和最终选择记录",
-        "T4.5": "新颖性审计、相似工作风险、机制设计核验和主张收敛建议",
+        "T4.5": "相似工作审计、正式研究方案、实验映射、质量审阅与 T5 交接边界",
         "T5-REBOOST-GATE": "从 T4.5 正式材料确定性编译并校验 handoff 上下文",
         "T5-HANDOFF": "外部实验 handoff pack、执行协议和交接提示",
         "T5-SPECIALIZE-EXECUTOR-SKILLS": "项目专属 executor Skill Suite、项目上下文和校验报告",

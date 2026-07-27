@@ -28,7 +28,7 @@ HELLO 是一个独立的冒烟任务，并非主链起源。遗留的内部实�
 | T3.5 | 涌现出哪些机制、张力、贡献空间与迁移？ | 综合/工作台、缺失领域审计 | 可选的 Survey 决策以及当前语料库 vs 定向检索偏好 |
 | T3.6 | 基于分类框架组织的领域综述是否必要且证据充分？ | 综述计划/状态/章节/审计/实际 PDF | 综述、大纲、语料库、编译恢复关卡 |
 | T4 | 哪个基于证据的 Research Idea 值得继续演化或选择？ | P0/P1/P2 Population、Evidence Index、评分、谱系、Portfolio、Pre-Novelty brief | 运行前确认；Gate1 directive、composition、rollback |
-| T4.5 | 选中的 Pre-Novelty idea 经查新后是否仍可形成连贯、可证伪的正式研究方案？ | 第一阶段 novelty/collision audit；第二阶段统一的 `research_blueprint.yaml`、`claim_registry.yaml`、正式 claims、Proposal 与实验计划；第三阶段按 orientation 审阅和定向修复 | 仅当 novelty audit 非通过时进入人工审阅；UTD/CCF-A/Hybrid 已由 T4 继承，不会重复询问 |
+| T4.5 研究方案审计与正式化 | 选中的 Pre-Novelty idea 经相似工作审计后，能否形成连贯、可证伪并通过质量门的研究包？ | 第一阶段 novelty/collision audit；第二阶段统一的 `research_blueprint.yaml`、`claim_registry.yaml`、正式 claims、Proposal 与实验计划；第三阶段按 orientation 审阅、定向修复和正式化通过回执 | 仅当 novelty audit 非通过时进入人工审阅；UTD/CCF-A/Hybrid 已由 T4 继承，不会重复询问 |
 | T5 | 外部执行器在不发明论文主张的情况下能实现什么，哪些资源可先自动获取和审查？ | 移交包、项目专属 Skill suite、Phase B 资源/来源报告、执行器选择、`external_executor/executor_research_report.md` | 协议边界、可选本地材料与执行器关卡；不要求手工上传资源 |
 | T8 | 如何将来源/结果转化为与证据一致的论文？ | 风格、叙事线、章节、评审、修订、声明审计 | 风格/模板关卡 |
 | T9 | 提交包是否内部一致并真实编译？ | 打包、编译报告、PDF/源文件指纹 | 环境/恢复暂停 |

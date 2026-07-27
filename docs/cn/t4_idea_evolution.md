@@ -890,9 +890,9 @@ Portfolio selection 首先尝试跨 Family 的 quality-diversity；同 Family �
 | 回滚到上一代 | 否 | 否 | 是；只切换 active Population pointer |
 | 暂停 | 否 | 否 | 是 |
 
-### 9.6 进入 T4.5 前的选择边界
+### 9.6 进入 T4.5 研究方案审计与正式化前的选择边界
 
-IdeaSeed 可以留在 Population、用于下一轮 Evolution 或作为人类讨论对象；但它不应仅因为“看起来新”而直接进入 T4.5。选择 readiness 需要独立评分、完整 LLM Final Card、可追溯 Core Thesis、至少一条由 LLM 写出的可证伪草案假设，以及不会将旧 Population/选择错误绑定的当前 fingerprint。满足这些输入的 Seed 会以 provisional 方向进入 T4.5，其成熟度、证据缺口和单条假设限制全部写入 Pre-Novelty warning，由 T4.5 审计；它们不能在二次确认后变成返回 T4 的隐藏失败。
+IdeaSeed 可以留在 Population、用于下一轮 Evolution 或作为人类讨论对象；但它不应仅因为“看起来新”而直接进入 T4.5 研究方案审计与正式化。选择 readiness 需要独立评分、完整 LLM Final Card、可追溯 Core Thesis、至少一条由 LLM 写出的可证伪草案假设，以及不会将旧 Population/选择错误绑定的当前 fingerprint。满足这些输入的 Seed 会以 provisional 方向进入 T4.5；其成熟度、证据缺口和单条假设限制全部写入 Pre-Novelty warning，先由 T4.5 第一阶段审计。它们不等同于新颖性已通过或正式化已完成，也不能在二次确认后变成返回 T4 的隐藏失败。
 
 Pass2 只补充接地、风险与选择建议，不能隐藏 Candidate。尤其当 `constraint_status=not_supported_by_current_evidence` 时，Candidate 可以保持 Gate1 可见，供研究者要求补证据、补机制或继续演化；但其 `screening_recommendation` 必须是 `revise_before_selection` 或其他非直接选择状态，绝不能与 `proceed` 同时出现。该规则防止“证据待补”被 UI 误写成可直接进入最终选择，同时不会抹掉有创造价值的探索性方向。
 

@@ -556,8 +556,8 @@ class StageReporter:
             visible_insights = insights if self.detailed else insights[:1]
             for insight in visible_insights:
                 renderables.append(self._insight_panel(insight))
-        if task_id == "T4.5" and ok:
-            file_guide = self._t45_file_guide()
+        if task_id == "T4.5-REVIEW" and ok:
+            file_guide = self._t45_completion_guide()
             if file_guide is not None:
                 renderables.append(file_guide)
         if task_id == "T2" and run and run.source_health and self.detailed:
@@ -900,8 +900,8 @@ class StageReporter:
             group.append(self._rows_table(rows))
         return Panel(Group(*group), title=str(insight.get("title") or "阶段统计"), border_style="magenta", expand=False)
 
-    def _t45_file_guide(self) -> Panel | None:
-        """Point researchers to formal T4.5 outputs before T5 consumes them."""
+    def _t45_completion_guide(self) -> Panel | None:
+        """Render the final, quality-gated T4.5 research package for T5 handoff."""
 
         candidates = (
             (
@@ -917,16 +917,16 @@ class StageReporter:
                 "核对每条主张是否都能被实验否证。",
             ),
             (
+                "正式假设",
+                "ideation/hypotheses.md",
+                "每项主张的预测、竞争解释、评测与证伪条件。",
+                "T5 保留其验证约束；T8 不得把它写成已观察结果。",
+            ),
+            (
                 "完整研究方案",
                 "ideation/proposal/research_proposal.md",
                 "问题、机制、贡献、现实意义、风险和完整实验逻辑。",
                 "优先阅读；T5 会把它作为执行边界。",
-            ),
-            (
-                "正式假设",
-                "ideation/hypotheses.md",
-                "核心假设、可观察预测和可证伪边界。",
-                "核对主张；T5 会保留其验证约束。",
             ),
             (
                 "实验计划",
@@ -956,7 +956,7 @@ class StageReporter:
                 "方案审阅记录",
                 "ideation/orientation_review.json",
                 "UTD、CCF-A 或 Hybrid 权重下的质量评分与定向修复记录。",
-                "恢复或进入 T5 前核对质量 gate。",
+                "确认质量 gate 已接受；T5 只消费这一状态下的研究包。",
             ),
             (
                 "新颖性审计",
@@ -966,9 +966,15 @@ class StageReporter:
             ),
             (
                 "方案追溯记录",
-                "ideation/proposal_manifest.json",
+                "ideation/proposal/proposal_manifest.json",
                 "proposal 的来源、审计状态与交接边界。",
                 "恢复或追溯时查看。",
+            ),
+            (
+                "正式化通过回执",
+                "ideation/post_novelty_formalization.json",
+                "当前 Candidate、质量门和完整产物集合的一致性证明。",
+                "T5 恢复时验证研究包仍属于当前选择。",
             ),
         )
         rows = [row for row in candidates if (self.workspace / row[1]).is_file()]
@@ -979,18 +985,24 @@ class StageReporter:
             header_style="bold bright_cyan",
             border_style="bright_cyan",
         )
-        table.add_column("重点文件", width=17, overflow="fold")
+        table.add_column("核心产物", width=17, overflow="fold")
         table.add_column("保存位置", width=42, overflow="fold")
-        table.add_column("包含什么", ratio=2, overflow="fold")
-        table.add_column("何时使用", ratio=2, overflow="fold")
+        table.add_column("它定义什么", ratio=2, overflow="fold")
+        table.add_column("后续用途", ratio=2, overflow="fold")
+        table.add_column("状态", width=11, overflow="fold")
         for label, path, contents, when in rows:
-            table.add_row(label, Text(path, style="cyan", overflow="fold"), contents, when)
+            table.add_row(label, Text(path, style="cyan", overflow="fold"), contents, when, Text("已通过", style="green"))
         note = Text(
-            "这些文件均已在当前 workspace 保存；T5 会读取其中的正式研究约束，不会把 T4/T4.5 的关键信息丢失。",
+            "质量门已通过。以上是当前 Candidate 的已接受研究包；它们定义待检验的方案与边界，不代表任何实验结果已经成立。",
             style="dim",
             overflow="fold",
         )
-        return Panel(Group(table, note), title="T4.5 完成后 · 重点研究文件", border_style="bright_cyan", expand=True)
+        return Panel(
+            Group(table, note),
+            title="T4.5 · 研究方案审计与正式化已完成",
+            border_style="bright_green",
+            expand=True,
+        )
 
     def _rows_table(self, rows: list[tuple[str, str]]) -> Table:
         table = Table(box=box.SIMPLE, show_header=False, expand=False, pad_edge=False)

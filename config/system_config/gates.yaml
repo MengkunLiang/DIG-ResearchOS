@@ -661,8 +661,8 @@ gates:
   # "继续"只表达研究者意图；若统一 formalization 质量契约尚未通过，状态机会先回到
   # T4.5-FORMALIZE 定向修复，绝不会把缺少 blueprint/claims/plan/review 的包送入 T5。
   t45_human_review_gate:
-    title: "T4.5 新颖性审计人工决策"
-    description: "T4.5 的 Final Gate Verdict 未直接通过。请查看审计报告和候选池后决定下一步，系统不会自动拒绝或自动回退。"
+    title: "T4.5 相似工作审计人工决策"
+    description: "T4.5 第一阶段的 Final Gate Verdict 未直接通过。请查看审计报告和候选池后决定下一步；系统不会自动拒绝或自动回退，也不会伪装为已完成正式化。"
     presentation:
       final_gate_verdict:
         from_file_regex:
