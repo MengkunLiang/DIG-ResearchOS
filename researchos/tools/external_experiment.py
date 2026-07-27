@@ -1540,7 +1540,11 @@ def _load_t45_proposal_context(
     manifest = _read_json(workspace / PROPOSAL_MANIFEST_REL_PATH)
     proposal_path = workspace / PROPOSAL_REL_PATH
     audit_path = workspace / "ideation" / "novelty_audit.md"
-    proposal_valid, _proposal_error = validate_t45_research_proposal(workspace, audit_path)
+    proposal_valid, _proposal_error = validate_t45_research_proposal(
+        workspace,
+        audit_path,
+        require_accepted_lineage=True,
+    )
     if (
         proposal_valid
         and manifest.get("semantics") == PROPOSAL_SEMANTICS
@@ -2372,6 +2376,7 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
     t45_quality_ok, t45_quality_error = validate_t45_research_proposal(
         workspace,
         workspace / "ideation" / "novelty_audit.md",
+        require_accepted_lineage=True,
     )
     synthesis = _read_text(workspace / "literature" / "synthesis.md", max_chars=16000)
     novelty = _read_text(workspace / "ideation" / "novelty_audit.md", max_chars=16000)

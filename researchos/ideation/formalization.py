@@ -11,9 +11,11 @@ handoff.
 from __future__ import annotations
 
 from collections import Counter
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
+import shutil
 from typing import Any, Iterable
 
 import yaml
@@ -26,6 +28,43 @@ CLAIM_REGISTRY_REL_PATH = "ideation/claim_registry.yaml"
 ORIENTATION_CONFIG_REL_PATH = "ideation/orientation_config.yaml"
 ORIENTATION_REVIEW_REL_PATH = "ideation/orientation_review.json"
 FORMALIZATION_MANIFEST_REL_PATH = "ideation/post_novelty_formalization.json"
+T45_SELECTION_ISOLATION_REL_PATH = "ideation/t45_selection_isolation.json"
+T45_SELECTION_HISTORY_DIR = "ideation/t45_selection_history"
+
+# A Gate1 Candidate selection starts a new research-plan lineage. These are
+# active, selection-bound T4.5 artifacts, never shared workspace background.
+# Archive rather than delete them so the prior plan remains auditable without
+# being mistaken for the newly selected Candidate's hypotheses or Proposal.
+_T45_FULL_SELECTION_RESET_PATHS = (
+    "ideation/novelty_audit.md",
+    "ideation/collision_cases.md",
+    "ideation/_mechanism_tuples",
+    "ideation/_design_rationale_tuples",
+    BLUEPRINT_REL_PATH,
+    CLAIM_REGISTRY_REL_PATH,
+    "ideation/hypotheses.md",
+    "ideation/exp_plan.yaml",
+    "ideation/research_dossier.json",
+    "ideation/contribution_hypothesis_map.yaml",
+    "ideation/validation_map.yaml",
+    "ideation/kill_criteria.yaml",
+    "ideation/proposal",
+    ORIENTATION_REVIEW_REL_PATH,
+    FORMALIZATION_MANIFEST_REL_PATH,
+    T45_SELECTION_ISOLATION_REL_PATH,
+)
+
+_T45_FORMALIZATION_RESET_PATHS = tuple(
+    path
+    for path in _T45_FULL_SELECTION_RESET_PATHS
+    if path
+    not in {
+        "ideation/novelty_audit.md",
+        "ideation/collision_cases.md",
+        "ideation/_mechanism_tuples",
+        "ideation/_design_rationale_tuples",
+    }
+)
 
 
 # The three user-facing orientations share one template.  Legacy profile names
@@ -178,6 +217,212 @@ def persist_orientation_configuration(workspace: Path) -> dict[str, Any]:
         "source": config["source"],
     }
     _write_yaml(Path(workspace) / ORIENTATION_CONFIG_REL_PATH, payload)
+    return payload
+
+
+def reset_t45_artifacts_for_new_selection(
+    workspace: Path,
+    *,
+    candidate_id: str,
+    selection_fingerprint: str,
+) -> dict[str, Any]:
+    """Archive every active T4.5 package before a new Gate1 choice begins.
+
+    A new Candidate is a new research-plan lineage even if it happens to share
+    a topic or a compact hypothesis label with a prior Candidate. Keeping the
+    previous active audit or Proposal at its canonical path lets later agents
+    and T5 confuse old content with the current choice. The old package stays
+    inspectable under ``ideation/t45_selection_history/``; only its active
+    authority is revoked.
+    """
+
+    workspace = Path(workspace)
+    previous_candidate_id, previous_fingerprint = _current_selected_identity(workspace)
+    archive = _archive_t45_paths(
+        workspace,
+        paths=_T45_FULL_SELECTION_RESET_PATHS,
+        reason="new_gate1_selection_supersedes_active_t45_package",
+        current_candidate_id=candidate_id,
+        current_selection_fingerprint=selection_fingerprint,
+        previous_candidate_id=previous_candidate_id,
+        previous_selection_fingerprint=previous_fingerprint,
+    )
+    context = _write_t45_selection_isolation(
+        workspace,
+        candidate_id=candidate_id,
+        selection_fingerprint=selection_fingerprint,
+        status="pending_novelty_audit",
+        reason="new_gate1_selection",
+        archive=archive,
+    )
+    return context
+
+
+def ensure_current_t45_selection_isolation(workspace: Path) -> dict[str, Any] | None:
+    """Migrate a resumed old selection to the current isolation contract.
+
+    This only handles workspaces created before Gate1 isolation existed. A
+    mismatched legacy manifest is decisive evidence that the active
+    formalization package belongs to another Candidate, so the complete
+    formalization side is archived before a resumed Formalizer can read it.
+    A newer audit remains active: it is the current selection's required
+    source boundary and must not be discarded during a formalization resume.
+    """
+
+    workspace = Path(workspace)
+    candidate_id, selection_fingerprint = _current_selected_identity(workspace)
+    if not candidate_id or not selection_fingerprint:
+        return None
+
+    current_context = _read_json_mapping(workspace / T45_SELECTION_ISOLATION_REL_PATH)
+    if _selection_identity_matches(current_context, candidate_id, selection_fingerprint):
+        return current_context
+
+    selected_path = workspace / "ideation" / "selected" / "selected_candidate.json"
+    selection_mtime = selected_path.stat().st_mtime if selected_path.is_file() else 0.0
+    manifest = _read_json_mapping(workspace / FORMALIZATION_MANIFEST_REL_PATH)
+    manifest_mismatch = bool(manifest) and not _selection_identity_matches(
+        manifest,
+        candidate_id,
+        selection_fingerprint,
+    )
+    stale_paths = [
+        path
+        for path in _T45_FORMALIZATION_RESET_PATHS
+        if (candidate := workspace / path).exists()
+        and candidate.stat().st_mtime <= selection_mtime
+    ]
+    if manifest_mismatch:
+        stale_paths = list(_T45_FORMALIZATION_RESET_PATHS)
+
+    archive: dict[str, Any] | None = None
+    if stale_paths:
+        archive = _archive_t45_paths(
+            workspace,
+            paths=tuple(stale_paths),
+            reason=(
+                "legacy_formalization_manifest_does_not_match_current_selection"
+                if manifest_mismatch
+                else "formalization_artifacts_predate_current_selection"
+            ),
+            current_candidate_id=candidate_id,
+            current_selection_fingerprint=selection_fingerprint,
+            previous_candidate_id=str(manifest.get("candidate_id") or "").strip(),
+            previous_selection_fingerprint=str(manifest.get("selection_fingerprint") or "").strip(),
+        )
+    return _write_t45_selection_isolation(
+        workspace,
+        candidate_id=candidate_id,
+        selection_fingerprint=selection_fingerprint,
+        status="pending_formalization",
+        reason="legacy_or_resumed_selection_isolation",
+        archive=archive,
+    )
+
+
+def validate_t45_selection_isolation(
+    workspace: Path,
+    *,
+    require_accepted: bool,
+) -> tuple[bool, str | None]:
+    """Ensure an active T4.5 package is bound to the current Gate1 choice."""
+
+    workspace = Path(workspace)
+    candidate_id, selection_fingerprint = _current_selected_identity(workspace)
+    if not candidate_id or not selection_fingerprint:
+        return False, "Current T4.5 selection is missing candidate_id or selection_fingerprint"
+    context = _read_json_mapping(workspace / T45_SELECTION_ISOLATION_REL_PATH)
+    if not _selection_identity_matches(context, candidate_id, selection_fingerprint):
+        return False, "T4.5 selection-isolation receipt does not match the current selected Candidate"
+    if require_accepted and str(context.get("status") or "").strip() != "accepted_for_t5":
+        return False, "T4.5 selection-isolation receipt is not accepted for the current Candidate"
+    return True, None
+
+
+def _current_selected_identity(workspace: Path) -> tuple[str, str]:
+    selected = _read_json_mapping(Path(workspace) / "ideation" / "selected" / "selected_candidate.json")
+    candidate = selected.get("candidate") if isinstance(selected.get("candidate"), dict) else {}
+    candidate_id = str(selected.get("candidate_id") or candidate.get("id") or "").strip()
+    selection_fingerprint = str(selected.get("selection_fingerprint") or "").strip()
+    return candidate_id, selection_fingerprint
+
+
+def _selection_identity_matches(
+    payload: dict[str, Any],
+    candidate_id: str,
+    selection_fingerprint: str,
+) -> bool:
+    return bool(
+        payload
+        and str(payload.get("candidate_id") or "").strip() == candidate_id
+        and str(payload.get("selection_fingerprint") or "").strip() == selection_fingerprint
+    )
+
+
+def _archive_t45_paths(
+    workspace: Path,
+    *,
+    paths: tuple[str, ...],
+    reason: str,
+    current_candidate_id: str,
+    current_selection_fingerprint: str,
+    previous_candidate_id: str,
+    previous_selection_fingerprint: str,
+) -> dict[str, Any]:
+    workspace = Path(workspace)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    prior_label = re.sub(r"[^A-Za-z0-9._-]+", "_", previous_candidate_id or "unbound")[:80]
+    archive_root = workspace / T45_SELECTION_HISTORY_DIR / f"{timestamp}_{prior_label}"
+    archive_root.mkdir(parents=True, exist_ok=True)
+    archived: list[str] = []
+    for rel_path in paths:
+        source = workspace / rel_path
+        if not source.exists():
+            continue
+        destination = archive_root / rel_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source), str(destination))
+        archived.append(rel_path)
+    receipt = {
+        "schema_version": "1.0.0",
+        "semantics": "t45_selection_supersession_archive",
+        "reason": reason,
+        "archived_at": datetime.now(timezone.utc).isoformat(),
+        "previous_candidate_id": previous_candidate_id,
+        "previous_selection_fingerprint": previous_selection_fingerprint,
+        "current_candidate_id": current_candidate_id,
+        "current_selection_fingerprint": current_selection_fingerprint,
+        "archived_paths": archived,
+    }
+    _write_json(archive_root / "selection_supersession_receipt.json", receipt)
+    return {
+        "root": str(archive_root.relative_to(workspace)),
+        "archived_paths": archived,
+        "reason": reason,
+    }
+
+
+def _write_t45_selection_isolation(
+    workspace: Path,
+    *,
+    candidate_id: str,
+    selection_fingerprint: str,
+    status: str,
+    reason: str,
+    archive: dict[str, Any] | None,
+) -> dict[str, Any]:
+    payload = {
+        "schema_version": "1.0.0",
+        "semantics": "t45_selection_isolation",
+        "candidate_id": candidate_id,
+        "selection_fingerprint": selection_fingerprint,
+        "status": status,
+        "reason": reason,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if archive is not None:
+        payload["archive"] = archive
+    _write_json(Path(workspace) / T45_SELECTION_ISOLATION_REL_PATH, payload)
     return payload
 
 
@@ -646,6 +891,20 @@ def write_post_novelty_formalization_manifest(workspace: Path) -> None:
     """Write receipt only after all sources, Proposal and review passed validation."""
 
     workspace = Path(workspace)
+    candidate_id, selection_fingerprint = _current_selected_identity(workspace)
+    if not candidate_id or not selection_fingerprint:
+        raise ValueError("Cannot publish T4.5 formalization without the current selected Candidate identity")
+    context = _read_json_mapping(workspace / T45_SELECTION_ISOLATION_REL_PATH)
+    if context and not _selection_identity_matches(context, candidate_id, selection_fingerprint):
+        raise ValueError("Cannot publish T4.5 formalization across different Candidate selection lineages")
+    _write_t45_selection_isolation(
+        workspace,
+        candidate_id=candidate_id,
+        selection_fingerprint=selection_fingerprint,
+        status="accepted_for_t5",
+        reason="formalization_and_orientation_review_accepted",
+        archive=context.get("archive") if isinstance(context.get("archive"), dict) else None,
+    )
     artifacts = {
         "orientation_config": ORIENTATION_CONFIG_REL_PATH,
         "research_blueprint": BLUEPRINT_REL_PATH,
@@ -665,6 +924,9 @@ def write_post_novelty_formalization_manifest(workspace: Path) -> None:
         {
             "semantics": "t45_post_novelty_formalization",
             "status": "formalized_after_novelty_pass",
+            "candidate_id": candidate_id,
+            "selection_fingerprint": selection_fingerprint,
+            "selection_isolation": T45_SELECTION_ISOLATION_REL_PATH,
             "artifacts": artifacts,
             "quality_gate": "blueprint_claims_proposal_orientation_review",
         },

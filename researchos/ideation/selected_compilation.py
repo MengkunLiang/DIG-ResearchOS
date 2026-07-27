@@ -15,7 +15,7 @@ from typing import Any
 import yaml
 
 from .state import T4ArtifactStore, stable_fingerprint
-from .formalization import persist_orientation_configuration
+from .formalization import persist_orientation_configuration, reset_t45_artifacts_for_new_selection
 
 
 def compile_pre_novelty_hypothesis_brief(
@@ -39,6 +39,15 @@ def compile_pre_novelty_hypothesis_brief(
     contributions = candidate.get("contributions") if isinstance(candidate.get("contributions"), list) else []
     minimum = candidate.get("minimum_experiment") if isinstance(candidate.get("minimum_experiment"), dict) else {}
     source_paths = _source_paths(candidate)
+    # Gate1 selection establishes a new T4.5 lineage. Archive every active
+    # audit/formalization output before writing this Candidate's handoff, so a
+    # prior Candidate's H1 labels, Proposal, or accepted manifest cannot be
+    # reused by the new audit or accidentally authorize T5.
+    reset_t45_artifacts_for_new_selection(
+        Path(workspace_dir),
+        candidate_id=selected_candidate_id,
+        selection_fingerprint=selection_fingerprint,
+    )
     selected_payload = {
         "schema_version": "1.0.0",
         "semantics": "t4_selected_research_idea_pre_novelty",

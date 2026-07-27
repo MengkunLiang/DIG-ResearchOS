@@ -7,8 +7,11 @@ from pathlib import Path
 import yaml
 
 from researchos.ideation.formalization import (
+    T45_SELECTION_ISOLATION_REL_PATH,
+    reset_t45_artifacts_for_new_selection,
     legacy_t45_upgrade_reason,
     validate_blueprint_and_claim_registry,
+    validate_t45_selection_isolation,
     validate_t45_formalization_core,
 )
 from researchos.ideation.proposal import validate_t45_research_proposal
@@ -167,6 +170,44 @@ def test_one_unified_template_accepts_all_three_orientations(tmp_path: Path) -> 
         assert ok is True, f"{orientation}: {error}"
         proposal = _proposal_path(workspace).read_text(encoding="utf-8")
         assert proposal.count("## ") == 7
+
+
+def test_new_candidate_selection_archives_prior_t45_package(tmp_path: Path) -> None:
+    """A second Gate1 choice must never leave the first plan active."""
+
+    populate_valid_t45_workspace(tmp_path)
+    prior_proposal = (tmp_path / "ideation" / "proposal" / "research_proposal.md").read_text(encoding="utf-8")
+
+    context = reset_t45_artifacts_for_new_selection(
+        tmp_path,
+        candidate_id="D2",
+        selection_fingerprint="selection-d2",
+    )
+
+    assert context["status"] == "pending_novelty_audit"
+    assert not (tmp_path / "ideation" / "novelty_audit.md").exists()
+    assert not (tmp_path / "ideation" / "hypotheses.md").exists()
+    assert not (tmp_path / "ideation" / "research_blueprint.yaml").exists()
+    assert not (tmp_path / "ideation" / "proposal" / "research_proposal.md").exists()
+    archive_root = tmp_path / context["archive"]["root"]
+    assert (archive_root / "ideation" / "proposal" / "research_proposal.md").read_text(encoding="utf-8") == prior_proposal
+    assert (archive_root / "ideation" / "post_novelty_formalization.json").is_file()
+
+    write(
+        tmp_path / "ideation" / "selected" / "selected_candidate.json",
+        json.dumps(
+            {
+                "candidate_id": "D2",
+                "selection_fingerprint": "selection-d2",
+                "candidate": {"id": "D2"},
+            }
+        ),
+    )
+    isolation = json.loads((tmp_path / T45_SELECTION_ISOLATION_REL_PATH).read_text(encoding="utf-8"))
+    assert isolation["candidate_id"] == "D2"
+    assert isolation["selection_fingerprint"] == "selection-d2"
+    assert validate_t45_selection_isolation(tmp_path, require_accepted=False) == (True, None)
+    assert validate_t45_selection_isolation(tmp_path, require_accepted=True)[0] is False
 
 
 def test_short_heading_complete_proposal_fails_with_substantive_reason(tmp_path: Path) -> None:

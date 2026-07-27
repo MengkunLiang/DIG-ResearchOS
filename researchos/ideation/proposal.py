@@ -23,6 +23,7 @@ from .formalization import (
     load_orientation_configuration,
     validate_orientation_review,
     validate_research_proposal_text,
+    validate_t45_selection_isolation,
     validate_t45_formalization_core,
 )
 
@@ -168,13 +169,13 @@ def repair_t45_proposal_manifest(workspace: Path, audit_path: Path) -> tuple[boo
     dossier = _json_object(workspace / "ideation" / "research_dossier.json")
     selected = _json_object(workspace / "ideation" / "selected" / "selected_candidate.json")
     candidate_id = _first_text(
-        dossier.get("candidate_id"),
         _selected_candidate_field(selected, "candidate_id", "id", "idea_id", "selected_id"),
+        dossier.get("candidate_id"),
         manifest.get("candidate_id"),
     )
     selection_fingerprint = _first_text(
-        dossier.get("selection_fingerprint"),
         _selected_candidate_field(selected, "selection_fingerprint", "fingerprint"),
+        dossier.get("selection_fingerprint"),
         manifest.get("selection_fingerprint"),
     )
     # These two values identify the selected T4 route.  Leave semantic repair
@@ -250,6 +251,8 @@ def repair_t45_proposal_manifest(workspace: Path, audit_path: Path) -> tuple[boo
 def validate_t45_research_proposal(
     workspace: Path,
     audit_path: Path,
+    *,
+    require_accepted_lineage: bool = False,
 ) -> tuple[bool, str | None]:
     """Validate a researcher-facing Proposal against the unified blueprint.
 
@@ -269,6 +272,12 @@ def validate_t45_research_proposal(
     formalization_ok, formalization_error = validate_t45_formalization_core(workspace)
     if not formalization_ok:
         return False, formalization_error
+    lineage_ok, lineage_error = validate_t45_selection_isolation(
+        workspace,
+        require_accepted=require_accepted_lineage,
+    )
+    if not lineage_ok:
+        return False, lineage_error
 
     paths = proposal_artifact_paths(workspace)
     missing = [name for name, path in paths.items() if not path.exists() or path.stat().st_size <= 0]
@@ -314,14 +323,14 @@ def validate_t45_research_proposal(
     dossier = _json_object(workspace / "ideation" / "research_dossier.json")
     selected = _json_object(workspace / "ideation" / "selected" / "selected_candidate.json")
     expected_candidate_id = _first_text(
-        dossier.get("candidate_id"),
         _selected_candidate_field(selected, "candidate_id", "id", "idea_id", "selected_id"),
+        dossier.get("candidate_id"),
     )
     if expected_candidate_id and str(manifest.get("candidate_id")).strip() != expected_candidate_id:
         return False, "proposal_manifest.json candidate_id does not match the current selected Candidate"
     expected_selection_fingerprint = _first_text(
-        dossier.get("selection_fingerprint"),
         _selected_candidate_field(selected, "selection_fingerprint", "fingerprint"),
+        dossier.get("selection_fingerprint"),
     )
     if (
         expected_selection_fingerprint

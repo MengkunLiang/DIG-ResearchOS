@@ -87,6 +87,7 @@ from ..ideation.evidence_display import (
 from ..ideation.formalization import (
     ORIENTATION_REVIEW_REL_PATH,
     validate_orientation_review,
+    validate_t45_selection_isolation,
     validate_t45_formalization_core,
 )
 from ..ideation.proposal import validate_t45_research_proposal
@@ -2245,6 +2246,25 @@ def _validate_t45_post_novelty_formalization(workspace_dir: Path, audit_path: Pa
         return False, "post-novelty formalization manifest semantics is invalid"
     if manifest.get("status") != "formalized_after_novelty_pass":
         return False, "post-novelty formalization is not marked as an accepted audit result"
+    selected_path = workspace_dir / "ideation" / "selected" / "selected_candidate.json"
+    try:
+        selected = json.loads(selected_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return False, f"current selected Candidate cannot be read: {exc}"
+    if not isinstance(selected, dict):
+        return False, "current selected Candidate must contain an object"
+    selected_candidate = selected.get("candidate") if isinstance(selected.get("candidate"), dict) else {}
+    expected_candidate_id = str(selected.get("candidate_id") or selected_candidate.get("id") or "").strip()
+    expected_selection_fingerprint = str(selected.get("selection_fingerprint") or "").strip()
+    if not expected_candidate_id or not expected_selection_fingerprint:
+        return False, "current selected Candidate is missing identity or selection fingerprint"
+    if str(manifest.get("candidate_id") or "").strip() != expected_candidate_id:
+        return False, "post-novelty formalization manifest candidate_id does not match the current selected Candidate"
+    if str(manifest.get("selection_fingerprint") or "").strip() != expected_selection_fingerprint:
+        return False, "post-novelty formalization manifest selection_fingerprint does not match the current selected Candidate"
+    isolation_ok, isolation_error = validate_t45_selection_isolation(workspace_dir, require_accepted=True)
+    if not isolation_ok:
+        return False, isolation_error
     missing = [name for name, path in required.items() if not path.exists() or path.stat().st_size <= 0]
     if missing:
         return False, "post-novelty formalization is missing: " + ", ".join(missing)
@@ -2255,13 +2275,24 @@ def _validate_t45_post_novelty_formalization(workspace_dir: Path, audit_path: Pa
     ]
     if too_early:
         return False, "formal artifacts predate the novelty audit: " + ", ".join(too_early)
+    selection_too_early = [
+        name
+        for name, path in required.items()
+        if path.stat().st_mtime < selected_path.stat().st_mtime
+    ]
+    if selection_too_early:
+        return False, "formal artifacts predate the current Candidate selection: " + ", ".join(selection_too_early)
     listed = manifest.get("artifacts") if isinstance(manifest.get("artifacts"), dict) else {}
     if any(str(listed.get(name) or "") != path.relative_to(workspace_dir).as_posix() for name, path in required.items()):
         return False, "post-novelty formalization manifest does not list the required artifact paths"
     formal_ok, formal_error = validate_t45_formalization_core(workspace_dir)
     if not formal_ok:
         return False, formal_error
-    proposal_ok, proposal_error = validate_t45_research_proposal(workspace_dir, audit_path)
+    proposal_ok, proposal_error = validate_t45_research_proposal(
+        workspace_dir,
+        audit_path,
+        require_accepted_lineage=True,
+    )
     if not proposal_ok:
         return False, proposal_error
     review_ok, review_error = validate_orientation_review(workspace_dir)

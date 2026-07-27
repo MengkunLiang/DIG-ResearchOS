@@ -53,6 +53,27 @@ def test_manifest_repair_replaces_stale_selection_identity(tmp_path: Path) -> No
     assert repaired_manifest["selection_fingerprint"] == "unified-fingerprint"
 
 
+def test_current_selected_candidate_overrides_a_stale_dossier_and_manifest(tmp_path: Path) -> None:
+    """Old formalization artifacts cannot self-authorize a new Gate1 choice."""
+
+    populate_valid_t45_workspace(tmp_path)
+    write(
+        tmp_path / "ideation" / "selected" / "selected_candidate.json",
+        json.dumps(
+            {
+                "candidate_id": "D2",
+                "selection_fingerprint": "new-selection-fingerprint",
+                "candidate": {"id": "D2"},
+            }
+        ),
+    )
+
+    ok, error = validate_t45_research_proposal(tmp_path, tmp_path / "ideation" / "novelty_audit.md")
+
+    assert ok is False
+    assert "selection-isolation receipt does not match" in (error or "")
+
+
 def test_t5_carries_blueprint_backed_proposal_as_planning_context_not_results(tmp_path: Path) -> None:
     populate_valid_t45_workspace(tmp_path)
 

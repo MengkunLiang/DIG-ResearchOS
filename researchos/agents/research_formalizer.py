@@ -13,6 +13,7 @@ from ..ideation.formalization import (
     ORIENTATION_REVIEW_REL_PATH,
     BLUEPRINT_REL_PATH,
     compile_t45_derived_artifacts,
+    ensure_current_t45_selection_isolation,
     persist_orientation_configuration,
     validate_orientation_review,
     validate_t45_formalization_core,
@@ -60,6 +61,10 @@ class ResearchFormalizerAgent(Agent):
         workspace = ctx.workspace_dir
         project = load_project(ctx)
         phase = self._phase(ctx)
+        # A workspace may have been paused after selecting a new Candidate
+        # under an older runtime. Isolate any old formalization package before
+        # it can appear in this fresh Formalizer context as reusable source.
+        ensure_current_t45_selection_isolation(workspace)
         orientation = persist_orientation_configuration(workspace)
         artifact_preview = {
             "selected_candidate": read_text_file(workspace / "ideation" / "selected" / "selected_candidate.json", default="")[:6000],
