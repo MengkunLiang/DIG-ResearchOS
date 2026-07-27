@@ -2263,6 +2263,17 @@ def _prepare_resume_from_task(
         print(f"Unable to load existing state.yaml for --from-task: {exc}")
         return 2
 
+    t4_reselection: dict[str, object] | None = None
+    if start_task == "T4":
+        try:
+            t4_reselection = _archive_active_t4_selection_for_reentry(workspace_dir, state)
+        except OSError as exc:
+            print(
+                "Unable to reopen T4 Candidate selection without risking the existing selection record: "
+                f"{exc}"
+            )
+            return 2
+
     prior_task = state.current_task
     reentry = {
         "from_task": prior_task,
@@ -2272,6 +2283,8 @@ def _prepare_resume_from_task(
         "reason": "explicit_cli_resume_from_task",
         "cleared_pending_gate": state.pending_gate.gate_id if state.pending_gate else None,
     }
+    if t4_reselection is not None:
+        reentry["t4_reselection"] = t4_reselection
     history = state.task_context.get("manual_reentries")
     records = list(history) if isinstance(history, list) else []
     records.append(reentry)
@@ -2284,10 +2297,75 @@ def _prepare_resume_from_task(
     state.dump_yaml(state_path)
     if literature_target is not None:
         message = f"[进度] 已受校验地从 {prior_task} 重入 {requested_task}；{literature_target[1]}"
+    elif t4_reselection is not None:
+        archived = str(t4_reselection.get("archived_selection") or "无活动选择记录")
+        message = (
+            f"[进度] 已从 {prior_task} 重入 T4；旧的 Gate1 选择已归档到 {archived}。"
+            "将复用当前 Candidate Portfolio 并重新打开 T4-GATE1 供你选择，不会自动进入 T4.5。"
+        )
     else:
         message = f"[进度] 已受校验地从 {prior_task} 重入 {start_task}；下一步将按该节点正常执行。"
     print(f"[Pipeline] resume_from_task={start_task}" if quiet else message, flush=True)
     return 0
+
+
+def _archive_active_t4_selection_for_reentry(
+    workspace_dir: Path,
+    state: StateYaml,
+) -> dict[str, object] | None:
+    """Reopen T4 Gate1 without letting an old confirmed selection auto-advance.
+
+    ``resume --from-task T4`` is an explicit researcher request to revisit the
+    idea decision surface, unlike ordinary ``resume``.  Native T4 treats an
+    active ``_gate1_user_selection.json`` as authorization to construct the
+    pre-novelty bundle, so leaving it in place bypasses the very Gate the
+    researcher asked to revisit.  Move the active record into immutable
+    selection history first, then clear only in-memory operation pointers.
+    Candidate Populations, dossiers, downstream artifacts, and the archived
+    selection all remain available for audit.
+    """
+
+    selection_path = workspace_dir / "ideation" / "_gate1_user_selection.json"
+    active_operation_keys = (
+        "t4_operation_request",
+        "t4_pending_directive",
+        "human_iteration_directive",
+    )
+    cleared_operation_keys = [key for key in active_operation_keys if key in state.task_context]
+
+    archived_selection: str | None = None
+    receipt_path: str | None = None
+    if selection_path.is_file():
+        history_dir = workspace_dir / "ideation" / "evolution" / "selection_history"
+        history_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        archive_path = history_dir / f"{timestamp}_gate1_user_selection.json"
+        # Same-workspace rename preserves the original record byte-for-byte;
+        # only its role changes from active authorization to history.
+        selection_path.replace(archive_path)
+        archived_selection = str(archive_path.relative_to(workspace_dir))
+        receipt = {
+            "schema_version": "1.0.0",
+            "semantics": "t4_explicit_reselection_reentry",
+            "requested_at": datetime.now(timezone.utc).isoformat(),
+            "archived_active_selection": archived_selection,
+            "cleared_operation_keys": cleared_operation_keys,
+            "reason": "resume_from_task_T4_reopens_candidate_decision",
+        }
+        receipt_file = history_dir / f"{timestamp}_reselection_receipt.json"
+        receipt_file.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        receipt_path = str(receipt_file.relative_to(workspace_dir))
+
+    for key in active_operation_keys:
+        state.task_context.pop(key, None)
+
+    if archived_selection is None and not cleared_operation_keys:
+        return None
+    return {
+        "archived_selection": archived_selection,
+        "receipt": receipt_path,
+        "cleared_operation_keys": cleared_operation_keys,
+    }
 
 
 def _migration_literature_start_target(workspace_dir: Path, current_task: str) -> tuple[str, str] | None:

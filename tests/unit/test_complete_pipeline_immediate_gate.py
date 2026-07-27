@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import researchos.cli as cli
 from researchos.cli_runners.complete_pipeline import CompletePipelineRunner
 from researchos.orchestration.state_machine import StateMachine
 from researchos.runtime.config import RuntimeSettings
@@ -141,3 +143,61 @@ def test_selection_score_recovery_is_not_mistaken_for_legacy_evolution() -> None
     )
 
     assert state_machine.should_pause_for_immediate_gate(state, workspace_dir=repo_root) is False
+
+
+def test_explicit_t4_reentry_archives_the_old_selection_and_reopens_gate1(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """`resume --from-task T4` must not reuse a prior Gate1 authorization."""
+
+    selection_path = tmp_path / "ideation" / "_gate1_user_selection.json"
+    selection_path.parent.mkdir(parents=True)
+    old_selection = {
+        "semantics": "t4_gate1_user_selection_for_candidate_pool",
+        "task_id": "T4-GATE1",
+        "gate_id": "t4_gate1_selection_gate",
+        "selected_candidate_id": "candidate-old",
+        "selected_option": "proceed_candidate",
+    }
+    selection_path.write_text(json.dumps(old_selection, ensure_ascii=False), encoding="utf-8")
+    state_path = tmp_path / "state.yaml"
+    StateYaml(
+        project_id="test",
+        current_task="T4.5",
+        status="PAUSED",
+        task_context={
+            "t4_operation_request": {"action": "recover_selection_score"},
+            "t4_pending_directive": {"action": "select_candidate"},
+            "human_iteration_directive": {"decision_id": "DIR-old"},
+        },
+    ).dump_yaml(state_path)
+
+    monkeypatch.setattr(cli, "validate_prerequisites", lambda _workspace, _task: (True, None))
+    state_machine = SimpleNamespace(nodes={"T4": SimpleNamespace(terminal=False)})
+
+    result = cli._prepare_resume_from_task(
+        workspace_dir=tmp_path,
+        state_machine=state_machine,
+        start_task="T4",
+    )
+
+    assert result == 0
+    assert not selection_path.exists()
+    archived = list((tmp_path / "ideation" / "evolution" / "selection_history").glob("*_gate1_user_selection.json"))
+    assert len(archived) == 1
+    assert json.loads(archived[0].read_text(encoding="utf-8")) == old_selection
+    receipts = list((tmp_path / "ideation" / "evolution" / "selection_history").glob("*_reselection_receipt.json"))
+    assert len(receipts) == 1
+    receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
+    assert receipt["archived_active_selection"] == str(archived[0].relative_to(tmp_path))
+
+    reopened = StateYaml.load_yaml(state_path)
+    assert reopened.current_task == "T4"
+    assert reopened.status == "PAUSED"
+    assert all(
+        key not in reopened.task_context
+        for key in ("t4_operation_request", "t4_pending_directive", "human_iteration_directive")
+    )
+    reentry = reopened.task_context["manual_reentries"][-1]
+    assert reentry["t4_reselection"]["archived_selection"] == str(archived[0].relative_to(tmp_path))
