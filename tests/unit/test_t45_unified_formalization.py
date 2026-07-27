@@ -24,6 +24,7 @@ from researchos.orchestration.task_io_contract import task_import_paths
 from researchos.runtime.agent import Agent, AgentSpec, ExecutionContext
 from researchos.runtime.orchestrator import AgentRunner
 from researchos.runtime.config import RuntimeSettings
+from researchos.runtime.observability.extractors import extract_stage_insights
 from researchos.schemas.state import GateState, StateYaml
 from researchos.testing.mocks import FakeLLMMessage, FakeRawCompletion, FakeToolCall, MockHumanInterface, MockLLMClient
 from researchos.tools.builtin import register_builtin_tools
@@ -34,6 +35,30 @@ from tests.unit.t45_unified_fixture import populate_valid_t45_workspace, write, 
 
 def _proposal_path(workspace: Path) -> Path:
     return workspace / "ideation" / "proposal" / "research_proposal.md"
+
+
+def test_t45_insights_treats_null_orientation_review_as_pending(tmp_path: Path) -> None:
+    """An incomplete T4.5 review must not crash the post-Gate stage display."""
+
+    ideation = tmp_path / "ideation"
+    ideation.mkdir()
+    write(ideation / "novelty_audit.md", "# Novelty Audit\n")
+    write_yaml(
+        ideation / "research_blueprint.yaml",
+        {
+            "orientation": {"profile_type": "hybrid"},
+            "technical_problem": {"key_challenges": [{"id": "C1"}]},
+            "research_claims": {"active_claim_ids": ["TC1"]},
+        },
+    )
+    write_yaml(ideation / "claim_registry.yaml", {"claims": []})
+    write(ideation / "orientation_review.json", "null\n")
+
+    insights = extract_stage_insights("T4.5-FORMALIZE", tmp_path)
+
+    formalization = next(item for item in insights if item["title"] == "Research Formalization")
+    assert ("Review", "pending") in formalization["rows"]
+    assert ("Orientation", "hybrid") in formalization["rows"]
 
 
 class _RepeatedT45RepairAgent(Agent):

@@ -411,6 +411,12 @@ def _t45_insights(workspace: Path) -> list[dict[str, Any]]:
     blueprint = _load_yaml(workspace / "ideation" / "research_blueprint.yaml")
     registry = _load_yaml(workspace / "ideation" / "claim_registry.yaml")
     review = _load_json(workspace / "ideation" / "orientation_review.json")
+    # T4.5 may be paused before the orientation review exists.  Observability
+    # must report that incomplete state rather than treating JSON null, an
+    # empty file, or a malformed partial write as a completed review object.
+    blueprint = blueprint if isinstance(blueprint, dict) else {}
+    registry = registry if isinstance(registry, dict) else {}
+    review = review if isinstance(review, dict) else {}
     if not text and not scorecard and not blueprint:
         return []
     verdict = _match(text, r"(?im)(?:verdict|判定)\s*[:：]\s*([^\n]+)") or "需阅读审计文件确认"
