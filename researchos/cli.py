@@ -2252,7 +2252,8 @@ def _prepare_resume_from_task(
     # The coverage Gate is itself the recovery surface for older T2 outputs.
     # Requiring every historical summary before it can be shown would hide the
     # decision a researcher needs to repair or expand the corpus.
-    if start_task != "T2-COVERAGE-GATE":
+    t4_gate1_reentry = start_task in {"T4", "T4-GATE1"}
+    if start_task != "T2-COVERAGE-GATE" and not t4_gate1_reentry:
         ok, err = validate_prerequisites(workspace_dir, start_task)
         if not ok:
             print(f"Prerequisites not met for --from-task {start_task}: {err}")
@@ -2264,15 +2265,24 @@ def _prepare_resume_from_task(
         return 2
 
     t4_reselection: dict[str, object] | None = None
-    if start_task == "T4":
+    if t4_gate1_reentry:
         try:
-            t4_reselection = _archive_active_t4_selection_for_reentry(workspace_dir, state)
+            t4_reselection = _archive_active_t4_selection_for_reentry(
+                workspace_dir,
+                state,
+                requested_task=requested_task,
+            )
         except OSError as exc:
             print(
-                "Unable to reopen T4 Candidate selection without risking the existing selection record: "
+                "Unable to reopen T4-GATE1 Candidate selection without risking the existing selection record: "
                 f"{exc}"
             )
             return 2
+        # Both public entry points mean "return to the existing Portfolio and
+        # choose again".  They must never run T4, consume a previous Gate1
+        # receipt, or replay an old confirmed directive before rendering the
+        # human decision surface.
+        start_task = "T4-GATE1"
 
     prior_task = state.current_task
     reentry = {
@@ -2300,8 +2310,8 @@ def _prepare_resume_from_task(
     elif t4_reselection is not None:
         archived = str(t4_reselection.get("archived_selection") or "无活动选择记录")
         message = (
-            f"[进度] 已从 {prior_task} 重入 T4；旧的 Gate1 选择已归档到 {archived}。"
-            "将复用当前 Candidate Portfolio 并重新打开 T4-GATE1 供你选择，不会自动进入 T4.5。"
+            f"[进度] 已从 {prior_task} 重入 T4-GATE1；旧的 Gate1 选择已归档到 {archived}。"
+            "将复用当前 Candidate Portfolio 并重新打开候选选择；历史确认只保留审计记录，不会自动进入 T4.5。"
         )
     else:
         message = f"[进度] 已受校验地从 {prior_task} 重入 {start_task}；下一步将按该节点正常执行。"
@@ -2312,16 +2322,18 @@ def _prepare_resume_from_task(
 def _archive_active_t4_selection_for_reentry(
     workspace_dir: Path,
     state: StateYaml,
+    *,
+    requested_task: str,
 ) -> dict[str, object] | None:
     """Reopen T4 Gate1 without letting an old confirmed selection auto-advance.
 
-    ``resume --from-task T4`` is an explicit researcher request to revisit the
-    idea decision surface, unlike ordinary ``resume``.  Native T4 treats an
-    active ``_gate1_user_selection.json`` as authorization to construct the
-    pre-novelty bundle, so leaving it in place bypasses the very Gate the
-    researcher asked to revisit.  Move the active record into immutable
-    selection history first, then clear only in-memory operation pointers.
-    Candidate Populations, dossiers, downstream artifacts, and the archived
+    ``resume --from-task T4`` and ``--from-task T4-GATE1`` are explicit
+    researcher requests to revisit the idea decision surface, unlike ordinary
+    ``resume``. Native T4 treats an active selection receipt and an accepted
+    directive confirmation as authorization to proceed. Move the active
+    receipt into immutable history, clear stale in-memory authorization, and
+    record a new confirmation boundary. Candidate Populations, dossiers,
+    downstream artifacts, historical confirmations, and the archived
     selection all remain available for audit.
     """
 
@@ -2330,9 +2342,12 @@ def _archive_active_t4_selection_for_reentry(
         "t4_operation_request",
         "t4_pending_directive",
         "human_iteration_directive",
+        "t4_resumed_confirmed_directive",
+        "t4_recovery_request",
     )
     cleared_operation_keys = [key for key in active_operation_keys if key in state.task_context]
 
+    reopened_at = datetime.now(timezone.utc).isoformat()
     archived_selection: str | None = None
     receipt_path: str | None = None
     if selection_path.is_file():
@@ -2347,7 +2362,10 @@ def _archive_active_t4_selection_for_reentry(
         receipt = {
             "schema_version": "1.0.0",
             "semantics": "t4_explicit_reselection_reentry",
-            "requested_at": datetime.now(timezone.utc).isoformat(),
+            "requested_at": reopened_at,
+            "requested_task": requested_task,
+            "reopened_gate_task": "T4-GATE1",
+            "confirmation_not_before": reopened_at,
             "archived_active_selection": archived_selection,
             "cleared_operation_keys": cleared_operation_keys,
             "reason": "resume_from_task_T4_reopens_candidate_decision",
@@ -2359,12 +2377,21 @@ def _archive_active_t4_selection_for_reentry(
     for key in active_operation_keys:
         state.task_context.pop(key, None)
 
-    if archived_selection is None and not cleared_operation_keys:
-        return None
+    state.task_context["t4_gate1_reselection"] = {
+        "schema_version": "1.0.0",
+        "semantics": "t4_explicit_gate1_reselection_boundary",
+        "requested_task": requested_task,
+        "reopened_at": reopened_at,
+        "confirmation_not_before": reopened_at,
+        "archived_active_selection": archived_selection,
+        "receipt": receipt_path,
+    }
     return {
         "archived_selection": archived_selection,
         "receipt": receipt_path,
         "cleared_operation_keys": cleared_operation_keys,
+        "confirmation_not_before": reopened_at,
+        "reopened_gate_task": "T4-GATE1",
     }
 
 

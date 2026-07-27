@@ -174,7 +174,12 @@ def test_explicit_t4_reentry_archives_the_old_selection_and_reopens_gate1(
     ).dump_yaml(state_path)
 
     monkeypatch.setattr(cli, "validate_prerequisites", lambda _workspace, _task: (True, None))
-    state_machine = SimpleNamespace(nodes={"T4": SimpleNamespace(terminal=False)})
+    state_machine = SimpleNamespace(
+        nodes={
+            "T4": SimpleNamespace(terminal=False),
+            "T4-GATE1": SimpleNamespace(terminal=False),
+        }
+    )
 
     result = cli._prepare_resume_from_task(
         workspace_dir=tmp_path,
@@ -193,14 +198,154 @@ def test_explicit_t4_reentry_archives_the_old_selection_and_reopens_gate1(
     assert receipt["archived_active_selection"] == str(archived[0].relative_to(tmp_path))
 
     reopened = StateYaml.load_yaml(state_path)
-    assert reopened.current_task == "T4"
+    assert reopened.current_task == "T4-GATE1"
     assert reopened.status == "PAUSED"
     assert all(
         key not in reopened.task_context
-        for key in ("t4_operation_request", "t4_pending_directive", "human_iteration_directive")
+        for key in (
+            "t4_operation_request",
+            "t4_pending_directive",
+            "human_iteration_directive",
+            "t4_resumed_confirmed_directive",
+            "t4_recovery_request",
+        )
     )
     reentry = reopened.task_context["manual_reentries"][-1]
     assert reentry["t4_reselection"]["archived_selection"] == str(archived[0].relative_to(tmp_path))
+    boundary = reopened.task_context["t4_gate1_reselection"]
+    assert boundary["requested_task"] == "T4"
+    assert boundary["confirmation_not_before"] == reentry["t4_reselection"]["confirmation_not_before"]
+
+
+def test_explicit_t4_gate1_reentry_has_the_same_reselection_semantics(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """The public Gate ID must not reuse a current or historical selection."""
+
+    selection_path = tmp_path / "ideation" / "_gate1_user_selection.json"
+    selection_path.parent.mkdir(parents=True)
+    selection_path.write_text(
+        json.dumps(
+            {
+                "semantics": "t4_gate1_user_selection_for_candidate_pool",
+                "task_id": "T4-GATE1",
+                "gate_id": "t4_gate1_selection_gate",
+                "selected_candidate_id": "candidate-old",
+                "selected_option": "proceed_candidate",
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_path = tmp_path / "state.yaml"
+    StateYaml(
+        project_id="test",
+        current_task="T4.5",
+        status="PAUSED",
+        task_context={"t4_resumed_confirmed_directive": {"directive_id": "DIR-old"}},
+    ).dump_yaml(state_path)
+    monkeypatch.setattr(cli, "validate_prerequisites", lambda _workspace, _task: (True, None))
+    state_machine = SimpleNamespace(
+        nodes={
+            "T4": SimpleNamespace(terminal=False),
+            "T4-GATE1": SimpleNamespace(terminal=False),
+        }
+    )
+
+    result = cli._prepare_resume_from_task(
+        workspace_dir=tmp_path,
+        state_machine=state_machine,
+        start_task="T4-GATE1",
+    )
+
+    assert result == 0
+    assert not selection_path.exists()
+    reopened = StateYaml.load_yaml(state_path)
+    assert reopened.current_task == "T4-GATE1"
+    assert reopened.status == "PAUSED"
+    assert "t4_resumed_confirmed_directive" not in reopened.task_context
+    assert reopened.task_context["t4_gate1_reselection"]["requested_task"] == "T4-GATE1"
+
+
+def test_t4_reselection_boundary_rejects_old_confirmations() -> None:
+    state = StateYaml(
+        project_id="test",
+        current_task="T4-GATE1",
+        status="WAITING_HUMAN",
+        task_context={
+            "t4_gate1_reselection": {
+                "confirmation_not_before": "2026-07-27T05:36:54.668019+00:00",
+            }
+        },
+    )
+
+    assert not StateMachine._t4_confirmation_is_eligible_for_resume(
+        state,
+        {"confirmed_at": "2026-07-26T09:20:57.283001+00:00"},
+    )
+    assert StateMachine._t4_confirmation_is_eligible_for_resume(
+        state,
+        {"confirmed_at": "2026-07-27T05:36:54.668019+00:00"},
+    )
+    assert not StateMachine._t4_confirmation_is_eligible_for_resume(state, {})
+
+
+def test_gate1_reselection_does_not_replay_a_historical_confirmation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Refreshing a re-opened Gate1 must leave the old directive as audit only."""
+
+    repo_root = Path(__file__).resolve().parents[2]
+    state_machine = StateMachine(
+        repo_root / "config/system_config/state_machine.yaml",
+        repo_root / "config/system_config/gates.yaml",
+    )
+    directives = tmp_path / "ideation" / "human_directives"
+    directives.mkdir(parents=True)
+    (directives / "20260101T000000Z_DIR-old_confirmation.json").write_text(
+        json.dumps(
+            {
+                "semantics": "t4_human_directive_confirmation",
+                "accepted": True,
+                "outcome": "confirmed_for_execution",
+                "confirmed_at": "2026-01-01T00:00:00+00:00",
+                "directive_id": "DIR-old",
+                "directive_path": "ideation/human_directives/old.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = StateYaml(
+        project_id="test",
+        current_task="T4-GATE1",
+        status="WAITING_HUMAN",
+        pending_gate=GateState(
+            gate_id="t4_gate1_selection_gate",
+            presented_at="2026-07-27T05:36:54.668019+00:00",
+            presentation={},
+            options=[],
+        ),
+        task_context={
+            "t4_gate1_reselection": {
+                "confirmation_not_before": "2026-07-27T05:36:54.668019+00:00",
+            }
+        },
+    )
+    # The test isolates the historical-confirmation branch. Card validation is
+    # exercised independently; no T4 artifacts or model work are required to
+    # prove that the stale directive does not get a second chance to execute.
+    monkeypatch.setattr(
+        state_machine,
+        "_redirect_incomplete_t4_gate_to_recovery",
+        lambda _state, _workspace: None,
+    )
+
+    refreshed = state_machine.refresh_pending_gate_presentation(state, workspace_dir=tmp_path)
+
+    assert refreshed.current_task == "T4-GATE1"
+    assert refreshed.pending_gate is not None
+    assert "t4_resumed_confirmed_directive" not in refreshed.task_context
 
 
 def test_t45_source_aware_recovery_is_not_blocked_by_old_iteration_history(tmp_path: Path) -> None:

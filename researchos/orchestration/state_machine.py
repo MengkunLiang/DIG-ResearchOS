@@ -4081,6 +4081,7 @@ class StateMachine:
                 candidate.get("semantics") == "t4_human_directive_confirmation"
                 and candidate.get("accepted") is True
                 and str(candidate.get("outcome") or "") == "confirmed_for_execution"
+                and self._t4_confirmation_is_eligible_for_resume(state, candidate)
             ):
                 confirmation = candidate
                 break
@@ -4098,6 +4099,13 @@ class StateMachine:
         except (OSError, ValueError, json.JSONDecodeError):
             return None
         if str(confirmation.get("directive_id") or "") != directive.directive_id:
+            return None
+        resumed = state.task_context.get("t4_resumed_confirmed_directive")
+        if isinstance(resumed, dict) and str(resumed.get("directive_id") or "") == directive.directive_id:
+            # The confirmation was already handed to the native operation
+            # boundary. Replaying it from the historical directives directory
+            # can otherwise select the same Candidate or rerun an Evolution
+            # after a later Gate1 resume.
             return None
         try:
             population, _dossiers = current_population_context(workspace_dir)
@@ -4124,6 +4132,42 @@ class StateMachine:
             directive_path=relative_directive_path,
             workspace_dir=workspace_dir,
         )
+
+    @staticmethod
+    def _t4_confirmation_is_eligible_for_resume(
+        state: StateYaml,
+        confirmation: dict[str, Any],
+    ) -> bool:
+        """Allow only this explicit Gate1 session's new confirmations to replay.
+
+        A normal resume may recover a durable confirmation that was accepted
+        immediately before interruption. An explicit ``--from-task T4`` or
+        ``T4-GATE1`` instead means the researcher revoked every old automatic
+        authorization and asked to choose again. The historical confirmation
+        files remain immutable audit evidence, but they must not be treated as
+        a fresh instruction for that new Gate session.
+        """
+
+        boundary = state.task_context.get("t4_gate1_reselection")
+        if not isinstance(boundary, dict):
+            return True
+        not_before = str(boundary.get("confirmation_not_before") or "").strip()
+        confirmed_at = str(confirmation.get("confirmed_at") or "").strip()
+        if not not_before or not confirmed_at:
+            # A re-selection boundary is an explicit revocation. Fail closed
+            # for legacy/malformed timestamps instead of replaying an old
+            # selection without another human action.
+            return False
+        try:
+            boundary_time = datetime.fromisoformat(not_before.replace("Z", "+00:00"))
+            confirmation_time = datetime.fromisoformat(confirmed_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if boundary_time.tzinfo is None:
+            boundary_time = boundary_time.replace(tzinfo=timezone.utc)
+        if confirmation_time.tzinfo is None:
+            confirmation_time = confirmation_time.replace(tzinfo=timezone.utc)
+        return confirmation_time >= boundary_time
 
     @staticmethod
     def _t4_gate1_ready_without_selection(workspace_dir: Path) -> bool:
@@ -4857,6 +4901,16 @@ class StateMachine:
                     accepted=True,
                     outcome="confirmed_for_execution",
                 )
+                # This acknowledgement is persisted before the state changes.
+                # It is also a replay guard: a later Gate1 resume must not
+                # rediscover the same immutable confirmation and execute it a
+                # second time after the native operation has already started.
+                state.task_context["t4_resumed_confirmed_directive"] = {
+                    "directive_id": directive.directive_id,
+                    "directive_path": str(pending.get("directive_path") or ""),
+                    "resumed_at": _now_iso(),
+                    "reason": "confirmed_in_current_gate_session",
+                }
                 return self._apply_native_t4_directive(
                     state,
                     directive=directive,
