@@ -901,83 +901,41 @@ class StageReporter:
         return Panel(Group(*group), title=str(insight.get("title") or "阶段统计"), border_style="magenta", expand=False)
 
     def _t45_completion_guide(self) -> Panel | None:
-        """Render the final, quality-gated T4.5 research package for T5 handoff."""
+        """Render the five researcher-facing entry points of the accepted T4.5 package."""
 
         candidates = (
             (
-                "研究蓝图",
-                "ideation/research_blueprint.yaml",
-                "真实问题、技术挑战、组件、评测、贡献和风险的共同来源。",
-                "优先核对；T5 以此保持研究结构一致。",
-            ),
-            (
-                "Claim 注册表",
-                "ideation/claim_registry.yaml",
-                "每项研究主张的机制、反事实、评测和证伪条件。",
-                "核对每条主张是否都能被实验否证。",
-            ),
-            (
-                "正式假设",
-                "ideation/hypotheses.md",
-                "每项主张的预测、竞争解释、评测与证伪条件。",
-                "T5 保留其验证约束；T8 不得把它写成已观察结果。",
-            ),
-            (
                 "完整研究方案",
-                "ideation/proposal/research_proposal.md",
-                "问题、机制、贡献、现实意义、风险和完整实验逻辑。",
-                "优先阅读；T5 会把它作为执行边界。",
+                ("ideation/proposal/research_proposal.md",),
+                "完整论证：问题、机制、贡献、现实意义、风险与研究设计。",
+                "优先阅读；为后续执行保留研究意图与边界。",
+            ),
+            (
+                "研究主张与假设",
+                ("ideation/hypotheses.md",),
+                "每项主张的预测、竞争解释、评测与证伪条件。",
+                "防止后续阶段将待检验假设写成已观察结果。",
+            ),
+            (
+                "研究设计约束",
+                ("ideation/research_blueprint.yaml", "ideation/claim_registry.yaml"),
+                "真实问题、技术挑战、组件，以及每项主张的机制、反事实和边界。",
+                "T5 以此保持方案结构与 claim 边界一致。",
             ),
             (
                 "实验计划",
-                "ideation/exp_plan.yaml",
+                ("ideation/exp_plan.yaml",),
                 "数据/benchmark、指标、baseline、实验设置与停止条件。",
                 "补充协议设置；T5 据此授权真实实验。",
             ),
             (
-                "贡献-假设映射",
-                "ideation/contribution_hypothesis_map.yaml",
-                "每项拟议贡献由哪条假设支撑。",
-                "T5/T8 用于主张对齐。",
-            ),
-            (
-                "验证映射",
-                "ideation/validation_map.yaml",
-                "每条假设应由哪些观察和实验验证。",
-                "T5 用于实验设计。",
-            ),
-            (
-                "停止条件",
-                "ideation/kill_criteria.yaml",
-                "哪些结果要求收缩、修正或放弃主张。",
-                "T5 用于实验诊断和风险控制。",
-            ),
-            (
-                "方案审阅记录",
-                "ideation/orientation_review.json",
-                "UTD、CCF-A 或 Hybrid 权重下的质量评分与定向修复记录。",
-                "确认质量 gate 已接受；T5 只消费这一状态下的研究包。",
-            ),
-            (
-                "新颖性审计",
-                "ideation/novelty_audit.md",
-                "相似工作、机制差异、必需 baseline 与审计结论。",
-                "T5/T8 用于比较边界和 Related Work。",
-            ),
-            (
-                "方案追溯记录",
-                "ideation/proposal/proposal_manifest.json",
-                "proposal 的来源、审计状态与交接边界。",
-                "恢复或追溯时查看。",
-            ),
-            (
-                "正式化通过回执",
-                "ideation/post_novelty_formalization.json",
-                "当前 Candidate、质量门和完整产物集合的一致性证明。",
-                "T5 恢复时验证研究包仍属于当前选择。",
+                "最终审阅与新颖性边界",
+                ("ideation/orientation_review.json", "ideation/novelty_audit.md"),
+                "最终质量结论、相似工作差异与必须保留的 baseline。",
+                "确认方案已接受，并保留比较与主张边界。",
             ),
         )
-        rows = [row for row in candidates if (self.workspace / row[1]).is_file()]
+        rows = [row for row in candidates if all((self.workspace / path).is_file() for path in row[1])]
         if not rows:
             return None
         table = lightweight_ruled_table(
@@ -990,10 +948,11 @@ class StageReporter:
         table.add_column("它定义什么", ratio=2, overflow="fold")
         table.add_column("后续用途", ratio=2, overflow="fold")
         table.add_column("状态", width=11, overflow="fold")
-        for label, path, contents, when in rows:
-            table.add_row(label, Text(path, style="cyan", overflow="fold"), contents, when, Text("已通过", style="green"))
+        for label, paths, contents, when in rows:
+            table.add_row(label, Text("\n".join(paths), style="cyan", overflow="fold"), contents, when, Text("已通过", style="green"))
         note = Text(
-            "质量门已通过。以上是当前 Candidate 的已接受研究包；它们定义待检验的方案与边界，不代表任何实验结果已经成立。",
+            "质量门已通过。上表只保留 5 个优先阅读入口；贡献/验证映射、停止条件和追溯回执仍已保存，"
+            "可在 workspace 或 --verbose 中查看。所有文件定义待检验的方案与边界，不代表任何实验结果已经成立。",
             style="dim",
             overflow="fold",
         )

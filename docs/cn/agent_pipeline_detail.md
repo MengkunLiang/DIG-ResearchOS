@@ -2743,7 +2743,7 @@ validator 会检查：
 
 `T4.5-REVIEW` 在另一个 `ResearchFormalizerAgent` 上下文中，按继承的 orientation 审阅同一研究包。它要求 claim 到实验的映射、组件的 ablation 或 mechanism test、与取向相称的实质技术贡献、连贯 Proposal 和 `orientation_review.json` 的 accepted 状态。通过后运行时写入 `post_novelty_formalization.json`，将研究包绑定到当前 Candidate 和 selection fingerprint。
 
-只有在这个最终边界，CLI 才显示 Rich 的**研究方案审计与正式化已完成**表，列出每个核心产物、路径、它定义的研究约束、下游用途与已通过质量门状态。T5 读取的是这份研究包；它是计划与证伪契约，不是实验结果。
+只有在这个最终边界，CLI 才显示 Rich 的**研究方案审计与正式化已完成**表。表只保留 5 个研究者优先阅读入口：Proposal、hypotheses、研究设计约束（blueprint 与 claim registry）、实验计划、最终审阅与新颖性边界（orientation review 与 novelty audit）；每行显示路径、定义的研究约束、下游用途和质量门状态。贡献/验证映射、停止条件、manifest 与正式化回执仍完整保存在 workspace，供 T5、`--verbose` 与恢复追溯使用，但不占用完成页。T5 读取的是完整研究包；它是计划与证伪契约，不是实验结果。
 
 ### mechanism tuple 工具
 
