@@ -7154,6 +7154,18 @@ class StateMachine:
         logger = get_logger("state_machine.deadlock")
 
         task_id = state.current_task
+        if task_id in {"T4.5", "T4.5-FORMALIZE", "T4.5-REVIEW"}:
+            # T4.5 retries are not evolutionary iterations.  They commonly
+            # resume a selected Candidate after a provider interruption,
+            # continue a novelty-audit repair, or re-formalize the same
+            # direction after an explicit Gate1 reselection.  Counting every
+            # start with identical declared inputs as a deadlock blocks the
+            # Agent before it can receive the saved runtime diagnosis.  These
+            # phases have their own source-aware validators and no-progress
+            # circuit breakers, so the generic startup counter is both weaker
+            # and incorrect here.
+            logger.debug("iteration_deadlock_bypassed", task_id=task_id, reason="t45_source_aware_recovery")
+            return
         task_history = state.iteration_history.get(task_id, [])
 
         if not task_history:
@@ -7194,6 +7206,10 @@ class StateMachine:
         Phase 2.3: 用于后续死锁检测。
         """
         task_id = state.current_task
+        if task_id in {"T4.5", "T4.5-FORMALIZE", "T4.5-REVIEW"}:
+            # See `_check_iteration_deadlock`: T4.5 has durable, source-aware
+            # recovery rather than a count-based start-loop guard.
+            return
         params = self._extract_task_params(node, state=state, workspace_dir=workspace_dir)
         param_hash = self._compute_param_hash(params)
 

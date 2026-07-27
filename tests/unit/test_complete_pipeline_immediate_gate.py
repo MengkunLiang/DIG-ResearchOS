@@ -201,3 +201,26 @@ def test_explicit_t4_reentry_archives_the_old_selection_and_reopens_gate1(
     )
     reentry = reopened.task_context["manual_reentries"][-1]
     assert reentry["t4_reselection"]["archived_selection"] == str(archived[0].relative_to(tmp_path))
+
+
+def test_t45_source_aware_recovery_is_not_blocked_by_old_iteration_history(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    state_machine = StateMachine(
+        repo_root / "config/system_config/state_machine.yaml",
+        repo_root / "config/system_config/gates.yaml",
+    )
+    node = state_machine.nodes["T4.5"]
+    state = StateYaml(project_id="test", current_task="T4.5", status="PAUSED")
+    params = state_machine._extract_task_params(node, state=state, workspace_dir=tmp_path)
+    param_hash = state_machine._compute_param_hash(params)
+    state.iteration_history["T4.5"] = [
+        {"param_hash": param_hash, "timestamp": "2026-01-01T00:00:00Z", "params": params}
+        for _ in range(3)
+    ]
+
+    # The former generic guard raised here before the Novelty Auditor could
+    # receive its durable recovery prompt. T4.5 now uses its own validators.
+    state_machine._check_iteration_deadlock(state, node, workspace_dir=tmp_path)
+    state_machine._record_iteration_attempt(state, node, workspace_dir=tmp_path)
+
+    assert len(state.iteration_history["T4.5"]) == 3
