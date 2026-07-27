@@ -56,12 +56,33 @@ STRUCTURED_ONLY_WRITE_PATHS = {
 }
 
 
-_T45_FORMALIZATION_ARTIFACTS = frozenset(
+T45_EDITABLE_SOURCE_ARTIFACTS = (
+    "ideation/research_blueprint.yaml",
+    "ideation/claim_registry.yaml",
+    "ideation/exp_plan.yaml",
+    "ideation/hypotheses.md",
+    "ideation/proposal/research_proposal.md",
+    "ideation/orientation_review.json",
+)
+
+_T45_RESEARCHER_FACING_PROSE_ARTIFACTS = frozenset(
     {
         "ideation/hypotheses.md",
         "ideation/proposal/research_proposal.md",
+    }
+)
+
+# These are deterministic projections of the validated source package. A
+# Formalizer writing one directly can create a superficially complete but stale
+# handoff, or waste turns repairing a file that the runtime will replace.
+T45_RUNTIME_DERIVED_ARTIFACTS = frozenset(
+    {
         "ideation/proposal/proposal_manifest.json",
         "ideation/post_novelty_formalization.json",
+        "ideation/research_dossier.json",
+        "ideation/contribution_hypothesis_map.yaml",
+        "ideation/validation_map.yaml",
+        "ideation/kill_criteria.yaml",
     }
 )
 
@@ -337,7 +358,23 @@ class WriteFileTool(Tool):
         path = kwargs["path"]
         content = kwargs["content"]
         normalized_path = path.strip().lstrip("./")
-        if self.policy.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"} and normalized_path in _T45_FORMALIZATION_ARTIFACTS:
+        if self.policy.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"} and normalized_path in T45_RUNTIME_DERIVED_ARTIFACTS:
+            return ToolResult(
+                ok=False,
+                content=(
+                    f"不能直接写入 {normalized_path}：它是 T4.5 通过 source validation 后由 runtime 确定性编译的派生产物。"
+                    "请只修复 research_blueprint、claim_registry、exp_plan、hypotheses、Proposal 或 orientation review 中"
+                    "报错明确指向的来源文件；完成后调用 finish_task，runtime 会重建该派生产物。"
+                ),
+                data={
+                    "path": path,
+                    "runtime_owned": True,
+                    "repair_scope": "t45_source_artifacts_only",
+                    "source_artifacts": list(T45_EDITABLE_SOURCE_ARTIFACTS),
+                },
+                error="t45_runtime_derived_artifact",
+            )
+        if self.policy.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"} and normalized_path in _T45_RESEARCHER_FACING_PROSE_ARTIFACTS:
             requirement_error = _t45_structured_source_validation_error(self.policy)
             if requirement_error:
                 required_path, required_schema = _t45_structured_source_hint(requirement_error)

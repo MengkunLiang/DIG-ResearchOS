@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from ..schemas.validator import validate_record, validate_record_diagnostics
 from .base import Tool, ToolResult
+from .filesystem import T45_EDITABLE_SOURCE_ARTIFACTS, T45_RUNTIME_DERIVED_ARTIFACTS
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 from ..runtime.errors import ToolRuntimeError
 
@@ -90,6 +91,22 @@ class WriteStructuredFileTool(Tool):
         format_type = kwargs["format"]
         normalized_path = str(path).strip().lstrip("./")
         normalizations: list[str] = []
+        if self.policy.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"} and normalized_path in T45_RUNTIME_DERIVED_ARTIFACTS:
+            return ToolResult(
+                ok=False,
+                content=(
+                    f"不能直接结构化写入 {normalized_path}：它是 T4.5 runtime-owned 派生产物。"
+                    "请只修复 research_blueprint、claim_registry、exp_plan、hypotheses、Proposal 或 orientation review 中"
+                    "报错明确指向的来源文件；完成后调用 finish_task，runtime 会重建该文件。"
+                ),
+                data={
+                    "path": path,
+                    "runtime_owned": True,
+                    "repair_scope": "t45_source_artifacts_only",
+                    "source_artifacts": list(T45_EDITABLE_SOURCE_ARTIFACTS),
+                },
+                error="t45_runtime_derived_artifact",
+            )
         if schema_name == "bridge_domain_plan" and normalized_path != "literature/bridge_domain_plan.json":
             return ToolResult(
                 ok=False,

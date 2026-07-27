@@ -1463,6 +1463,13 @@ def summarize_tool_result(
                 f"但尚未通过共同研究契约。先用 write_structured_file 修复唯一失败项。原因：{detail}",
                 str(data.get("required_path") or "ideation/research_blueprint.yaml"),
             )
+        if error == "t45_runtime_derived_artifact":
+            path = str(data.get("path") or "T4.5 派生产物")
+            return (
+                f"正式化未直接改写 {path}：这是 runtime 从已验证来源确定性编译的文件；"
+                "请修复报错指向的 blueprint、claim registry、实验计划、假设、Proposal 或 review。",
+                path,
+            )
         if tool_name in _HIGH_VOLUME_TOOL_NAMES:
             return _summarize_high_volume_failure(tool_name, data=data, error=error), _extract_output_path(tool_name, data)
         return _compact_text(error or content or "工具返回失败", 280), _extract_output_path(tool_name, data)

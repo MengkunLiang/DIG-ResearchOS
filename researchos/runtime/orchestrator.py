@@ -145,6 +145,13 @@ T45_QUALITY_SOURCE_ARTIFACTS = (
     "ideation/proposal/research_proposal.md",
     "ideation/orientation_review.json",
 )
+T45_RESEARCH_CONTENT_SOURCE_ARTIFACTS = (
+    "ideation/research_blueprint.yaml",
+    "ideation/claim_registry.yaml",
+    "ideation/exp_plan.yaml",
+    "ideation/hypotheses.md",
+    "ideation/proposal/research_proposal.md",
+)
 TOOL_CONTEXT_CONTENT_LIMITS = {
     # PDF 文本工具是 T3 上下文膨胀的主要来源。工具自身也有上限，这里再加
     # runtime 兜底，防止未来工具改动或异常 PDF 解析再次把长文本塞进模型。
@@ -8817,11 +8824,15 @@ class AgentRunner:
         return str(error or "").startswith("T45_REPAIRABLE_WARNING:")
 
     @staticmethod
-    def _t45_quality_source_fingerprint(workspace_dir: Path) -> dict[str, str]:
-        """Fingerprint only T4.5 source artifacts, never compiled compatibility files."""
+    def _t45_quality_source_fingerprint(
+        workspace_dir: Path,
+        *,
+        source_paths: tuple[str, ...] = T45_QUALITY_SOURCE_ARTIFACTS,
+    ) -> dict[str, str]:
+        """Fingerprint the source artifacts relevant to one T4.5 repair."""
 
         fingerprints: dict[str, str] = {}
-        for relative_path in T45_QUALITY_SOURCE_ARTIFACTS:
+        for relative_path in source_paths:
             path = workspace_dir / relative_path
             if not path.is_file():
                 fingerprints[relative_path] = "missing"
@@ -8834,6 +8845,85 @@ class AgentRunner:
                 fingerprints[relative_path] = digest
         return fingerprints
 
+    @staticmethod
+    def _t45_quality_repair_source_scope(error: str) -> tuple[str, ...]:
+        """Return sources whose changes can resolve the current diagnostic.
+
+        The old all-source fingerprint treated an edit to any T4.5 file as
+        progress. That allowed a model to keep changing a review receipt while
+        a Proposal or hypotheses failure remained unchanged. Scope is kept
+        deliberately conservative for cross-artifact failures: it permits the
+        smallest synchronized set described by repair feedback, but not an
+        unrelated display-only write.
+        """
+
+        raw = str(error or "")
+        if AgentRunner._is_t45_repairable_warning(raw):
+            named = tuple(
+                dict.fromkeys(
+                    match.group(1).strip()
+                    for match in re.finditer(r"(?m)^-\s+\[[^\]]+\]\s+([^:\s]+):", raw)
+                    if match.group(1).strip() in T45_QUALITY_SOURCE_ARTIFACTS
+                )
+            )
+            if named:
+                return named
+
+        normalized = raw.casefold()
+        if any(marker in normalized for marker in ("hypotheses.md", "short assertion", " in hypotheses.md is missing:")):
+            return ("ideation/hypotheses.md",)
+        if any(
+            marker in normalized
+            for marker in (
+                "research_proposal.md",
+                "proposal sections",
+                "prior research, gap",
+                "central insight",
+                "research design and evaluation",
+                "expected contributions",
+                "risks, limitations",
+                "utd proposal",
+                "ccf-a proposal",
+                "hybrid proposal",
+                "practical significance",
+                "affected actor",
+            )
+        ):
+            return ("ideation/proposal/research_proposal.md",)
+        if any(marker in normalized for marker in ("experiment plan", "exp_plan.yaml", "experiment mapped")):
+            return ("ideation/research_blueprint.yaml", "ideation/exp_plan.yaml")
+        if any(
+            marker in normalized
+            for marker in (
+                "research_blueprint.yaml",
+                "challenge",
+                "technical components",
+                "component references",
+                "design rationale",
+                "simpler alternative",
+                "cross-level link",
+                "utd formalization",
+                "ccf-a formalization",
+                "evaluation.",
+                "technical_risks",
+                "novelty_risks",
+                "data_or_experimental_risks",
+            )
+        ):
+            return ("ideation/research_blueprint.yaml", "ideation/claim_registry.yaml")
+        if any(marker in normalized for marker in ("claim_registry.yaml", "active claim", "active_claim_ids", "claim references")):
+            return ("ideation/research_blueprint.yaml", "ideation/claim_registry.yaml")
+        if any(
+            marker in normalized
+            for marker in (
+                "orientation-aware review scores",
+                "mandatory floor",
+                "cross_level_integration",
+            )
+        ):
+            return T45_RESEARCH_CONTENT_SOURCE_ARTIFACTS
+        return T45_QUALITY_SOURCE_ARTIFACTS
+
     @classmethod
     def _record_t45_quality_repair_attempt(cls, *, ctx: ExecutionContext, error: str) -> bool:
         """Return true only for a repeated T4.5 error with no source-artifact progress.
@@ -8845,7 +8935,8 @@ class AgentRunner:
         """
 
         normalized_error = " ".join(str(error or "unknown validation error").split()).casefold()
-        current = cls._t45_quality_source_fingerprint(ctx.workspace_dir)
+        scope = cls._t45_quality_repair_source_scope(error)
+        current = cls._t45_quality_source_fingerprint(ctx.workspace_dir, source_paths=scope)
         previous_error = str(ctx.extra.get("t45_quality_last_error") or "").casefold()
         previous = ctx.extra.get("t45_quality_last_source_fingerprint")
         no_source_progress = (
@@ -9072,8 +9163,10 @@ class AgentRunner:
             "这是 T4.5 统一质量 Gate 的定向修复，不是重新执行 T4、重新检索论文或重写 novelty_audit.md。"
             "先读取 `ideation/orientation_config.yaml` 和报错涉及的 source artifact；保留已通过字段、Candidate、"
             "novelty audit 与其它未受影响产物。不要直接写 `proposal_manifest.json`、"
-            "`post_novelty_formalization.json`、`research_dossier.json`、`validation_map.yaml` 或 `kill_criteria.yaml`，"
+            "`post_novelty_formalization.json`、`research_dossier.json`、`contribution_hypothesis_map.yaml`、"
+            "`validation_map.yaml` 或 `kill_criteria.yaml`，"
             "这些文件由 runtime 从通过验证的 source artifacts 确定性编译。"
+            "若修改 researcher-facing prose，保留已定义术语的一致写法，并在受影响文档中首次展开新增的非显然缩写。"
         )
         if AgentRunner._is_t45_repairable_warning(error):
             guidance = str(error).removeprefix("T45_REPAIRABLE_WARNING:").strip()

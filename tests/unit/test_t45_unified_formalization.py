@@ -93,6 +93,10 @@ def test_formalizer_uses_explicit_chinese_research_facing_language(tmp_path: Pat
     assert "English Canonical Title（简洁中文释义）" in prompt
     assert "Pilot" in prompt
     assert "From Copilot to Crutch（从辅助到依赖）" in prompt
+    assert "Academic writing and terminology discipline" in prompt
+    assert "Expand every non-obvious acronym at its first occurrence" in prompt
+    assert "Full English Name（简洁中文释义，ABBR）" in prompt
+    assert "never expect a reader to infer an acronym from a component ID" in prompt
 
 
 def test_t4_role_prompts_preserve_canonical_english_names_in_chinese_explanations() -> None:
@@ -132,9 +136,35 @@ def test_formalizer_does_not_rewrite_valid_structured_sources_before_prose(tmp_p
 
     message = ResearchFormalizerAgent(mode="formalize").initial_user_message(ctx)
 
-    assert "已共同通过确定性验证" in message
-    assert "不要重新生成或覆盖这三份结构化来源" in message
+    assert "最新 `valid` 结果是本轮唯一权威状态" in message
+    assert "若 valid=true，不得再重写已通过的 research_blueprint、claim_registry 与 exp_plan" in message
+    assert "runtime 会从通过验证的 source artifacts 确定性编译它们" in message
     assert "validate_t45_formalization_sources" in ResearchFormalizerAgent(mode="formalize").spec.tool_names
+
+
+def test_formalizer_prompt_treats_live_structured_validation_as_authoritative(tmp_path: Path) -> None:
+    """A startup diagnostic must not keep the model in a stale YAML-repair branch."""
+
+    populate_valid_t45_workspace(tmp_path)
+    blueprint_path = tmp_path / "ideation" / "research_blueprint.yaml"
+    blueprint = yaml.safe_load(blueprint_path.read_text(encoding="utf-8"))
+    blueprint["proposed_approach"]["alternatives_considered"] = []
+    write_yaml(blueprint_path, blueprint)
+    ctx = ExecutionContext(
+        workspace_dir=tmp_path,
+        project_id="formalizer-live-checkpoint",
+        task_id="T4.5-FORMALIZE",
+        run_id="formalizer-live-checkpoint-run",
+        mode="formalize",
+    )
+
+    prompt = ResearchFormalizerAgent(mode="formalize").system_prompt(ctx)
+
+    assert "Initial formalization diagnostic" in prompt
+    assert "opening snapshot, not a permanent instruction" in prompt
+    assert "Live structured-source checkpoint and delivery protocol" in prompt
+    assert "latest `validate_t45_formalization_sources` result supersedes it" in prompt
+    assert "If the initial snapshot and the latest tool result disagree, trust the latest" in prompt
 
 
 def test_formalizer_excludes_edit_file_from_its_runtime_tool_surface(tmp_path: Path) -> None:
@@ -429,10 +459,12 @@ def test_formalizer_injects_the_current_structured_repair_target(tmp_path: Path)
     prompt = agent.system_prompt(ctx)
     message = agent.initial_user_message(ctx)
 
-    assert "Current deterministic repair target" in prompt
-    assert "research_blueprint.yaml fails research_blueprint schema" in prompt
-    assert "research_blueprint.yaml fails research_blueprint schema" in message
-    assert "不要重写无关的 Candidate" in message
+    assert "Initial formalization diagnostic" in prompt
+    assert "research_blueprint.yaml" in prompt
+    assert "design rationale" in prompt
+    assert "latest `validate_t45_formalization_sources` result supersedes it" in prompt
+    assert "最新 `valid` 结果是本轮唯一权威状态" in message
+    assert "最小同步集合" in message
 
 
 def test_short_heading_complete_proposal_fails_with_substantive_reason(tmp_path: Path) -> None:
@@ -622,6 +654,33 @@ def test_t45_quality_repair_has_no_fixed_retry_limit_but_stops_without_source_pr
 
     proposal = _proposal_path(tmp_path)
     proposal.write_text(proposal.read_text(encoding="utf-8") + "\nA source repair.\n", encoding="utf-8")
+    assert AgentRunner._record_t45_quality_repair_attempt(ctx=ctx, error=error) is False
+
+
+def test_t45_quality_repair_ignores_unrelated_source_writes(tmp_path: Path) -> None:
+    """A repair loop cannot claim progress by changing an artifact outside its scope."""
+
+    populate_valid_t45_workspace(tmp_path)
+    ctx = ExecutionContext(
+        workspace_dir=tmp_path,
+        project_id="quality-gate-scope-test",
+        task_id="T4.5-REVIEW",
+        run_id="quality-gate-scope-run",
+    )
+    error = (
+        "T45_REPAIRABLE_WARNING:\n"
+        "Internal T4.5 quality refinements required:\n"
+        "- [claims_depth] ideation/hypotheses.md: Research Claims and Hypotheses is below the orientation depth target.\n"
+        "  Required repair: Develop missing research reasoning."
+    )
+
+    assert AgentRunner._record_t45_quality_repair_attempt(ctx=ctx, error=error) is False
+    proposal = _proposal_path(tmp_path)
+    proposal.write_text(proposal.read_text(encoding="utf-8") + "\nUnrelated proposal edit.\n", encoding="utf-8")
+    assert AgentRunner._record_t45_quality_repair_attempt(ctx=ctx, error=error) is True
+
+    hypotheses = tmp_path / "ideation" / "hypotheses.md"
+    hypotheses.write_text(hypotheses.read_text(encoding="utf-8") + "\nA claim-source repair.\n", encoding="utf-8")
     assert AgentRunner._record_t45_quality_repair_attempt(ctx=ctx, error=error) is False
 
 

@@ -25,7 +25,7 @@ def _policy(workspace: Path, *, task_id: str = "T4.5-FORMALIZE") -> WorkspaceAcc
     )
 
 
-def test_t45_cannot_publish_formalization_before_structured_exp_plan(tmp_path: Path) -> None:
+def test_t45_runtime_derived_receipt_cannot_be_written_before_structured_exp_plan(tmp_path: Path) -> None:
     populate_valid_t45_workspace(tmp_path)
     (tmp_path / "ideation" / "exp_plan.yaml").unlink()
     receipt = tmp_path / "ideation/post_novelty_formalization.json"
@@ -40,25 +40,55 @@ def test_t45_cannot_publish_formalization_before_structured_exp_plan(tmp_path: P
     )
 
     assert result.ok is False
-    assert result.error == "t45_formalization_requires_structured_sources"
-    assert result.data["required_path"] == "ideation/exp_plan.yaml"
-    assert "exp_plan" in result.data["validation_error"]
+    assert result.error == "t45_runtime_derived_artifact"
+    assert result.data["runtime_owned"] is True
+    assert "runtime 会重建" in result.content
     assert receipt.read_text(encoding="utf-8") == original_receipt
 
 
-def test_t45_allows_formalization_after_valid_exp_plan(tmp_path: Path) -> None:
+def test_t45_runtime_derived_artifacts_cannot_be_written_after_valid_source_contract(tmp_path: Path) -> None:
     populate_valid_t45_workspace(tmp_path)
     tool = WriteFileTool(_policy(tmp_path))
 
+    for path in (
+        "ideation/post_novelty_formalization.json",
+        "ideation/proposal/proposal_manifest.json",
+        "ideation/research_dossier.json",
+        "ideation/contribution_hypothesis_map.yaml",
+        "ideation/validation_map.yaml",
+        "ideation/kill_criteria.yaml",
+    ):
+        original = (tmp_path / path).read_text(encoding="utf-8")
+        result = asyncio.run(
+            tool.execute(
+                path=path,
+                content="runtime-owned mutation attempt",
+            )
+        )
+
+        assert result.ok is False
+        assert result.error == "t45_runtime_derived_artifact"
+        assert (tmp_path / path).read_text(encoding="utf-8") == original
+
+
+def test_t45_structured_writer_cannot_bypass_runtime_owned_artifact_policy(tmp_path: Path) -> None:
+    populate_valid_t45_workspace(tmp_path)
+    path = "ideation/validation_map.yaml"
+    original = (tmp_path / path).read_text(encoding="utf-8")
+
     result = asyncio.run(
-        tool.execute(
-            path="ideation/post_novelty_formalization.json",
-            content='{"status": "formalized_after_novelty_pass"}',
+        WriteStructuredFileTool(_policy(tmp_path)).execute(
+            path=path,
+            schema_name="exp_plan",
+            format="yaml",
+            data={"goal": "invalid destination bypass", "experiments": []},
         )
     )
 
-    assert result.ok is True
-    assert (tmp_path / "ideation/post_novelty_formalization.json").is_file()
+    assert result.ok is False
+    assert result.error == "t45_runtime_derived_artifact"
+    assert result.data["runtime_owned"] is True
+    assert (tmp_path / path).read_text(encoding="utf-8") == original
 
 
 def test_t45_structured_source_validator_reports_ready_without_writing(tmp_path: Path) -> None:
@@ -217,6 +247,20 @@ def test_structured_parameter_failure_is_actionable_in_cli() -> None:
     assert "结构化文件未调用" in summary
     assert "exp_plan" in summary
     assert path == "ideation/exp_plan.yaml"
+
+
+def test_runtime_owned_t45_artifact_failure_is_actionable_in_cli() -> None:
+    summary, path = summarize_tool_result(
+        tool_name="write_file",
+        ok=False,
+        content="runtime-owned artifact",
+        data={"path": "ideation/validation_map.yaml", "runtime_owned": True},
+        error="t45_runtime_derived_artifact",
+    )
+
+    assert "确定性编译" in summary
+    assert "blueprint" in summary
+    assert path == "ideation/validation_map.yaml"
 
 
 def test_blueprint_parameter_failure_names_the_actual_first_source() -> None:

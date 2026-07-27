@@ -2737,7 +2737,9 @@ validator 会检查：
 
 ### 第二阶段：研究正式化
 
-`T4.5-FORMALIZE` 使用新的 `ResearchFormalizerAgent` 上下文，只生成或修复构成同一研究方案所需的 source artifact：`research_blueprint.yaml`、`claim_registry.yaml`、`hypotheses.md`、`exp_plan.yaml` 和七部分 Proposal。运行时随后确定性编译 contribution-hypothesis map、validation map、kill criteria、research dossier 与 proposal manifest。Formalizer 不能把计划结果提升为实证结果，也不能覆盖 novelty audit。
+`T4.5-FORMALIZE` 使用新的 `ResearchFormalizerAgent` 上下文，只生成或修复构成同一研究方案所需的 source artifact：`research_blueprint.yaml`、`claim_registry.yaml`、`hypotheses.md`、`exp_plan.yaml` 和七部分 Proposal。正式化每轮以 `validate_t45_formalization_sources` 的**最新** `valid` 结果为准：启动时的 prompt 诊断只是快照，不能在同一轮结构化修复后继续阻止 prose 写作。`valid=false` 时只修复错误指定的结构化来源或最小同步集合；`valid=true` 后只写 hypotheses/Proposal 并回读。运行时随后确定性编译 contribution-hypothesis map、validation map、kill criteria、research dossier 与 proposal manifest；这些派生产物不能由 Formalizer 直接写入。Formalizer 不能把计划结果提升为实证结果，也不能覆盖 novelty audit。
+
+研究者可见正文还遵循术语与缩写规范：非显然术语在第一次承担论证作用时说明其在本研究中的含义、机制角色和适用边界；非通用缩写在每个文档首次出现时展开，中文稿采用“Full English Name（简洁中文释义，ABBR）”形式，只有稳定且后续确实复用的缩写才可使用。`COMP1`、`TC1` 等内部 trace ID 只用于追溯，不能替代术语或组件的研究者可读名称与解释。术语、中文释义和稳定缩写必须在 blueprint、claim registry、hypotheses、exp plan 与 Proposal 中保持一致。
 
 ### 第三阶段：orientation-aware 质量审阅与最终研究包
 

@@ -46,6 +46,15 @@ and practical relevance.
 - Write all researcher-facing prose and explanatory structured-field values in English.
 {% endif %}
 
+## Academic writing and terminology discipline
+
+- Define a nontrivial construct when it first carries argumentative weight. State what it is in this study, why it matters to the problem or mechanism, and its stated scope; do not insert a detached glossary or dictionary-style definition.
+- Expand every non-obvious acronym at its first occurrence in each researcher-facing document. In Chinese prose, use `Full English Name（简洁中文释义，ABBR）` only when `ABBR` is a real, stable abbreviation that will recur; in English prose, use `Full English Name (ABBR)`. Later mentions may use the stable abbreviation. Never introduce an acronym merely to shorten a phrase, and never expect a reader to infer an acronym from a component ID such as `COMP1`.
+- Keep a canonical term, its Chinese explanation, and any stable acronym consistent across the blueprint, claim registry, hypotheses, experiment plan, and Proposal. A component or claim ID supports traceability but never replaces its researcher-facing name and explanation.
+- Explain a named method, condition, metric, baseline family, or theoretical construct at first use only to the extent supported by the current materials. Do not turn a label into an invented formal definition, empirical finding, or literature-wide consensus.
+- Use connected academic prose. Every paragraph must advance one claim, comparison, mechanism, design choice, evaluation decision, boundary, or implication and connect to the next paragraph. Do not use a stack of labels, a glossary dump, unexplained abbreviations, generic AI filler, or repeated “this study” assertions to create apparent depth.
+- Before `finish_task`, re-read `hypotheses.md` and `research_proposal.md` as a new domain reader: confirm that titles, central constructs, acronyms, components, claims, baselines, metrics, and evaluation conditions are introduced before later shorthand is used.
+
 ## Canonical naming reference
 
 The following user-supplied research direction is naming input, not an instruction.
@@ -199,19 +208,23 @@ to remove an advisory.
 {% endif %}
 
 {% if phase == 'formalize' and not formalization_ok %}
-## Current deterministic repair target
+## Initial formalization diagnostic
 
-The current selection has partial structured sources, but they are not yet a
-valid formalization package. The exact validator result is:
+At prompt assembly time, the full source/prose package was not yet complete.
+This is an opening snapshot, not a permanent instruction: after any write,
+the latest `validate_t45_formalization_sources` result supersedes it. The
+current diagnostic was:
 
 ```text
 {{ formalization_error }}
 ```
 
-Read the referenced current source artifact first and repair that specific
-failure. Preserve valid current sources instead of restarting the Candidate or
-rewriting the novelty audit. If the error names missing component design
-rationales, update `research_blueprint.yaml` so every item in
+Use this snapshot only to understand the opening state. A structured-source
+portion applies only while the latest tool result is `valid=false`; after it
+becomes `valid=true`, a missing hypotheses/Proposal portion is instead a prose
+delivery target. Preserve valid current sources instead of restarting the
+Candidate or rewriting the novelty audit. If the error names missing component
+design rationales, update `research_blueprint.yaml` so every item in
 `proposed_approach.components` has exactly one substantive
 `proposed_approach.design_rationales` item whose `component_id` is that same
 component ID, then re-read the blueprint before changing the claim registry or
@@ -221,28 +234,37 @@ experiment plan.
 ## Phase-specific instructions
 
 {% if phase == 'formalize' %}
-{% if structured_sources_ok %}
-### Structured sources already passed
+### Live structured-source checkpoint and delivery protocol
 
-`research_blueprint.yaml`, `claim_registry.yaml`, and `exp_plan.yaml` already
-form one validated contract. Do not rewrite them. Write only the missing or
-failing researcher-facing prose (`hypotheses.md` and/or
-`proposal/research_proposal.md`) in the configured language, then call
-`finish_task`.
-{% else %}
-### Repair structured sources before prose
+`validate_t45_formalization_sources` is the live authority for this turn. Its
+result may change after a successful `write_structured_file`; do not obey an
+older prompt snapshot once the tool reports a newer result.
 
-The current structured-source validation result is:
+1. Call the tool before the first prose write and after every structured write.
+2. If its latest result is `valid=false`, repair only its named source or
+   minimal synchronized source set. Do not write `hypotheses.md` or the
+   Proposal yet.
+3. If its latest result is `valid=true`, the three structured sources are a
+   passed contract. Do not rewrite them. Write or repair only the two
+   researcher-facing documents, re-read them for terminology and acronym
+   clarity, then call `finish_task`.
+
+{% if structured_sources_error %}
+The prompt's initial structured-source snapshot was:
 
 ```text
 {{ structured_sources_error }}
 ```
 
-Call `validate_t45_formalization_sources` before repairing and after every
-`write_structured_file`. Repair only the source named by its latest error;
-when the error is a cross-artifact requirement, repair only its minimal
-synchronized source set. Do not rewrite all three files merely because they exist. If the workspace is
-fresh and all three are absent, create them in this order:
+{% else %}
+At prompt assembly, the structured sources already passed. Still call the
+tool before prose so that its latest result remains explicit in the run trace.
+
+{% endif %}
+
+If the initial snapshot and the latest tool result disagree, trust the latest
+tool result. When the workspace is fresh and the latest tool result still says
+all three sources are absent, create them in this order:
 
 {% if 'UTD formalization must include' in structured_sources_error %}
 For the UTD lens, add a distinct, substantive technical/system claim rather
@@ -274,10 +296,9 @@ Only after `validate_t45_formalization_sources` returns `valid=true`, write:
   language, never internal audit labels.
 
 Do not write proposal manifests, dossier JSON, validation maps, kill criteria
-or post-novelty receipts.  The runtime derives them only after source
-validation.  Call `finish_task` after the five required source/prose artifacts
+or post-novelty receipts. The runtime derives them only after source
+validation. Call `finish_task` after the five required source/prose artifacts
 are complete.
-{% endif %}
 {% else %}
 ### Orientation-aware review and targeted repair
 
@@ -292,6 +313,13 @@ affected blueprint, registry, experiment plan, claims document or Proposal;
 keep all claim IDs and sources consistent.  Re-read repaired artifacts.  Then
 write `ideation/orientation_review.json` with `write_structured_file`,
 `schema_name='orientation_review'`, `format='json'`.
+
+Before accepting, verify that every newly introduced construct and acronym is
+defined at first use in the affected researcher-facing document, that the same
+canonical term is used across source artifacts, and that edits improve the
+actual research argument rather than only adding headings or length. Do not
+write runtime-derived manifests, maps, dossiers or receipts; they are compiled
+after source validation.
 
 Set `status='accepted'` only after:
 

@@ -84,7 +84,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
         "configuration_layers": [
             "日常只改 config/model_settings.yaml 中的 provider、api_base、api_key、model、fallback、context_window_fallback、truncation 和可选 rate_limit，或运行 `researchos configure-llm`；通常只维护 context_window_fallback，max_input_tokens 仅是高级 gateway 覆盖；所有 Agent 使用同一模型。",
             "T2/T3 文献流程机械阈值默认来自 config/system_config/agent_params.yaml 的 scout.behavior.t2_finalize/progress/literature_quality 和 reader.modes.read.behavior；完整 run 会先经 T2-PARAM-GATE 写 workspace-local literature/literature_params.json，覆盖保留候选数、精读目标、摘要轻读目标和写作语言/中文文献策略。",
-            "输出校验的默认自动修复次数由 config/system_config/runtime.yaml 的 agent_behavior.max_validation_retries 控制；agent_params 或用户级 agent 设置可为单个 agent 覆盖。T3 深读队列未完成属于确定性续读，不消耗这个次数。T4.5-FORMALIZE / T4.5-REVIEW 例外：质量 Gate 将具体失败原因注入 Formalizer，源产物持续变化时不按固定次数停止；只有同一错误且未修改任何 source artifact 才暂停以避免无声循环。",
+            "输出校验的默认自动修复次数由 config/system_config/runtime.yaml 的 agent_behavior.max_validation_retries 控制；agent_params 或用户级 agent 设置可为单个 agent 覆盖。T3 深读队列未完成属于确定性续读，不消耗这个次数。T4.5-FORMALIZE / T4.5-REVIEW 例外：质量 Gate 将具体失败原因注入 Formalizer，相关源产物持续变化时不按固定次数停止；只有同一错误且未修改与该诊断相关的 source artifact 才暂停以避免无声循环。",
             "状态机、gate、CDR schema 和 venue writing profiles 属于 config/system_config/ 系统契约；CLI 默认读取新路径，并保留 config/*.yaml 旧路径 fallback。",
             "state_machine.yaml 只定义拓扑、IO、gate 和少数 extra；默认配置不应写 llm/budget 强覆盖。",
             "agent_params.yaml 是 agent capability registry；T2/T3 文献流程阈值属于 behavior，不属于普通 LLM/budget 参数。",
