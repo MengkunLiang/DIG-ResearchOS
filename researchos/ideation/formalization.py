@@ -262,11 +262,12 @@ def ensure_current_t45_selection_isolation(workspace: Path) -> dict[str, Any] | 
     """Migrate a resumed old selection to the current isolation contract.
 
     This only handles workspaces created before Gate1 isolation existed. A
-    mismatched legacy manifest is decisive evidence that the active
-    formalization package belongs to another Candidate, so the complete
-    formalization side is archived before a resumed Formalizer can read it.
-    A newer audit remains active: it is the current selection's required
-    source boundary and must not be discarded during a formalization resume.
+    mismatched legacy manifest is decisive evidence that its own receipt cannot
+    authorize the current Candidate. A resumed Formalizer can nevertheless
+    have already written new structured sources after the selection timestamp,
+    so archive only artifacts that predate the current selection. A newer
+    audit remains active: it is the current selection's required source
+    boundary and must not be discarded during a formalization resume.
     """
 
     workspace = Path(workspace)
@@ -292,9 +293,6 @@ def ensure_current_t45_selection_isolation(workspace: Path) -> dict[str, Any] | 
         if (candidate := workspace / path).exists()
         and candidate.stat().st_mtime <= selection_mtime
     ]
-    if manifest_mismatch:
-        stale_paths = list(_T45_FORMALIZATION_RESET_PATHS)
-
     archive: dict[str, Any] | None = None
     if stale_paths:
         archive = _archive_t45_paths(

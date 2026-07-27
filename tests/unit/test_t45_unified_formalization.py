@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
+import time
 
 import yaml
 
 from researchos.ideation.formalization import (
     T45_SELECTION_ISOLATION_REL_PATH,
+    ensure_current_t45_selection_isolation,
     reset_t45_artifacts_for_new_selection,
     legacy_t45_upgrade_reason,
     validate_blueprint_and_claim_registry,
@@ -208,6 +211,44 @@ def test_new_candidate_selection_archives_prior_t45_package(tmp_path: Path) -> N
     assert isolation["selection_fingerprint"] == "selection-d2"
     assert validate_t45_selection_isolation(tmp_path, require_accepted=False) == (True, None)
     assert validate_t45_selection_isolation(tmp_path, require_accepted=True)[0] is False
+
+
+def test_resume_isolation_keeps_new_structured_sources_but_archives_old_prose(tmp_path: Path) -> None:
+    """A paused current formalization must not lose its already-written sources."""
+
+    populate_valid_t45_workspace(tmp_path)
+    selected_path = tmp_path / "ideation" / "selected" / "selected_candidate.json"
+    selected_path.write_text(
+        json.dumps(
+            {
+                "candidate_id": "D2",
+                "selection_fingerprint": "selection-d2",
+                "candidate": {"id": "D2"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    selection_time = time.time() + 10
+    os.utime(selected_path, (selection_time, selection_time))
+    for rel_path in (
+        "ideation/research_blueprint.yaml",
+        "ideation/claim_registry.yaml",
+        "ideation/exp_plan.yaml",
+    ):
+        path = tmp_path / rel_path
+        source_time = selection_time + 10
+        os.utime(path, (source_time, source_time))
+
+    context = ensure_current_t45_selection_isolation(tmp_path)
+
+    assert context is not None
+    assert context["candidate_id"] == "D2"
+    assert (tmp_path / "ideation/research_blueprint.yaml").is_file()
+    assert (tmp_path / "ideation/claim_registry.yaml").is_file()
+    assert (tmp_path / "ideation/exp_plan.yaml").is_file()
+    assert not (tmp_path / "ideation/hypotheses.md").exists()
+    assert not (tmp_path / "ideation/proposal" / "research_proposal.md").exists()
+    assert not (tmp_path / "ideation/post_novelty_formalization.json").exists()
 
 
 def test_short_heading_complete_proposal_fails_with_substantive_reason(tmp_path: Path) -> None:
