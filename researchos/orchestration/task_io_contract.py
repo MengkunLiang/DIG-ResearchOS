@@ -68,6 +68,22 @@ LITERATURE_DEPENDENT_IMPORT_PREFIXES: tuple[str, ...] = (
     "T8",
 )
 
+# T4-GATE1 is not a standalone document viewer.  It is a decision over a
+# native Population, its scores, lineage, Candidate dossiers, and a complete
+# T4-to-T4.5 handoff.  Importing only the rendered card files creates a
+# convincing but unusable half-workspace: there is no project configuration,
+# no native T4 state, and no selected-Candidate material for the action the
+# researcher is about to confirm.  Explicit T4 and T4-GATE1 workspace imports
+# therefore transfer the whole auditable ideation tree in addition to the
+# shared literature substrate.
+T4_RESELECTION_IMPORT_TASKS: frozenset[str] = frozenset({"T4", "T4-GATE1"})
+T4_RESELECTION_IMPORT_ROOT = "ideation"
+T4_RESELECTION_IMPORT_BASE_PATHS: tuple[str, ...] = (
+    "project.yaml",
+    "user_seeds/seed_ideas.md",
+    "user_seeds/seed_constraints.md",
+)
+
 
 TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
     "HELLO": {
@@ -1973,6 +1989,9 @@ def task_import_paths(task_id: str) -> list[str]:
     normalized_task_id = str(task_id or "").strip().upper()
     if normalized_task_id.startswith(LITERATURE_DEPENDENT_IMPORT_PREFIXES):
         candidates.append(LITERATURE_IMPORT_ROOT)
+    if normalized_task_id in T4_RESELECTION_IMPORT_TASKS:
+        candidates.extend(T4_RESELECTION_IMPORT_BASE_PATHS)
+        candidates.append(T4_RESELECTION_IMPORT_ROOT)
 
     selected: list[str] = []
     for candidate in candidates:

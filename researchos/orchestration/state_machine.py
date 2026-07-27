@@ -3875,6 +3875,14 @@ class StateMachine:
         node = self.nodes.get(state.current_task)
         if node is None:
             return state
+        if state.pending_gate.gate_id == "runtime_recovery_gate" and workspace_dir is not None:
+            redirected = self._redirect_incomplete_t5_to_t45_formalization(
+                state,
+                workspace_dir,
+                source="pending_t5_runtime_recovery",
+            )
+            if redirected is not None:
+                return redirected
         # A previously rendered T4 recovery panel can become obsolete without
         # another model turn: legacy Final Cards may have been migrated, or a
         # bounded repair may already have committed a complete deck before the
@@ -4041,6 +4049,87 @@ class StateMachine:
             return state
         state.pending_gate.presentation = presentation
         state.pending_gate.options = options
+        return state
+
+    def _redirect_incomplete_t5_to_t45_formalization(
+        self,
+        state: StateYaml,
+        workspace_dir: Path,
+        *,
+        source: str,
+        error: str | None = None,
+    ) -> StateYaml | None:
+        """Return a stale T5 handoff to the source-aware T4.5 repair path.
+
+        T5 consumes a formalized research contract; it must never be used as
+        a fallback writer for a missing blueprint, claim registry, experiment
+        plan, or independent orientation review.  This is especially common
+        in a workspace created from an older T4.5 package, where the audit and
+        legacy Proposal exist but a structured write failed before the unified
+        formalization contract was complete.
+
+        The redirect is deliberately conditional on the real T4.5 inputs. If
+        those are absent too, the caller preserves the original prerequisite
+        diagnostic rather than pretending a Formalizer can invent an upstream
+        Candidate or literature base.
+        """
+
+        if "T4.5-FORMALIZE" not in self.nodes:
+            return None
+        if state.current_task not in {"T5-REBOOST-GATE", "T5-HANDOFF", "T4.5-HUMAN-REVIEW"}:
+            return None
+
+        audit_path = workspace_dir / "ideation" / "novelty_audit.md"
+        formal_ok = False
+        formal_error = ""
+        if audit_path.is_file():
+            formal_ok, raw_error = _validate_t45_post_novelty_formalization(workspace_dir, audit_path)
+            formal_error = str(raw_error or "")
+        else:
+            formal_error = "missing ideation/novelty_audit.md"
+        if formal_ok:
+            return None
+
+        formalize_inputs = {
+            "project": workspace_dir / "project.yaml",
+            "hypothesis_brief": workspace_dir / "ideation" / "hypothesis_brief.yaml",
+            "selected_candidate": workspace_dir / "ideation" / "selected" / "selected_candidate.json",
+            "novelty_audit": audit_path,
+            "synthesis": workspace_dir / "literature" / "synthesis.md",
+        }
+        missing_inputs = [name for name, path in formalize_inputs.items() if not path.is_file() or path.stat().st_size <= 0]
+        if missing_inputs:
+            return None
+
+        diagnostic = formal_error or str(error or "").strip() or "formalization contract is incomplete"
+        summary = "T5 handoff is blocked until T4.5 formalization passes: " + diagnostic
+        repair = {
+            "schema_version": "1.0.0",
+            "semantics": "t45_t5_handoff_formalization_repair",
+            "action": "repair_t45_before_t5",
+            "target_task": "T4.5-FORMALIZE",
+            "requested_at": _now_iso(),
+            "source": source,
+            "error_summary": summary[:1200],
+            "required_contract": [
+                "ideation/research_blueprint.yaml",
+                "ideation/claim_registry.yaml",
+                "ideation/exp_plan.yaml",
+                "ideation/orientation_review.json",
+            ],
+            "scope": (
+                "Repair the missing or invalid unified T4.5 source artifacts before T5. "
+                "Preserve the selected Candidate, novelty audit, valid hypotheses, and valid Proposal sections; "
+                "do not use T5 to invent research claims, baselines, experiment design, or quality-review results."
+            ),
+        }
+        state.task_context["runtime_recovery"] = dict(repair)
+        state.task_context["t45_t5_handoff_repair"] = dict(repair)
+        state.pending_gate = None
+        state.current_task = "T4.5-FORMALIZE"
+        state.status = "RUNNING"
+        state.paused_at = None
+        state.last_error = None
         return state
 
     def _resume_confirmed_native_t4_directive(
@@ -4677,6 +4766,22 @@ class StateMachine:
                 return self.pause_for_immediate_gate(state, workspace_dir=workspace_dir)
 
         next_task = self._resolve_branch(node, gate_result, state, workspace_dir=workspace_dir)
+        if (
+            node.task_id == "T4.5-HUMAN-REVIEW"
+            and next_task in {"T5-REBOOST-GATE", "T5-HANDOFF"}
+            and workspace_dir is not None
+        ):
+            redirected = self._redirect_incomplete_t5_to_t45_formalization(
+                state,
+                workspace_dir,
+                source="t45_human_review_continue_to_t5",
+            )
+            if redirected is not None:
+                # Preserve the researcher's intent in the normal immediate-Gate
+                # receipt, but record the actual next node truthfully. T5 is
+                # not authorized until the formalization quality gate passes.
+                self._persist_immediate_gate_result(node, gate_result, state.current_task, workspace_dir)
+                return redirected
         # ``_resolve_branch`` runs before the material receipt is persisted,
         # so its ``__parse_from_output__`` route can only see the previous
         # decision file. Resolve the current affirmative material choice here

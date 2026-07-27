@@ -657,7 +657,9 @@ gates:
     options: []
 
   # T4.5 非通过 verdict 的人工确认门：
-  # Novelty Auditor 可以建议 reframe/drop，但最终是否回 T4、继续外部实验链或停止由用户决定。
+  # Novelty Auditor 可以建议 reframe/drop，但最终是否回 T4、请求外部实验链或停止由用户决定。
+  # "继续"只表达研究者意图；若统一 formalization 质量契约尚未通过，状态机会先回到
+  # T4.5-FORMALIZE 定向修复，绝不会把缺少 blueprint/claims/plan/review 的包送入 T5。
   t45_human_review_gate:
     title: "T4.5 新颖性审计人工决策"
     description: "T4.5 的 Final Gate Verdict 未直接通过。请查看审计报告和候选池后决定下一步，系统不会自动拒绝或自动回退。"
@@ -686,6 +688,7 @@ gates:
     options:
       - id: continue_to_t5
         label: "继续进入外部实验链"
+        description: "仅当 blueprint、claim registry、实验计划和 orientation review 均通过 T4.5 质量 Gate 时进入 T5；否则保留本选择并先定向补齐正式化材料。"
         next: T5-REBOOST-GATE
       - id: return_to_t4
         label: "回到 T4 重构"

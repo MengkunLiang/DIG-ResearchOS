@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import yaml
@@ -11,9 +12,12 @@ from researchos.ideation.formalization import (
     validate_t45_formalization_core,
 )
 from researchos.ideation.proposal import validate_t45_research_proposal
+from researchos.orchestration.state_machine import StateMachine
+from researchos.orchestration.task_io_contract import task_import_paths
 from researchos.runtime.agent import Agent, AgentSpec, ExecutionContext
 from researchos.runtime.orchestrator import AgentRunner
 from researchos.runtime.config import RuntimeSettings
+from researchos.schemas.state import GateState, StateYaml
 from researchos.testing.mocks import FakeLLMMessage, FakeRawCompletion, FakeToolCall, MockHumanInterface, MockLLMClient
 from researchos.tools.builtin import register_builtin_tools
 from researchos.tools.external_experiment import _build_reboost_pack
@@ -339,3 +343,93 @@ def test_legacy_passed_audit_requires_formalization_upgrade_not_silent_t5_use(tm
     reason = legacy_t45_upgrade_reason(tmp_path)
     assert reason is not None
     assert "统一研究正式化质量 gate" in reason
+
+
+def test_t4_gate1_workspace_import_includes_the_complete_reselection_closure() -> None:
+    """A Gate1 import must not leave a cards-only workspace without project/T4 state."""
+
+    paths = task_import_paths("T4-GATE1")
+
+    assert "project.yaml" in paths
+    assert "literature" in paths
+    assert "ideation" in paths
+    assert not any(path.startswith("ideation/") for path in paths)
+
+
+def _state_machine() -> StateMachine:
+    repo_root = Path(__file__).resolve().parents[2]
+    return StateMachine(
+        repo_root / "config/system_config/state_machine.yaml",
+        repo_root / "config/system_config/gates.yaml",
+    )
+
+
+def test_incomplete_t5_contract_redirects_to_t45_formalization(tmp_path: Path) -> None:
+    populate_valid_t45_workspace(tmp_path)
+    (tmp_path / "ideation" / "orientation_review.json").unlink()
+    state = StateYaml(project_id="test", current_task="T5-REBOOST-GATE", status="PAUSED")
+
+    redirected = _state_machine()._redirect_incomplete_t5_to_t45_formalization(
+        state,
+        tmp_path,
+        source="test",
+    )
+
+    assert redirected is state
+    assert state.current_task == "T4.5-FORMALIZE"
+    assert state.status == "RUNNING"
+    assert state.pending_gate is None
+    repair = state.task_context["t45_t5_handoff_repair"]
+    assert repair["target_task"] == "T4.5-FORMALIZE"
+    assert "orientation_review" in repair["error_summary"]
+
+
+def test_t45_human_continue_cannot_bypass_missing_formalization(tmp_path: Path) -> None:
+    populate_valid_t45_workspace(tmp_path)
+    (tmp_path / "ideation" / "exp_plan.yaml").unlink()
+    state = StateYaml(
+        project_id="test",
+        current_task="T4.5-HUMAN-REVIEW",
+        status="WAITING_HUMAN",
+        pending_gate=GateState(
+            gate_id="t45_human_review_gate",
+            presented_at="2026-07-27T00:00:00+00:00",
+            presentation={},
+            options=[],
+        ),
+    )
+
+    resolved = _state_machine().resolve_pending_gate(
+        state,
+        {"option_id": "continue_to_t5", "captured": {}},
+        workspace_dir=tmp_path,
+    )
+
+    assert resolved.current_task == "T4.5-FORMALIZE"
+    assert resolved.status == "RUNNING"
+    assert resolved.pending_gate is None
+    receipt = json.loads((tmp_path / "ideation" / "novelty_human_review.json").read_text(encoding="utf-8"))
+    assert receipt["selected_option"] == "continue_to_t5"
+    assert receipt["next_task"] == "T4.5-FORMALIZE"
+
+
+def test_pending_t5_recovery_is_upgraded_to_t45_formalization(tmp_path: Path) -> None:
+    populate_valid_t45_workspace(tmp_path)
+    (tmp_path / "ideation" / "research_blueprint.yaml").unlink()
+    state = StateYaml(
+        project_id="test",
+        current_task="T5-REBOOST-GATE",
+        status="WAITING_HUMAN",
+        pending_gate=GateState(
+            gate_id="runtime_recovery_gate",
+            presented_at="2026-07-27T00:00:00+00:00",
+            presentation={},
+            options=[],
+        ),
+    )
+
+    refreshed = _state_machine().refresh_pending_gate_presentation(state, workspace_dir=tmp_path)
+
+    assert refreshed.current_task == "T4.5-FORMALIZE"
+    assert refreshed.status == "RUNNING"
+    assert refreshed.pending_gate is None

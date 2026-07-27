@@ -439,6 +439,29 @@ class CompletePipelineRunner:
             if not prerequisites_ok:
                 error = f"任务前置材料未就绪，未提交模型请求: {prerequisites_error}"
                 is_literature_coverage_gap = "Literature reading coverage is not ready" in str(prerequisites_error)
+                t45_redirected = None
+                if state.current_task in {"T5-REBOOST-GATE", "T5-HANDOFF"}:
+                    t45_redirected = self.state_machine._redirect_incomplete_t5_to_t45_formalization(
+                        state,
+                        self.workspace,
+                        source="t5_prerequisite_preflight",
+                        error=error,
+                    )
+                if t45_redirected is not None:
+                    prior_task = state.current_task
+                    state = t45_redirected
+                    state.dump_yaml(state_path)
+                    self.run_logger.event(
+                        "STATE_TRANSITION",
+                        from_task=prior_task,
+                        to_task=state.current_task,
+                        reason="incomplete_t45_formalization",
+                    )
+                    self.progress.emit(
+                        "[T4.5 Quality Gate] T5 所需正式化材料不完整；已回到 T4.5-FORMALIZE 定向补齐，未提交 T5 模型请求。",
+                        important=True,
+                    )
+                    continue
                 recovered = self.state_machine._pause_for_runtime_recovery_gate(
                     state,
                     error=error,
