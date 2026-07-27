@@ -17,6 +17,7 @@ from researchos.ideation.formalization import (
     format_t45_repairable_quality_warnings,
     reset_t45_artifacts_for_new_selection,
     legacy_t45_upgrade_reason,
+    validate_claims_markdown,
     validate_blueprint_and_claim_registry,
     validate_t45_selection_isolation,
     validate_t45_formalization_core,
@@ -406,6 +407,44 @@ def test_removed_h1_cannot_satisfy_active_claim_contract(tmp_path: Path) -> None
     ok, error = validate_t45_formalization_core(tmp_path)
     assert ok is False
     assert "TC1" in (error or "") or "too short" in (error or "")
+
+
+def test_claim_markdown_keeps_level_three_fields_inside_level_two_claim() -> None:
+    """Chinese researcher-facing claim fields must not be parsed as a new claim."""
+
+    registry = {"claims": [{"id": "DP1"}]}
+    text = """# 研究主张与假设
+
+## DP1：动态渐退式话术脚手架设计原则
+
+### 主张
+渐退式建议应当在计划性 AI 移除后提高主播的独立销售转化率，并且相对静态稀疏建议仍有增量收益。
+
+### 理由
+静态稀疏格式只能降低对完整脚本的依赖，却不能检验逐步撤除支持是否促进独立策略生成。
+
+### 机制
+完整脚本、目标理由和关键词提示依次减少外部认知卸载，促使主播检索并重组自身的情境知识。
+
+### 预期观察
+渐退组在无 AI 阶段优于静态稀疏组，且主动改写比率在 AI 辅助期末更高。
+
+### 评测
+以三臂随机实验比较渐退、持续完整脚本和静态稀疏条件，并预先注册主要结果和非劣效检验。
+
+### 竞争解释
+若高质量内容的被动暴露足以解释学习，静态稀疏组应与渐退组表现等价。
+
+### 证伪条件
+若渐退组在 AI 移除后的表现不高于静态稀疏组，或即时绩效显著下降，则该设计主张不成立。
+
+## MC1：下一项主张
+
+### 主张
+此处是独立 claim，不应进入 DP1 区块。
+"""
+
+    assert validate_claims_markdown(text, registry=registry, orientation={}) is None
 
 
 def test_claim_without_experiment_mapping_and_component_test_fails(tmp_path: Path) -> None:

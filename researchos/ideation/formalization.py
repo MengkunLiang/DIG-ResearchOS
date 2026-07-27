@@ -1303,11 +1303,22 @@ def _research_text_length(text: str) -> int:
 
 
 def _markdown_block_for_heading(text: str, heading: str) -> str:
-    match = re.search(rf"(?im)^###?\s+{re.escape(heading)}\b.*$", text)
+    """Return a claim section without mistaking its field headings for claims.
+
+    Claim blocks use a level-two or level-three heading (for example
+    ``## DP1``), followed by field headings such as ``### Rationale`` or
+    ``### 理由``.  The previous implementation ended the block at *any*
+    level-two/three heading, which reduced every level-two claim with
+    level-three fields to its title alone.  A Markdown section ends only at a
+    heading of the same or a higher level.
+    """
+
+    match = re.search(rf"(?im)^(?P<marks>###?)\s+{re.escape(heading)}\b.*$", text)
     if not match:
         return ""
     tail = text[match.end() :]
-    end = re.search(r"(?im)^###?\s+", tail)
+    level = len(match.group("marks"))
+    end = re.search(rf"(?m)^#{{1,{level}}}\s+", tail)
     return text[match.start() : match.end() + (end.start() if end else len(tail))]
 
 
