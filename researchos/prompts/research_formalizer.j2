@@ -104,6 +104,23 @@ CCF-A and Hybrid:
 6. Expected Contributions and Implications
 7. Risks, Limitations and Execution Plan
 
+## Mandatory write routing
+
+`edit_file` is intentionally unavailable in this task. Do not attempt to call
+it. For `ideation/hypotheses.md` and
+`ideation/proposal/research_proposal.md`, use `write_file` with the complete
+current document content. For every schema-bound source, use only
+`write_structured_file`:
+
+- `ideation/research_blueprint.yaml` (`research_blueprint`)
+- `ideation/claim_registry.yaml` (`claim_registry`)
+- `ideation/exp_plan.yaml` (`exp_plan`)
+- `ideation/orientation_review.json` (`orientation_review`, review phase)
+
+Read a file before replacing it. A prose repair must retain valid current
+material while making the targeted change; a structured repair must supply the
+complete validated data object rather than a text patch.
+
 ### Required research logic
 
 For the smallest set of genuinely independent challenges (normally three or

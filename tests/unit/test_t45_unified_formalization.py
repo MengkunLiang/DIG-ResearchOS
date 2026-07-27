@@ -25,7 +25,7 @@ from researchos.ideation.formalization import (
 from researchos.ideation.proposal import validate_t45_research_proposal
 from researchos.orchestration.state_machine import StateMachine
 from researchos.orchestration.task_io_contract import task_import_paths
-from researchos.runtime.agent import Agent, AgentSpec, ExecutionContext
+from researchos.runtime.agent import Agent, AgentSpec, ExecutionContext, resolve_effective_config
 from researchos.runtime.orchestrator import AgentRunner
 from researchos.runtime.config import RuntimeSettings
 from researchos.runtime.observability.extractors import extract_stage_insights
@@ -105,6 +105,40 @@ def test_formalizer_does_not_rewrite_valid_structured_sources_before_prose(tmp_p
     assert "已共同通过确定性验证" in message
     assert "不要重新生成或覆盖这三份结构化来源" in message
     assert "validate_t45_formalization_sources" in ResearchFormalizerAgent(mode="formalize").spec.tool_names
+
+
+def test_formalizer_excludes_edit_file_from_its_runtime_tool_surface(tmp_path: Path) -> None:
+    """T4.5 should not tempt the model to patch schema-bound sources as text."""
+
+    agent = ResearchFormalizerAgent(mode="review")
+    assert agent.spec.allow_edit_file_compatibility is False
+
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    # The policy must also hold if an external registration happens to expose
+    # a tool with this compatibility name.
+    registry.grant_dynamic_tools(["edit_file"], allowed_agents=["research_formalizer"])
+    runner = AgentRunner(
+        agent,
+        registry,
+        MockLLMClient([]),
+        MockHumanInterface(),
+        RuntimeSettings(),
+    )
+    ctx = ExecutionContext(
+        workspace_dir=tmp_path,
+        project_id="formalizer-tool-contract",
+        task_id="T4.5-REVIEW",
+        run_id="formalizer-tool-contract-run",
+        mode="review",
+    )
+
+    tool_names = runner._resolve_run_tool_names(resolve_effective_config(agent.spec, ctx))
+
+    assert "edit_file" not in tool_names
+    assert {"write_file", "write_structured_file", "validate_t45_formalization_sources"} <= set(tool_names)
+    prompt = agent.system_prompt(ctx)
+    assert "`edit_file` is intentionally unavailable in this task" in prompt
 
 
 def test_t45_depth_warning_is_internal_prompt_guidance(tmp_path: Path) -> None:

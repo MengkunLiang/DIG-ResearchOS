@@ -64,7 +64,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
                 "agent_behavior.max_validation_retries",
             ],
             "agent_params_yaml": [
-                "agents.<agent>.tools.tool_names/allowed_read_prefixes/allowed_write_prefixes",
+                "agents.<agent>.tools.tool_names/allowed_read_prefixes/allowed_write_prefixes/allow_edit_file_compatibility",
                 "agents.<agent>.prompt.prompt_template/structured_outputs/expected_outputs",
                 "agents.scout.behavior.t2_finalize.*",
                 "agents.scout.behavior.progress.*",

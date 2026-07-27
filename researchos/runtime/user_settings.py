@@ -298,7 +298,13 @@ _BUDGET_SHORTHAND_KEYS = {
     "tags",
     "budget_tags",
 }
-_TOOLS_SHORTHAND_KEYS = {"tool_names", "allowed_read_prefixes", "allowed_write_prefixes", "extra_tool_names"}
+_TOOLS_SHORTHAND_KEYS = {
+    "tool_names",
+    "allowed_read_prefixes",
+    "allowed_write_prefixes",
+    "extra_tool_names",
+    "allow_edit_file_compatibility",
+}
 _PROMPT_SHORTHAND_KEYS = {"prompt_template", "structured_outputs", "expected_outputs", "output_schemas"}
 
 

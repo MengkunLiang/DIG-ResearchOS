@@ -247,6 +247,32 @@ class AgentRunner:
         )
         self._t4_durable_recap_keys: set[str] = set()
 
+    def _resolve_run_tool_names(self, eff: EffectiveConfig) -> list[str]:
+        """Resolve runtime-added tools without overriding an Agent's write contract."""
+
+        tool_names = list(eff.tool_names)
+        dynamic_tool_names = self.tool_registry.dynamic_tool_names_for(self.agent.spec.name)
+        if dynamic_tool_names:
+            # MCP tools are configured by the workspace owner at startup. They
+            # augment, rather than replace, the capability contract declared by
+            # the Agent or Skill.
+            tool_names.extend(dynamic_tool_names)
+
+        if not eff.allow_edit_file_compatibility:
+            # Some tasks own schema-bound sources and deliberately expose only
+            # write_structured_file for them. Do this after dynamic-tool
+            # augmentation as well, so an MCP registration cannot quietly
+            # reintroduce an incompatible compatibility surface.
+            return list(dict.fromkeys(name for name in tool_names if name != "edit_file"))
+
+        if "write_file" in tool_names and self.tool_registry.has("edit_file"):
+            # OpenAI-compatible providers often choose the familiar
+            # ``edit_file`` name after reading an existing text document.
+            # Agents can opt out when that alias would conflict with their
+            # structured-write contract.
+            tool_names.append("edit_file")
+        return list(dict.fromkeys(tool_names))
+
     def _is_t4_ideation_agent(self, ctx: ExecutionContext) -> bool:
         """Return whether native T4 controls apply to this runner.
 
@@ -787,19 +813,7 @@ class AgentRunner:
         ctx.extra.pop("_runtime_explicit_pause", None)
         eff = resolve_effective_config(self.agent.spec, ctx)
         eff = self._apply_runtime_recovery_window(eff, ctx)
-        dynamic_tool_names = self.tool_registry.dynamic_tool_names_for(self.agent.spec.name)
-        if dynamic_tool_names:
-            # MCP tools are configured by the workspace owner at startup. They
-            # augment, rather than replace, the capability contract declared by
-            # the Agent or Skill.
-            eff.tool_names = list(dict.fromkeys([*eff.tool_names, *dynamic_tool_names]))
-        if "write_file" in eff.tool_names and self.tool_registry.has("edit_file"):
-            # OpenAI-compatible providers often choose the familiar
-            # ``edit_file`` name after reading an existing document. Expose a
-            # policy-bound compatibility tool whenever the Agent may already
-            # write files. It delegates to WriteFileTool, so this does not
-            # grant a new path capability or bypass structured-output guards.
-            eff.tool_names = list(dict.fromkeys([*eff.tool_names, "edit_file"]))
+        eff.tool_names = self._resolve_run_tool_names(eff)
         max_agent_runtime = int(self.global_timeout.get("max_agent_runtime") or 0)
         effective_wall_seconds = eff.max_wall_seconds
         if max_agent_runtime > 0:

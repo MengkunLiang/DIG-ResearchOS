@@ -40,6 +40,10 @@ class AgentSpec:
         default_factory=lambda: ["", "user_seeds/", "papers/", "hypotheses/", "exp_plans/"]
     )
     allowed_write_prefixes: list[str] = field(default_factory=list)
+    # ``edit_file`` is a convenience alias for whole-text writes. Agents that
+    # own schema-bound artifacts can turn it off so the model sees only the
+    # canonical structured-write capability for those files.
+    allow_edit_file_compatibility: bool = True
     max_validation_retries: int = 5
     pre_hooks: list[PreHook] = field(default_factory=list)
     post_hooks: list[PostHook] = field(default_factory=list)
@@ -129,6 +133,7 @@ class EffectiveConfig:
     unlimited_budget: bool
     allowed_read_prefixes: list[str]
     allowed_write_prefixes: list[str]
+    allow_edit_file_compatibility: bool
     tool_names: list[str]
 
 
@@ -164,6 +169,7 @@ def resolve_effective_config(spec: AgentSpec, ctx: ExecutionContext) -> Effectiv
             if to.allowed_write_prefixes is not None
             else spec.allowed_write_prefixes
         ),
+        allow_edit_file_compatibility=spec.allow_edit_file_compatibility,
         tool_names=list(spec.tool_names) + list(to.extra_tool_names),
     )
 

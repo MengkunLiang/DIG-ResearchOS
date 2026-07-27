@@ -54,6 +54,7 @@ class ResearchFormalizerAgent(Agent):
                     "temperature": 0.35,
                     "allowed_read_prefixes": ["", "ideation/", "literature/"],
                     "allowed_write_prefixes": ["ideation/"],
+                    "allow_edit_file_compatibility": False,
                     "prompt_template": "research_formalizer.j2",
                     "structured_outputs": {
                         BLUEPRINT_REL_PATH: "research_blueprint",

@@ -275,6 +275,13 @@ def build_agent_spec(
             params.get("allowed_write_prefixes"),
             fallback=defaults.get("allowed_write_prefixes", []),
         ),
+        allow_edit_file_compatibility=_as_bool(
+            _pick_first(
+                params.get("allow_edit_file_compatibility"),
+                defaults.get("allow_edit_file_compatibility"),
+                True,
+            )
+        ),
         max_validation_retries=int(
             _pick_first(
                 params.get("max_validation_retries"),
