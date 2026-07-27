@@ -13,8 +13,10 @@ from ..ideation.formalization import (
     ORIENTATION_REVIEW_REL_PATH,
     BLUEPRINT_REL_PATH,
     canonicalize_research_blueprint_file,
+    collect_t45_quality_diagnostics,
     compile_t45_derived_artifacts,
     ensure_current_t45_selection_isolation,
+    format_t45_repairable_quality_warnings,
     persist_orientation_configuration,
     validate_orientation_review,
     validate_t45_structured_sources,
@@ -78,6 +80,7 @@ class ResearchFormalizerAgent(Agent):
         orientation = persist_orientation_configuration(workspace)
         structured_sources_ok, structured_sources_error = validate_t45_structured_sources(workspace)
         formalization_ok, formalization_error = validate_t45_formalization_core(workspace)
+        quality_diagnostics = collect_t45_quality_diagnostics(workspace)
         artifact_preview = {
             "selected_candidate": read_text_file(workspace / "ideation" / "selected" / "selected_candidate.json", default="")[:6000],
             "hypothesis_brief": read_text_file(workspace / "ideation" / "hypothesis_brief.yaml", default="")[:4000],
@@ -100,6 +103,7 @@ class ResearchFormalizerAgent(Agent):
             structured_sources_error=structured_sources_error or "",
             formalization_ok=formalization_ok,
             formalization_error=formalization_error or "",
+            quality_diagnostics=quality_diagnostics,
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
@@ -150,7 +154,8 @@ class ResearchFormalizerAgent(Agent):
         if self._phase(ctx) != "review":
             # The independent reviewer and its acceptance record are required
             # before a Proposal can become a T5-authoritative artifact.
-            return True, None
+            quality_warning = format_t45_repairable_quality_warnings(collect_t45_quality_diagnostics(workspace))
+            return (False, quality_warning) if quality_warning else (True, None)
         repaired, repair_error = repair_t45_proposal_manifest(workspace, workspace / "ideation" / "novelty_audit.md")
         if repair_error and not repaired:
             return False, repair_error
@@ -160,5 +165,8 @@ class ResearchFormalizerAgent(Agent):
         review_ok, review_error = validate_orientation_review(workspace)
         if not review_ok:
             return False, review_error
+        quality_warning = format_t45_repairable_quality_warnings(collect_t45_quality_diagnostics(workspace))
+        if quality_warning:
+            return False, quality_warning
         write_post_novelty_formalization_manifest(workspace)
         return True, None

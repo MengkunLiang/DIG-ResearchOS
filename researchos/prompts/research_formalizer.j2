@@ -106,7 +106,8 @@ CCF-A and Hybrid:
 
 ### Required research logic
 
-For exactly three or four challenges, explain:
+For the smallest set of genuinely independent challenges (normally three or
+four; two is acceptable when it fully spans the problem), explain:
 
 `Existing assumption → why it fails here → observable consequence → required new capability`.
 
@@ -149,6 +150,20 @@ appropriate, and real-world relevance.  Every main technical component must
 have an ablation or a mechanism test.  Describe data, tasks, baselines and
 metrics only at the granularity supported by current materials; leave specific
 unverified choices as proposed or unknown.
+
+{% if quality_diagnostics %}
+## Internal quality refinement targets
+
+These diagnostics are internal repair guidance. Address every `repair` item
+before finishing. Treat `advisory` items as a focused self-review: improve
+them when warranted, but do not invent a challenge, claim, or experiment only
+to remove an advisory.
+{% for item in quality_diagnostics %}
+- [{{ item.get('severity') }} · {{ item.get('code') }} · {{ item.get('artifact') }}]
+  {{ item.get('message') }}
+  Action: {{ item.get('action') }}
+{% endfor %}
+{% endif %}
 
 {% if phase == 'formalize' and not formalization_ok %}
 ## Current deterministic repair target

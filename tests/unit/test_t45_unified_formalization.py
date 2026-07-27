@@ -11,7 +11,10 @@ import yaml
 from researchos.agents.research_formalizer import ResearchFormalizerAgent
 from researchos.ideation.formalization import (
     T45_SELECTION_ISOLATION_REL_PATH,
+    T45_REPAIRABLE_WARNING_PREFIX,
+    collect_t45_quality_diagnostics,
     ensure_current_t45_selection_isolation,
+    format_t45_repairable_quality_warnings,
     reset_t45_artifacts_for_new_selection,
     legacy_t45_upgrade_reason,
     validate_blueprint_and_claim_registry,
@@ -101,6 +104,28 @@ def test_formalizer_does_not_rewrite_valid_structured_sources_before_prose(tmp_p
     assert "已共同通过确定性验证" in message
     assert "不要重新生成或覆盖这三份结构化来源" in message
     assert "validate_t45_formalization_sources" in ResearchFormalizerAgent(mode="formalize").spec.tool_names
+
+
+def test_t45_depth_warning_is_internal_prompt_guidance(tmp_path: Path) -> None:
+    """Depth heuristics should guide repair without masquerading as missing artifacts."""
+
+    populate_valid_t45_workspace(tmp_path)
+    write(tmp_path / "ideation/hypotheses.md", "# Research Claims and Hypotheses\n\nbrief draft\n")
+    diagnostics = collect_t45_quality_diagnostics(tmp_path)
+    warning = format_t45_repairable_quality_warnings(diagnostics)
+    ctx = ExecutionContext(
+        workspace_dir=tmp_path,
+        project_id="formalizer-quality-guidance",
+        task_id="T4.5-FORMALIZE",
+        run_id="formalizer-quality-guidance-run",
+        mode="formalize",
+    )
+
+    assert any(item["code"] == "claims_depth" and item["severity"] == "repair" for item in diagnostics)
+    assert warning is not None and warning.startswith(T45_REPAIRABLE_WARNING_PREFIX)
+    assert AgentRunner._is_t45_repairable_warning(warning) is True
+    assert "内部质量修订目标" in AgentRunner._validation_repair_feedback(ctx=ctx, error=warning)
+    assert "Internal quality refinement targets" in ResearchFormalizerAgent(mode="formalize").system_prompt(ctx)
 
 
 class _RepeatedT45RepairAgent(Agent):

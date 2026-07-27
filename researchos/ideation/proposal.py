@@ -20,6 +20,8 @@ from .formalization import (
     CLAIM_REGISTRY_REL_PATH,
     ORIENTATION_CONFIG_REL_PATH,
     ORIENTATION_REVIEW_REL_PATH,
+    collect_t45_quality_diagnostics,
+    format_t45_repairable_quality_warnings,
     load_orientation_configuration,
     validate_orientation_review,
     validate_research_proposal_text,
@@ -398,6 +400,9 @@ def validate_t45_research_proposal(
     review_ok, review_error = validate_orientation_review(workspace)
     if not review_ok:
         return False, review_error
+    quality_warning = format_t45_repairable_quality_warnings(collect_t45_quality_diagnostics(workspace))
+    if quality_warning:
+        return False, quality_warning
     return True, None
 
 

@@ -1876,6 +1876,7 @@ class AgentRunner:
                         str(err or "unknown validation error"),
                     )
                     t45_quality_repair = self._uses_t45_quality_repair_loop(ctx)
+                    t45_repairable_warning = self._is_t45_repairable_warning(err)
                     if not t45_quality_repair:
                         self.progress.validation_result(
                             task_id=ctx.task_id,
@@ -1904,19 +1905,26 @@ class AgentRunner:
                             ctx=ctx,
                             error=str(err or "unknown validation error"),
                         )
-                        self.progress.validation_result(
-                            task_id=ctx.task_id,
-                            ok=False,
-                            error=str(err or "unknown validation error"),
-                        )
+                        if not t45_repairable_warning:
+                            self.progress.validation_result(
+                                task_id=ctx.task_id,
+                                ok=False,
+                                error=str(err or "unknown validation error"),
+                            )
                         if no_source_progress:
                             stop_reason = AgentResult.STOP_INTERRUPTED
-                            error_msg = (
-                                "T4.5 质量 Gate 的同一错误在收到定向修复说明后再次出现，"
-                                "但 blueprint、claim registry、实验计划、假设、proposal、review 等源产物没有变化。"
-                                f"最后原因：{err}。系统未按固定次数放弃，而是暂停以避免无修改的 finish_task 循环；"
-                                "恢复后将再次把该诊断交给 Formalizer 定向修复。"
-                            )
+                            if t45_repairable_warning:
+                                error_msg = (
+                                    "T4.5 内部质量修订在收到定向指导后未产生新的来源修改，已暂停以避免无声循环。"
+                                    "恢复后会继续将内部质量目标交给 Formalizer，不会跳过 T4.5 或进入 T5。"
+                                )
+                            else:
+                                error_msg = (
+                                    "T4.5 质量 Gate 的同一错误在收到定向修复说明后再次出现，"
+                                    "但 blueprint、claim registry、实验计划、假设、proposal、review 等源产物没有变化。"
+                                    f"最后原因：{err}。系统未按固定次数放弃，而是暂停以避免无修改的 finish_task 循环；"
+                                    "恢复后将再次把该诊断交给 Formalizer 定向修复。"
+                                )
                             self.progress.emit(
                                 "[T4.5 Quality Gate] 同一诊断未伴随任何源产物修改，已暂停以避免无声循环；"
                                 "保留全部产物和定向修复原因。",
@@ -1929,17 +1937,19 @@ class AgentRunner:
                                 details={
                                     "failure_count": validation_fails,
                                     "validator_error": str(err or "unknown validation error"),
+                                    "repairable_warning": t45_repairable_warning,
                                     "repair_policy": "targeted_no_fixed_retry_limit",
                                     "source_artifacts": list(T45_QUALITY_SOURCE_ARTIFACTS),
                                 },
                             )
                             break
-                        self.progress.emit(
-                            "[T4.5 Quality Gate] 第 "
-                            f"{validation_fails} 次校验未通过；已把具体原因和最小修复范围注入 Formalizer，"
-                            "修复后会重新运行全部质量校验（不设固定修复轮次上限）。",
-                            important=True,
-                        )
+                        if not t45_repairable_warning:
+                            self.progress.emit(
+                                "[T4.5 Quality Gate] 第 "
+                                f"{validation_fails} 次校验未通过；已把具体原因和最小修复范围注入 Formalizer，"
+                                "修复后会重新运行全部质量校验（不设固定修复轮次上限）。",
+                                important=True,
+                            )
                         feedback = Message.user(
                             self._validation_repair_feedback(
                                 ctx=ctx,
@@ -8787,6 +8797,12 @@ class AgentRunner:
         return ctx.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"}
 
     @staticmethod
+    def _is_t45_repairable_warning(error: object) -> bool:
+        """Whether an internal quality target should stay out of the normal UI."""
+
+        return str(error or "").startswith("T45_REPAIRABLE_WARNING:")
+
+    @staticmethod
     def _t45_quality_source_fingerprint(workspace_dir: Path) -> dict[str, str]:
         """Fingerprint only T4.5 source artifacts, never compiled compatibility files."""
 
@@ -9045,6 +9061,15 @@ class AgentRunner:
             "`post_novelty_formalization.json`、`research_dossier.json`、`validation_map.yaml` 或 `kill_criteria.yaml`，"
             "这些文件由 runtime 从通过验证的 source artifacts 确定性编译。"
         )
+        if AgentRunner._is_t45_repairable_warning(error):
+            guidance = str(error).removeprefix("T45_REPAIRABLE_WARNING:").strip()
+            return (
+                "以下为内部质量修订目标；这些内容不会作为用户侧 warning 展示。"
+                + common
+                + "只修复其中标明的 researcher-facing source artifact，保留已经通过的研究契约。"
+                + "\n\n"
+                + guidance
+            )
         normalized = error.casefold()
 
         blueprint_markers = (

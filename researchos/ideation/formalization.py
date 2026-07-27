@@ -31,6 +31,7 @@ ORIENTATION_REVIEW_REL_PATH = "ideation/orientation_review.json"
 FORMALIZATION_MANIFEST_REL_PATH = "ideation/post_novelty_formalization.json"
 T45_SELECTION_ISOLATION_REL_PATH = "ideation/t45_selection_isolation.json"
 T45_SELECTION_HISTORY_DIR = "ideation/t45_selection_history"
+T45_REPAIRABLE_WARNING_PREFIX = "T45_REPAIRABLE_WARNING:"
 
 # A Gate1 Candidate selection starts a new research-plan lineage. These are
 # active, selection-bound T4.5 artifacts, never shared workspace background.
@@ -756,12 +757,6 @@ def validate_claims_markdown(text: str, *, registry: dict[str, Any], orientation
 
     if not re.search(r"(?im)^#\s*(?:Research Claims and Hypotheses|研究主张与假设)\s*$", text):
         return "hypotheses.md must start with '# Research Claims and Hypotheses' or '# 研究主张与假设'"
-    minimum_words = int(orientation["minimum_words"]["claims"])
-    if _research_text_length(text) < minimum_words:
-        return (
-            f"hypotheses.md is too short for {orientation['profile_type']} formalization "
-            f"({_research_text_length(text)}/{minimum_words} words or CJK-character equivalents)"
-        )
     audit_hits = _AUDIT_LANGUAGE.findall(text)
     if len(audit_hits) > 1:
         return "hypotheses.md leaks internal novelty-audit labels into researcher-facing claims"
@@ -799,13 +794,6 @@ def validate_research_proposal_text(
     missing = [key for key, _aliases in PROPOSAL_SECTIONS if key not in sections]
     if missing:
         return "research_proposal.md is missing required sections: " + ", ".join(missing)
-    minimum_words = int(orientation["minimum_words"]["proposal"])
-    actual_length = _research_text_length(text)
-    if actual_length < minimum_words:
-        return (
-            f"research_proposal.md is too short for {orientation['profile_type']} proposal "
-            f"({actual_length}/{minimum_words} words or CJK-character equivalents)"
-        )
     too_short = [key for key, content in sections.items() if _research_text_length(content) < 120]
     if too_short:
         return "Proposal sections need substantive prose, not heading-only fragments: " + ", ".join(too_short)
@@ -871,6 +859,127 @@ def validate_research_proposal_text(
         if not links or not _contains_any(text, ("cross-level", "技术属性", "用户", "组织", "平台", "决策结果")):
             return "Hybrid proposal has no explicit link from a technical design to a user, organizational, platform, or decision outcome"
     return None
+
+
+def collect_t45_quality_diagnostics(workspace: Path) -> list[dict[str, str]]:
+    """Collect quality guidance without confusing it with integrity failures.
+
+    Integrity and scientific-minimum checks remain in the deterministic
+    validators above. These diagnostics identify refinements that an agent can
+    make safely: depth relative to the selected orientation, prose-language
+    consistency, and avoidable over/under-fragmentation. They are supplied to
+    the Formalizer, not rendered as a user-facing warning stream.
+    """
+
+    workspace = Path(workspace)
+    structured_ok, _structured_error = validate_t45_structured_sources(workspace)
+    if not structured_ok:
+        return []
+    orientation = load_orientation_configuration(workspace)
+    language = str(orientation.get("formalization_language") or "en")
+    blueprint, _normalizations = normalize_research_blueprint_payload(
+        _read_yaml_mapping(workspace / BLUEPRINT_REL_PATH)
+    )
+    diagnostics: list[dict[str, str]] = []
+
+    challenges = _dict_list(_nested_value(blueprint, "technical_problem", "key_challenges"))
+    if len(challenges) == 2:
+        diagnostics.append(
+            {
+                "severity": "advisory",
+                "code": "challenge_scope_two",
+                "artifact": BLUEPRINT_REL_PATH,
+                "message": "The plan uses two independent technical challenges. This is valid when they fully span the problem.",
+                "action": "Confirm that a third challenge would not be artificial; do not add one merely to meet a preferred count.",
+            }
+        )
+    elif len(challenges) > 4:
+        diagnostics.append(
+            {
+                "severity": "advisory",
+                "code": "challenge_scope_broad",
+                "artifact": BLUEPRINT_REL_PATH,
+                "message": f"The plan declares {len(challenges)} key challenges, which may diffuse one study's central mechanism.",
+                "action": "Consolidate only genuinely overlapping challenges; retain distinct challenges when they change the artifact or evaluation.",
+            }
+        )
+
+    rationale_counts = Counter(
+        str(item.get("component_id") or "").strip()
+        for item in _dict_list(_nested_value(blueprint, "proposed_approach", "design_rationales"))
+        if str(item.get("component_id") or "").strip()
+    )
+    repeated_rationales = sorted(component_id for component_id, count in rationale_counts.items() if count > 1)
+    if repeated_rationales:
+        diagnostics.append(
+            {
+                "severity": "advisory",
+                "code": "duplicate_component_rationale",
+                "artifact": BLUEPRINT_REL_PATH,
+                "message": "More than one design-rationale entry names " + ", ".join(repeated_rationales) + ".",
+                "action": "Merge duplicate rationale entries when they express the same design argument; keep distinct ones only when they test different mechanisms.",
+            }
+        )
+
+    for relative_path, target_key, label in (
+        ("ideation/hypotheses.md", "claims", "Research Claims and Hypotheses"),
+        ("ideation/proposal/research_proposal.md", "proposal", "Research Proposal"),
+    ):
+        path = workspace / relative_path
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        actual = _research_text_length(text)
+        target = int(orientation["minimum_words"][target_key])
+        if actual < target:
+            diagnostics.append(
+                {
+                    "severity": "repair",
+                    "code": f"{target_key}_depth",
+                    "artifact": relative_path,
+                    "message": f"{label} is below the orientation depth target ({actual}/{target} words or CJK-character equivalents).",
+                    "action": "Develop missing research reasoning, mechanisms, design comparisons, evaluation logic, or boundary conditions. Do not pad with repeated sentences or audit metadata.",
+                }
+            )
+        if language == "zh":
+            cjk_chars = len(re.findall(r"[\u3400-\u9fff]", text))
+            latin_words = len(re.findall(r"\b[A-Za-z][A-Za-z0-9_-]*\b", text))
+            if cjk_chars < max(240, latin_words):
+                diagnostics.append(
+                    {
+                        "severity": "repair",
+                        "code": f"{target_key}_language",
+                        "artifact": relative_path,
+                        "message": f"{label} is configured for Chinese formalization but is predominantly English ({cjk_chars} CJK characters, {latin_words} Latin words).",
+                        "action": "Rewrite the researcher-facing argument in Chinese while retaining stable IDs, schema keys, citations, and necessary technical terms in English.",
+                    }
+                )
+    return diagnostics
+
+
+def repairable_t45_quality_diagnostics(diagnostics: Iterable[dict[str, str]]) -> list[dict[str, str]]:
+    """Return only diagnostics that require an autonomous source revision."""
+
+    return [item for item in diagnostics if str(item.get("severity") or "") == "repair"]
+
+
+def format_t45_repairable_quality_warnings(diagnostics: Iterable[dict[str, str]]) -> str | None:
+    """Encode internal quality guidance for the Formalizer repair loop."""
+
+    repairable = repairable_t45_quality_diagnostics(diagnostics)
+    if not repairable:
+        return None
+    lines = [T45_REPAIRABLE_WARNING_PREFIX, "Internal T4.5 quality refinements required:"]
+    for item in repairable:
+        lines.append(
+            "- [{code}] {artifact}: {message}\n  Required repair: {action}".format(
+                code=item.get("code") or "quality",
+                artifact=item.get("artifact") or "source artifact",
+                message=item.get("message") or "quality target not met",
+                action=item.get("action") or "Revise the named source artifact.",
+            )
+        )
+    return "\n".join(lines)
 
 
 def validate_orientation_review(workspace: Path) -> tuple[bool, str | None]:
