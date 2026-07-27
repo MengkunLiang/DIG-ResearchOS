@@ -24,6 +24,9 @@ from .bridge_catalog import migrate_legacy_bridge_catalogs
 from .environment import write_runtime_environment
 
 
+DEFAULT_PROJECT_ID = "demo-project"
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -123,6 +126,38 @@ class WorkspaceInitResult:
     workspace_dir: Path
     created_dirs: list[str]
     project_file: Path | None
+
+
+def load_workspace_project_id(workspace_dir: Path) -> str | None:
+    """Read the canonical project identity from ``project.yaml`` when present.
+
+    ``state.yaml`` records execution progress and may be imported from an old
+    workspace.  It is therefore not a trustworthy authority for the research
+    project's identity.  Callers that need a project identifier for a runtime
+    state should prefer this value and retain their supplied fallback only when
+    the project file has not been created or cannot yet be parsed.
+    """
+
+    project_path = workspace_dir / "project.yaml"
+    if not project_path.is_file():
+        return None
+    try:
+        payload = yaml.safe_load(project_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    project_id = payload.get("project_id")
+    if not isinstance(project_id, str):
+        return None
+    normalized = project_id.strip()
+    return normalized or None
+
+
+def resolve_workspace_project_id(workspace_dir: Path, fallback: str | None = None) -> str:
+    """Return ``project.yaml`` identity, or a non-empty runtime fallback."""
+
+    return load_workspace_project_id(workspace_dir) or str(fallback or "").strip() or DEFAULT_PROJECT_ID
 
 
 def merge_workspace_artifact(
@@ -241,7 +276,7 @@ def initialize_workspace(
     if create_project_file:
         project_file = write_project_stub(
             workspace_dir,
-            project_id=project_id or "demo-project",
+            project_id=project_id or DEFAULT_PROJECT_ID,
             topic=topic or "",
             force=force_project_file,
         )

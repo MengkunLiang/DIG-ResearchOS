@@ -72,6 +72,7 @@ from .runtime.literature_contract import build_literature_manifest, migrate_lega
 from .runtime.workspace import (
     WorkspaceInitResult,
     initialize_workspace,
+    resolve_workspace_project_id,
     merge_workspace_artifact,
     migrate_workspace_note_directories,
 )
@@ -1743,6 +1744,11 @@ async def run_command(args: argparse.Namespace) -> int:
         if checkpoint_code != 0:
             return checkpoint_code
 
+    # `project.yaml` is the workspace's durable research identity.  Resolve
+    # it after all optional import/re-entry preparation so a legacy CLI
+    # default never becomes the active state identity.
+    effective_project_id = resolve_workspace_project_id(workspace_dir, args.project_id)
+
     try:
         prepared = await _prepare_runtime(args, workspace_dir)
     except Exception as exc:
@@ -1772,7 +1778,7 @@ async def run_command(args: argparse.Namespace) -> int:
             human_interface=_build_human_interface(runtime_settings, llm_client=prepared.llm_client),
             runtime_settings=runtime_settings,
         )
-        return await runner.run(project_id=args.project_id, resume=getattr(args, "resume", False))
+        return await runner.run(project_id=effective_project_id, resume=getattr(args, "resume", False))
     finally:
         await prepared.aclose()
 
@@ -1924,7 +1930,10 @@ async def run_smoke_command(args: argparse.Namespace) -> int:
             human_interface=_build_human_interface(runtime_settings, llm_client=prepared.llm_client),
             runtime_settings=runtime_settings,
         )
-        return await runner.run(project_id=args.project_id, resume=False)
+        return await runner.run(
+            project_id=resolve_workspace_project_id(workspace_dir, args.project_id),
+            resume=False,
+        )
     finally:
         await prepared.aclose()
 
@@ -2194,7 +2203,7 @@ def _prepare_pipeline_start_workspace(
 
     state = _build_start_task_state(
         start_task=start_task,
-        project_id=project_id,
+        project_id=resolve_workspace_project_id(workspace_dir, project_id),
         source_state=source_state,
         source_history_boundary_task=requested_start_task,
     )
@@ -2741,7 +2750,10 @@ def _build_start_task_state(
         return StateYaml(project_id=project_id, current_task=start_task, status="RUNNING")
 
     state = StateYaml(
-        project_id=source_state.project_id or project_id,
+        # The source state is execution history, not an authority for the new
+        # workspace's research identity.  In particular it may contain the
+        # historical CLI default `demo-project`.
+        project_id=project_id,
         current_task=start_task,
         status="RUNNING",
         budget_cumulative=source_state.budget_cumulative,

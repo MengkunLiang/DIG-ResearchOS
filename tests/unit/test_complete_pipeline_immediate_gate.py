@@ -291,12 +291,19 @@ def test_imported_t4_entries_archive_source_selection_and_open_a_new_gate1(
     for requested_task in ("T4", "T4-GATE1"):
         source = tmp_path / f"source-{requested_task}"
         target = tmp_path / f"target-{requested_task}"
+        source.mkdir()
+        (source / "project.yaml").write_text("project_id: ZhuHui\n", encoding="utf-8")
         selection_path = source / "ideation" / "_gate1_user_selection.json"
         selection_path.parent.mkdir(parents=True)
         selection_path.write_text(json.dumps(old_selection, ensure_ascii=False), encoding="utf-8")
-        StateYaml(project_id="source", current_task="T4.5", status="PAUSED").dump_yaml(source / "state.yaml")
+        StateYaml(project_id="demo-project", current_task="T4.5", status="PAUSED").dump_yaml(source / "state.yaml")
 
         def copy_imported_inputs(*, workspace_dir: Path, **_kwargs: object) -> None:
+            workspace_dir.mkdir(parents=True, exist_ok=True)
+            (workspace_dir / "project.yaml").write_text(
+                (source / "project.yaml").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
             imported_selection = workspace_dir / "ideation" / "_gate1_user_selection.json"
             imported_selection.parent.mkdir(parents=True, exist_ok=True)
             imported_selection.write_text(selection_path.read_text(encoding="utf-8"), encoding="utf-8")
@@ -319,6 +326,7 @@ def test_imported_t4_entries_archive_source_selection_and_open_a_new_gate1(
         assert json.loads(archived[0].read_text(encoding="utf-8")) == old_selection
 
         initialized = StateYaml.load_yaml(target / "state.yaml")
+        assert initialized.project_id == "ZhuHui"
         assert initialized.current_task == "T4-GATE1"
         assert initialized.status == "RUNNING"
         assert initialized.pending_gate is None
@@ -327,6 +335,21 @@ def test_imported_t4_entries_archive_source_selection_and_open_a_new_gate1(
         imported = initialized.task_context["workspace_import_t4_reselection"]
         assert imported["source_workspace"] == str(source)
         assert imported["t4_reselection"]["archived_selection"] == str(archived[0].relative_to(target))
+
+
+def test_pipeline_resume_reconciles_stale_state_project_id_from_project_yaml(tmp_path: Path) -> None:
+    """Old imported `demo-project` state must not mislabel later resumes."""
+
+    (tmp_path / "project.yaml").write_text("project_id: ZhuHui\n", encoding="utf-8")
+    state_path = tmp_path / "state.yaml"
+    StateYaml(project_id="demo-project", current_task="T4.5-FORMALIZE", status="PAUSED").dump_yaml(state_path)
+
+    runner = _runner(tmp_path, state_machine=object(), human=_GateHuman())
+    state = StateYaml.load_yaml(state_path)
+    runner._reconcile_state_project_identity(state, state_path)
+
+    assert state.project_id == "ZhuHui"
+    assert StateYaml.load_yaml(state_path).project_id == "ZhuHui"
 
 
 def test_t4_reselection_boundary_rejects_old_confirmations() -> None:

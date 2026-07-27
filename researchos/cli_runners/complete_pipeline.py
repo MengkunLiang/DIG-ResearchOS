@@ -19,7 +19,7 @@ from ..runtime.logger import get_logger
 from ..runtime.orchestrator import AgentRunner
 from ..runtime.progress import CliProgressEmitter
 from ..runtime.run_logger import RunLogger
-from ..runtime.workspace import initialize_workspace
+from ..runtime.workspace import initialize_workspace, load_workspace_project_id, resolve_workspace_project_id
 from ..schemas.state import StateYaml
 from ..schemas.validator import register_builtin_task_checkers, validate_prerequisites, validate_task_artifacts
 from ..skills.agent import SkillAgent
@@ -109,8 +109,11 @@ class CompletePipelineRunner:
         state_path = self.workspace / "state.yaml"
         if state_path.exists():
             state = StateYaml.load_yaml(state_path)
+            self._reconcile_state_project_identity(state, state_path)
         else:
-            state = self.state_machine.create_initial_state(project_id=project_id)
+            state = self.state_machine.create_initial_state(
+                project_id=resolve_workspace_project_id(self.workspace, project_id)
+            )
 
         if resume and state.status == "RUNNING":
             state = self.state_machine.mark_interrupted(
@@ -154,8 +157,8 @@ class CompletePipelineRunner:
                 status=state.status,
             )
         else:
-            self.run_logger.event("RUN_START", project_id=project_id, task=state.current_task, mode="pipeline")
-            self.progress.pipeline_start(project_id=project_id, task=state.current_task, resume=False)
+            self.run_logger.event("RUN_START", project_id=state.project_id, task=state.current_task, mode="pipeline")
+            self.progress.pipeline_start(project_id=state.project_id, task=state.current_task, resume=False)
 
         while True:
             state = await self._run_one_step(state, state_path)
@@ -197,6 +200,32 @@ class CompletePipelineRunner:
                     gate_id=state.pending_gate.gate_id if state.pending_gate else None,
                 )
                 return 130
+
+    def _reconcile_state_project_identity(self, state: StateYaml, state_path: Path) -> None:
+        """Align stale imported runtime state with the workspace project config.
+
+        This intentionally changes only the state-level identity used by new
+        UI and runtime log events.  Existing history, traces, and artifacts
+        keep their original timestamps and content for auditability.
+        """
+
+        canonical_project_id = load_workspace_project_id(self.workspace)
+        if canonical_project_id is None or canonical_project_id == state.project_id:
+            return
+        previous_project_id = state.project_id
+        state.project_id = canonical_project_id
+        state.dump_yaml(state_path)
+        self.run_logger.event(
+            "PROJECT_ID_RECONCILED",
+            previous_project_id=previous_project_id,
+            project_id=canonical_project_id,
+            task=state.current_task,
+            source="project.yaml",
+        )
+        self.progress.emit(
+            f"[Pipeline] 已将旧运行状态的项目标识从 {previous_project_id} 校准为 {canonical_project_id}。",
+            important=True,
+        )
 
     async def _prepare_failed_resume(self, state: StateYaml, state_path: Path) -> tuple[StateYaml, bool]:
         failed_history = self._last_failed_task_history(state)
