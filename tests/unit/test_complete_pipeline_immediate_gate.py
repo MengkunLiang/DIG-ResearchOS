@@ -267,6 +267,68 @@ def test_explicit_t4_gate1_reentry_has_the_same_reselection_semantics(
     assert reopened.task_context["t4_gate1_reselection"]["requested_task"] == "T4-GATE1"
 
 
+def test_imported_t4_entries_archive_source_selection_and_open_a_new_gate1(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """New-workspace ``run --from`` must not replay source Gate1 authority."""
+
+    old_selection = {
+        "semantics": "t4_gate1_user_selection_for_candidate_pool",
+        "task_id": "T4-GATE1",
+        "gate_id": "t4_gate1_selection_gate",
+        "selected_candidate_id": "candidate-old",
+        "selected_option": "proceed_candidate",
+    }
+    state_machine = SimpleNamespace(
+        nodes={
+            "T4": SimpleNamespace(terminal=False),
+            "T4-GATE1": SimpleNamespace(terminal=False),
+        }
+    )
+    monkeypatch.setattr(cli, "validate_prerequisites", lambda _workspace, _task: (True, None))
+
+    for requested_task in ("T4", "T4-GATE1"):
+        source = tmp_path / f"source-{requested_task}"
+        target = tmp_path / f"target-{requested_task}"
+        selection_path = source / "ideation" / "_gate1_user_selection.json"
+        selection_path.parent.mkdir(parents=True)
+        selection_path.write_text(json.dumps(old_selection, ensure_ascii=False), encoding="utf-8")
+        StateYaml(project_id="source", current_task="T4.5", status="PAUSED").dump_yaml(source / "state.yaml")
+
+        def copy_imported_inputs(*, workspace_dir: Path, **_kwargs: object) -> None:
+            imported_selection = workspace_dir / "ideation" / "_gate1_user_selection.json"
+            imported_selection.parent.mkdir(parents=True, exist_ok=True)
+            imported_selection.write_text(selection_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+        monkeypatch.setattr(cli, "_copy_task_inputs_from_workspace", copy_imported_inputs)
+        result = cli._prepare_pipeline_start_workspace(
+            workspace_dir=target,
+            state_machine=state_machine,
+            start_task=requested_task,
+            from_workspace=source,
+            project_id="target",
+            quiet=True,
+        )
+
+        assert result == 0
+        assert selection_path.exists(), "the source workspace must remain untouched"
+        assert not (target / "ideation" / "_gate1_user_selection.json").exists()
+        archived = list((target / "ideation" / "evolution" / "selection_history").glob("*_gate1_user_selection.json"))
+        assert len(archived) == 1
+        assert json.loads(archived[0].read_text(encoding="utf-8")) == old_selection
+
+        initialized = StateYaml.load_yaml(target / "state.yaml")
+        assert initialized.current_task == "T4-GATE1"
+        assert initialized.status == "RUNNING"
+        assert initialized.pending_gate is None
+        boundary = initialized.task_context["t4_gate1_reselection"]
+        assert boundary["requested_task"] == requested_task
+        imported = initialized.task_context["workspace_import_t4_reselection"]
+        assert imported["source_workspace"] == str(source)
+        assert imported["t4_reselection"]["archived_selection"] == str(archived[0].relative_to(target))
+
+
 def test_t4_reselection_boundary_rejects_old_confirmations() -> None:
     state = StateYaml(
         project_id="test",

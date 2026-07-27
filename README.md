@@ -226,7 +226,7 @@ Most projects repeatedly use only `status`, `run`, and `resume`. Do not edit `st
 | Create a research project from scratch | `init-workspace`, then `run` | Creates a new workspace and starts the complete workflow. |
 | Continue the same paused project | `resume --workspace <project-dir>` | Reuses confirmed choices and valid files. A T2/T3 "continue" choice does not repeat retrieval. |
 | Intentionally revisit T2/T3/T4 ideas | `resume --from-task T4` | T2/T3 first reopen their research-scope decision. `T4` and `T4-GATE1` both archive the active Gate1 selection and reopen the existing Candidate Portfolio for a new choice. |
-| Start a new project with another project's material | `run --from <source-dir> --start-task T4` | Creates a separate target workspace and copies declared upstream inputs without merging histories. |
+| Start a new project with another project's material | `run --from <source-dir> --start-task T4` | Creates a separate target workspace and copies declared upstream inputs without merging histories. For `T4`/`T4-GATE1`, it archives the source selection in the new workspace and opens a new Gate1 decision. |
 | Diagnose one stage only | `run-task T4` | Runs that task only and does not advance the main path, except that public T8 accepts a verified external-executor handoff. |
 | Browse or run a focused capability | `browse-skills` / `run-skill` | Uses an independent, resumable Skill session. Read its input/output contract first. |
 
@@ -417,7 +417,7 @@ The `research-execution` root Skill normally runs `python -m researchos.cli run-
 
 The recovery matrix above is the normal decision guide. The following rules explain the less common cases without changing that guide:
 
-- `run --from <source-workspace> --start-task <task>` initializes a **new** target workspace from another project's declared, validated upstream artifacts. It never merges state or history. `run-task <task> --from <source-workspace>` copies the same declared inputs but runs only that one diagnostic task.
+- `run --from <source-workspace> --start-task <task>` initializes a **new** target workspace from another project's declared, validated upstream artifacts. It never merges state or history. For `T4` and `T4-GATE1`, it copies the Candidate Population and cards for comparison but archives any imported active Gate1 selection under `ideation/evolution/selection_history/`; the new workspace always opens Gate1 and cannot automatically enter T4.5. `run-task <task> --from <source-workspace>` copies the same declared inputs but runs only that one diagnostic task.
 - For literature-dependent downstream stages (`T3.5`, `T3.6`, `T4`, `T5`, `T8`), the import closure contains the complete `literature/` tree. Empty imported directories therefore cannot hide real note cards; `bridge_notes/` and `cross_domain_catalogs/` are both retained when declared.
 - Import happens before the model connection check, so a provider outage does not discard a prepared diagnostic workspace. `resume --from <source>` adds only missing declared inputs to an existing target; it also never merges source state/history.
 - A workspace with `state.yaml` must use `resume`; a directory without it must use `run`; a `COMPLETED` workspace is intentionally not resumed because its artifacts must not be silently rewritten.

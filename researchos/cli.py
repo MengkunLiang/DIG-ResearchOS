@@ -2198,6 +2198,43 @@ def _prepare_pipeline_start_workspace(
         source_state=source_state,
         source_history_boundary_task=requested_start_task,
     )
+    t4_import_reselection: dict[str, object] | None = None
+    if from_workspace is not None and requested_start_task in {"T4", "T4-GATE1"}:
+        # A new workspace is allowed to reuse an existing Candidate Population
+        # and its researcher-facing cards, but it must never inherit the source
+        # workspace's active Gate1 decision as authorization to enter T4.5.
+        # Keep that receipt in this new workspace's audit history and establish
+        # the same confirmation boundary used by explicit T4 resume re-entry.
+        try:
+            t4_import_reselection = _archive_active_t4_selection_for_reentry(
+                workspace_dir,
+                state,
+                requested_task=requested_start_task,
+                reason="workspace_import_T4_reopens_candidate_decision",
+            )
+        except OSError as exc:
+            print(
+                "Unable to initialize T4-GATE1 selection without risking the imported selection record: "
+                f"{exc}"
+            )
+            return 2
+        # Both documented import entry points mean “compare the imported
+        # Portfolio and choose here”. They are intentionally aliases, rather
+        # than a request to re-run T4 or consume the source selection.
+        start_task = "T4-GATE1"
+        state.current_task = start_task
+        state.status = "RUNNING"
+        state.pending_gate = None
+        state.paused_at = None
+        state.last_error = None
+        state.task_context["workspace_import_t4_reselection"] = {
+            "schema_version": "1.0.0",
+            "semantics": "workspace_import_t4_gate1_reselection",
+            "source_workspace": str(from_workspace),
+            "requested_task": requested_start_task,
+            "initialized_at": datetime.now(timezone.utc).isoformat(),
+            "t4_reselection": t4_import_reselection,
+        }
     if migration_target is not None:
         state.task_context["workspace_import_decision"] = {
             "requested_task": requested_start_task,
@@ -2212,6 +2249,13 @@ def _prepare_pipeline_start_workspace(
     else:
         if migration_target is not None:
             print(f"[进度] 已导入来源材料；{migration_target[1]}", flush=True)
+        elif t4_import_reselection is not None:
+            archived = str(t4_import_reselection.get("archived_selection") or "无活动选择记录")
+            print(
+                "[进度] 已导入 T4 Candidate Portfolio 并打开新的 Gate1 选择；"
+                f"来源 workspace 的活动选择已归档到 {archived}，不会自动进入 T4.5。",
+                flush=True,
+            )
         else:
             print(f"[进度] 已初始化 pipeline state: current_task={start_task}", flush=True)
     return 0
@@ -2324,17 +2368,18 @@ def _archive_active_t4_selection_for_reentry(
     state: StateYaml,
     *,
     requested_task: str,
+    reason: str = "resume_from_task_T4_reopens_candidate_decision",
 ) -> dict[str, object] | None:
     """Reopen T4 Gate1 without letting an old confirmed selection auto-advance.
 
-    ``resume --from-task T4`` and ``--from-task T4-GATE1`` are explicit
-    researcher requests to revisit the idea decision surface, unlike ordinary
-    ``resume``. Native T4 treats an active selection receipt and an accepted
-    directive confirmation as authorization to proceed. Move the active
-    receipt into immutable history, clear stale in-memory authorization, and
-    record a new confirmation boundary. Candidate Populations, dossiers,
-    downstream artifacts, historical confirmations, and the archived
-    selection all remain available for audit.
+    Explicit T4 re-entry, including an imported new workspace starting at T4
+    or T4-GATE1, is a researcher request to revisit the idea decision surface.
+    Native T4 treats an active selection receipt and an accepted directive
+    confirmation as authorization to proceed. Move the active receipt into
+    immutable history, clear stale in-memory authorization, and record a new
+    confirmation boundary. Candidate Populations, dossiers, downstream
+    artifacts, historical confirmations, and the archived selection all remain
+    available for audit.
     """
 
     selection_path = workspace_dir / "ideation" / "_gate1_user_selection.json"
@@ -2368,7 +2413,7 @@ def _archive_active_t4_selection_for_reentry(
             "confirmation_not_before": reopened_at,
             "archived_active_selection": archived_selection,
             "cleared_operation_keys": cleared_operation_keys,
-            "reason": "resume_from_task_T4_reopens_candidate_decision",
+            "reason": reason,
         }
         receipt_file = history_dir / f"{timestamp}_reselection_receipt.json"
         receipt_file.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
