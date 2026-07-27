@@ -61,6 +61,48 @@ def test_t45_insights_treats_null_orientation_review_as_pending(tmp_path: Path) 
     assert ("Orientation", "hybrid") in formalization["rows"]
 
 
+def test_formalizer_uses_explicit_chinese_research_facing_language(tmp_path: Path) -> None:
+    """T4.5 prose language is independent from the eventual manuscript language."""
+
+    populate_valid_t45_workspace(tmp_path)
+    project_path = tmp_path / "project.yaml"
+    project = yaml.safe_load(project_path.read_text(encoding="utf-8"))
+    project.setdefault("metadata", {})["formalization_language"] = "zh"
+    write_yaml(project_path, project)
+    ctx = ExecutionContext(
+        workspace_dir=tmp_path,
+        project_id="formalizer-zh",
+        task_id="T4.5-FORMALIZE",
+        run_id="formalizer-zh-run",
+        mode="formalize",
+    )
+
+    prompt = ResearchFormalizerAgent(mode="formalize").system_prompt(ctx)
+
+    assert "formalization language: zh" in prompt
+    assert "所有研究者可读的正文和结构化字段值均使用中文" in prompt
+    assert "# 研究主张与假设" in prompt
+
+
+def test_formalizer_does_not_rewrite_valid_structured_sources_before_prose(tmp_path: Path) -> None:
+    """A resume with a valid contract should move forward to prose, not loop on YAML."""
+
+    populate_valid_t45_workspace(tmp_path)
+    ctx = ExecutionContext(
+        workspace_dir=tmp_path,
+        project_id="formalizer-prose-only",
+        task_id="T4.5-FORMALIZE",
+        run_id="formalizer-prose-only-run",
+        mode="formalize",
+    )
+
+    message = ResearchFormalizerAgent(mode="formalize").initial_user_message(ctx)
+
+    assert "已共同通过确定性验证" in message
+    assert "不要重新生成或覆盖这三份结构化来源" in message
+    assert "validate_t45_formalization_sources" in ResearchFormalizerAgent(mode="formalize").spec.tool_names
+
+
 class _RepeatedT45RepairAgent(Agent):
     """A scripted Formalizer used to exercise the runtime recovery loop."""
 

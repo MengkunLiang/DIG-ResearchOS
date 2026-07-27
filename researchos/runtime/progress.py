@@ -1456,6 +1456,13 @@ def summarize_tool_result(
                 f"正式化已阻止：先结构化写入 research_blueprint、claim_registry 与 exp_plan，再写正文。原因：{detail}",
                 "ideation/research_blueprint.yaml",
             )
+        if error == "t45_formalization_requires_structured_sources":
+            detail = _compact_text(data.get("validation_error") or content or "三份结构化来源尚未通过共同契约", 220)
+            return (
+                "正式化正文暂缓：research_blueprint、claim_registry 与 exp_plan 已检查，"
+                f"但尚未通过共同研究契约。先用 write_structured_file 修复唯一失败项。原因：{detail}",
+                str(data.get("required_path") or "ideation/research_blueprint.yaml"),
+            )
         if tool_name in _HIGH_VOLUME_TOOL_NAMES:
             return _summarize_high_volume_failure(tool_name, data=data, error=error), _extract_output_path(tool_name, data)
         return _compact_text(error or content or "工具返回失败", 280), _extract_output_path(tool_name, data)

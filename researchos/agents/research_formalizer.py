@@ -12,10 +12,12 @@ from ..ideation.formalization import (
     CLAIM_REGISTRY_REL_PATH,
     ORIENTATION_REVIEW_REL_PATH,
     BLUEPRINT_REL_PATH,
+    canonicalize_research_blueprint_file,
     compile_t45_derived_artifacts,
     ensure_current_t45_selection_isolation,
     persist_orientation_configuration,
     validate_orientation_review,
+    validate_t45_structured_sources,
     validate_t45_formalization_core,
     write_post_novelty_formalization_manifest,
 )
@@ -36,7 +38,14 @@ class ResearchFormalizerAgent(Agent):
                 mode=mode,
                 defaults={
                     "model_tier": "heavy",
-                    "tool_names": ["read_file", "write_file", "write_structured_file", "list_files", "finish_task"],
+                    "tool_names": [
+                        "read_file",
+                        "write_file",
+                        "write_structured_file",
+                        "validate_t45_formalization_sources",
+                        "list_files",
+                        "finish_task",
+                    ],
                     "max_steps": 45,
                     "max_tokens_total": 120_000,
                     "max_wall_seconds": 900,
@@ -65,7 +74,9 @@ class ResearchFormalizerAgent(Agent):
         # under an older runtime. Isolate any old formalization package before
         # it can appear in this fresh Formalizer context as reusable source.
         ensure_current_t45_selection_isolation(workspace)
+        canonicalize_research_blueprint_file(workspace)
         orientation = persist_orientation_configuration(workspace)
+        structured_sources_ok, structured_sources_error = validate_t45_structured_sources(workspace)
         formalization_ok, formalization_error = validate_t45_formalization_core(workspace)
         artifact_preview = {
             "selected_candidate": read_text_file(workspace / "ideation" / "selected" / "selected_candidate.json", default="")[:6000],
@@ -85,6 +96,8 @@ class ResearchFormalizerAgent(Agent):
             project=project,
             orientation=orientation,
             artifact_preview=artifact_preview,
+            structured_sources_ok=structured_sources_ok,
+            structured_sources_error=structured_sources_error or "",
             formalization_ok=formalization_ok,
             formalization_error=formalization_error or "",
         )
@@ -100,25 +113,27 @@ class ResearchFormalizerAgent(Agent):
                 "只有所有问题已修复、scores 达到规范且 status='accepted' 时才 finish_task；不要把 novelty audit 的内部标签写入 proposal。"
             )
         else:
-            existing_ok, existing_error = validate_t45_formalization_core(ctx.workspace_dir)
-            repair_prefix = ""
-            if not existing_ok and existing_error:
-                repair_prefix = (
-                    "当前选择已有部分 T4.5 结构化来源，但尚未通过确定性校验。"
-                    f"首要失败点：{existing_error}。先读取并定向修复受影响的现有 source artifact；"
-                    "不要重写无关的 Candidate、novelty audit 或已通过的 structured source。"
+            structured_ok, structured_error = validate_t45_structured_sources(ctx.workspace_dir)
+            if structured_ok:
+                message = (
+                    "T4.5 的 research_blueprint、claim_registry 与 exp_plan 已共同通过确定性验证。"
+                    "不要重新生成或覆盖这三份结构化来源。现在只写缺失或不合格的 hypotheses.md 和 "
+                    "proposal/research_proposal.md；正文必须遵守当前 formalization language。"
+                    "写完后调用 finish_task，让 runtime 校验正文并确定性编译兼容产物。"
                 )
-            message = (
-                repair_prefix
-                + "执行 T4.5 Research Formalization。Novelty Audit 已结束；不要重写 novelty_audit.md，也不要做新的论文检索。"
-                "先读取 candidate、brief、audit 和 synthesis 的完整需要段落。严格按此顺序调用 write_structured_file："
-                "(1) ideation/research_blueprint.yaml, schema_name='research_blueprint', format='yaml'; "
-                "(2) ideation/claim_registry.yaml, schema_name='claim_registry', format='yaml'; "
-                "(3) ideation/exp_plan.yaml, schema_name='exp_plan', format='yaml'。"
-                "三个 data 都必须是对象，path 不得为 null。结构化写入成功后才写 hypotheses.md 和 proposal/research_proposal.md。"
-                "不要写 proposal_manifest、post_novelty_formalization、research_dossier、validation_map 或 kill_criteria；"
-                "运行时会从验证后的 source artifacts 确定性编译这些兼容产物。"
-            )
+            else:
+                repair_prefix = (
+                    "当前选择的三份 T4.5 结构化来源尚未通过共同研究契约。"
+                    f"唯一确定性失败点：{structured_error}。先读取并只修复该错误涉及的 source artifact 或最小一致性集合；"
+                    "不要重写无关的 Candidate、novelty audit 或已经一致的 structured source。"
+                )
+                message = (
+                    repair_prefix
+                    + "先调用 validate_t45_formalization_sources 获取当前唯一失败点。"
+                    "使用 write_structured_file 修复后，再次调用该校验工具；只有它返回 valid=true 才可写 hypotheses.md 或 proposal/research_proposal.md。"
+                    "不要写 proposal_manifest、post_novelty_formalization、research_dossier、validation_map 或 kill_criteria；"
+                    "运行时会从验证后的 source artifacts 确定性编译这些兼容产物。"
+                )
         return prepend_resume_prefix(ctx, message)
 
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:

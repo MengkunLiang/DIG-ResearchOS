@@ -474,6 +474,7 @@ agents:
       - read_file
       - write_file
       - write_structured_file
+      - validate_t45_formalization_sources
       - list_files
       - finish_task
       allowed_write_prefixes:

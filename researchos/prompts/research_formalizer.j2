@@ -22,6 +22,22 @@ different proposal template.  All orientations must retain a real-world
 motivation, a substantive technical artifact, design rationale, evaluation,
 and practical relevance.
 
+## Research-facing language
+
+- formalization language: {{ orientation.get('formalization_language', 'en') }}
+{% if orientation.get('formalization_language', 'en') == 'zh' %}
+- 所有研究者可读的正文和结构化字段值均使用中文，包括 `hypotheses.md`、
+  `research_proposal.md`、blueprint 的说明性文本和 claim registry 的说明性文本。
+  保留稳定的 YAML/JSON 键、Claim/Component/Challenge ID（如 `TC1`、`COMP1`、`C1`）
+  以及必要的专业术语（如 `ablation`、`baseline`、`mechanism`）为英文；不要把整段论证改写成英文。
+- `hypotheses.md` 顶级标题使用 `# 研究主张与假设`。Proposal 依次使用：
+  `## 研究动机与核心问题`、`## 现有研究、缺口与关键挑战`、`## 技术方案与设计理由`、
+  `## 研究问题、研究主张与假设`、`## 研究设计与评测`、`## 预期贡献与现实含义`、
+  `## 风险、局限与执行计划`。
+{% else %}
+- Write all researcher-facing prose and explanatory structured-field values in English.
+{% endif %}
+
 ## Evidence discipline
 
 - Treat current literature notes, synthesis and the novelty audit as evidence
@@ -99,6 +115,27 @@ effect.  Do not jump directly from a gap to a module list.  Explain the
 central technical insight before the components, and explain why simpler
 alternatives are inadequate.
 
+### Canonical blueprint wire format
+
+`write_structured_file` validates the following exact fields. Do not replace
+them with near-synonyms such as `component_refs`, `approach`, or
+`why_insufficient`:
+
+```yaml
+proposed_approach:
+  design_rationales:
+    - component_id: COMP1
+      rationale: "Why COMP1 is necessary for its named challenge and why the design works."
+  alternatives_considered:
+    - alternative: "A genuinely simpler baseline or design"
+      reason_not_sufficient: "Why it cannot solve the named challenge under the stated boundary."
+```
+
+There must be one substantive `design_rationales` entry for every `COMPn`.
+`alternative` and `reason_not_sufficient` are not optional narrative polish:
+they establish the design comparison that lets the Proposal explain why the
+technical artifact is necessary.
+
 Every active claim must include: statement, rationale, related component,
 mechanism, boundary conditions, expected observation, baseline or
 counterfactual, evaluation method, competing explanation and falsification
@@ -136,23 +173,54 @@ experiment plan.
 ## Phase-specific instructions
 
 {% if phase == 'formalize' %}
-### Write structured sources first
+{% if structured_sources_ok %}
+### Structured sources already passed
 
-Call `write_structured_file` exactly for the following researcher-authored
-sources in this order:
+`research_blueprint.yaml`, `claim_registry.yaml`, and `exp_plan.yaml` already
+form one validated contract. Do not rewrite them. Write only the missing or
+failing researcher-facing prose (`hypotheses.md` and/or
+`proposal/research_proposal.md`) in the configured language, then call
+`finish_task`.
+{% else %}
+### Repair structured sources before prose
 
-1. `path='ideation/research_blueprint.yaml'`, `schema_name='research_blueprint'`, `format='yaml'`, and an object with all required top-level fields.  Use orientation `{{ orientation.get('profile_type') }}` and the supplied weights/guidance.  Components use `COMP1`, `COMP2`, …; challenges use `C1`, `C2`, …. Every component must have one substantive `design_rationales` entry with exactly the same `component_id`; do not leave component rationales implicit.
+The current structured-source validation result is:
+
+```text
+{{ structured_sources_error }}
+```
+
+Call `validate_t45_formalization_sources` before repairing and after every
+`write_structured_file`. Repair only the source named by its latest error;
+when the error is a cross-artifact requirement, repair only its minimal
+synchronized source set. Do not rewrite all three files merely because they exist. If the workspace is
+fresh and all three are absent, create them in this order:
+
+{% if 'UTD formalization must include' in structured_sources_error %}
+For the UTD lens, add a distinct, substantive technical/system claim rather
+than relabeling a vague design proposition. It must state what the concrete
+artifact enables, cite its `related_components`, include a mechanism,
+counterfactual, evaluation method, competing explanation and falsification
+condition, be listed in `active_claim_ids`, and map to an `exp_plan` experiment.
+{% elif 'CCF-A formalization must include' in structured_sources_error %}
+For the CCF-A lens, add a distinct technical, algorithmic, robustness, or
+generalization claim with an explicit computational capability and an
+experiment mapping; do not relabel a generic application claim.
+{% endif %}
+
+1. `path='ideation/research_blueprint.yaml'`, `schema_name='research_blueprint'`, `format='yaml'`, and an object with all required top-level fields.  Use orientation `{{ orientation.get('profile_type') }}` and the supplied weights/guidance.  Components use `COMP1`, `COMP2`, …; challenges use `C1`, `C2`, …. Every component must have one substantive `design_rationales` entry with exactly the same `component_id`; do not leave component rationales implicit. Include at least one canonical `alternatives_considered` item with both `alternative` and `reason_not_sufficient`.
 2. `path='ideation/claim_registry.yaml'`, `schema_name='claim_registry'`, `format='yaml'`, and an object whose `claims` match the blueprint's `active_claim_ids` exactly.
 3. `path='ideation/exp_plan.yaml'`, `schema_name='exp_plan'`, `format='yaml'`, and an object with `experiments`.  Each experiment must include `claim_refs` for the active claim IDs; do not invent fixed numerical budgets or results.
 
-Only after all three calls succeed, write:
+Only after `validate_t45_formalization_sources` returns `valid=true`, write:
 
 - `ideation/hypotheses.md`: an integrated, researcher-facing claims document.
   It must explain each claim rather than list audit decisions.  Include labelled
-  Rationale, Mechanism, Expected Observation, Evaluation, Competing
-  Explanation and Falsification Condition for every claim.
+  Rationale/理由, Mechanism/机制, Expected Observation/预期观察,
+  Evaluation/评测, Competing Explanation/竞争解释 and
+  Falsification Condition/证伪条件 for every claim.
 - `ideation/proposal/research_proposal.md`: a complete formal proposal using
-  exactly the seven `##` headings above.  Develop the seven sections in
+  the seven language-appropriate `##` headings above.  Develop the seven sections in
   connected prose; headings and bullet lists cannot substitute for argument.
   Add a compact evidence-boundary note only when useful, in plain researcher
   language, never internal audit labels.
@@ -161,6 +229,7 @@ Do not write proposal manifests, dossier JSON, validation maps, kill criteria
 or post-novelty receipts.  The runtime derives them only after source
 validation.  Call `finish_task` after the five required source/prose artifacts
 are complete.
+{% endif %}
 {% else %}
 ### Orientation-aware review and targeted repair
 

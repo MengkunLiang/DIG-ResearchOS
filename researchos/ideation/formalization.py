@@ -11,6 +11,7 @@ handoff.
 from __future__ import annotations
 
 from collections import Counter
+from copy import deepcopy
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -179,6 +180,24 @@ def orientation_spec(profile_type: str | None) -> dict[str, Any]:
     }
 
 
+def _normalize_formalization_language(value: Any) -> str | None:
+    normalized = str(value or "").strip().casefold().replace("_", "-")
+    if normalized in {"zh", "zh-cn", "zh-hans", "chinese", "中文", "汉语"}:
+        return "zh"
+    if normalized in {"en", "en-us", "en-gb", "english", "英文"}:
+        return "en"
+    return None
+
+
+def _project_formalization_language(workspace: Path) -> str | None:
+    project = _read_yaml_mapping(Path(workspace) / "project.yaml")
+    metadata = project.get("metadata") if isinstance(project.get("metadata"), dict) else {}
+    return (
+        _normalize_formalization_language(project.get("formalization_language"))
+        or _normalize_formalization_language(metadata.get("formalization_language"))
+    )
+
+
 def load_orientation_configuration(workspace: Path) -> dict[str, Any]:
     """Load T4's chosen orientation without introducing a second T4.5 choice."""
 
@@ -189,6 +208,14 @@ def load_orientation_configuration(workspace: Path) -> dict[str, Any]:
         result = orientation_spec(profile)
         result["target_venues"] = _string_list(existing.get("target_venues"))
         result["user_instruction"] = str(existing.get("user_instruction") or "").strip()
+        # project.yaml is the user-owned setting; orientation_config.yaml is
+        # a generated derivative and must not keep an earlier default after a
+        # researcher changes the intended T4.5 prose language.
+        result["formalization_language"] = (
+            _project_formalization_language(workspace)
+            or _normalize_formalization_language(existing.get("formalization_language"))
+            or "en"
+        )
         result["source"] = str(existing.get("source") or "ideation/orientation_config.yaml")
         return result
 
@@ -198,6 +225,7 @@ def load_orientation_configuration(workspace: Path) -> dict[str, Any]:
     result = orientation_spec(profile)
     result["target_venues"] = _string_list(target.get("target_venues"))
     result["user_instruction"] = str(target.get("user_instruction") or "").strip()
+    result["formalization_language"] = _project_formalization_language(workspace) or "en"
     result["source"] = "ideation/t4_run_config.json" if target else "default_hybrid"
     return result
 
@@ -211,6 +239,7 @@ def persist_orientation_configuration(workspace: Path) -> dict[str, Any]:
         "profile_type": config["profile_type"],
         "target_venues": config["target_venues"],
         "user_instruction": config["user_instruction"],
+        "formalization_language": config["formalization_language"],
         "proposal_weights": config["proposal_weights"],
         "guidance": config["guidance"],
         "review_focus": config["review_focus"],
@@ -218,6 +247,115 @@ def persist_orientation_configuration(workspace: Path) -> dict[str, Any]:
     }
     _write_yaml(Path(workspace) / ORIENTATION_CONFIG_REL_PATH, payload)
     return payload
+
+
+def normalize_research_blueprint_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Canonicalize lossless legacy/model aliases before blueprint validation.
+
+    The structured writer used to accept arbitrary objects for rationale and
+    alternative entries, while the cross-artifact validator required specific
+    fields.  Normalize only unambiguous aliases so historical workspaces stay
+    readable and every newly written blueprint has one durable wire format.
+    """
+
+    normalized = deepcopy(payload)
+    changes: list[str] = []
+    approach = normalized.get("proposed_approach")
+    if not isinstance(approach, dict):
+        return normalized, changes
+
+    raw_rationales = approach.get("design_rationales")
+    rationales = raw_rationales if isinstance(raw_rationales, list) else []
+    canonical_rationales: list[dict[str, Any]] = []
+    covered_components: set[str] = set()
+    for item in rationales:
+        if not isinstance(item, dict):
+            canonical_rationales.append(item)
+            continue
+        refs: list[str] = []
+        for key in ("component_id", "component_ref"):
+            value = str(item.get(key) or "").strip()
+            if value:
+                refs.append(value)
+        refs.extend(_string_list(item.get("component_refs")))
+        refs = list(dict.fromkeys(refs))
+        rationale = item.get("rationale")
+        if not _substantive_text(rationale) and _substantive_text(item.get("design_rationale")):
+            rationale = item.get("design_rationale")
+            changes.append("design_rationales[].design_rationale -> rationale")
+        if not refs:
+            canonical_rationales.append(item)
+            continue
+        for component_id in refs:
+            canonical = dict(item)
+            canonical["component_id"] = component_id
+            if rationale is not None:
+                canonical["rationale"] = rationale
+            canonical.pop("component_ref", None)
+            canonical.pop("component_refs", None)
+            canonical.pop("design_rationale", None)
+            canonical_rationales.append(canonical)
+            covered_components.add(component_id)
+        if "component_ref" in item or "component_refs" in item:
+            changes.append("design_rationales component reference -> component_id")
+
+    # Older Formalizers sometimes placed a complete rationale directly on the
+    # component. It is researcher-authored information, not a value we invent,
+    # so materialize the canonical cross-reference deterministically.
+    for component in _dict_list(approach.get("components")):
+        component_id = str(component.get("id") or "").strip()
+        rationale = component.get("design_rationale")
+        if component_id and component_id not in covered_components and _substantive_text(rationale):
+            canonical_rationales.append({"component_id": component_id, "rationale": rationale})
+            covered_components.add(component_id)
+            changes.append("components[].design_rationale -> design_rationales[]")
+    if canonical_rationales != rationales:
+        approach["design_rationales"] = canonical_rationales
+
+    alternatives = approach.get("alternatives_considered")
+    if isinstance(alternatives, list):
+        canonical_alternatives: list[Any] = []
+        for item in alternatives:
+            if not isinstance(item, dict):
+                canonical_alternatives.append(item)
+                continue
+            canonical = dict(item)
+            if not _substantive_text(canonical.get("alternative")):
+                for alias in ("simpler_alternative", "approach"):
+                    if _substantive_text(canonical.get(alias)):
+                        canonical["alternative"] = canonical.get(alias)
+                        canonical.pop(alias, None)
+                        changes.append(f"alternatives_considered[].{alias} -> alternative")
+                        break
+            if not _substantive_text(canonical.get("reason_not_sufficient")):
+                for alias in ("why_insufficient", "reason"):
+                    if _substantive_text(canonical.get(alias)):
+                        canonical["reason_not_sufficient"] = canonical.get(alias)
+                        canonical.pop(alias, None)
+                        changes.append(f"alternatives_considered[].{alias} -> reason_not_sufficient")
+                        break
+            canonical_alternatives.append(canonical)
+        if canonical_alternatives != alternatives:
+            approach["alternatives_considered"] = canonical_alternatives
+    return normalized, list(dict.fromkeys(changes))
+
+
+def canonicalize_research_blueprint_file(workspace: Path) -> list[str]:
+    """Persist lossless blueprint field-name migrations for the active T4.5 run.
+
+    This is intentionally limited to aliases whose values map one-to-one onto
+    the canonical contract. It never creates a rationale, an alternative, or
+    any research content that the model did not already supply.
+    """
+
+    path = Path(workspace) / BLUEPRINT_REL_PATH
+    raw = _read_yaml_mapping(path)
+    if not raw:
+        return []
+    normalized, changes = normalize_research_blueprint_payload(raw)
+    if changes and normalized != raw:
+        _write_yaml(path, normalized)
+    return changes
 
 
 def reset_t45_artifacts_for_new_selection(
@@ -551,16 +689,23 @@ def validate_blueprint_and_claim_registry(workspace: Path) -> tuple[bool, str | 
     return True, None
 
 
-def validate_t45_formalization_core(workspace: Path) -> tuple[bool, str | None]:
-    """Validate all non-Proposal formalization artifacts for a passed audit."""
+def validate_t45_structured_sources(workspace: Path) -> tuple[bool, str | None]:
+    """Validate the three structured sources required before T4.5 prose.
+
+    This is intentionally separate from ``validate_t45_formalization_core``:
+    the claims document is not expected to exist until this contract passes.
+    Keeping that boundary explicit prevents a valid file's mere existence from
+    being mistaken for a usable, internally consistent research plan.
+    """
 
     workspace = Path(workspace)
     ok, error = validate_blueprint_and_claim_registry(workspace)
     if not ok:
         return ok, error
-    blueprint = _read_yaml_mapping(workspace / BLUEPRINT_REL_PATH)
+    blueprint, _normalizations = normalize_research_blueprint_payload(
+        _read_yaml_mapping(workspace / BLUEPRINT_REL_PATH)
+    )
     registry = _read_yaml_mapping(workspace / CLAIM_REGISTRY_REL_PATH)
-    orientation = load_orientation_configuration(workspace)
 
     exp_plan, error = _load_structured(workspace / "ideation" / "exp_plan.yaml", "exp_plan")
     if error:
@@ -580,6 +725,19 @@ def validate_t45_formalization_core(workspace: Path) -> tuple[bool, str | None]:
     if missing_component_tests:
         return False, "Main technical components lack an ablation or mechanism test: " + ", ".join(missing_component_tests)
 
+    return True, None
+
+
+def validate_t45_formalization_core(workspace: Path) -> tuple[bool, str | None]:
+    """Validate structured sources and the researcher-facing claims document."""
+
+    workspace = Path(workspace)
+    ok, error = validate_t45_structured_sources(workspace)
+    if not ok:
+        return ok, error
+    registry = _read_yaml_mapping(workspace / CLAIM_REGISTRY_REL_PATH)
+    orientation = load_orientation_configuration(workspace)
+
     hypotheses_path = workspace / "ideation" / "hypotheses.md"
     if not hypotheses_path.is_file():
         return False, "Missing ideation/hypotheses.md"
@@ -596,8 +754,8 @@ def validate_t45_formalization_core(workspace: Path) -> tuple[bool, str | None]:
 def validate_claims_markdown(text: str, *, registry: dict[str, Any], orientation: dict[str, Any]) -> str | None:
     """Check that researcher-facing claims are complete rather than audit headings."""
 
-    if not re.search(r"(?im)^#\s*Research Claims and Hypotheses\s*$", text):
-        return "hypotheses.md must start with '# Research Claims and Hypotheses'"
+    if not re.search(r"(?im)^#\s*(?:Research Claims and Hypotheses|研究主张与假设)\s*$", text):
+        return "hypotheses.md must start with '# Research Claims and Hypotheses' or '# 研究主张与假设'"
     minimum_words = int(orientation["minimum_words"]["claims"])
     if _research_text_length(text) < minimum_words:
         return (
@@ -943,6 +1101,8 @@ def _load_structured(path: Path, schema_name: str, *, format_name: str | None = 
         return None, f"Cannot parse {path.name}: {exc}"
     if not isinstance(value, dict):
         return None, f"{path.name} must contain an object"
+    if schema_name == "research_blueprint":
+        value, _normalizations = normalize_research_blueprint_payload(value)
     valid, error = validate_record(value, schema_name)
     if not valid:
         return None, f"{path.name} fails {schema_name} schema: {error}"

@@ -66,59 +66,33 @@ _T45_FORMALIZATION_ARTIFACTS = frozenset(
 )
 
 
-def _t45_exp_plan_validation_error(policy: WorkspaceAccessPolicy) -> str | None:
-    """Return the blocking reason before T4.5 declares formalization complete."""
+def _t45_structured_source_validation_error(policy: WorkspaceAccessPolicy) -> str | None:
+    """Return the exact common-contract failure before T4.5 prose is written.
 
-    plan_path = policy.workspace_dir / "ideation" / "exp_plan.yaml"
-    if not plan_path.is_file() or plan_path.stat().st_size <= 0:
-        return "ideation/exp_plan.yaml 尚未通过结构化写入"
-    try:
-        payload = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        return f"ideation/exp_plan.yaml 无法解析: {exc}"
-    if not isinstance(payload, dict):
-        return "ideation/exp_plan.yaml 顶层必须是对象"
-    valid, error = validate_record(payload, "exp_plan")
-    if not valid:
-        return f"ideation/exp_plan.yaml 未通过 exp_plan schema: {error or 'unknown validation error'}"
-    return None
-
-
-def _t45_blueprint_validation_error(policy: WorkspaceAccessPolicy) -> str | None:
-    """Require a valid shared blueprint and registry before prose formalization.
-
-    A writer may not turn a novelty audit into isolated Markdown claims.  The
-    two structured sources are deliberately produced first, so later Proposal
-    prose and the experiment plan cannot silently contradict one another.
+    A markdown Proposal must be derived from the same validated blueprint,
+    claim registry, and experiment plan that T5 will consume. Checking only
+    file existence or isolated schemas previously admitted a misleading state:
+    all three files existed, yet their references or planned tests disagreed.
     """
 
-    blueprint_path = policy.workspace_dir / "ideation" / "research_blueprint.yaml"
-    registry_path = policy.workspace_dir / "ideation" / "claim_registry.yaml"
-    for path, schema_name in ((blueprint_path, "research_blueprint"), (registry_path, "claim_registry")):
-        if not path.is_file() or path.stat().st_size <= 0:
-            return f"{path.relative_to(policy.workspace_dir).as_posix()} 尚未通过结构化写入"
-        try:
-            payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError) as exc:
-            return f"{path.name} 无法解析: {exc}"
-        if not isinstance(payload, dict):
-            return f"{path.name} 顶层必须是对象"
-        valid, error = validate_record(payload, schema_name)
-        if not valid:
-            return f"{path.name} 未通过 {schema_name} schema: {error or 'unknown validation error'}"
-    # Schema validity alone cannot prove that blueprint claim IDs, component
-    # references, and orientation agree.  Keep prose generation behind this
-    # cross-artifact check as well, otherwise a model can write a polished but
-    # internally inconsistent Proposal before the final validator rejects it.
     try:
-        from ..ideation.formalization import validate_blueprint_and_claim_registry
+        from ..ideation.formalization import validate_t45_structured_sources
 
-        consistent, consistency_error = validate_blueprint_and_claim_registry(policy.workspace_dir)
+        valid, error = validate_t45_structured_sources(policy.workspace_dir)
     except Exception as exc:  # pragma: no cover - defensive tool diagnosis
-        return f"无法核对 research_blueprint 与 claim_registry 的一致性: {exc}"
-    if not consistent:
-        return f"research_blueprint.yaml 与 claim_registry.yaml 尚未形成一致来源: {consistency_error or 'unknown error'}"
-    return None
+        return f"无法核对 T4.5 三份结构化来源: {exc}"
+    return None if valid else str(error or "T4.5 structured-source validation failed")
+
+
+def _t45_structured_source_hint(error: str) -> tuple[str, str]:
+    """Point the CLI back to the first concrete source named by validation."""
+
+    normalized = str(error or "")
+    if "exp_plan" in normalized or "Experiment plan" in normalized:
+        return "ideation/exp_plan.yaml", "exp_plan"
+    if "claim_registry" in normalized or "claim registry" in normalized:
+        return "ideation/claim_registry.yaml", "claim_registry"
+    return "ideation/research_blueprint.yaml", "research_blueprint"
 
 
 def _note_card_stem_lookup_keys(stem: str) -> set[str]:
@@ -364,17 +338,17 @@ class WriteFileTool(Tool):
         content = kwargs["content"]
         normalized_path = path.strip().lstrip("./")
         if self.policy.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"} and normalized_path in _T45_FORMALIZATION_ARTIFACTS:
-            blueprint_error = _t45_blueprint_validation_error(self.policy)
-            plan_error = _t45_exp_plan_validation_error(self.policy)
-            requirement_error = blueprint_error or plan_error
+            requirement_error = _t45_structured_source_validation_error(self.policy)
             if requirement_error:
+                required_path, required_schema = _t45_structured_source_hint(requirement_error)
                 return ToolResult(
                     ok=False,
                     content=(
                         f"不能写入 {normalized_path}：{requirement_error}。"
-                        "先用 write_structured_file 依次写入并通过 `ideation/research_blueprint.yaml` "
-                        "(research_blueprint)、`ideation/claim_registry.yaml` (claim_registry) 和 "
-                        "`ideation/exp_plan.yaml` (exp_plan)，再写 researcher-facing prose。"
+                        "三份结构化来源可能已经存在，但必须作为一个共同契约通过："
+                        "`ideation/research_blueprint.yaml` (research_blueprint)、"
+                        "`ideation/claim_registry.yaml` (claim_registry) 和 `ideation/exp_plan.yaml` (exp_plan)。"
+                        "请只用 write_structured_file 修复该错误指向的来源，再写 researcher-facing prose。"
                         "不要用 write_file 写这些 YAML，也不要把缺失结构化来源描述为已 formalized。"
                     ),
                     data={
@@ -384,13 +358,13 @@ class WriteFileTool(Tool):
                             "ideation/claim_registry.yaml",
                             "ideation/exp_plan.yaml",
                         ],
-                        "required_path": "ideation/exp_plan.yaml",
+                        "required_path": required_path,
                         "required_tool": "write_structured_file",
-                        "required_schema": "exp_plan",
+                        "required_schema": required_schema,
                         "validation_error": requirement_error,
                         "repair_scope": "t45_blueprint_claims_exp_plan_before_prose",
                     },
-                    error=("t45_formalization_requires_blueprint" if blueprint_error else "t45_formalization_requires_exp_plan"),
+                    error="t45_formalization_requires_structured_sources",
                 )
         # ``survey.tex`` is a derived artifact.  A review agent may revise
         # source sections and then call ``assemble_survey``, but allowing a

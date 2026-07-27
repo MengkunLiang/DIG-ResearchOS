@@ -76,8 +76,32 @@
             "additionalProperties": true
           }
         },
-        "design_rationales": {"type": "array", "minItems": 2, "items": {"type": "object"}},
-        "alternatives_considered": {"type": "array", "minItems": 1, "items": {"type": "object"}}
+        "design_rationales": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "properties": {
+              "component_id": {"type": "string", "pattern": "^COMP[1-9][0-9]*$"},
+              "rationale": {"type": "string", "minLength": 30}
+            },
+            "required": ["component_id", "rationale"],
+            "additionalProperties": true
+          }
+        },
+        "alternatives_considered": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "alternative": {"type": "string", "minLength": 5},
+              "reason_not_sufficient": {"type": "string", "minLength": 20}
+            },
+            "required": ["alternative", "reason_not_sufficient"],
+            "additionalProperties": true
+          }
+        }
       },
       "required": ["artifact_type", "central_insight", "components", "design_rationales", "alternatives_considered"],
       "additionalProperties": true

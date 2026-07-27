@@ -89,6 +89,7 @@ class WriteStructuredFileTool(Tool):
         schema_name = kwargs["schema_name"]
         format_type = kwargs["format"]
         normalized_path = str(path).strip().lstrip("./")
+        normalizations: list[str] = []
         if schema_name == "bridge_domain_plan" and normalized_path != "literature/bridge_domain_plan.json":
             return ToolResult(
                 ok=False,
@@ -101,6 +102,14 @@ class WriteStructuredFileTool(Tool):
                 ),
                 error="wrong_artifact_path",
             )
+
+        if schema_name == "research_blueprint":
+            # Keep one canonical on-disk shape while accepting only lossless
+            # aliases emitted by older Formalizers. The normalized object is
+            # still schema-validated before any write occurs.
+            from ..ideation.formalization import normalize_research_blueprint_payload
+
+            data, normalizations = normalize_research_blueprint_payload(data)
 
         try:
             # 1. Schema 验证
@@ -174,13 +183,17 @@ class WriteStructuredFileTool(Tool):
 
             return ToolResult(
                 ok=True,
-                content=f"✅ 成功写入 {len(content)} 字符到 {path}\n"
-                f"格式: {format_type}, Schema: {schema_name}",
+                content=(
+                    f"✅ 成功写入 {len(content)} 字符到 {path}\n"
+                    f"格式: {format_type}, Schema: {schema_name}"
+                    + ("\n已规范化兼容字段: " + "; ".join(normalizations) if normalizations else "")
+                ),
                 data={
                     "path": path,
                     "bytes": len(content.encode("utf-8")),
                     "format": format_type,
                     "schema_name": schema_name,
+                    "normalizations": normalizations,
                 },
             )
 
