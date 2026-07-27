@@ -33,6 +33,7 @@ from ..runtime.bridge_catalog import load_bridge_catalog_summaries
 from ..runtime.prompts import render_prompt
 from ..literature_identity import is_paper_note_file
 from ..schemas.validator import validate_record
+from ..ideation.novelty_verdict import extract_final_gate_verdict, is_passing_final_gate_verdict
 from ._common import (
     prepend_resume_prefix,
     load_project,
@@ -326,25 +327,7 @@ def _load_pre_novelty_brief(workspace: Path) -> tuple[dict, str, list[str]]:
 
 
 def _t45_verdict_is_pass(text: str) -> bool:
-    matches = list(re.finditer(
-        r"(?im)^\s*(?:#+\s*)?(?:\*\*)?\s*Final\s+Gate\s+Verdict\s*(?:\*\*)?\s*[:：]\s*(.+?)\s*$",
-        text,
-    ))
-    match = matches[-1] if matches else None
-    verdict = match.group(1).strip().casefold().replace("-", "_").replace(" ", "_") if match else ""
-    token = re.split(r"[^a-z0-9_]+", verdict, maxsplit=1)[0]
-    pass_tokens = {
-        "pass",
-        "passed",
-        "pass_to_experiment",
-        "pass_with_required_baselines",
-        "continue_to_t5",
-        "continue_to_experiment",
-        # Legacy aliases accepted only for older novelty_audit.md files.
-        "go_t7",
-        "continue_to_t7",
-    }
-    return token in pass_tokens
+    return is_passing_final_gate_verdict(extract_final_gate_verdict(text), allow_legacy=True)
 
 
 def _t45_exp_plan_recovery_instruction(workspace: Path) -> str:

@@ -686,7 +686,8 @@ def test_t5_is_blocked_when_final_quality_gate_is_not_passed(tmp_path: Path) -> 
 def test_legacy_passed_audit_requires_formalization_upgrade_not_silent_t5_use(tmp_path: Path) -> None:
     write(
         tmp_path / "ideation" / "novelty_audit.md",
-        "# Old attempt\nFinal Gate Verdict: drop_due_to_collision\n\n# Final attempt\nFinal Gate Verdict: pass_to_experiment\n",
+        "# Old attempt\nFinal Gate Verdict: drop_due_to_collision\n\n# Final attempt\n"
+        "**Final Gate Verdict**: `pass_to_experiment`\n",
     )
     write_yaml(tmp_path / "ideation" / "hypothesis_brief.yaml", {"draft_hypotheses": [{"id": "H1", "statement": "draft"}]})
     write(tmp_path / "ideation" / "selected" / "selected_candidate.json", "{}\n")

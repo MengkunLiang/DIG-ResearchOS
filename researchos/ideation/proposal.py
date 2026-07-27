@@ -28,6 +28,11 @@ from .formalization import (
     validate_t45_selection_isolation,
     validate_t45_formalization_core,
 )
+from .novelty_verdict import (
+    PASSING_FINAL_GATE_VERDICTS,
+    extract_final_gate_verdict,
+    normalize_final_gate_verdict,
+)
 
 
 PROPOSAL_REL_PATH = "ideation/proposal/research_proposal.md"
@@ -49,14 +54,7 @@ PROPOSAL_REQUIRED_SOURCE_ARTIFACTS = (
     ORIENTATION_REVIEW_REL_PATH,
 )
 
-_PASS_VERDICTS = {
-    "pass",
-    "passed",
-    "pass_to_experiment",
-    "pass_with_required_baselines",
-    "continue_to_t5",
-    "continue_to_experiment",
-}
+_PASS_VERDICTS = PASSING_FINAL_GATE_VERDICTS
 
 PROPOSAL_SECTION_KEYS = (
     "motivation",
@@ -89,18 +87,8 @@ def proposal_artifact_paths(workspace: Path) -> dict[str, Path]:
 
 
 def _normalized_audit_verdict(audit_text: str) -> tuple[str, str]:
-    matches = list(re.finditer(
-        r"(?im)^\s*(?:#+\s*)?(?:\*\*)?\s*Final\s+Gate\s+Verdict\s*(?:\*\*)?\s*[:：]\s*(.+?)\s*$",
-        audit_text,
-    ))
-    match = matches[-1] if matches else None
-    raw_verdict = match.group(1).strip() if match else ""
-    normalized = re.split(
-        r"[^a-z0-9_]+",
-        raw_verdict.casefold().replace("-", "_").replace(" ", "_"),
-        maxsplit=1,
-    )[0]
-    return raw_verdict, normalized
+    raw_verdict = extract_final_gate_verdict(audit_text)
+    return raw_verdict, normalize_final_gate_verdict(raw_verdict)
 
 
 def _json_object(path: Path) -> dict[str, Any]:

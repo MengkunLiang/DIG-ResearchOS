@@ -22,6 +22,12 @@ from typing import Any, Iterable
 import yaml
 
 from ..schemas.validator import validate_record
+from .novelty_verdict import (
+    PASSING_FINAL_GATE_VERDICTS,
+    extract_final_gate_verdict,
+    is_passing_final_gate_verdict,
+    normalize_final_gate_verdict,
+)
 
 
 BLUEPRINT_REL_PATH = "ideation/research_blueprint.yaml"
@@ -1022,17 +1028,8 @@ def legacy_t45_upgrade_reason(workspace: Path) -> str | None:
     audit_path = workspace / "ideation" / "novelty_audit.md"
     if not audit_path.is_file():
         return None
-    verdict = _audit_verdict(audit_path.read_text(encoding="utf-8", errors="replace")).casefold()
-    pass_tokens = {
-        "pass",
-        "passed",
-        "pass_to_experiment",
-        "pass_with_required_baselines",
-        "continue_to_t5",
-        "continue_to_experiment",
-    }
-    normalized = re.split(r"[^a-z0-9_]+", verdict.replace("-", "_").replace(" ", "_"), maxsplit=1)[0]
-    if normalized not in pass_tokens:
+    verdict = extract_final_gate_verdict(audit_path.read_text(encoding="utf-8", errors="replace"))
+    if normalize_final_gate_verdict(verdict) not in PASSING_FINAL_GATE_VERDICTS:
         return None
     required_inputs = (
         workspace / "ideation" / "hypothesis_brief.yaml",
@@ -1071,7 +1068,9 @@ def compile_t45_derived_artifacts(workspace: Path, audit_path: Path) -> tuple[bo
     candidate = selected.get("candidate") if isinstance(selected.get("candidate"), dict) else {}
     candidate_id = str(selected.get("candidate_id") or candidate.get("id") or "unknown").strip()
     fingerprint = str(selected.get("selection_fingerprint") or "unknown").strip()
-    verdict = _audit_verdict(audit_path.read_text(encoding="utf-8", errors="replace"))
+    verdict = extract_final_gate_verdict(audit_path.read_text(encoding="utf-8", errors="replace"))
+    if not is_passing_final_gate_verdict(verdict):
+        return False, "T4.5 derivatives require a passing Final Gate Verdict in novelty_audit.md"
     claims = _dict_list(registry.get("claims"))
     contributions = blueprint.get("contributions") if isinstance(blueprint.get("contributions"), dict) else {}
     risks = blueprint.get("risks") if isinstance(blueprint.get("risks"), dict) else {}
@@ -1345,12 +1344,6 @@ def _repeated_sentence_count(text: str) -> int:
     normalized = [re.sub(r"\s+", " ", sentence.casefold()).strip() for sentence in sentences]
     repeated = Counter(item for item in normalized if len(item) >= 60)
     return sum(count - 1 for count in repeated.values() if count >= 2)
-
-
-def _audit_verdict(text: str) -> str:
-    matches = list(re.finditer(r"(?im)^\s*(?:#+\s*)?(?:\*\*)?\s*Final\s+Gate\s+Verdict\s*(?:\*\*)?\s*[:：]\s*(.+?)\s*$", text))
-    match = matches[-1] if matches else None
-    return match.group(1).strip() if match else "pass_to_experiment"
 
 
 def _flatten_contributions(contributions: dict[str, Any]) -> list[dict[str, Any]]:

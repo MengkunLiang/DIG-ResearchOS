@@ -9,6 +9,11 @@ from researchos.ideation.proposal import (
     repair_t45_proposal_manifest,
     validate_t45_research_proposal,
 )
+from researchos.ideation.formalization import compile_t45_derived_artifacts
+from researchos.ideation.novelty_verdict import (
+    extract_final_gate_verdict,
+    normalize_final_gate_verdict,
+)
 from researchos.tools.external_experiment import _build_reboost_pack, _validate_research_reboost_pack
 from tests.unit.t45_unified_fixture import populate_valid_t45_workspace, write
 
@@ -19,6 +24,45 @@ def test_t45_proposal_is_substantive_and_traceable(tmp_path: Path) -> None:
     ok, error = validate_t45_research_proposal(tmp_path, tmp_path / "ideation/novelty_audit.md")
 
     assert ok is True, error
+
+
+def test_markdown_wrapped_passing_verdict_authorizes_t45_proposal(tmp_path: Path) -> None:
+    """The auditor's documented Markdown form must not become a false failure."""
+
+    populate_valid_t45_workspace(tmp_path)
+    audit_path = tmp_path / "ideation" / "novelty_audit.md"
+    write(
+        audit_path,
+        "# Novelty Audit\n\n## Final Gate Verdict\n\n"
+        "**Final Gate Verdict**: `pass_with_required_baselines`\n",
+    )
+    proposal_path = tmp_path / PROPOSAL_REL_PATH
+    proposal_path.touch()
+
+    repaired, error = repair_t45_proposal_manifest(tmp_path, audit_path)
+    ok, validation_error = validate_t45_research_proposal(tmp_path, audit_path)
+
+    assert repaired is True, error
+    assert ok is True, validation_error
+
+
+def test_t45_final_gate_verdict_parser_accepts_markdown_and_never_defaults_to_pass(tmp_path: Path) -> None:
+    """Formatting decoration is not a verdict, and an absent verdict is not approval."""
+
+    markdown_audit = "## Final Gate Verdict\n\n**Final Gate Verdict**: `pass_with_required_baselines`\n"
+    raw = extract_final_gate_verdict(markdown_audit)
+
+    assert raw == "`pass_with_required_baselines`"
+    assert normalize_final_gate_verdict(raw) == "pass_with_required_baselines"
+
+    populate_valid_t45_workspace(tmp_path)
+    audit_path = tmp_path / "ideation" / "novelty_audit.md"
+    write(audit_path, "# Novelty Audit\n\nNo final verdict was recorded.\n")
+
+    compiled, error = compile_t45_derived_artifacts(tmp_path, audit_path)
+
+    assert compiled is False
+    assert "require a passing Final Gate Verdict" in (error or "")
 
 
 def test_manifest_metadata_is_repaired_from_validated_sources(tmp_path: Path) -> None:

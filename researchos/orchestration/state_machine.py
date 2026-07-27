@@ -90,6 +90,10 @@ from ..ideation.formalization import (
     validate_t45_selection_isolation,
     validate_t45_formalization_core,
 )
+from ..ideation.novelty_verdict import (
+    extract_final_gate_verdict,
+    normalize_final_gate_verdict,
+)
 from ..ideation.proposal import validate_t45_research_proposal
 from ..ideation.state import T4ArtifactStore, build_t4_input_fingerprints, run_config_fingerprint
 
@@ -2200,23 +2204,7 @@ def _normalize_venue_style(value: Any) -> str:
 def _extract_t45_final_gate_verdict(text: str) -> str:
     """Extract the T4.5 Final Gate Verdict without interpreting scientific quality."""
 
-    matches = list(re.finditer(
-        r"(?im)^\s*(?:#+\s*)?(?:\*\*)?\s*Final\s+Gate\s+Verdict\s*(?:\*\*)?\s*[:：]\s*(.+?)\s*$",
-        text,
-    ))
-    match = matches[-1] if matches else None
-    if match:
-        return match.group(1).strip()
-
-    heading = re.search(r"(?im)^\s*#+\s*Final\s+Gate\s+Verdict\s*$", text)
-    if heading:
-        tail = text[heading.end() :].splitlines()
-        for line in tail[:8]:
-            stripped = line.strip().strip("*")
-            if not stripped or stripped.startswith("#"):
-                continue
-            return stripped
-    return ""
+    return extract_final_gate_verdict(text)
 
 
 def _validate_t45_post_novelty_formalization(workspace_dir: Path, audit_path: Path) -> tuple[bool, str | None]:
@@ -6780,12 +6768,12 @@ class StateMachine:
         if not verdict_text:
             return human_review
 
-        normalized = verdict_text.lower().replace("-", "_").replace(" ", "_")
+        normalized = normalize_final_gate_verdict(verdict_text)
         if any(token in normalized for token in ("return_to_t4", "return_tot4", "reframe", "回到t4", "回退t4")):
             return human_review
         if any(token in normalized for token in ("drop_due_to_collision", "drop", "collision", "reject", "fail")):
             return human_review
-        verdict_token = re.split(r"[^a-z0-9_]+", normalized, maxsplit=1)[0]
+        verdict_token = normalized
         pass_tokens = {
             "pass",
             "passed",
