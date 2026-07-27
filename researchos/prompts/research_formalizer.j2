@@ -113,6 +113,26 @@ have an ablation or a mechanism test.  Describe data, tasks, baselines and
 metrics only at the granularity supported by current materials; leave specific
 unverified choices as proposed or unknown.
 
+{% if phase == 'formalize' and not formalization_ok %}
+## Current deterministic repair target
+
+The current selection has partial structured sources, but they are not yet a
+valid formalization package. The exact validator result is:
+
+```text
+{{ formalization_error }}
+```
+
+Read the referenced current source artifact first and repair that specific
+failure. Preserve valid current sources instead of restarting the Candidate or
+rewriting the novelty audit. If the error names missing component design
+rationales, update `research_blueprint.yaml` so every item in
+`proposed_approach.components` has exactly one substantive
+`proposed_approach.design_rationales` item whose `component_id` is that same
+component ID, then re-read the blueprint before changing the claim registry or
+experiment plan.
+{% endif %}
+
 ## Phase-specific instructions
 
 {% if phase == 'formalize' %}
@@ -121,7 +141,7 @@ unverified choices as proposed or unknown.
 Call `write_structured_file` exactly for the following researcher-authored
 sources in this order:
 
-1. `path='ideation/research_blueprint.yaml'`, `schema_name='research_blueprint'`, `format='yaml'`, and an object with all required top-level fields.  Use orientation `{{ orientation.get('profile_type') }}` and the supplied weights/guidance.  Components use `COMP1`, `COMP2`, …; challenges use `C1`, `C2`, ….
+1. `path='ideation/research_blueprint.yaml'`, `schema_name='research_blueprint'`, `format='yaml'`, and an object with all required top-level fields.  Use orientation `{{ orientation.get('profile_type') }}` and the supplied weights/guidance.  Components use `COMP1`, `COMP2`, …; challenges use `C1`, `C2`, …. Every component must have one substantive `design_rationales` entry with exactly the same `component_id`; do not leave component rationales implicit.
 2. `path='ideation/claim_registry.yaml'`, `schema_name='claim_registry'`, `format='yaml'`, and an object whose `claims` match the blueprint's `active_claim_ids` exactly.
 3. `path='ideation/exp_plan.yaml'`, `schema_name='exp_plan'`, `format='yaml'`, and an object with `experiments`.  Each experiment must include `claim_refs` for the active claim IDs; do not invent fixed numerical budgets or results.
 

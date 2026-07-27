@@ -66,6 +66,7 @@ class ResearchFormalizerAgent(Agent):
         # it can appear in this fresh Formalizer context as reusable source.
         ensure_current_t45_selection_isolation(workspace)
         orientation = persist_orientation_configuration(workspace)
+        formalization_ok, formalization_error = validate_t45_formalization_core(workspace)
         artifact_preview = {
             "selected_candidate": read_text_file(workspace / "ideation" / "selected" / "selected_candidate.json", default="")[:6000],
             "hypothesis_brief": read_text_file(workspace / "ideation" / "hypothesis_brief.yaml", default="")[:4000],
@@ -84,6 +85,8 @@ class ResearchFormalizerAgent(Agent):
             project=project,
             orientation=orientation,
             artifact_preview=artifact_preview,
+            formalization_ok=formalization_ok,
+            formalization_error=formalization_error or "",
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
@@ -97,8 +100,17 @@ class ResearchFormalizerAgent(Agent):
                 "只有所有问题已修复、scores 达到规范且 status='accepted' 时才 finish_task；不要把 novelty audit 的内部标签写入 proposal。"
             )
         else:
+            existing_ok, existing_error = validate_t45_formalization_core(ctx.workspace_dir)
+            repair_prefix = ""
+            if not existing_ok and existing_error:
+                repair_prefix = (
+                    "当前选择已有部分 T4.5 结构化来源，但尚未通过确定性校验。"
+                    f"首要失败点：{existing_error}。先读取并定向修复受影响的现有 source artifact；"
+                    "不要重写无关的 Candidate、novelty audit 或已通过的 structured source。"
+                )
             message = (
-                "执行 T4.5 Research Formalization。Novelty Audit 已结束；不要重写 novelty_audit.md，也不要做新的论文检索。"
+                repair_prefix
+                + "执行 T4.5 Research Formalization。Novelty Audit 已结束；不要重写 novelty_audit.md，也不要做新的论文检索。"
                 "先读取 candidate、brief、audit 和 synthesis 的完整需要段落。严格按此顺序调用 write_structured_file："
                 "(1) ideation/research_blueprint.yaml, schema_name='research_blueprint', format='yaml'; "
                 "(2) ideation/claim_registry.yaml, schema_name='claim_registry', format='yaml'; "

@@ -8,6 +8,7 @@ import time
 
 import yaml
 
+from researchos.agents.research_formalizer import ResearchFormalizerAgent
 from researchos.ideation.formalization import (
     T45_SELECTION_ISOLATION_REL_PATH,
     ensure_current_t45_selection_isolation,
@@ -249,6 +250,32 @@ def test_resume_isolation_keeps_new_structured_sources_but_archives_old_prose(tm
     assert not (tmp_path / "ideation/hypotheses.md").exists()
     assert not (tmp_path / "ideation/proposal" / "research_proposal.md").exists()
     assert not (tmp_path / "ideation/post_novelty_formalization.json").exists()
+
+
+def test_formalizer_injects_the_current_structured_repair_target(tmp_path: Path) -> None:
+    """A resumed Formalizer should repair the named source, not restart T4.5."""
+
+    populate_valid_t45_workspace(tmp_path)
+    blueprint_path = tmp_path / "ideation" / "research_blueprint.yaml"
+    blueprint = yaml.safe_load(blueprint_path.read_text(encoding="utf-8"))
+    blueprint["proposed_approach"]["design_rationales"] = []
+    write_yaml(blueprint_path, blueprint)
+    ctx = ExecutionContext(
+        workspace_dir=tmp_path,
+        project_id="formalizer-repair-target",
+        task_id="T4.5-FORMALIZE",
+        run_id="formalizer-repair-target-run",
+        mode="formalize",
+    )
+
+    agent = ResearchFormalizerAgent(mode="formalize")
+    prompt = agent.system_prompt(ctx)
+    message = agent.initial_user_message(ctx)
+
+    assert "Current deterministic repair target" in prompt
+    assert "research_blueprint.yaml fails research_blueprint schema" in prompt
+    assert "research_blueprint.yaml fails research_blueprint schema" in message
+    assert "不要重写无关的 Candidate" in message
 
 
 def test_short_heading_complete_proposal_fails_with_substantive_reason(tmp_path: Path) -> None:
