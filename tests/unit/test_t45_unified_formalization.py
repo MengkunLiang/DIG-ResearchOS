@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import yaml
@@ -10,12 +11,71 @@ from researchos.ideation.formalization import (
     validate_t45_formalization_core,
 )
 from researchos.ideation.proposal import validate_t45_research_proposal
+from researchos.runtime.agent import Agent, AgentSpec, ExecutionContext
+from researchos.runtime.orchestrator import AgentRunner
+from researchos.runtime.config import RuntimeSettings
+from researchos.testing.mocks import FakeLLMMessage, FakeRawCompletion, FakeToolCall, MockHumanInterface, MockLLMClient
+from researchos.tools.builtin import register_builtin_tools
 from researchos.tools.external_experiment import _build_reboost_pack
+from researchos.tools.registry import ToolRegistry
 from tests.unit.t45_unified_fixture import populate_valid_t45_workspace, write, write_yaml
 
 
 def _proposal_path(workspace: Path) -> Path:
     return workspace / "ideation" / "proposal" / "research_proposal.md"
+
+
+class _RepeatedT45RepairAgent(Agent):
+    """A scripted Formalizer used to exercise the runtime recovery loop."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            AgentSpec(
+                name="research_formalizer",
+                model_tier="heavy",
+                tool_names=["write_file", "finish_task"],
+                allowed_read_prefixes=[""],
+                allowed_write_prefixes=["ideation/"],
+                # Deliberately low: the T4.5-specific loop must not use it.
+                max_validation_retries=1,
+            )
+        )
+
+    def system_prompt(self, ctx: ExecutionContext) -> str:
+        return "Test only: repair the declared T4.5 source artifact."
+
+    def initial_user_message(self, ctx: ExecutionContext) -> str:
+        return "Run the scripted T4.5 quality-gate repair test."
+
+    def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
+        proposal = ctx.workspace_dir / "ideation" / "proposal" / "research_proposal.md"
+        if "repair iteration 6" in proposal.read_text(encoding="utf-8"):
+            return True, None
+        return False, "research_proposal.md is too short for hybrid proposal (120/1900 words)"
+
+
+def _finish_response(summary: str) -> FakeRawCompletion:
+    return FakeRawCompletion(
+        message=FakeLLMMessage(
+            tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": summary})]
+        )
+    )
+
+
+def _proposal_write_response(iteration: int) -> FakeRawCompletion:
+    return FakeRawCompletion(
+        message=FakeLLMMessage(
+            tool_calls=[
+                FakeToolCall(
+                    name="write_file",
+                    arguments={
+                        "path": "ideation/proposal/research_proposal.md",
+                        "content": f"repair iteration {iteration}",
+                    },
+                )
+            ]
+        )
+    )
 
 
 def test_one_unified_template_accepts_all_three_orientations(tmp_path: Path) -> None:
@@ -130,6 +190,128 @@ def test_orientation_specific_failure_modes_are_blocked(tmp_path: Path) -> None:
     ok, error = validate_blueprint_and_claim_registry(hybrid)
     assert ok is False
     assert "cross-level" in (error or "")
+
+
+def test_t45_quality_repair_feedback_targets_the_failing_source_artifact(tmp_path: Path) -> None:
+    ctx = ExecutionContext(
+        workspace_dir=tmp_path,
+        project_id="quality-gate-test",
+        task_id="T4.5-REVIEW",
+        run_id="quality-gate-feedback",
+    )
+
+    proposal_feedback = AgentRunner._validation_repair_feedback(
+        ctx=ctx,
+        error="research_proposal.md is too short for hybrid proposal (120/1900 words)",
+    )
+    plan_feedback = AgentRunner._validation_repair_feedback(
+        ctx=ctx,
+        error="Experiment plan has no experiment mapped to active claims: TC1",
+    )
+    review_feedback = AgentRunner._validation_repair_feedback(
+        ctx=ctx,
+        error="Orientation-aware review scores remain below threshold: evaluation_rigor",
+    )
+
+    assert "research_proposal.md" in proposal_feedback
+    assert "不要直接写 `proposal_manifest.json`" in proposal_feedback
+    assert "exp_plan.yaml" in plan_feedback
+    assert "orientation_review.json" in review_feedback
+    assert "不得只把 status 改为 accepted" in review_feedback
+
+
+def test_t45_quality_repair_has_no_fixed_retry_limit_but_stops_without_source_progress(tmp_path: Path) -> None:
+    populate_valid_t45_workspace(tmp_path)
+    ctx = ExecutionContext(
+        workspace_dir=tmp_path,
+        project_id="quality-gate-test",
+        task_id="T4.5-REVIEW",
+        run_id="quality-gate-fingerprint",
+    )
+    error = "research_proposal.md is too short for hybrid proposal (120/1900 words)"
+
+    assert AgentRunner._record_t45_quality_repair_attempt(ctx=ctx, error=error) is False
+    # A repeated finish_task with neither a source write nor a new diagnosis
+    # cannot make progress, irrespective of any numeric retry setting.
+    assert AgentRunner._record_t45_quality_repair_attempt(ctx=ctx, error=error) is True
+
+    proposal = _proposal_path(tmp_path)
+    proposal.write_text(proposal.read_text(encoding="utf-8") + "\nA source repair.\n", encoding="utf-8")
+    assert AgentRunner._record_t45_quality_repair_attempt(ctx=ctx, error=error) is False
+
+
+def test_t45_quality_gate_repairs_past_legacy_limit_without_human_extension(tmp_path: Path) -> None:
+    """Exercise finish -> validation failure -> repair -> revalidate with mock LLM calls."""
+
+    populate_valid_t45_workspace(tmp_path)
+    responses = [_finish_response("initial validation")]
+    for iteration in range(1, 7):
+        responses.append(_proposal_write_response(iteration))
+        responses.append(_finish_response(f"repair {iteration}"))
+    llm = MockLLMClient(responses)
+    human = MockHumanInterface()
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    runner = AgentRunner(
+        _RepeatedT45RepairAgent(),
+        registry,
+        llm,
+        human,
+        RuntimeSettings(),
+    )
+    ctx = ExecutionContext(
+        workspace_dir=tmp_path,
+        project_id="quality-gate-test",
+        task_id="T4.5-REVIEW",
+        run_id="quality-gate-run",
+        mode="review",
+    )
+
+    result = asyncio.run(runner.run(ctx))
+
+    assert result.ok is True, result.error or result.message
+    assert llm.call_count == len(responses)
+    assert not any(
+        call[0] == "gate" and call[1]["gate_id"] == "runtime_validation_retry_extension"
+        for call in human.calls
+    )
+    user_messages = [
+        str(message.get("content") or "")
+        for call_messages in llm.last_messages
+        for message in call_messages
+        if message.get("role") == "user"
+    ]
+    assert any("research_proposal.md is too short" in message for message in user_messages)
+
+
+def test_t45_quality_gate_pauses_if_the_model_retries_without_changing_a_source(tmp_path: Path) -> None:
+    populate_valid_t45_workspace(tmp_path)
+    llm = MockLLMClient([_finish_response("initial validation"), _finish_response("ignored repair")])
+    human = MockHumanInterface()
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    runner = AgentRunner(
+        _RepeatedT45RepairAgent(),
+        registry,
+        llm,
+        human,
+        RuntimeSettings(),
+    )
+    ctx = ExecutionContext(
+        workspace_dir=tmp_path,
+        project_id="quality-gate-test",
+        task_id="T4.5-REVIEW",
+        run_id="quality-gate-no-progress",
+        mode="review",
+    )
+
+    result = asyncio.run(runner.run(ctx))
+
+    assert result.ok is False
+    assert result.stop_reason == "interrupted"
+    assert "源产物没有变化" in (result.error or "")
+    assert llm.call_count == 2
+    assert not any(call[0] == "gate" for call in human.calls)
 
 
 def test_t5_is_blocked_when_final_quality_gate_is_not_passed(tmp_path: Path) -> None:

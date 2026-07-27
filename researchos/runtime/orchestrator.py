@@ -136,6 +136,15 @@ T2_AUTO_PERSIST_SEARCH_TOOLS = frozenset(
     }
 )
 TOOL_FAILURE_CACHE_NAMES = frozenset({"fetch_paper_pdf", "expand_corpus_for_survey"})
+T45_QUALITY_SOURCE_ARTIFACTS = (
+    "ideation/orientation_config.yaml",
+    "ideation/research_blueprint.yaml",
+    "ideation/claim_registry.yaml",
+    "ideation/exp_plan.yaml",
+    "ideation/hypotheses.md",
+    "ideation/proposal/research_proposal.md",
+    "ideation/orientation_review.json",
+)
 TOOL_CONTEXT_CONTENT_LIMITS = {
     # PDF 文本工具是 T3 上下文膨胀的主要来源。工具自身也有上限，这里再加
     # runtime 兜底，防止未来工具改动或异常 PDF 解析再次把长文本塞进模型。
@@ -1859,13 +1868,15 @@ class AgentRunner:
                         ctx,
                         str(err or "unknown validation error"),
                     )
-                    self.progress.validation_result(
-                        task_id=ctx.task_id,
-                        ok=False,
-                        error=str(err or "unknown validation error"),
-                        failure_count=validation_fails,
-                        retry_limit=validation_retry_limit,
-                    )
+                    t45_quality_repair = self._uses_t45_quality_repair_loop(ctx)
+                    if not t45_quality_repair:
+                        self.progress.validation_result(
+                            task_id=ctx.task_id,
+                            ok=False,
+                            error=str(err or "unknown validation error"),
+                            failure_count=validation_fails,
+                            retry_limit=validation_retry_limit,
+                        )
                     run_logger.event(
                         "VALIDATION_FAILED",
                         task=ctx.task_id,
@@ -1874,6 +1885,64 @@ class AgentRunner:
                         limit=validation_retry_limit,
                         reason=err,
                     )
+                    if t45_quality_repair:
+                        # T4.5 is a source-first formalization workflow.  A
+                        # generic retry counter makes it stop exactly when the
+                        # validator has supplied the most useful diagnosis for
+                        # a targeted source-artifact repair.  Continue while
+                        # the model is making real source changes; only pause
+                        # when it asks for another validation without changing
+                        # anything for the same diagnosis.
+                        no_source_progress = self._record_t45_quality_repair_attempt(
+                            ctx=ctx,
+                            error=str(err or "unknown validation error"),
+                        )
+                        self.progress.validation_result(
+                            task_id=ctx.task_id,
+                            ok=False,
+                            error=str(err or "unknown validation error"),
+                        )
+                        if no_source_progress:
+                            stop_reason = AgentResult.STOP_INTERRUPTED
+                            error_msg = (
+                                "T4.5 质量 Gate 的同一错误在收到定向修复说明后再次出现，"
+                                "但 blueprint、claim registry、实验计划、假设、proposal、review 等源产物没有变化。"
+                                f"最后原因：{err}。系统未按固定次数放弃，而是暂停以避免无修改的 finish_task 循环；"
+                                "恢复后将再次把该诊断交给 Formalizer 定向修复。"
+                            )
+                            self.progress.emit(
+                                "[T4.5 Quality Gate] 同一诊断未伴随任何源产物修改，已暂停以避免无声循环；"
+                                "保留全部产物和定向修复原因。",
+                                important=True,
+                            )
+                            self._mark_runtime_recovery(
+                                ctx,
+                                kind="t45_quality_no_source_progress",
+                                error=error_msg,
+                                details={
+                                    "failure_count": validation_fails,
+                                    "validator_error": str(err or "unknown validation error"),
+                                    "repair_policy": "targeted_no_fixed_retry_limit",
+                                    "source_artifacts": list(T45_QUALITY_SOURCE_ARTIFACTS),
+                                },
+                            )
+                            break
+                        self.progress.emit(
+                            "[T4.5 Quality Gate] 第 "
+                            f"{validation_fails} 次校验未通过；已把具体原因和最小修复范围注入 Formalizer，"
+                            "修复后会重新运行全部质量校验（不设固定修复轮次上限）。",
+                            important=True,
+                        )
+                        feedback = Message.user(
+                            self._validation_repair_feedback(
+                                ctx=ctx,
+                                error=str(err or "unknown validation error"),
+                            ),
+                            step=budget.steps,
+                        )
+                        messages.append(feedback)
+                        trace.write_message(feedback)
+                        continue
                     if validation_fails >= validation_retry_limit:
                         (
                             extended,
@@ -8705,6 +8774,53 @@ class AgentRunner:
         return count
 
     @staticmethod
+    def _uses_t45_quality_repair_loop(ctx: ExecutionContext) -> bool:
+        """Whether this run uses T4.5's source-aware, non-counted repair loop."""
+
+        return ctx.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"}
+
+    @staticmethod
+    def _t45_quality_source_fingerprint(workspace_dir: Path) -> dict[str, str]:
+        """Fingerprint only T4.5 source artifacts, never compiled compatibility files."""
+
+        fingerprints: dict[str, str] = {}
+        for relative_path in T45_QUALITY_SOURCE_ARTIFACTS:
+            path = workspace_dir / relative_path
+            if not path.is_file():
+                fingerprints[relative_path] = "missing"
+                continue
+            try:
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                fingerprints[relative_path] = "unreadable"
+            else:
+                fingerprints[relative_path] = digest
+        return fingerprints
+
+    @classmethod
+    def _record_t45_quality_repair_attempt(cls, *, ctx: ExecutionContext, error: str) -> bool:
+        """Return true only for a repeated T4.5 error with no source-artifact progress.
+
+        This intentionally does not count repair attempts.  A model may need
+        several source-first corrections before every cross-artifact quality
+        gate passes.  Retrying a validation without changing any editable
+        source for the same error is the one state that cannot make progress.
+        """
+
+        normalized_error = " ".join(str(error or "unknown validation error").split()).casefold()
+        current = cls._t45_quality_source_fingerprint(ctx.workspace_dir)
+        previous_error = str(ctx.extra.get("t45_quality_last_error") or "").casefold()
+        previous = ctx.extra.get("t45_quality_last_source_fingerprint")
+        no_source_progress = (
+            normalized_error == previous_error
+            and isinstance(previous, dict)
+            and previous == current
+        )
+        ctx.extra["t45_quality_last_error"] = normalized_error
+        ctx.extra["t45_quality_last_source_fingerprint"] = current
+        return no_source_progress
+
+    @staticmethod
     def _t36_citation_repair_context(workspace_dir: Path) -> str:
         """Inject deterministic, evidence-bounded T3.6 repair facts into the writer.
 
@@ -8778,6 +8894,8 @@ class AgentRunner:
             f"{prefix} 最后错误：{error}\n"
             "只修复该错误涉及的最小 artifact，保留其它已合格字段；修复后再次调用 finish_task。"
         )
+        if AgentRunner._uses_t45_quality_repair_loop(ctx):
+            return AgentRunner._t45_quality_repair_feedback(error=error, base=base)
         if ctx.task_id != "T4":
             if ctx.task_id == "T4.5":
                 proposal_context = (
@@ -8901,6 +9019,133 @@ class AgentRunner:
             base
             + "T4 的研究字段必须由你根据已有候选、论文笔记和 scorecard 归纳修复；"
             "先读取报错文件，确认 schema 和字段路径，再写回最小完整修复。"
+        )
+
+    @staticmethod
+    def _t45_quality_repair_feedback(*, error: str, base: str) -> str:
+        """Turn a T4.5 quality-gate rejection into a bounded source repair.
+
+        The Formalizer must repair researcher-facing source artifacts, not
+        metadata compiled deterministically from them.  Keeping the scope
+        explicit prevents a short Proposal fix from overwriting the novelty
+        audit or an experiment-plan failure from becoming a wholesale rewrite.
+        """
+
+        common = (
+            "这是 T4.5 统一质量 Gate 的定向修复，不是重新执行 T4、重新检索论文或重写 novelty_audit.md。"
+            "先读取 `ideation/orientation_config.yaml` 和报错涉及的 source artifact；保留已通过字段、Candidate、"
+            "novelty audit 与其它未受影响产物。不要直接写 `proposal_manifest.json`、"
+            "`post_novelty_formalization.json`、`research_dossier.json`、`validation_map.yaml` 或 `kill_criteria.yaml`，"
+            "这些文件由 runtime 从通过验证的 source artifacts 确定性编译。"
+        )
+        normalized = error.casefold()
+
+        blueprint_markers = (
+            "research_blueprint.yaml",
+            "challenge",
+            "technical components",
+            "component references",
+            "design rationale",
+            "simpler alternative",
+            "cross-level link",
+            "utd formalization",
+            "ccf-a formalization",
+            "evaluation.",
+            "technical_risks",
+            "novelty_risks",
+            "data_or_experimental_risks",
+        )
+        registry_markers = (
+            "claim_registry.yaml",
+            "active claim",
+            "active_claim_ids",
+            "claim references",
+            "duplicate active claim",
+        )
+        plan_markers = (
+            "experiment plan",
+            "exp_plan.yaml",
+            "experiment mapped",
+            "main technical components lack an ablation or mechanism test",
+        )
+        hypothesis_markers = (
+            "hypotheses.md",
+            "research claims and hypotheses",
+            "short assertion",
+            " in hypotheses.md is missing:",
+            "audit labels",
+        )
+        proposal_markers = (
+            "research_proposal.md",
+            "proposal ",
+            "proposal sections",
+            "prior research, gap",
+            "central insight",
+            "research design and evaluation",
+            "expected contributions",
+            "risks, limitations",
+            "utd proposal",
+            "ccf-a proposal",
+            "hybrid proposal",
+            "practical significance",
+            "affected actor",
+        )
+
+        if any(marker in normalized for marker in proposal_markers):
+            return (
+                base
+                + common
+                + "只读取 blueprint、claim registry、exp plan 和当前 `ideation/proposal/research_proposal.md`，"
+                "然后只修复 Proposal 中报错指向的章节。Proposal 必须以研究者可读的方式解释问题、现实动机、研究缺口、"
+                "central insight、技术方案与设计理由、可证伪 claims、实验设计、baseline/ablation/robustness/mechanism 验证、"
+                "预期贡献、现实中的受影响主体、风险和 fallback/kill criteria。不得以重复文本凑长度，"
+                "不得把审计 verdict、T4.5、true_collision、candidate_id 等内部过程语言作为内容主体。"
+            )
+        if any(marker in normalized for marker in plan_markers):
+            return (
+                base
+                + common
+                + "只读取并修复 `ideation/exp_plan.yaml`，必要时同步 `ideation/research_blueprint.yaml` 的 "
+                "`evaluation.ablations` 或 `evaluation.mechanism_tests`。每个 active claim 必须映射到至少一个实验；"
+                "每个主要技术组件必须有 ablation 或 mechanism test；保留真实 baseline、竞争解释、证伪条件和资源边界，"
+                "不得把预期结果写成已观察结果。结构化文件必须用 `write_structured_file` 按原 schema 完整写回。"
+            )
+        if any(marker in normalized for marker in hypothesis_markers):
+            return (
+                base
+                + common
+                + "只读取 `ideation/claim_registry.yaml` 与 `ideation/hypotheses.md`，只重写受影响的 claim block。"
+                "每个 active claim 块必须有与 registry 一致的 claim ID，并明确写出 Rationale、Mechanism、"
+                "Expected Observation、Evaluation、Competing Explanation 和 Falsification；`### H1 [removed]` "
+                "不是有效假设。补足研究论证而不是重复段落，也不要把 T4.5、Level、collision 或 candidate_id 等内部审计语言写进正文。"
+            )
+        if any(marker in normalized for marker in blueprint_markers) or any(
+            marker in normalized for marker in registry_markers
+        ):
+            return (
+                base
+                + common
+                + "读取 `ideation/research_blueprint.yaml` 与 `ideation/claim_registry.yaml`，只修复错误关联的结构化字段和交叉引用。"
+                "技术挑战、组件、design rationale、active claims、风险与评测必须形成可追溯链；UTD 需要实质技术构件，"
+                "CCF-A 需要完整计算方法与设计理由，Hybrid 需要从技术设计到真实世界结果的明确跨层机制。"
+                "使用 `write_structured_file` 写回完整且 schema-valid 的对象；不要修改 prose，除非该错误明确指向 prose。"
+            )
+        if "orientation_review.json" in normalized or "orientation-aware review" in normalized or "review scores" in normalized:
+            return (
+                base
+                + common
+                + "先读取 `ideation/orientation_review.json` 中的逐项诊断，并回读它指出的 blueprint、claim registry、"
+                "exp plan、hypotheses 或 Proposal source。先修复实际薄弱点，再以 `write_structured_file` 更新 review。"
+                "不得只把 status 改为 accepted 或虚增 score；只有各 focus score 和 mandatory floor 已由具体、可验证的"
+                "研究内容支撑时，才写 `status: accepted`。"
+            )
+        return (
+            base
+            + common
+            + "读取 `ideation/research_blueprint.yaml`、`ideation/claim_registry.yaml`、`ideation/exp_plan.yaml`、"
+            "`ideation/hypotheses.md`、`ideation/proposal/research_proposal.md` 和（Review 阶段）"
+            "`ideation/orientation_review.json`，依据错误文本定位唯一需要修复的 source artifact。"
+            "修复后重新读取写入结果，再调用 finish_task，让 runtime 重新运行全部质量 Gate。"
         )
 
     async def _maybe_offer_validation_retry_extension(

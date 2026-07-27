@@ -42,7 +42,9 @@ agent_behavior:
 
   # 普通 Agent 输出校验失败时的默认自动修复次数。单个 Agent 可通过
   # agent_params.yaml 或用户级 agent 设置覆盖；T3 未读完的深读队列走
-  # 确定性续读，不消耗此次数。
+  # 确定性续读，不消耗此次数。T4.5-FORMALIZE / T4.5-REVIEW 使用独立的
+  # source-aware 定向修复：只要源产物持续变化就不按该次数停止；同一错误
+  # 且没有任何源产物变化时才暂停，避免无声循环。
   max_validation_retries: 5
 
   # 仅用于迁移极早期 T4 workspace 的显式兼容开关。默认 false：T4 只运行

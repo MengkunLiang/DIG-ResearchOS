@@ -498,7 +498,6 @@ agents:
           max_steps: 35
           max_tokens_total: 90000
           max_wall_seconds: 600
-          max_validation_retries: 3
         llm:
           tier: heavy
           temperature: 0.2
