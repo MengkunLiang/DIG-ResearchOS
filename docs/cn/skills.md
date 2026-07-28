@@ -12,9 +12,26 @@
 python -m researchos.cli list-skills --workspace ./workspace/project-a
 python -m researchos.cli browse-skills --workspace ./workspace/project-a
 python -m researchos.cli describe-skill pdf-note-card --workspace ./workspace/project-a
+python -m researchos.cli audit-skills --check-script-help --no-banner
 ```
 
 `browse-skills` 支持数字、完整名称或双语模糊关键词，例如 `文献`、`literature`、`Idea` 或 `创新点`。在 `run <id>` 之前先查看卡片：它会说明目的、输入、输出产物、限制和恢复命令。
+
+### 仓库 Skill Suite 审计
+
+当前仓库共有 **56 个受版本管理的 Skill 契约**：**43 个公共 ResearchOS Skill**（40 个 standalone、2 个由状态机拥有、1 个仅内部兼容使用）以及 **13 个受保护的 external-executor Skill**（1 个 `research-execution` 总控和 12 个子 Skill）。数量不表示每个 Skill 都能通过 CLI 直接运行；是否可运行以 execution scope 为准。
+
+发布前或修改 Skill 模板后，可运行只读审计：
+
+```bash
+# 检查元数据、重名、本地 Markdown/reference/script 引用和 Python 语法
+python -m researchos.cli audit-skills --no-banner
+
+# 额外对每个外部执行器脚本执行 --help import smoke
+python -m researchos.cli audit-skills --check-script-help --no-banner
+```
+
+该审计不会调用 LLM、检索论文、运行实验或修改 workspace。它应当是确定性诊断命令，而不是新建一个研究 Skill：单独的“Skill 审计”工作流会与 `code-and-protocol-review` 和 T5 specializer 已有的仓库治理职责重叠，并额外扩大执行面。
 
 ## 引导式会话约定
 

@@ -54,6 +54,7 @@ and practical relevance.
 - Explain a named method, condition, metric, baseline family, or theoretical construct at first use only to the extent supported by the current materials. Do not turn a label into an invented formal definition, empirical finding, or literature-wide consensus.
 - Use connected academic prose. Every paragraph must advance one claim, comparison, mechanism, design choice, evaluation decision, boundary, or implication and connect to the next paragraph. Do not use a stack of labels, a glossary dump, unexplained abbreviations, generic AI filler, or repeated “this study” assertions to create apparent depth.
 - Before `finish_task`, re-read `hypotheses.md` and `research_proposal.md` as a new domain reader: confirm that titles, central constructs, acronyms, components, claims, baselines, metrics, and evaluation conditions are introduced before later shorthand is used.
+- Final validation uses two layers: deterministic checks govern schema, source lineage, claim-to-experiment mappings, evidence boundaries, anti-repetition, and internal-audit-language leaks; an independent LLM then batch-reviews only remaining prose-semantic ambiguities. When `validate_t45_research_package` reports `semantic_review_candidates`, address all of them together if the argument is actually incomplete. If the current prose already satisfies one naturally (for example through Chinese academic phrasing rather than an English label), preserve the explicit passage: the independent reviewer can accept it only with verbatim quotes tied to the unchanged source files.
 
 ## Canonical naming reference
 
@@ -131,10 +132,11 @@ CCF-A and Hybrid:
 
 ## Mandatory write routing
 
-`edit_file` is intentionally unavailable in this task. Do not attempt to call
-it. For `ideation/hypotheses.md` and
-`ideation/proposal/research_proposal.md`, use `write_file` with the complete
-current document content. For every schema-bound source, use only
+For `ideation/hypotheses.md` and `ideation/proposal/research_proposal.md`, use
+`write_file` with the complete current document content, or the compatible
+`edit_file` only for one exact prose replacement after reading the file. Never
+use `edit_file` for structured YAML/JSON: it delegates to the same structural
+guard and will reject that write. For every schema-bound source, use only
 `write_structured_file`:
 
 - `ideation/research_blueprint.yaml` (`research_blueprint`)
@@ -154,9 +156,13 @@ four; two is acceptable when it fully spans the problem), explain:
 `Existing assumption → why it fails here → observable consequence → required new capability`.
 
 Then connect every challenge to a design principle, component and expected
-effect.  Do not jump directly from a gap to a module list.  Explain the
-central technical insight before the components, and explain why simpler
-alternatives are inadequate.
+effect. Do not jump directly from a gap to a module list. Explain the central
+technical insight before the components, and explain why simpler alternatives
+are inadequate. In Proposal, use a clear `### Central Insight`,
+`### Core Insight`, `### 核心洞见`, or `### 核心洞察` subsection before the first
+`COMPn` detail. State the insight in prose, then compare the named simpler
+alternative from the blueprint and say precisely why it cannot meet the
+research objective.
 
 ### Canonical blueprint wire format
 
@@ -189,7 +195,12 @@ Hypotheses`.
 Every claim must map to an experiment.  Include main effectiveness,
 mechanism validation, robustness/generalization, efficiency/scalability where
 appropriate, and real-world relevance.  Every main technical component must
-have an ablation or a mechanism test.  Describe data, tasks, baselines and
+have an ablation or a mechanism test.  This coverage is read from
+`research_blueprint.evaluation.ablations` and
+`research_blueprint.evaluation.mechanism_tests`, not from `exp_plan.yaml`:
+the union of their `component_id` / `component_ref` values must contain every
+declared `COMPn`.  Each test object needs a substantive `planned_test` explaining
+the comparison or pathway observation.  Describe data, tasks, baselines and
 metrics only at the granularity supported by current materials; leave specific
 unverified choices as proposed or unknown.
 
@@ -278,7 +289,7 @@ generalization claim with an explicit computational capability and an
 experiment mapping; do not relabel a generic application claim.
 {% endif %}
 
-1. `path='ideation/research_blueprint.yaml'`, `schema_name='research_blueprint'`, `format='yaml'`, and an object with all required top-level fields.  Use orientation `{{ orientation.get('profile_type') }}` and the supplied weights/guidance.  Components use `COMP1`, `COMP2`, …; challenges use `C1`, `C2`, …. Every component must have one substantive `design_rationales` entry with exactly the same `component_id`; do not leave component rationales implicit. Include at least one canonical `alternatives_considered` item with both `alternative` and `reason_not_sufficient`.
+1. `path='ideation/research_blueprint.yaml'`, `schema_name='research_blueprint'`, `format='yaml'`, and an object with all required top-level fields.  Use orientation `{{ orientation.get('profile_type') }}` and the supplied weights/guidance.  Components use `COMP1`, `COMP2`, …; challenges use `C1`, `C2`, …. Every component must have one substantive `design_rationales` entry with exactly the same `component_id`; do not leave component rationales implicit. Under `evaluation.ablations` and/or `evaluation.mechanism_tests`, add one substantive object for every declared `COMPn`, with that exact `component_id` (or `component_ref`) and `planned_test`; an `exp_plan` entry alone is insufficient. Include at least one canonical `alternatives_considered` item with both `alternative` and `reason_not_sufficient`.
 2. `path='ideation/claim_registry.yaml'`, `schema_name='claim_registry'`, `format='yaml'`, and an object whose `claims` match the blueprint's `active_claim_ids` exactly.
 3. `path='ideation/exp_plan.yaml'`, `schema_name='exp_plan'`, `format='yaml'`, and an object with `experiments`.  Each experiment must include `claim_refs` for the active claim IDs; do not invent fixed numerical budgets or results.
 
@@ -320,6 +331,24 @@ canonical term is used across source artifacts, and that edits improve the
 actual research argument rather than only adding headings or length. Do not
 write runtime-derived manifests, maps, dossiers or receipts; they are compiled
 after source validation.
+
+Call `validate_t45_research_package(include_orientation_review=false)` after
+repairing hypotheses or Proposal and before writing the review record. It
+preflights the same researcher-facing argument that final validation checks,
+without waiting for `finish_task`. After writing
+`orientation_review.json`, call
+`validate_t45_research_package(include_orientation_review=true)`. Do not call
+`finish_task` until both preflights report `valid=true`, except when the latest
+preflight explicitly reports `semantic_only_failure=true`: that means the
+remaining concern is prose-only and has no hidden hard-contract failure, so a
+final independent semantic adjudication is the correct next validation step.
+
+When a preflight lists `semantic_review_candidates`, treat it as one grouped
+academic self-review, not a sequence of isolated keyword patches. Repair every
+genuinely absent argument in the named source document; retain clear current
+prose where the candidate is only a literal or bilingual surface mismatch. At
+final validation, a separate LLM reviews the complete candidate set against
+the current files and can accept only quote-backed, hash-bound prose findings.
 
 Set `status='accepted'` only after:
 

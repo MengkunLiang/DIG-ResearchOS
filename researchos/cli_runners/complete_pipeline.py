@@ -454,6 +454,36 @@ class CompletePipelineRunner:
                 state.dump_yaml(state_path)
                 return state
 
+            prior_task = state.current_task
+            redirect_unapproved_t45 = getattr(
+                self.state_machine,
+                "_redirect_unapproved_t45_formalization_to_human_review",
+                None,
+            )
+            redirected = (
+                redirect_unapproved_t45(
+                    state,
+                    self.workspace,
+                    source="complete_pipeline_t45_formalization_preflight",
+                )
+                if callable(redirect_unapproved_t45)
+                else None
+            )
+            if redirected is not None:
+                state = redirected
+                state.dump_yaml(state_path)
+                self.run_logger.event(
+                    "STATE_TRANSITION",
+                    from_task=prior_task,
+                    to_task=state.current_task,
+                    reason="t45_audit_not_authorized_for_formalization",
+                )
+                self.progress.emit(
+                    "[T4.5] novelty audit 未授权正式化；已回到人工审阅，不会用 Proposal 或 hypothesis 改写尝试绕过 Final Gate Verdict。",
+                    important=True,
+                )
+                continue
+
             # ``resume`` advances through state-machine nodes without
             # returning to the CLI's one-time prerequisite check.  Every
             # consumer that declares the shared manifest must therefore

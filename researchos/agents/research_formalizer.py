@@ -45,6 +45,7 @@ class ResearchFormalizerAgent(Agent):
                         "write_file",
                         "write_structured_file",
                         "validate_t45_formalization_sources",
+                        "validate_t45_research_package",
                         "list_files",
                         "finish_task",
                     ],
@@ -54,7 +55,12 @@ class ResearchFormalizerAgent(Agent):
                     "temperature": 0.35,
                     "allowed_read_prefixes": ["", "ideation/", "literature/"],
                     "allowed_write_prefixes": ["ideation/"],
-                    "allow_edit_file_compatibility": False,
+                    # Some OpenAI-compatible providers choose `edit_file`
+                    # after reading prose. Its implementation delegates to
+                    # WriteFileTool, so schema-bound sources retain the same
+                    # structural-write guard while prose edits no longer turn
+                    # into unknown-tool retries.
+                    "allow_edit_file_compatibility": True,
                     "prompt_template": "research_formalizer.j2",
                     "structured_outputs": {
                         BLUEPRINT_REL_PATH: "research_blueprint",
@@ -116,6 +122,8 @@ class ResearchFormalizerAgent(Agent):
                 "受影响的 source artifact，然后重新读取其内容确认一致。最后用 write_structured_file 写 "
                 "ideation/orientation_review.json（schema_name='orientation_review', format='json'）。"
                 "复核新增或改写的术语和缩写是否已在首次出现处自然定义且跨文件一致。"
+                "写入 review 前调用 validate_t45_research_package(include_orientation_review=false)；"
+                "写入 accepted review 后再次调用 validate_t45_research_package(include_orientation_review=true)。"
                 "只有所有问题已修复、scores 达到规范且 status='accepted' 时才 finish_task；不要把 novelty audit 的内部标签写入 proposal，"
                 "也不要写 runtime 负责生成的 manifest、map、dossier 或 receipt。"
             )

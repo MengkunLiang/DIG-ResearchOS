@@ -28,6 +28,7 @@ from .novelty_verdict import (
     is_passing_final_gate_verdict,
     normalize_final_gate_verdict,
 )
+from .t45_semantic_adjudication import accepted_t45_semantic_errors
 
 
 BLUEPRINT_REL_PATH = "ideation/research_blueprint.yaml"
@@ -199,10 +200,32 @@ def _normalize_formalization_language(value: Any) -> str | None:
 def _project_formalization_language(workspace: Path) -> str | None:
     project = _read_yaml_mapping(Path(workspace) / "project.yaml")
     metadata = project.get("metadata") if isinstance(project.get("metadata"), dict) else {}
-    return (
+    configured = (
         _normalize_formalization_language(project.get("formalization_language"))
         or _normalize_formalization_language(metadata.get("formalization_language"))
     )
+    if configured is not None:
+        return configured
+    # A project can explicitly select English for an eventual venue even when
+    # its working brief is Chinese.  In the absence of that user-owned choice,
+    # use the language already present in the research direction/question only
+    # for a *new* formalization.  Applying that inference to an existing
+    # accepted English package would retroactively invalidate its hypotheses,
+    # Proposal, review, and already-compiled T5 handoff merely because the
+    # project brief happens to be bilingual.
+    existing_research_prose = (
+        Path(workspace) / "ideation" / "hypotheses.md",
+        Path(workspace) / "ideation" / "proposal" / "research_proposal.md",
+    )
+    if any(path.is_file() and path.stat().st_size > 0 for path in existing_research_prose):
+        return None
+    researcher_text = "\n".join(
+        str(project.get(key) or "")
+        for key in ("research_direction", "research_question")
+    )
+    if re.search(r"[\u3400-\u9fff]", researcher_text):
+        return "zh"
+    return None
 
 
 def load_orientation_configuration(workspace: Path) -> dict[str, Any]:
@@ -696,49 +719,87 @@ def validate_blueprint_and_claim_registry(workspace: Path) -> tuple[bool, str | 
     return True, None
 
 
-def validate_t45_structured_sources(workspace: Path) -> tuple[bool, str | None]:
-    """Validate the three structured sources required before T4.5 prose.
+def collect_t45_structured_source_errors(workspace: Path) -> list[str]:
+    """Return all independently actionable T4.5 source-contract failures.
 
-    This is intentionally separate from ``validate_t45_formalization_core``:
-    the claims document is not expected to exist until this contract passes.
-    Keeping that boundary explicit prevents a valid file's mere existence from
-    being mistaken for a usable, internally consistent research plan.
+    The public validator still exposes one stable first error for callers that
+    need a boolean contract.  The Formalizer, however, must see independent
+    errors together.  The previous fail-fast implementation made a model fix
+    a blueprint rationale, discover the missing component tests only on the
+    next turn, then discover a claim-to-experiment gap after that.  Those are
+    separate properties of the same research contract and should be repaired
+    in one structured write whenever their source data is readable.
+
+    This deliberately does not try to diagnose dependent schema failures.  A
+    malformed YAML object has to be repaired before cross-artifact reasoning
+    is trustworthy, while a readable, schema-valid object can safely expose
+    several independent consistency gaps at once.
     """
 
     workspace = Path(workspace)
-    ok, error = validate_blueprint_and_claim_registry(workspace)
-    if not ok:
-        return ok, error
-    blueprint, _normalizations = normalize_research_blueprint_payload(
-        _read_yaml_mapping(workspace / BLUEPRINT_REL_PATH)
-    )
-    registry = _read_yaml_mapping(workspace / CLAIM_REGISTRY_REL_PATH)
+    errors: list[str] = []
+    blueprint_ok, blueprint_error = validate_blueprint_and_claim_registry(workspace)
+    if not blueprint_ok and blueprint_error:
+        errors.append(str(blueprint_error))
 
-    exp_plan, error = _load_structured(workspace / "ideation" / "exp_plan.yaml", "exp_plan")
-    if error:
-        return False, error
-    assert exp_plan is not None
+    blueprint, blueprint_load_error = _load_structured(workspace / BLUEPRINT_REL_PATH, "research_blueprint")
+    registry, registry_load_error = _load_structured(workspace / CLAIM_REGISTRY_REL_PATH, "claim_registry")
+    exp_plan, exp_plan_error = _load_structured(workspace / "ideation" / "exp_plan.yaml", "exp_plan")
+
+    # Do not repeat the first source error: ``validate_blueprint_and_claim_registry``
+    # is already the canonical diagnostic for the first two artifacts.
+    if exp_plan_error:
+        errors.append(str(exp_plan_error))
+    if blueprint_load_error or registry_load_error or exp_plan_error:
+        return list(dict.fromkeys(errors))
+    assert blueprint is not None and registry is not None and exp_plan is not None
+
     claim_ids = [str(item.get("id") or "").strip() for item in _dict_list(registry.get("claims"))]
     mapped_claim_ids = _exp_plan_claim_ids(exp_plan)
-    unmapped = [claim_id for claim_id in claim_ids if claim_id not in mapped_claim_ids]
+    unmapped = [claim_id for claim_id in claim_ids if claim_id and claim_id not in mapped_claim_ids]
     if unmapped:
-        return False, "Experiment plan has no experiment mapped to active claims: " + ", ".join(unmapped)
+        errors.append("Experiment plan has no experiment mapped to active claims: " + ", ".join(unmapped))
 
     components = _dict_list(_nested_value(blueprint, "proposed_approach", "components"))
-    component_ids = {str(item.get("id") or "").strip() for item in components}
+    component_ids = {str(item.get("id") or "").strip() for item in components if str(item.get("id") or "").strip()}
     evaluation = blueprint.get("evaluation") if isinstance(blueprint.get("evaluation"), dict) else {}
     tested_components = _component_test_ids(evaluation.get("ablations")) | _component_test_ids(evaluation.get("mechanism_tests"))
     missing_component_tests = sorted(component_ids - tested_components)
     if missing_component_tests:
-        return False, "Main technical components lack an ablation or mechanism test: " + ", ".join(missing_component_tests)
+        errors.append(
+            "research_blueprint.yaml evaluation.ablations or evaluation.mechanism_tests "
+            "lacks a component_id/component_ref for: " + ", ".join(missing_component_tests)
+        )
 
-    return True, None
+    return list(dict.fromkeys(errors))
 
 
-def validate_t45_formalization_core(workspace: Path) -> tuple[bool, str | None]:
+def validate_t45_structured_sources(workspace: Path) -> tuple[bool, str | None]:
+    """Validate the three structured sources required before T4.5 prose.
+
+    Callers that require the historical boolean API receive the first stable
+    error.  ``collect_t45_structured_source_errors`` remains available to the
+    Formalizer's read-only checkpoint so it can repair independent failures in
+    one pass rather than discovering them serially.
+    """
+
+    errors = collect_t45_structured_source_errors(workspace)
+    return (True, None) if not errors else (False, errors[0])
+
+
+def validate_t45_formalization_core(
+    workspace: Path,
+    *,
+    accepted_semantic_errors: set[str] | None = None,
+) -> tuple[bool, str | None]:
     """Validate structured sources and the researcher-facing claims document."""
 
     workspace = Path(workspace)
+    accepted_semantic_errors = (
+        accepted_t45_semantic_errors(workspace)
+        if accepted_semantic_errors is None
+        else accepted_semantic_errors
+    )
     ok, error = validate_t45_structured_sources(workspace)
     if not ok:
         return ok, error
@@ -752,27 +813,94 @@ def validate_t45_formalization_core(workspace: Path) -> tuple[bool, str | None]:
         hypotheses_path.read_text(encoding="utf-8", errors="replace"),
         registry=registry,
         orientation=orientation,
+        accepted_semantic_errors=accepted_semantic_errors,
     )
     if hypothesis_error:
         return False, hypothesis_error
     return True, None
 
 
-def validate_claims_markdown(text: str, *, registry: dict[str, Any], orientation: dict[str, Any]) -> str | None:
+def collect_t45_semantic_errors(workspace: Path) -> list[str]:
+    """Return every current prose-only error eligible for LLM adjudication.
+
+    This is intentionally not a second validator and never returns a hard
+    error.  The caller can therefore ask one independent reviewer to assess a
+    complete set of ambiguous language failures from the same current source
+    package, rather than serialising one keyword false-negative per repair
+    loop.  If a prerequisite hard check is not satisfied, the function returns
+    no candidates and the deterministic validator remains the only authority.
+    """
+
+    workspace = Path(workspace)
+    structured_ok, _structured_error = validate_t45_structured_sources(workspace)
+    if not structured_ok:
+        return []
+    blueprint = _read_yaml_mapping(workspace / BLUEPRINT_REL_PATH)
+    registry = _read_yaml_mapping(workspace / CLAIM_REGISTRY_REL_PATH)
+    orientation = load_orientation_configuration(workspace)
+    hypotheses_path = workspace / "ideation" / "hypotheses.md"
+    if not hypotheses_path.is_file():
+        return []
+    hypothesis_hard_error, hypothesis_errors = _claims_markdown_errors(
+        hypotheses_path.read_text(encoding="utf-8", errors="replace"),
+        registry=registry,
+        orientation=orientation,
+    )
+    if hypothesis_hard_error:
+        return []
+
+    proposal_path = workspace / "ideation" / "proposal" / "research_proposal.md"
+    if not proposal_path.is_file():
+        return list(dict.fromkeys(hypothesis_errors))
+    proposal_hard_error, proposal_errors = _proposal_text_errors(
+        proposal_path.read_text(encoding="utf-8", errors="replace"),
+        blueprint=blueprint,
+        registry=registry,
+        orientation=orientation,
+    )
+    if proposal_hard_error:
+        return list(dict.fromkeys(hypothesis_errors))
+    return list(dict.fromkeys([*hypothesis_errors, *proposal_errors]))
+
+
+def validate_claims_markdown(
+    text: str,
+    *,
+    registry: dict[str, Any],
+    orientation: dict[str, Any],
+    accepted_semantic_errors: set[str] | None = None,
+) -> str | None:
     """Check that researcher-facing claims are complete rather than audit headings."""
 
+    hard_error, semantic_errors = _claims_markdown_errors(
+        text,
+        registry=registry,
+        orientation=orientation,
+    )
+    return hard_error or _first_unadjudicated_error(semantic_errors, accepted_semantic_errors)
+
+
+def _claims_markdown_errors(
+    text: str,
+    *,
+    registry: dict[str, Any],
+    orientation: dict[str, Any],
+) -> tuple[str | None, list[str]]:
+    """Separate non-negotiable claim-document checks from prose heuristics."""
+
     if not re.search(r"(?im)^#\s*(?:Research Claims and Hypotheses|研究主张与假设)\s*$", text):
-        return "hypotheses.md must start with '# Research Claims and Hypotheses' or '# 研究主张与假设'"
+        return "hypotheses.md must start with '# Research Claims and Hypotheses' or '# 研究主张与假设'", []
     audit_hits = _AUDIT_LANGUAGE.findall(text)
     if len(audit_hits) > 1:
-        return "hypotheses.md leaks internal novelty-audit labels into researcher-facing claims"
+        return "hypotheses.md leaks internal novelty-audit labels into researcher-facing claims", []
+    semantic_errors: list[str] = []
     for claim in _dict_list(registry.get("claims")):
         claim_id = str(claim.get("id") or "").strip()
         block = _markdown_block_for_heading(text, claim_id)
         if not block:
-            return f"hypotheses.md omits active claim {claim_id}"
+            return f"hypotheses.md omits active claim {claim_id}", []
         if _research_text_length(block) < 130:
-            return f"{claim_id} in hypotheses.md is only a short assertion, not a testable research claim"
+            semantic_errors.append(f"{claim_id} in hypotheses.md is only a short assertion, not a testable research claim")
         labels = {
             "rationale": ("rationale", "理由", "依据"),
             "mechanism": ("mechanism", "机制", "设计推理"),
@@ -783,8 +911,8 @@ def validate_claims_markdown(text: str, *, registry: dict[str, Any], orientation
         }
         missing = [name for name, aliases in labels.items() if not _contains_any(block, aliases)]
         if missing:
-            return f"{claim_id} in hypotheses.md is missing: " + ", ".join(missing)
-    return None
+            semantic_errors.append(f"{claim_id} in hypotheses.md is missing: " + ", ".join(missing))
+    return None, semantic_errors
 
 
 def validate_research_proposal_text(
@@ -793,65 +921,113 @@ def validate_research_proposal_text(
     blueprint: dict[str, Any],
     registry: dict[str, Any],
     orientation: dict[str, Any],
+    accepted_semantic_errors: set[str] | None = None,
 ) -> str | None:
     """Run deterministic quality gates over the unified seven-section proposal."""
+
+    hard_error, semantic_errors = _proposal_text_errors(
+        text,
+        blueprint=blueprint,
+        registry=registry,
+        orientation=orientation,
+    )
+    return hard_error or _first_unadjudicated_error(semantic_errors, accepted_semantic_errors)
+
+
+def _proposal_text_errors(
+    text: str,
+    *,
+    blueprint: dict[str, Any],
+    registry: dict[str, Any],
+    orientation: dict[str, Any],
+) -> tuple[str | None, list[str]]:
+    """Separate Proposal contract failures from ambiguous prose failures."""
 
     sections = _proposal_sections(text)
     missing = [key for key, _aliases in PROPOSAL_SECTIONS if key not in sections]
     if missing:
-        return "research_proposal.md is missing required sections: " + ", ".join(missing)
+        return "research_proposal.md is missing required sections: " + ", ".join(missing), []
     too_short = [key for key, content in sections.items() if _research_text_length(content) < 120]
     if too_short:
-        return "Proposal sections need substantive prose, not heading-only fragments: " + ", ".join(too_short)
+        return "Proposal sections need substantive prose, not heading-only fragments: " + ", ".join(too_short), []
     repeated = _repeated_sentence_count(text)
     if repeated >= 3:
-        return "research_proposal.md repeats the same sentence or near-identical sentence blocks instead of developing the argument"
+        return "research_proposal.md repeats the same sentence or near-identical sentence blocks instead of developing the argument", []
     audit_hits = _AUDIT_LANGUAGE.findall(text)
     if len(audit_hits) > 1:
-        return "research_proposal.md is audit-dominated; move internal T4.5/collision labels to novelty_audit.md"
+        return "research_proposal.md is audit-dominated; move internal T4.5/collision labels to novelty_audit.md", []
 
+    semantic_errors: list[str] = []
     challenges = _dict_list(_nested_value(blueprint, "technical_problem", "key_challenges"))
     for challenge in challenges:
         challenge_id = str(challenge.get("id") or "").strip()
         if challenge_id and challenge_id not in sections["gap_and_challenges"]:
-            return f"Proposal does not explain challenge {challenge_id} in Prior Research, Gap and Key Challenges"
-    if not _contains_any(sections["approach"], ("central insight", "核心洞见")):
-        return "Proposal does not state a central insight before listing technical components"
+            semantic_errors.append(f"Proposal does not explain challenge {challenge_id} in Prior Research, Gap and Key Challenges")
+    component_ids = [
+        str(component.get("id") or "").strip()
+        for component in _dict_list(_nested_value(blueprint, "proposed_approach", "components"))
+        if str(component.get("id") or "").strip()
+    ]
+    central_insight_position = _central_insight_position(sections["approach"])
+    if central_insight_position is None:
+        semantic_errors.append(
+            "Proposal does not state a readable central insight in Proposed Approach and Design Rationale "
+            "(use Central Insight, Core Insight, 核心洞见, or 核心洞察)"
+        )
+    first_component_position = _first_component_position(sections["approach"], component_ids)
+    if (
+        central_insight_position is not None
+        and first_component_position is not None
+        and central_insight_position > first_component_position
+    ):
+        semantic_errors.append(
+            "Proposal states its central insight after the first technical component; explain the insight before component detail"
+        )
     for component in _dict_list(_nested_value(blueprint, "proposed_approach", "components")):
         component_id = str(component.get("id") or "").strip()
         if component_id and component_id not in sections["approach"]:
-            return f"Proposal does not explain technical component {component_id}"
-    if not _contains_any(sections["approach"], ("alternative", "替代方案", "为何不")):
-        return "Proposal does not explain why a simpler alternative is insufficient"
+            return f"Proposal does not explain technical component {component_id}", []
+    if not _explains_simpler_alternative(sections["approach"], blueprint):
+        semantic_errors.append(
+            "Proposal does not explain the simpler alternative from research_blueprint.yaml "
+            "and why it is insufficient"
+        )
 
     for claim in _dict_list(registry.get("claims")):
         claim_id = str(claim.get("id") or "").strip()
         if claim_id and claim_id not in sections["claims"]:
-            return f"Proposal does not carry active claim {claim_id} into Research Questions, Claims and Hypotheses"
-    evaluation_text = sections["evaluation"].casefold()
-    for marker, label in (("baseline", "baselines"), ("ablation", "ablations"), ("robust", "robustness"), ("mechanism", "mechanism validation")):
-        if marker not in evaluation_text and not _contains_any(sections["evaluation"], ("基线", "消融", "稳健", "机制")):
-            return f"Research Design and Evaluation does not include {label}"
+            return f"Proposal does not carry active claim {claim_id} into Research Questions, Claims and Hypotheses", []
+    evaluation_requirements = (
+        ("baselines", ("baseline", "基线", "对照组", "对照条件")),
+        ("ablations", ("ablation", "消融", "移除组件")),
+        ("robustness", ("robust", "稳健", "敏感性")),
+        ("mechanism validation", ("mechanism", "机制", "中介检验", "过程检验")),
+    )
+    for label, aliases in evaluation_requirements:
+        if not _contains_any(sections["evaluation"], aliases):
+            semantic_errors.append(f"Research Design and Evaluation does not include {label}")
     if not _contains_any(sections["evaluation"], ("real-world", "deployment", "现实", "部署", "组织", "用户", "平台")):
-        return "Research Design and Evaluation does not connect the technical study to a real-world validation or deployment consequence"
+        semantic_errors.append(
+            "Research Design and Evaluation does not connect the technical study to a real-world validation or deployment consequence"
+        )
     if not _contains_any(sections["contributions"], ("technical contribution", "技术贡献")):
-        return "Expected Contributions and Implications lacks a concrete technical contribution"
+        semantic_errors.append("Expected Contributions and Implications lacks a concrete technical contribution")
     if not _contains_any(sections["contributions"], ("practical", "managerial", "现实", "实践", "管理")):
-        return "Expected Contributions and Implications names no practical actor or decision implication"
+        semantic_errors.append("Expected Contributions and Implications names no practical actor or decision implication")
     actors = _string_list(_nested_value(blueprint, "core_problem", "affected_actors"))
     actor_text = sections["contributions"] + "\n" + sections["evaluation"]
-    if actors and not any(actor.casefold() in actor_text.casefold() for actor in actors):
-        return "The practical significance section does not name an affected actor from the research blueprint"
+    if actors and not any(_actor_is_named_in_text(actor, actor_text) for actor in actors):
+        semantic_errors.append("The practical significance section does not name an affected actor from the research blueprint")
     risk_text = sections["risks"]
     if not _contains_any(risk_text, ("fallback", "mitigation", "kill criteria", "备选", "缓解", "停止条件")):
-        return "Risks, Limitations and Execution Plan lists risks without mitigation, fallback, or kill criteria"
+        semantic_errors.append("Risks, Limitations and Execution Plan lists risks without mitigation, fallback, or kill criteria")
 
     profile = orientation["profile_type"]
     if profile == "ccf_a" and not _contains_any(sections["approach"], ("algorithm", "model", "system", "optimization", "算法", "模型", "系统", "优化")):
-        return "CCF-A proposal lacks a complete computational method or system artifact"
+        semantic_errors.append("CCF-A proposal lacks a complete computational method or system artifact")
     if profile == "utd":
         if not _contains_any(sections["approach"], ("algorithm", "model", "system", "artifact", "算法", "模型", "系统", "技术构件")):
-            return "UTD proposal lacks the mandatory substantive technical artifact"
+            semantic_errors.append("UTD proposal lacks the mandatory substantive technical artifact")
         thin_api = re.search(r"(?i)(?:call|invoke|use)\s+(?:an?\s+)?(?:existing\s+)?(?:llm|api)", sections["approach"])
         technical_design = _contains_any(sections["approach"], ("objective", "representation", "optimization", "inference", "训练", "表示", "优化", "推断"))
         explicit_api_only = re.search(
@@ -859,12 +1035,16 @@ def validate_research_proposal_text(
             sections["approach"],
         )
         if thin_api and (not technical_design or explicit_api_only):
-            return "UTD proposal reduces its technical artifact to calling an existing LLM/API"
+            semantic_errors.append("UTD proposal reduces its technical artifact to calling an existing LLM/API")
     if profile == "hybrid":
         links = _dict_list(_nested_value(blueprint, "research_claims", "cross_level_links"))
-        if not links or not _contains_any(text, ("cross-level", "技术属性", "用户", "组织", "平台", "决策结果")):
-            return "Hybrid proposal has no explicit link from a technical design to a user, organizational, platform, or decision outcome"
-    return None
+        if not links:
+            return "Hybrid formalization is missing structured cross_level_links in research_blueprint.yaml", []
+        if not _contains_any(text, ("cross-level", "技术属性", "用户", "组织", "平台", "决策结果")):
+            semantic_errors.append(
+                "Hybrid proposal has no explicit link from a technical design to a user, organizational, platform, or decision outcome"
+            )
+    return None, semantic_errors
 
 
 def collect_t45_quality_diagnostics(workspace: Path) -> list[dict[str, str]]:
@@ -1324,6 +1504,136 @@ def _markdown_block_for_heading(text: str, heading: str) -> str:
 def _contains_any(text: str, values: Iterable[str]) -> bool:
     lowered = text.casefold()
     return any(value.casefold() in lowered for value in values)
+
+
+def _first_unadjudicated_error(
+    errors: Iterable[str],
+    accepted_semantic_errors: set[str] | None,
+) -> str | None:
+    """Return the first unsatisfied prose requirement after bounded review.
+
+    ``accepted_semantic_errors`` is populated only by a hash-bound, quoted
+    LLM adjudication receipt. All structural checks return before reaching this
+    helper, so this cannot relax schema, evidence, identity, or execution
+    contracts.
+    """
+
+    accepted = accepted_semantic_errors or set()
+    return next((error for error in errors if error not in accepted), None)
+
+
+def _central_insight_position(text: str) -> int | None:
+    """Locate a readable central insight in the approach section.
+
+    The contract requires an argument before the component inventory, not one
+    particular English heading. Chinese academic prose commonly uses
+    ``核心洞察`` rather than ``核心洞见``; treating that natural synonym as
+    absent caused a deterministic repair loop in an otherwise valid Proposal.
+    """
+
+    marker = re.compile(r"(?i)central\s+insight|core\s+insight|核心洞见|核心洞察|核心思路|核心思想")
+    match = marker.search(text)
+    return match.start() if match else None
+
+
+def _first_component_position(text: str, component_ids: Iterable[str]) -> int | None:
+    """Return the earliest explicit component reference in the approach."""
+
+    positions = [
+        match.start()
+        for component_id in component_ids
+        if component_id
+        for match in re.finditer(rf"(?i)\b{re.escape(component_id)}\b", text)
+    ]
+    return min(positions) if positions else None
+
+
+def _explains_simpler_alternative(text: str, blueprint: dict[str, Any]) -> bool:
+    """Recognize a substantive design comparison without forcing one label.
+
+    The blueprint supplies the named alternative and the Proposal must explain
+    why it falls short. A literal ``alternative`` heading is useful, but not a
+    scholarly requirement: Chinese prose often embeds that comparison in the
+    central-insight paragraph. Accept an explicit comparison label, or a named
+    blueprint alternative paired with an insufficiency explanation.
+    """
+
+    comparison_markers = (
+        "alternative",
+        "simpler design",
+        "simpler approach",
+        "替代方案",
+        "更简单的方案",
+        "简化方案",
+        "基线方案",
+    )
+    insufficiency_markers = (
+        "insufficient",
+        "cannot",
+        "does not",
+        "fails to",
+        "inadequate",
+        "not enough",
+        "不足",
+        "不足以",
+        "无法",
+        "不能",
+        "未能",
+        "缺乏",
+        "没有",
+    )
+    if _contains_any(text, comparison_markers) and _contains_any(text, insufficiency_markers):
+        return True
+
+    alternatives = _dict_list(_nested_value(blueprint, "proposed_approach", "alternatives_considered"))
+    for alternative in alternatives:
+        label = str(alternative.get("alternative") or "")
+        # Proper names and distinctive English terms are reliable anchors for
+        # a comparison embedded in a Chinese paragraph. Generic words such as
+        # "static" and "model" do not establish that comparison.
+        anchors = [
+            token
+            for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{3,}", label)
+            if token.casefold() not in {"static", "model", "system", "approach", "guardrail"}
+        ]
+        if anchors and any(anchor.casefold() in text.casefold() for anchor in anchors):
+            if _contains_any(text, insufficiency_markers):
+                return True
+    return False
+
+
+def _actor_is_named_in_text(actor: str, text: str) -> bool:
+    """Recognize a blueprint actor in prose written in the selected language.
+
+    ``affected_actors`` may be inherited from an English Candidate while the
+    T4.5 researcher-facing text is intentionally Chinese. A byte-for-byte
+    match turns a clearly named actor such as ``平台`` into a false failure.
+    This small controlled lexicon covers role nouns rather than attempting open
+    ended translation; exact matching remains the default for all other terms.
+    """
+
+    actor_normalized = str(actor or "").casefold().strip()
+    text_normalized = str(text or "").casefold()
+    if actor_normalized and actor_normalized in text_normalized:
+        return True
+    token_aliases = {
+        "anchor": ("主播", "直播主"),
+        "streamer": ("主播", "直播主"),
+        "platform": ("平台",),
+        "agency": ("机构", "mc n", "mcn", "公会"),
+        "designer": ("设计者", "设计人员", "系统设计"),
+        "developer": ("开发者", "开发人员", "系统开发"),
+        "manager": ("管理者", "管理人员", "管理者"),
+        "organization": ("组织", "机构"),
+        "user": ("用户", "使用者"),
+        "worker": ("员工", "工作者"),
+        "seller": ("销售", "卖家", "主播"),
+        "customer": ("客户", "消费者", "观众"),
+    }
+    return any(
+        token in actor_normalized and _contains_any(text_normalized, aliases)
+        for token, aliases in token_aliases.items()
+    )
 
 
 def _proposal_sections(text: str) -> dict[str, str]:

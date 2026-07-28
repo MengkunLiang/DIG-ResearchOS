@@ -92,6 +92,7 @@ from ..ideation.formalization import (
 )
 from ..ideation.novelty_verdict import (
     extract_final_gate_verdict,
+    is_passing_final_gate_verdict,
     normalize_final_gate_verdict,
 )
 from ..ideation.proposal import validate_t45_research_proposal
@@ -3193,6 +3194,27 @@ class StateMachine:
             )
         )
 
+    @staticmethod
+    def _is_t36_source_audit_repair_error(error: str | None) -> bool:
+        """Whether a downstream T3.6 failure needs source repair, not compile retry.
+
+        A current audit may become invalid after an older successful PDF or
+        survey-insights export was written.  Recompiling unchanged TeX cannot
+        repair citation coverage, taxonomy coverage, or a stale audited input;
+        route those failures through the saved audit's source-repair Gate.
+        """
+
+        text = str(error or "").casefold()
+        return bool(
+            text
+            and (
+                "survey_audit.json 存在硬失败" in text
+                or "survey audit" in text
+                or "citation_diversity" in text
+                or "survey_insights 对应的 survey_audit 已过期" in text
+            )
+        )
+
     def _pause_for_t36_compile_recovery_gate(
         self,
         state: StateYaml,
@@ -3754,6 +3776,54 @@ class StateMachine:
         state.paused_at = _now_iso()
         return state
 
+    @staticmethod
+    def _mark_runtime_recovery_receipt_resolved(
+        workspace_dir: Path | None,
+        *,
+        task_id: str,
+        resolution: str,
+    ) -> None:
+        """Keep a durable recovery receipt truthful after deterministic recovery.
+
+        Recovery receipts are intentionally retained for auditability.  Before
+        this marker existed, a successful later T5 compiler left a file whose
+        only visible status was the old failure.  Users then reasonably read a
+        historical diagnostic as an active blocker.  The state file remains
+        authoritative for control flow; this method only records that a newer
+        independent task checker superseded the original recovery condition.
+        """
+
+        if workspace_dir is None:
+            return
+        safe_task = re.sub(r"[^A-Za-z0-9_.-]+", "_", task_id).lower()
+        path = Path(workspace_dir) / "_runtime" / "recovery" / f"{safe_task}_runtime_recovery.json"
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        except (OSError, json.JSONDecodeError):
+            existing = {}
+        if not isinstance(existing, dict):
+            existing = {}
+        existing.update(
+            {
+                "status": "resolved",
+                "resolved_at": _now_iso(),
+                "resolution": resolution,
+                "superseded_by": {
+                    "task_id": task_id,
+                    "validation": "independent_task_artifact_checker",
+                },
+            }
+        )
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_path = path.with_suffix(path.suffix + ".tmp")
+            temporary_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            temporary_path.replace(path)
+        except OSError:
+            # The receipt is explanatory only.  Failure to refresh it must
+            # never prevent the state machine from accepting a passing task.
+            return
+
     def _resolve_runtime_recovery_gate(
         self,
         state: StateYaml,
@@ -3895,6 +3965,13 @@ class StateMachine:
         if node is None:
             return state
         if state.pending_gate.gate_id == "runtime_recovery_gate" and workspace_dir is not None:
+            redirected = self._redirect_unapproved_t45_formalization_to_human_review(
+                state,
+                workspace_dir,
+                source="pending_t45_formalization_runtime_recovery",
+            )
+            if redirected is not None:
+                return redirected
             redirected = self._redirect_incomplete_t5_to_t45_formalization(
                 state,
                 workspace_dir,
@@ -3902,6 +3979,45 @@ class StateMachine:
             )
             if redirected is not None:
                 return redirected
+            # A recovery Gate persists the error that *originally* paused the
+            # task.  It can therefore outlive a deterministic repair made
+            # while the process was stopped (for example an upgraded T5
+            # compiler recompiles a valid handoff).  Do not make a researcher
+            # confirm the same stale T5 failure merely to let the runner read
+            # artifacts that already pass the task's independent contract.
+            #
+            # This is intentionally narrow: it applies only to the
+            # source-preserving T5 reboost compiler and only after the normal
+            # incomplete-T4.5 redirect above has declined to act.  A passing
+            # task checker proves the handoff, reports, controls, and
+            # generation status are all current; it does not waive any later
+            # protocol/material/executor decision.
+            if node.task_id == "T5-REBOOST-GATE":
+                try:
+                    from ..schemas.validator import validate_task_artifacts
+
+                    reboost_ok, _reboost_error = validate_task_artifacts(
+                        workspace_dir,
+                        "T5-REBOOST-GATE",
+                    )
+                except Exception:  # pragma: no cover - normal task execution reports the concrete fault
+                    reboost_ok = False
+                if reboost_ok:
+                    state.pending_gate = None
+                    state.status = "RUNNING"
+                    state.paused_at = None
+                    state.last_error = None
+                    state.task_context.pop("runtime_recovery", None)
+                    state.task_context["t5_reboost_recovery_resolved"] = {
+                        "resolved_at": _now_iso(),
+                        "resolution": "existing_t5_reboost_artifacts_pass_task_checker",
+                    }
+                    self._mark_runtime_recovery_receipt_resolved(
+                        workspace_dir,
+                        task_id="T5-REBOOST-GATE",
+                        resolution="existing_t5_reboost_artifacts_pass_task_checker",
+                    )
+                    return state
         # A previously rendered T4 recovery panel can become obsolete without
         # another model turn: legacy Final Cards may have been migrated, or a
         # bounded repair may already have committed a complete deck before the
@@ -4149,6 +4265,64 @@ class StateMachine:
         state.status = "RUNNING"
         state.paused_at = None
         state.last_error = None
+        return state
+
+    def _redirect_unapproved_t45_formalization_to_human_review(
+        self,
+        state: StateYaml,
+        workspace_dir: Path,
+        *,
+        source: str,
+    ) -> StateYaml | None:
+        """Keep an unapproved audit out of the Formalizer's impossible repair loop.
+
+        A Formalizer may enrich a research plan only after the novelty audit
+        has explicitly authorized that plan.  Old state files could point
+        directly at T4.5-FORMALIZE/REVIEW even when their audit was a
+        return/drop decision or had only a heading without a parseable value.
+        The resulting Proposal validator then demanded a passing verdict from
+        a phase that is intentionally prohibited from editing novelty_audit.
+
+        Redirecting to the existing human review boundary preserves all audit
+        evidence and gives the researcher the actual choice: return to T4,
+        stop, or inspect the audit.  It never silently changes the research
+        direction or permits a prose edit to authorize T5.
+        """
+
+        if state.current_task not in {"T4.5-FORMALIZE", "T4.5-REVIEW"}:
+            return None
+        human_review = "T4.5-HUMAN-REVIEW"
+        if human_review not in self.nodes:
+            return None
+        audit_path = Path(workspace_dir) / "ideation" / "novelty_audit.md"
+        if not audit_path.is_file() or audit_path.stat().st_size <= 0:
+            # The normal prerequisite validator owns a genuinely missing
+            # audit; this redirect is only for readable non-passing audits.
+            return None
+        try:
+            verdict = extract_final_gate_verdict(audit_path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return None
+        if is_passing_final_gate_verdict(verdict):
+            return None
+
+        normalized = normalize_final_gate_verdict(verdict) or "missing_or_unparseable"
+        state.pending_gate = None
+        state.current_task = human_review
+        state.status = "RUNNING"
+        state.paused_at = None
+        state.last_error = None
+        state.task_context.pop("runtime_recovery", None)
+        state.task_context["t45_formalization_verdict_blocker"] = {
+            "source": source,
+            "observed_verdict": verdict or "missing",
+            "normalized_verdict": normalized,
+            "reason": (
+                "T4.5 formalization was not started because novelty_audit.md does not carry a passing Final Gate Verdict. "
+                "The Formalizer cannot repair or override that audit decision."
+            ),
+            "redirected_at": _now_iso(),
+        }
         return state
 
     def _resume_confirmed_native_t4_directive(
@@ -4435,6 +4609,8 @@ class StateMachine:
                 return state
             if state.current_task == "T3.6-ASSEMBLE" and self._is_t36_assemble_recoverable_error(result.error):
                 return self._pause_for_t36_assemble_recovery_gate(state, result.error or "", workspace_dir)
+            if state.current_task in {"T3.6-COMPILE", "T3.6-FEED"} and self._is_t36_source_audit_repair_error(result.error):
+                return self._pause_for_t36_assemble_recovery_gate(state, result.error or "", workspace_dir)
             if state.current_task == "T3.6-COMPILE" and self._is_t36_compile_recoverable_error(result.error):
                 return self._pause_for_t36_compile_recovery_gate(state, result.error or "", workspace_dir)
             runtime_recovery = self._pause_for_runtime_recovery_gate(
@@ -4458,6 +4634,8 @@ class StateMachine:
             if t4_recovery is not None:
                 return t4_recovery
             if state.current_task == "T3.6-ASSEMBLE" and self._is_t36_assemble_recoverable_error(result.error):
+                return self._pause_for_t36_assemble_recovery_gate(state, result.error or "", workspace_dir)
+            if state.current_task in {"T3.6-COMPILE", "T3.6-FEED"} and self._is_t36_source_audit_repair_error(result.error):
                 return self._pause_for_t36_assemble_recovery_gate(state, result.error or "", workspace_dir)
             if state.current_task == "T3.6-COMPILE" and self._is_t36_compile_recoverable_error(result.error):
                 return self._pause_for_t36_compile_recovery_gate(state, result.error or "", workspace_dir)
@@ -4516,6 +4694,11 @@ class StateMachine:
             # successful task would make a later normal run look like it still
             # has an approved exception.
             state.task_context.pop("runtime_recovery", None)
+            self._mark_runtime_recovery_receipt_resolved(
+                workspace_dir,
+                task_id=state.current_task,
+                resolution="targeted_runtime_recovery_completed",
+            )
 
         human_directive = state.task_context.get("human_iteration_directive")
         if isinstance(human_directive, dict) and human_directive.get("target_task") == state.current_task:
@@ -4790,6 +4973,30 @@ class StateMachine:
             and next_task in {"T5-REBOOST-GATE", "T5-HANDOFF"}
             and workspace_dir is not None
         ):
+            audit_path = workspace_dir / "ideation" / "novelty_audit.md"
+            try:
+                verdict = extract_final_gate_verdict(audit_path.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                verdict = ""
+            if not is_passing_final_gate_verdict(verdict):
+                # ``continue_to_t5`` records intent, not authority to override
+                # a non-passing novelty audit.  Keep the same human boundary
+                # instead of redirecting into a Formalizer that cannot edit
+                # the audit and would otherwise loop on an impossible request.
+                presentation = dict(state.pending_gate.presentation or {}) if state.pending_gate else {}
+                presentation["continuation_blocker"] = {
+                    "observed_verdict": verdict or "missing",
+                    "reason": (
+                        "T5 cannot be entered because novelty_audit.md has no passing Final Gate Verdict. "
+                        "Proposal or hypothesis edits cannot change this audit decision; choose Return to T4 or stop after inspection."
+                    ),
+                }
+                if state.pending_gate is not None:
+                    state.pending_gate.presentation = presentation
+                state.status = "WAITING_HUMAN"
+                state.paused_at = _now_iso()
+                state.last_error = presentation["continuation_blocker"]["reason"]
+                return state
             redirected = self._redirect_incomplete_t5_to_t45_formalization(
                 state,
                 workspace_dir,

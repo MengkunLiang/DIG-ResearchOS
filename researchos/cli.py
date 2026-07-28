@@ -91,6 +91,7 @@ from .skills.contracts import (
     parse_skill_interaction,
     prepare_skill_intake_packet,
 )
+from .skills.audit import audit_skill_suite, render_skill_suite_audit
 from .skills.workflow import parse_skill_workflow
 from .tools.survey_tools import AuditSurveyCoverageTool
 from .tools.workspace_policy import WorkspaceAccessPolicy
@@ -4048,6 +4049,21 @@ def list_skills_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def audit_skills_command(args: argparse.Namespace) -> int:
+    """Audit all repository-owned Skill contracts without starting an LLM."""
+
+    repo_root = Path(__file__).resolve().parents[1]
+    report = audit_skill_suite(
+        repo_root,
+        check_script_help=bool(getattr(args, "check_script_help", False)),
+    )
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(render_skill_suite_audit(report))
+    return 0 if report.get("status") == "pass" else 1
+
+
 def browse_skills_command(args: argparse.Namespace) -> int:
     """Interactive terminal browser for guided standalone Skills.
 
@@ -4574,6 +4590,22 @@ def build_parser() -> argparse.ArgumentParser:
     list_skills_parser = subparsers.add_parser("list-skills", help="列出所有可用的 skills")
     _add_shared_cli_options(list_skills_parser, runtime_settings, use_defaults=False)
 
+    audit_skills_parser = subparsers.add_parser(
+        "audit-skills",
+        help="无模型审计公共与外部执行器 Skill 契约、资源引用和脚本语法",
+    )
+    _add_shared_cli_options(audit_skills_parser, runtime_settings, use_defaults=False)
+    audit_skills_parser.add_argument(
+        "--check-script-help",
+        action="store_true",
+        help="额外逐个执行外部 Skill 脚本的 --help import smoke。",
+    )
+    audit_skills_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="输出完整 JSON 审计记录。",
+    )
+
     browse_skills_parser = subparsers.add_parser("browse-skills", help="以终端卡片浏览、查看并启动 Skill")
     _add_shared_cli_options(browse_skills_parser, runtime_settings, use_defaults=False)
 
@@ -4637,6 +4669,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_async_cli_command(args, run_skill_command(args))
     if args.command == "list-skills":
         return list_skills_command(args)
+    if args.command == "audit-skills":
+        return audit_skills_command(args)
     if args.command == "browse-skills":
         return browse_skills_command(args)
     if args.command == "describe-skill":

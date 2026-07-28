@@ -774,16 +774,29 @@ def _experiments_from_plan(exp_plan: dict[str, Any]) -> list[dict[str, Any]]:
 def _baseline_names_from_exp_plan(exp_plan: dict[str, Any]) -> list[str]:
     names: list[str] = []
     for exp in _experiments_from_plan(exp_plan):
-        for key in ("baseline_methods", "baselines", "required_baselines"):
-            value = exp.get(key)
-            if isinstance(value, list):
-                for item in value:
-                    if isinstance(item, str):
-                        names.append(item)
-                    elif isinstance(item, dict):
-                        names.append(str(item.get("name") or item.get("baseline_name") or item.get("id") or ""))
-            elif isinstance(value, str):
-                names.append(value)
+        sources = [exp]
+        design = exp.get("design")
+        if isinstance(design, dict):
+            sources.append(design)
+        for source in sources:
+            for key in ("baseline_methods", "baselines", "required_baselines"):
+                value = source.get(key)
+                if isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, str):
+                            names.append(item)
+                        elif isinstance(item, dict):
+                            names.append(
+                                str(
+                                    item.get("name")
+                                    or item.get("baseline_name")
+                                    or item.get("label")
+                                    or item.get("id")
+                                    or ""
+                                )
+                            )
+                elif isinstance(value, str):
+                    names.append(value)
     return list(dict.fromkeys(name.strip() for name in names if name and name.strip()))
 
 
@@ -1293,31 +1306,59 @@ def _external_binding_fingerprint_issues(workspace: Path, payload: dict[str, Any
 def _extract_exp_plan_metrics(exp_plan: dict[str, Any]) -> list[str]:
     """Normalize the T4.5 metric spellings into the T5 execution contract.
 
-    T4.5 plans legitimately use a compact top-level ``metrics`` list and the
-    researcher-facing ``measurements`` alias inside an experiment.  Dropping
-    either one made an otherwise usable plan look as though it had no metrics.
+    T4.5 plans legitimately use a compact ``metrics`` list, a
+    researcher-facing ``measurements`` alias, or outcome-oriented field names
+    such as ``primary_outcome`` / ``secondary_outcomes``.  The latter are the
+    canonical natural-language shape emitted by the unified Formalizer, so T5
+    must preserve them as declared metric-or-observation contracts rather than
+    falsely reporting that a fully specified study has no metrics.
     """
 
     metrics: list[str] = []
 
     def append_metrics(values: Any) -> None:
-        if not isinstance(values, list):
-            return
-        for metric in values:
+        normalized_values = values if isinstance(values, list) else [values]
+        for metric in normalized_values:
             if isinstance(metric, dict):
-                value = metric.get("name") or metric.get("metric") or metric.get("metric_id")
+                value = (
+                    metric.get("name")
+                    or metric.get("metric")
+                    or metric.get("metric_id")
+                    or metric.get("outcome")
+                    or metric.get("label")
+                )
             else:
                 value = metric
             text = str(value or "").strip()
             if text and text.casefold() not in {"unknown", "tbd"}:
                 metrics.append(text)
 
-    append_metrics(exp_plan.get("metrics") if isinstance(exp_plan, dict) else [])
+    for key in ("metrics", "primary_metrics", "secondary_metrics", "outcomes"):
+        append_metrics(exp_plan.get(key) if isinstance(exp_plan, dict) else [])
     for exp in exp_plan.get("experiments", []) or []:
         if not isinstance(exp, dict):
             continue
-        append_metrics(exp.get("metrics"))
-        append_metrics(exp.get("measurements"))
+        # Unified Formalizer plans keep the experimental protocol under a
+        # nested ``design`` object. Earlier T5 recovery only inspected the
+        # legacy flat experiment shape and therefore marked these plans as
+        # missing every metric despite fully declared design.metrics fields.
+        sources = [exp]
+        design = exp.get("design")
+        if isinstance(design, dict):
+            sources.append(design)
+        for source in sources:
+            for key in (
+                "metrics",
+                "measurements",
+                "primary_metrics",
+                "secondary_metrics",
+                "primary_outcome",
+                "primary_metric",
+                "secondary_outcomes",
+                "secondary_outcome",
+                "outcomes",
+            ):
+                append_metrics(source.get(key))
     return list(dict.fromkeys(metrics))
 
 
@@ -2052,47 +2093,148 @@ def _execution_readiness(
     }
 
 
+_REBOOST_BASELINE_ROLES = frozenset(
+    {
+        "nearest_work",
+        "canonical",
+        "strong_recent",
+        "component_source",
+        "lower_bound",
+        "upper_bound",
+        "sanity_check",
+    }
+)
+
+
+def _normalize_reboost_baseline_role(raw_role: object, *, fallback: str = "canonical") -> tuple[str, str | None]:
+    """Map T4.5 comparison semantics onto the executor schema's closed enum.
+
+    T4.5 distinguishes research-facing roles such as
+    ``static_guardrail_comparator`` and ``explanatory_competitor``.  The T5
+    handoff schema deliberately has a smaller execution role taxonomy.  These
+    are not contradictory: both denote a closest comparison that must be
+    retained.  Preserve the original label in the baseline rationale/source
+    note while emitting the schema-valid executor role.
+    """
+
+    declared = str(raw_role or "").strip()
+    if declared in _REBOOST_BASELINE_ROLES:
+        return declared, None
+    normalized = declared.casefold().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "static_guardrail_comparator": "nearest_work",
+        "explanatory_competitor": "nearest_work",
+        "literature_comparator": "nearest_work",
+        "closest_prior_work": "nearest_work",
+        "static_comparator": "canonical",
+        "counterfactual": "canonical",
+        "treatment_control": "canonical",
+        "control_condition": "canonical",
+    }
+    if normalized in aliases:
+        return aliases[normalized], declared
+    if "nearest" in normalized or "prior" in normalized or "competitor" in normalized:
+        return "nearest_work", declared or None
+    if "lower" in normalized:
+        return "lower_bound", declared or None
+    if "upper" in normalized:
+        return "upper_bound", declared or None
+    if "sanity" in normalized or "random" in normalized or "naive" in normalized:
+        return "sanity_check", declared or None
+    if "component" in normalized:
+        return "component_source", declared or None
+    resolved_fallback = fallback if fallback in _REBOOST_BASELINE_ROLES else "canonical"
+    return resolved_fallback, declared or None
+
+
 def _exp_baseline_records(exp_plan: dict[str, Any], workspace: Path) -> list[dict[str, Any]]:
+    """Collect only explicitly declared T4.5 comparison baselines.
+
+    Older plans store baselines beside each experiment.  Unified T4.5 plans
+    may instead keep the canonical cross-claim comparison list in the runtime
+    derived ``validation_map.yaml`` and in ``research_blueprint.evaluation``.
+    Both are explicit, source-backed T4.5 records; ignoring them made a valid
+    formalization appear to lack every baseline at T5.
+    """
+
     records: list[dict[str, Any]] = []
     seen: set[str] = set()
-    novelty_required = _extract_required_baselines(workspace)
-    for item in novelty_required:
-        name = _baseline_name(item)
-        if name and name.casefold() not in seen:
-            seen.add(name.casefold())
-            records.append(
-                {
-                    "name": name,
-                    "source": str(item.get("source") or "ideation/novelty_audit.md"),
-                    "why": str(item.get("reason_required") or "Required by novelty audit"),
-                    "requirement": "required",
-                    "role": "nearest_work",
-                }
-            )
-    def add_plan_baselines(baseline_items: list[Any]) -> None:
+
+    def add_baselines(
+        baseline_items: list[Any],
+        *,
+        source_default: str,
+        rationale_default: str,
+        role_default: str = "canonical",
+    ) -> None:
         for item in baseline_items:
             if isinstance(item, dict):
-                name = str(item.get("name") or item.get("baseline_name") or "").strip()
-                source = str(item.get("source") or "ideation/exp_plan.yaml")
-                why = str(item.get("why") or item.get("rationale") or item.get("purpose") or "Listed in experiment plan")
+                name = str(
+                    item.get("name")
+                    or item.get("baseline_name")
+                    or item.get("label")
+                    or item.get("baseline_id")
+                    or ""
+                ).strip()
+                source = str(item.get("source") or source_default)
+                why = str(
+                    item.get("why")
+                    or item.get("rationale")
+                    or item.get("purpose")
+                    or item.get("description")
+                    or item.get("reason_required")
+                    or rationale_default
+                )
+                role, original_role = _normalize_reboost_baseline_role(
+                    item.get("role"),
+                    fallback=role_default,
+                )
             else:
                 name = str(item or "").strip()
-                source = "ideation/exp_plan.yaml"
-                why = "Listed in experiment plan"
+                source = source_default
+                why = rationale_default
+                role = role_default
+                original_role = None
             if not name or name.casefold() in seen:
                 continue
             seen.add(name.casefold())
             lowered = name.casefold()
-            role = "canonical"
-            if "htce" in lowered or "nearest" in lowered:
-                role = "nearest_work"
-            elif "target" in lowered or "lower" in lowered:
-                role = "lower_bound"
-            elif "naive" in lowered or "random" in lowered or "sanity" in lowered:
-                role = "sanity_check"
-            elif "m1-" in lowered:
-                role = "component_source"
-            records.append({"name": name, "source": source, "why": why, "requirement": "required", "role": role})
+            if role == "canonical":
+                if "htce" in lowered or "nearest" in lowered:
+                    role = "nearest_work"
+                elif "target" in lowered or "lower" in lowered:
+                    role = "lower_bound"
+                elif "naive" in lowered or "random" in lowered or "sanity" in lowered:
+                    role = "sanity_check"
+                elif "m1-" in lowered:
+                    role = "component_source"
+            if original_role:
+                why = f"{why} [T4.5 comparison role: {original_role}]"
+            records.append(
+                {
+                    "name": name,
+                    "source": source,
+                    "why": why,
+                    "requirement": "required",
+                    "role": role,
+                    "original_role": original_role,
+                }
+            )
+
+    novelty_required = _extract_required_baselines(workspace)
+    add_baselines(
+        novelty_required,
+        source_default="ideation/novelty_audit.md",
+        rationale_default="Required by novelty audit",
+        role_default="nearest_work",
+    )
+
+    def add_plan_baselines(baseline_items: list[Any]) -> None:
+        add_baselines(
+            baseline_items,
+            source_default="ideation/exp_plan.yaml",
+            rationale_default="Listed in experiment plan",
+        )
 
     root_baselines: list[Any] = []
     for key in ("required_baselines", "baselines", "baseline_methods"):
@@ -2105,13 +2247,37 @@ def _exp_baseline_records(exp_plan: dict[str, Any], workspace: Path) -> list[dic
 
     for exp in _experiments_from_plan(exp_plan):
         baseline_items: list[Any] = []
-        for key in ("required_baselines", "baselines", "baseline_methods"):
-            value = exp.get(key)
-            if isinstance(value, list):
-                baseline_items.extend(value)
-            elif value:
-                baseline_items.append(value)
+        sources = [exp]
+        design = exp.get("design")
+        if isinstance(design, dict):
+            sources.append(design)
+        for source in sources:
+            for key in ("required_baselines", "baselines", "baseline_methods"):
+                value = source.get(key)
+                if isinstance(value, list):
+                    baseline_items.extend(value)
+                elif value:
+                    baseline_items.append(value)
         add_plan_baselines(baseline_items)
+
+    validation_map = _read_yaml(workspace / "ideation" / "validation_map.yaml")
+    validation_baselines = validation_map.get("baselines") if isinstance(validation_map.get("baselines"), list) else []
+    add_baselines(
+        validation_baselines,
+        source_default="ideation/validation_map.yaml",
+        rationale_default="Required comparison declared by the T4.5 validation map",
+        role_default="nearest_work",
+    )
+
+    blueprint = _read_yaml(workspace / "ideation" / "research_blueprint.yaml")
+    evaluation = blueprint.get("evaluation") if isinstance(blueprint.get("evaluation"), dict) else {}
+    blueprint_baselines = evaluation.get("baselines") if isinstance(evaluation.get("baselines"), list) else []
+    add_baselines(
+        blueprint_baselines,
+        source_default="ideation/research_blueprint.yaml",
+        rationale_default="Required comparison declared by the T4.5 research blueprint",
+        role_default="nearest_work",
+    )
     return records
 
 
@@ -2120,7 +2286,16 @@ def _build_reboost_baseline_matrix(exp_plan: dict[str, Any], workspace: Path, cl
     baselines: list[dict[str, Any]] = []
     for idx, record in enumerate(records, start=1):
         name = record["name"]
-        source_id = "SRC_NOVELTY" if "novelty" in record.get("source", "") else "SRC_EXP_PLAN"
+        source_path = str(record.get("source") or "")
+        source_id = (
+            "SRC_NOVELTY"
+            if "novelty" in source_path
+            else "SRC_VALIDATION_MAP"
+            if "validation_map" in source_path
+            else "SRC_RESEARCH_BLUEPRINT"
+            if "research_blueprint" in source_path
+            else "SRC_EXP_PLAN"
+        )
         baselines.append(
             {
                 "baseline_id": f"B{idx}",
@@ -2150,7 +2325,19 @@ def _build_reboost_baseline_matrix(exp_plan: dict[str, Any], workspace: Path, cl
                 },
                 "linked_claim_ids": claim_ids,
                 "source_refs": [
-                    _source_ref(source_id, "baseline declarations", f"{name} is required or planned for comparison", "reconciled")
+                    _source_ref(
+                        source_id,
+                        "baseline declarations",
+                        (
+                            f"{name} is required or planned for comparison"
+                            + (
+                                f" (T4.5 comparison role: {record['original_role']})"
+                                if record.get("original_role")
+                                else ""
+                            )
+                        ),
+                        "reconciled",
+                    )
                 ],
             }
         )

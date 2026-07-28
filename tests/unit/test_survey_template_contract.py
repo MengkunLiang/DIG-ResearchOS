@@ -8,7 +8,9 @@ import pytest
 
 from researchos.latex_templates import ccf_template_entries
 from researchos.orchestration.state_machine import StateMachine
+from researchos.runtime.agent import AgentResult
 from researchos.runtime.orchestrator import AgentRunner
+from researchos.schemas.state import StateYaml
 from researchos.runtime.abstract_sweep import _append_bib_entries
 from researchos.tools.survey_tools import (
     _extract_survey_abstract,
@@ -99,6 +101,37 @@ def test_compile_gate_offers_direct_retry_only_for_environment_recovery(tmp_path
 
     report_path.write_text(json.dumps({"success": True, "error": None}), encoding="utf-8")
     assert StateMachine._t36_compile_direct_retry_supported(workspace, "An old compile Gate is still visible")
+
+
+@pytest.mark.parametrize("task_id", ["T3.6-COMPILE", "T3.6-FEED"])
+def test_t36_stale_audit_downstream_failure_routes_to_source_repair(
+    tmp_path: Path,
+    task_id: str,
+) -> None:
+    state_machine = StateMachine(
+        _repo_root() / "config/system_config/state_machine.yaml",
+        _repo_root() / "config/system_config/gates.yaml",
+    )
+    state = StateYaml(project_id="test", current_task=task_id, status="RUNNING")
+    state = state_machine.start_task(state, "run", workspace_dir=tmp_path)
+    result = AgentResult(
+        ok=False,
+        message="failed current survey audit",
+        outputs_produced={},
+        steps_used=1,
+        tokens_in=0,
+        tokens_out=0,
+        cost_usd=0.0,
+        duration_seconds=0.0,
+        stop_reason=AgentResult.STOP_ERROR,
+        error="survey_audit.json 存在硬失败: citation_diversity: missing traceable coverage",
+    )
+
+    recovered = state_machine.advance(state, result, workspace_dir=tmp_path)
+
+    assert recovered.status == "WAITING_HUMAN"
+    assert recovered.pending_gate is not None
+    assert recovered.pending_gate.gate_id == "t36_assemble_recovery_gate"
 
 
 def test_bibliography_append_upgrades_stale_entry_when_metadata_backfill_adds_author(tmp_path: Path) -> None:

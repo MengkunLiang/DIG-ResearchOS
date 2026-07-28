@@ -267,6 +267,8 @@ ResearchOS 的核心设计是：**进度靠文件恢复，不靠模型记忆恢�
 
 新 workspace 默认只创建当前主链目录。legacy `pilot/`、顶层 `reviews/`、workspace-local `skills/` 和 `external_executor/workdir` 不再默认创建；旧 workspace 如果已经存在这些目录，runtime 会补 legacy/optional guide，但不会删除或移动已有产物。`external_executor/expr`、legacy `external_executor/workdir`、`resources/repos`、PDF/figure 等可能包含外部代码或资产的子树不会被递归污染。已有自定义 `_DIR_GUIDE.md` 会保留，只有 ResearchOS 生成式 guide 会被刷新。
 
+生成式 guide 具有版本化契约。当前 guide 会明确说明 T5 生成的 13-Skill Suite、Phase A--F 的所有权、`reviews/`、`evidence_package/`、`figure/` 和 `table/`，以及六件 Writer Handoff 与“只有 `T5-EXTERNAL-WAIT` 才能授权 T8 摄取”的边界。因此正常初始化或 resume 可以刷新生成式 guide；研究者自行编写的 `_DIR_GUIDE.md` 不会被覆盖。
+
 ### 4.1 task I/O 契约是什么
 
 每个 task 的输入输出契约定义在：
@@ -2741,6 +2743,8 @@ validator 会检查：
 
 研究者可见正文还遵循术语与缩写规范：非显然术语在第一次承担论证作用时说明其在本研究中的含义、机制角色和适用边界；非通用缩写在每个文档首次出现时展开，中文稿采用“Full English Name（简洁中文释义，ABBR）”形式，只有稳定且后续确实复用的缩写才可使用。`COMP1`、`TC1` 等内部 trace ID 只用于追溯，不能替代术语或组件的研究者可读名称与解释。术语、中文释义和稳定缩写必须在 blueprint、claim registry、hypotheses、exp plan 与 Proposal 中保持一致。
 
+T4.5 的有效性不是“只看关键词”的单层判断。schema、文件存在、selection lineage、Final Gate Verdict、claim-to-experiment 映射、组件 ablation/mechanism test、证据边界、重复文本和内部审计语言仍是**不可覆盖的确定性硬门**。只有当一个已写入的 hypotheses/Proposal 自然语言论证被词面规则误判时，runtime 才会启动一个与作者上下文隔离的 LLM Semantic Adjudicator。它只能审阅预先列举的 prose 条件（例如中心洞察、替代方案论证、实际主体、评测逻辑或自然语言 claim 完整性），不能改写文件或补充事实；要放行必须返回 1--3 条可在当前 artifact 中逐字找到的原文证据。确认结论写入 `_runtime/t45_semantic_adjudications.json`，并绑定 Proposal/blueprint/registry/exp plan（或 hypotheses/registry）的 SHA-256 指纹。任一相关来源变化即自动失效，随后重新执行全部硬门。若裁决器不可用、JSON 无效、证据不可核验或结论为 needs_repair，系统不降低要求，而是把具体缺口注入 Formalizer。
+
 ### 第三阶段：orientation-aware 质量审阅与最终研究包
 
 `T4.5-REVIEW` 在另一个 `ResearchFormalizerAgent` 上下文中，按继承的 orientation 审阅同一研究包。它要求 claim 到实验的映射、组件的 ablation 或 mechanism test、与取向相称的实质技术贡献、连贯 Proposal 和 `orientation_review.json` 的 accepted 状态。通过后运行时写入 `post_novelty_formalization.json`，将研究包绑定到当前 Candidate 和 selection fingerprint。
@@ -3581,6 +3585,8 @@ researchos validate --task T3.6-ASSEMBLE --workspace ./workspace/project-a
 
 集中度是同一检查中的独立部分。小语料保留最小重复保护；长综述的阈值按总引用出现次数放大。因此 `13/104`（12.5%）不会再因固定 `>10` 规则被误判为集中。真正的 `bibliography_quality` 失败仍会阻塞，例如把 `Information Systems Research`、`Management Science` 或 `MIS Quarterly` 的期刊论文写成 `@inproceedings`；abstract sweep 会优先识别显式 `journal` 元数据和常见期刊名称，生成 `@article`/`journal` 字段。
 
+T3.6 的 section、assemble 和 review 校验遵循来源进展而不是固定修复轮次：每次失败都会把 audit 中的具体检查、最小可修改的 section/plan/state/bibliography 范围和证据边界注入 Survey Writer；只要相关来源确有变化，就重新执行完整校验。只有相同诊断再次出现且相关来源未变时才暂停，避免无修改循环。对少数高误判风险的自然语言检查，系统可使用独立 Semantic Adjudicator：仅限中文稿中保留必要英文术语导致的语言统计、compact taxonomy content 的等价学术表述，以及 review 中清晰的中英维度标题。裁决器不能修改文本，必须给出当前 artifact 内 1--3 条逐字证据；回执写入 `_runtime/t36_semantic_adjudications.json` 并绑定 `survey.tex`、plan/state/template 或 review/action/audit 的 SHA-256。引用覆盖、citation alignment、BibTeX、来源/指纹、内部运行术语、图表、LaTeX 和 PDF 编译永远是确定性硬门，不能由语义裁决放行。
+
 ### 11.2 T4：Evolutionary Idea Formation、Rich Gate1 与假设状态
 
 T4 是一个 artifact-first 的 Evolutionary Idea Formation 工作流，Gate1 后的状态由确认操作决定。选择已准备好的 Candidate 走 `T4 -> T4-GATE1 -> T4.5`；定向演化、再探索、重跑 Route 或批准后的组合走 `T4 -> T4-GATE1 -> T4`，随后带着保留的新版本回到 Gate1；只读查看则停留在 Gate1。第一次进入 T4 时会显示 Rich pre-run confirmation：说明已有全文/部分全文与摘要层论文阅读笔记、非阻塞的 Bridge warning、当前 mode、预计工作量以及已有 Population snapshot 是否可 rollback。Standard mode 完成一次完整的 `P0 -> P1`：Evidence Routing -> Opportunity Map -> 非对称 Multi-route Generation -> Idea Genome 与 Idea Family -> Independent Scoring -> Parent Selection -> Mutation/Crossover plan -> Offspring -> 条件式 union rescoring -> Idea Contract -> Family-level Survival Selection -> Population Update -> Portfolio Selection。只有成功接纳的 Child 改变 Population 时才进行该重评；若没有 Child 存活，Controller 会保留实际取得的 Parent 独立评分，并写入评分复用回执，而不是编造分数或再次调用 provider。它不是一次 Prompt 改写，也不会增加公开 state machine node。
@@ -3706,9 +3712,17 @@ $.ideas[0].basis.literature_observations[0].strength [enum]: `supporting` 不在
 
 排障顺序是：读取 CLI 的 `$.path` 诊断 -> 修正同一个结构对象 -> 重新调用同一写入 -> 继续 Gate1 或最终 hypotheses。不要把 `schema_validation_failed` 当作网络错误，不要盲目重复调用，也不要手写或删除已通过的其它产物。`researchos trace <run-id> --workspace <workspace>` 保留完整受限 ToolResult，供外部包装器只显示错误码时核验。
 
+### 11.5.1 T4.5：双层质量校验与批量语义复核
+
+T4.5 不能只靠关键词、字数或单一英文标题判断研究论证是否成立。`ResearchFormalizerAgent` 的质量 Gate 分为两层：第一层是确定性契约，负责 schema、文件存在、Final Gate Verdict、Candidate lineage、active claim ID、claim-to-experiment 映射、组件 ablation/mechanism test、证据边界、反重复和内部 audit 语言泄漏；这些条件绝不由 LLM 放行。第二层只处理自然语言歧义，例如中心洞察是否已在组件前以中文学术表达说明、是否实际说明了更简单替代方案及其不足、评价与现实影响是否已经在连贯叙述中出现、或双语 actor 名称是否被合理表达。
+
+当确定性层发现的是第二类问题时，runtime 不再逐条产生 `finish -> repair -> finish` 循环。它会收集同一份当前 source package 中全部可语义裁决的问题，交给独立 LLM 一次性复核。LLM 必须逐项返回 `satisfied` / `needs_repair` / `inconclusive`，并且只有 `satisfied` 且提供 1--3 条可在当前 `hypotheses.md` 或 Proposal 中逐字找到的原文 quote 时，runtime 才会写入 `_runtime/t45_semantic_adjudications.json`。该 receipt 绑定 Proposal/blueprint/claim registry/experiment plan 或 hypotheses/claim registry 的 SHA-256；任一相关文件改变后自动失效。LLM 不可用、JSON 无效、quote 不存在、遗漏某项或判定需要修复时，系统仍把明确原因注入 Formalizer prompt，继续定向修复。
+
+`validate_t45_research_package` 也会在不写盘的 preflight 中返回 `semantic_review_candidates`。若同时标明 `semantic_only_failure=true`，表示已无隐藏 hard-contract error；Formalizer 应先完整自审，真正缺失就一次性修复，若是自然表达已满足则保留清楚的现有段落并允许 `finish_task` 触发独立复核。这样既不会因中文/双语表述造成机械循环，也不会让“LLM 觉得差不多”绕开可追溯的研究与证据底线。
+
 ### 11.6 Public Skill 能力档位：更强工具面，不放开任意执行
 
-42 个公开 Skill 现在通过可审计的 capability profile 获得相应工具组合。每个 Skill 至少有 `workspace_navigation`：`list_files`、`glob_files`、`grep_search`；它们仍受该 Skill 自己的 `allowed_read_prefixes` 约束，因此不会因为“可列目录”而读到其它项目。根据任务类型，catalog 还会叠加 `literature_discovery`、`paper_acquisition`、`paper_curation`、`literature_processing`、`structured_artifacts`、`idea_analysis`、`claim_review`、`manuscript_planning`、`survey_workflow`、`tex_delivery` 或 `external_handoff`。
+43 个公开 Skill 现在通过可审计的 capability profile 获得相应工具组合。每个 Skill 至少有 `workspace_navigation`：`list_files`、`glob_files`、`grep_search`；它们仍受该 Skill 自己的 `allowed_read_prefixes` 约束，因此不会因为“可列目录”而读到其它项目。根据任务类型，catalog 还会叠加 `literature_discovery`、`paper_acquisition`、`paper_curation`、`literature_processing`、`structured_artifacts`、`idea_analysis`、`claim_review`、`manuscript_planning`、`survey_workflow`、`tex_delivery` 或 `external_handoff`。仓库级 `researchos audit-skills` 会独立检查全部 43 个公共契约与 13 个受保护的 executor 模板；它是只读诊断，不会把审计变成新的 LLM Skill。
 
 这解决了 PDF note card、论文对比、综述、Idea fanout、领域综合等流程过去“只有读写和提问、却不能解析 DOI/下载 PDF/搜索或抽取 section”的能力断裂。授权仍是最小而不是随意扩张：profile 不包含 `bash_run` 或 `docker_exec`；所有 workspace 路径仍通过 `WorkspaceAccessPolicy`；网络取源仍需要用户明确提供 DOI/arXiv/OpenAlex ID、URL、精确标题，或有边界的“主题 + 篇数”请求，并只能写入该 Skill 已声明的目的地。可用以下命令在演示前查看真实解析结果：
 

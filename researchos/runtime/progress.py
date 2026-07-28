@@ -131,6 +131,15 @@ def classify_tool_outcome(
     payload = data if isinstance(data, dict) else {}
     disposition = str(payload.get("display_disposition") or "").casefold()
     failure_class = str(payload.get("failure_class") or error or "").casefold()
+    # Read-only validation tools can successfully execute while reporting that
+    # the inspected research package is not valid.  Preserve ``ok=True`` for
+    # the model-facing tool protocol (the diagnostic is usable), but never
+    # paint that result as a completed research artifact in the CLI.
+    if disposition == "validation_failed" or (
+        str(tool_name or "") in {"validate_t45_formalization_sources", "validate_t45_research_package"}
+        and payload.get("valid") is False
+    ):
+        return ToolOutcome("VALIDATION_FAILED", "yellow", True)
     if ok:
         return ToolOutcome("DONE", "green", False)
     # Agents occasionally probe for an optional/generated path before the
@@ -1348,8 +1357,18 @@ def summarize_tool_result(
 ) -> tuple[str, str | None]:
     data = data if isinstance(data, dict) else {}
     metadata = metadata if isinstance(metadata, dict) else {}
+    outcome = classify_tool_outcome(ok=ok, data=data, error=error, tool_name=tool_name)
+    if outcome.status == "VALIDATION_FAILED":
+        if error in {"t45_incomplete_proposal_replacement", "t45_destructive_prose_replacement"}:
+            detail = _compact_text(data.get("validation_error") or content or "Proposal replacement was blocked", 300)
+            return f"T4.5 Proposal 未被覆盖：{detail}", _extract_output_path(tool_name, data)
+        detail = _compact_text(data.get("validation_error") or content or "研究契约未通过", 300)
+        targets = data.get("repair_targets")
+        target_text = ""
+        if isinstance(targets, list) and targets:
+            target_text = "；最小修复范围：" + "、".join(str(item) for item in targets[:4])
+        return f"校验已完成，但当前未通过：{detail}{target_text}", _extract_output_path(tool_name, data)
     if not ok:
-        outcome = classify_tool_outcome(ok=ok, data=data, error=error, tool_name=tool_name)
         if outcome.status == "EXPLORATORY_MISS":
             return "探索性检查未命中，系统已继续。", _extract_output_path(tool_name, data)
         if outcome.status == "SKIPPED":

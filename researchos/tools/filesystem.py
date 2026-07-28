@@ -72,6 +72,16 @@ _T45_RESEARCHER_FACING_PROSE_ARTIFACTS = frozenset(
     }
 )
 
+_T45_PROPOSAL_SECTION_MARKERS = (
+    ("research motivation and core problem", "研究动机与核心问题", "研究背景与核心问题"),
+    ("prior research, gap and key challenges", "现有研究、缺口与关键挑战", "文献缺口与关键挑战"),
+    ("proposed approach and design rationale", "技术方案与设计理由", "研究方法与设计理由"),
+    ("research questions, claims and hypotheses", "研究问题、研究主张与假设"),
+    ("research design and evaluation", "研究设计与评测", "研究设计与评估"),
+    ("expected contributions and implications", "预期贡献与现实含义"),
+    ("risks, limitations and execution plan", "风险、局限与执行计划", "风险、局限与实施计划"),
+)
+
 # These are deterministic projections of the validated source package. A
 # Formalizer writing one directly can create a superficially complete but stale
 # handoff, or waste turns repairing a file that the runtime will replace.
@@ -114,6 +124,28 @@ def _t45_structured_source_hint(error: str) -> tuple[str, str]:
     if "claim_registry" in normalized or "claim registry" in normalized:
         return "ideation/claim_registry.yaml", "claim_registry"
     return "ideation/research_blueprint.yaml", "research_blueprint"
+
+
+def _t45_structured_source_repair_scope(error: str) -> tuple[list[str], str]:
+    """Describe the smallest source write set for a blocked T4.5 prose write."""
+
+    normalized = str(error or "")
+    if "evaluation.ablations or evaluation.mechanism_tests" in normalized:
+        return (
+            ["ideation/research_blueprint.yaml"],
+            "唯一需要修改的来源是 `ideation/research_blueprint.yaml`：在 "
+            "`evaluation.ablations` 或 `evaluation.mechanism_tests` 中为每个列出的 COMPn "
+            "写入含 `component_id`（或 `component_ref`）及实质 `planned_test` 的条目。"
+            "仅编辑 `ideation/exp_plan.yaml` 不会满足这项校验。",
+        )
+    return (
+        [
+            "ideation/research_blueprint.yaml",
+            "ideation/claim_registry.yaml",
+            "ideation/exp_plan.yaml",
+        ],
+        "三份结构化来源共同构成研究契约；请只修改错误直接指向的来源或最小同步集合。",
+    )
 
 
 def _note_card_stem_lookup_keys(stem: str) -> set[str]:
@@ -354,6 +386,65 @@ class WriteFileTool(Tool):
     def __init__(self, policy: WorkspaceAccessPolicy):
         self.policy = policy
 
+    def _t45_prose_replacement_error(self, normalized_path: str, content: str) -> ToolResult | None:
+        """Protect complete T4.5 prose from accidental fragment replacement."""
+
+        if (
+            self.policy.task_id not in {"T4.5-FORMALIZE", "T4.5-REVIEW"}
+            or normalized_path not in _T45_RESEARCHER_FACING_PROSE_ARTIFACTS
+        ):
+            return None
+        existing_path = self.policy.workspace_dir / normalized_path
+        try:
+            existing = existing_path.read_text(encoding="utf-8") if existing_path.is_file() else ""
+        except OSError:
+            existing = ""
+        if normalized_path == "ideation/proposal/research_proposal.md":
+            lowered = content.casefold()
+            missing_sections = [
+                " / ".join(markers[:2])
+                for markers in _T45_PROPOSAL_SECTION_MARKERS
+                if not any(marker.casefold() in lowered for marker in markers)
+            ]
+            if missing_sections:
+                return ToolResult(
+                    ok=False,
+                    content=(
+                        "T4.5 Proposal replacement was not written because it is missing required sections: "
+                        + ", ".join(missing_sections)
+                        + ". Read the current Proposal and write one complete seven-section document; do not replace it with a fragment."
+                    ),
+                    data={
+                        "path": normalized_path,
+                        "validation_error": "Proposal replacement is missing required sections: " + ", ".join(missing_sections),
+                        "repair_targets": [normalized_path],
+                        "display_disposition": "validation_failed",
+                    },
+                    error="t45_incomplete_proposal_replacement",
+                )
+        # Once a substantive current document exists, a drastically shorter
+        # full-file write is almost always a context-limited fragment.  The
+        # agent can still make a real concise revision, but it must retain at
+        # least a defensible fraction of the existing argument.
+        if len(existing) >= 4_000 and len(content) < max(1_200, len(existing) // 2):
+            return ToolResult(
+                ok=False,
+                content=(
+                    f"T4.5 did not overwrite {normalized_path}: the proposed replacement is {len(content)} characters, "
+                    f"far shorter than the current {len(existing)}-character research document. Read the current artifact and "
+                    "submit a complete targeted revision rather than a truncated excerpt."
+                ),
+                data={
+                    "path": normalized_path,
+                    "existing_chars": len(existing),
+                    "proposed_chars": len(content),
+                    "repair_targets": [normalized_path],
+                    "display_disposition": "validation_failed",
+                },
+                error="t45_destructive_prose_replacement",
+            )
+        return None
+
     async def execute(self, **kwargs) -> ToolResult:
         path = kwargs["path"]
         content = kwargs["content"]
@@ -378,23 +469,18 @@ class WriteFileTool(Tool):
             requirement_error = _t45_structured_source_validation_error(self.policy)
             if requirement_error:
                 required_path, required_schema = _t45_structured_source_hint(requirement_error)
+                required_paths, repair_scope = _t45_structured_source_repair_scope(requirement_error)
                 return ToolResult(
                     ok=False,
                     content=(
                         f"不能写入 {normalized_path}：{requirement_error}。"
-                        "三份结构化来源可能已经存在，但必须作为一个共同契约通过："
-                        "`ideation/research_blueprint.yaml` (research_blueprint)、"
-                        "`ideation/claim_registry.yaml` (claim_registry) 和 `ideation/exp_plan.yaml` (exp_plan)。"
-                        "请只用 write_structured_file 修复该错误指向的来源，再写 researcher-facing prose。"
-                        "不要用 write_file 写这些 YAML，也不要把缺失结构化来源描述为已 formalized。"
+                        + repair_scope
+                        + "请只用 write_structured_file 修复该错误指向的来源，再写 researcher-facing prose。"
+                        + "不要用 write_file 写这些 YAML，也不要把缺失结构化来源描述为已 formalized。"
                     ),
                     data={
                         "path": path,
-                        "required_paths": [
-                            "ideation/research_blueprint.yaml",
-                            "ideation/claim_registry.yaml",
-                            "ideation/exp_plan.yaml",
-                        ],
+                        "required_paths": required_paths,
                         "required_path": required_path,
                         "required_tool": "write_structured_file",
                         "required_schema": required_schema,
@@ -460,6 +546,9 @@ class WriteFileTool(Tool):
         content, conversion_error = self._coerce_content(content, normalized_path)
         if conversion_error:
             return ToolResult(ok=False, content=conversion_error, error="invalid_content_type")
+        replacement_error = self._t45_prose_replacement_error(normalized_path, content)
+        if replacement_error is not None:
+            return replacement_error
         try:
             abs_path = self.policy.resolve_write(path)
 

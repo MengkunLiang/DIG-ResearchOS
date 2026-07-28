@@ -267,6 +267,8 @@ Where:
 
 New workspaces by default only create directories of the current main chain. Legacy `pilot/`, top-level `reviews/`, workspace-local `skills/`, and `external_executor/workdir` are no longer created by default; if an old workspace already contains these directories, the runtime will supplement a legacy/optional guide, but will not delete or move existing artifacts. Subtrees such as `external_executor/expr`, legacy `external_executor/workdir`, `resources/repos`, and PDF/figure that may contain external code or assets will not be recursively polluted. Existing custom `_DIR_GUIDE.md` files are preserved; only ResearchOS-generated guides are refreshed.
 
+The generated-guide contract is versioned. The current guide set explicitly documents the T5 project-specialized 13-Skill Suite, Phase A--F ownership, `reviews/`, `evidence_package/`, `figure/`, and `table/`, the six-file Writer Handoff, and the rule that T8 ingestion is authorized only from `T5-EXTERNAL-WAIT`. A generated guide may therefore be refreshed during a normal initialization or resume; a researcher-authored `_DIR_GUIDE.md` remains untouched.
+
 ### 4.1 What is the Task I/O Contract?
 
 The input/output contract for each task is defined in:
@@ -3700,7 +3702,7 @@ The troubleshooting order is: read the `$.path` diagnostics from the CLI -> fix 
 
 ### 11.6 Public Skill capability tiers: stronger tool surfaces, no arbitrary execution
 
-42 public Skills now receive corresponding tool combinations through auditable capability profiles. Each Skill has at least `workspace_navigation`: `list_files`, `glob_files`, `grep_search`; these are still constrained by the Skill's own `allowed_read_prefixes`, so they cannot read other projects just because they can list directories. Depending on the task type, the catalog also adds `literature_discovery`, `paper_acquisition`, `paper_curation`, `literature_processing`, `structured_artifacts`, `idea_analysis`, `claim_review`, `manuscript_planning`, `survey_workflow`, `tex_delivery`, or `external_handoff`.
+43 public Skills now receive corresponding tool combinations through auditable capability profiles. Each Skill has at least `workspace_navigation`: `list_files`, `glob_files`, `grep_search`; these are still constrained by the Skill's own `allowed_read_prefixes`, so they cannot read other projects just because they can list directories. Depending on the task type, the catalog also adds `literature_discovery`, `paper_acquisition`, `paper_curation`, `literature_processing`, `structured_artifacts`, `idea_analysis`, `claim_review`, `manuscript_planning`, `survey_workflow`, `tex_delivery`, or `external_handoff`. The repository-wide `researchos audit-skills` command independently checks all 43 public contracts and 13 protected executor templates; it is read-only and does not turn an audit into a new LLM Skill.
 
 This resolves the capability gap where pipelines such as PDF note cards, paper comparison, surveys, idea fanout, and domain synthesis previously could "only read, write, and ask questions but could not parse DOIs/download PDFs/search/extract sections." Authorization remains minimal rather than arbitrarily expanded: the profile does not include `bash_run` or `docker_exec`; all workspace paths still go through `WorkspaceAccessPolicy`; network sources still require the user to explicitly provide DOI/arXiv/OpenAlex ID, URL, exact title, or a bounded "topic + count" request, and can only write to the Skill's declared destinations. Use the following commands to view real resolution results before a demonstration:
 

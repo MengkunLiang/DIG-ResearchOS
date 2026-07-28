@@ -98,6 +98,18 @@ from ..ideation.models import EvolutionPhase, HumanCompositionCompatibility
 from ..ideation.prerun import has_current_t4_prerun_confirmation
 from ..ideation.selected_compilation import ensure_t45_pre_novelty_brief, validate_legacy_t45_brief_source
 from ..ideation.state import T4ArtifactStore
+from ..ideation.formalization import collect_t45_semantic_errors
+from ..ideation.t45_semantic_adjudication import (
+    accepted_t45_semantic_errors,
+    persist_t45_semantic_adjudication,
+    semantic_adjudication_scope,
+)
+from ..survey_semantic_adjudication import (
+    accepted_t36_semantic_errors,
+    collect_t36_semantic_errors,
+    persist_t36_semantic_adjudication,
+    semantic_adjudication_scope as t36_semantic_adjudication_scope,
+)
 from ..ui.idea_evolution_renderer import render_t4_evolution_phase
 from .trace import NullTraceWriter, TraceWriter
 from ..tools.base import Tool, ToolResult
@@ -145,6 +157,21 @@ T45_QUALITY_SOURCE_ARTIFACTS = (
     "ideation/proposal/research_proposal.md",
     "ideation/orientation_review.json",
 )
+T36_QUALITY_SOURCE_ARTIFACTS = (
+    "drafts/survey/survey_plan.json",
+    "drafts/survey/survey_state.json",
+    "drafts/survey/sections",
+    "literature/related_work.bib",
+)
+
+# A T4.5 Proposal can be several thousand words.  Retaining every historic
+# full-document write until a provider's global context limit is reached made
+# one local prose repair inflate to millions of input tokens.  This is a
+# history-retention cap only: the complete current artifacts stay on disk and
+# the Formalizer is explicitly told to re-read them after compaction.
+T45_HISTORY_MAX_INPUT_TOKENS = 96_000
+T45_HISTORY_TRIGGER_RATIO = 0.72
+T45_HISTORY_TARGET_RATIO = 0.55
 T45_RESEARCH_CONTENT_SOURCE_ARTIFACTS = (
     "ideation/research_blueprint.yaml",
     "ideation/claim_registry.yaml",
@@ -1403,7 +1430,7 @@ class AgentRunner:
 
                 # 如果上下文太长，这里会按“完整 tool call group”为单位裁掉旧消息，
                 # 同时插入一条 runtime note，提醒模型去读 artifact 而不是假装记得历史。
-                messages = self._maybe_truncate(messages, primary_binding)
+                messages = self._maybe_truncate(messages, primary_binding, task_id=ctx.task_id)
                 messages = self._repair_openai_tool_message_sequence(messages)
 
                 provider_retry_batches, provider_cooldown, provider_long_cooldown = self._llm_provider_recovery_policy()
@@ -1723,24 +1750,37 @@ class AgentRunner:
                 pause_reason: str | None = None
                 pause_tool_name: str | None = None
                 pause_tool_data: dict[str, object] = {}
+                t45_checkpoint_feedback: list[Message] = []
                 for tool_call, tool_msg in zip(assistant_msg.tool_calls, tool_msgs):
                     messages.append(tool_msg)
                     trace.write_message(tool_msg)
                     tool_ok = not bool(tool_msg.metadata.get("is_error"))
-                    tool_summary, output_path = summarize_tool_result(
-                        tool_name=tool_call.name,
-                        ok=tool_ok,
-                        content=tool_msg.content,
-                        data=tool_msg.metadata.get("data") if isinstance(tool_msg.metadata, dict) else {},
-                        error=tool_msg.metadata.get("error") if isinstance(tool_msg.metadata, dict) else None,
-                        metadata=tool_msg.metadata if isinstance(tool_msg.metadata, dict) else {},
-                        verbose=self.runtime_settings.ui.verbose,
-                    )
                     tool_data = (
                         tool_msg.metadata.get("data")
                         if isinstance(tool_msg.metadata, dict)
                         and isinstance(tool_msg.metadata.get("data"), dict)
                         else {}
+                    )
+                    # Read-only validation can execute correctly while
+                    # reporting a non-passing research contract.  Keep that
+                    # diagnostic non-error for the model, but render it as a
+                    # failed checkpoint so the terminal no longer claims a
+                    # green success for an invalid T4.5 package.
+                    display_ok = tool_ok and not (
+                        str(tool_data.get("display_disposition") or "").casefold() == "validation_failed"
+                        or (
+                            tool_call.name in {"validate_t45_formalization_sources", "validate_t45_research_package"}
+                            and tool_data.get("valid") is False
+                        )
+                    )
+                    tool_summary, output_path = summarize_tool_result(
+                        tool_name=tool_call.name,
+                        ok=tool_ok,
+                        content=tool_msg.content,
+                        data=tool_data,
+                        error=tool_msg.metadata.get("error") if isinstance(tool_msg.metadata, dict) else None,
+                        metadata=tool_msg.metadata if isinstance(tool_msg.metadata, dict) else {},
+                        verbose=self.runtime_settings.ui.verbose,
                     )
                     tool_error = (
                         tool_msg.metadata.get("error")
@@ -1751,17 +1791,17 @@ class AgentRunner:
                         task_id=ctx.task_id,
                         run_id=ctx.run_id,
                         tool_name=tool_call.name,
-                        ok=tool_ok,
+                        ok=display_ok,
                         data=tool_data,
                         error=str(tool_error) if tool_error else None,
                     )
                     self.progress.tool_result(
                         agent=self.agent.spec.name,
                         tool_name=tool_call.name,
-                        ok=tool_ok,
+                        ok=display_ok,
                         result_summary=tool_summary,
                         output_path=safe_relative(output_path, ctx.workspace_dir) or output_path,
-                        next_step=next_step_for_task(ctx.task_id, ok=tool_ok) if not tool_ok else None,
+                        next_step=next_step_for_task(ctx.task_id, ok=display_ok) if not display_ok else None,
                         duration_ms=tool_msg.duration_ms,
                         data=tool_data,
                         error=str(tool_error) if tool_error else None,
@@ -1770,10 +1810,25 @@ class AgentRunner:
                         ctx,
                         step=budget.steps,
                         step_limit=step_limit,
-                        phase="tool_completed" if tool_ok else "tool_failed",
+                        phase="tool_completed" if display_ok else "tool_failed",
                         tool_name=tool_call.name,
-                        detail=("工具完成：" if tool_ok else "工具失败：") + tool_summary,
+                        detail=("工具完成：" if display_ok else "校验未通过：") + tool_summary,
                     )
+                    if (
+                        ctx.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"}
+                        and tool_call.name in {"validate_t45_formalization_sources", "validate_t45_research_package"}
+                        and tool_data.get("valid") is False
+                    ):
+                        t45_checkpoint_feedback.append(
+                            Message.user(
+                                self._t45_checkpoint_repair_feedback(
+                                    tool_name=tool_call.name,
+                                    data=tool_data,
+                                    fallback_error=str(tool_msg.content or "T4.5 checkpoint did not pass"),
+                                ),
+                                step=budget.steps,
+                            )
+                        )
                     if self._is_t4_ideation_agent(ctx) and tool_call.name in {"write_file", "write_structured_file", "append_file"}:
                         # The tool result itself already announces the durable
                         # write. Refresh the on-disk checkpoint silently so a
@@ -1812,6 +1867,9 @@ class AgentRunner:
                         pause_tool_name = tool_call.name
                         raw_pause_data = tool_msg.metadata.get("data")
                         pause_tool_data = dict(raw_pause_data) if isinstance(raw_pause_data, dict) else {}
+                for feedback in t45_checkpoint_feedback:
+                    messages.append(feedback)
+                    trace.write_message(feedback)
                 for note in post_tool_runtime_notes:
                     messages.append(note)
                     trace.write_message(note)
@@ -1886,6 +1944,39 @@ class AgentRunner:
                         ok, err = self.agent.validate_outputs(ctx)
                     finally:
                         ctx.extra.pop("_t3_pending_abstract_sweep", None)
+                    semantic_adjudication_feedback = ""
+                    if not ok:
+                        adjudication = await self._maybe_adjudicate_t45_semantic_failure(
+                            ctx=ctx,
+                            eff=eff,
+                            budget=budget,
+                            error=str(err or "unknown validation error"),
+                            run_logger=run_logger,
+                        )
+                        semantic_adjudication_feedback = str(adjudication.get("feedback") or "")
+                        if adjudication.get("accepted"):
+                            # The receipt is hash-bound and the Agent's normal
+                            # validator still runs every non-overridden hard
+                            # rule. A newly exposed error remains a repair
+                            # target; one finish request gets at most one LLM
+                            # semantic adjudication.
+                            ok, err = self.agent.validate_outputs(ctx)
+                    if not ok:
+                        adjudication = await self._maybe_adjudicate_t36_semantic_failure(
+                            ctx=ctx,
+                            eff=eff,
+                            budget=budget,
+                            error=str(err or "unknown validation error"),
+                            run_logger=run_logger,
+                        )
+                        semantic_adjudication_feedback += str(adjudication.get("feedback") or "")
+                        if adjudication.get("accepted"):
+                            # T3.6 receives the same independent, hash-bound
+                            # revalidation discipline as T4.5.  A receipt can
+                            # only affect its one prose check; every hard
+                            # source, citation, TeX, and compile check runs
+                            # again immediately.
+                            ok, err = self.agent.validate_outputs(ctx)
                     if ok:
                         self.progress.validation_result(task_id=ctx.task_id, ok=True)
                         run_logger.event("VALIDATION_PASS", task=ctx.task_id, step=budget.steps)
@@ -1897,8 +1988,9 @@ class AgentRunner:
                         str(err or "unknown validation error"),
                     )
                     t45_quality_repair = self._uses_t45_quality_repair_loop(ctx)
+                    t36_quality_repair = self._uses_t36_quality_repair_loop(ctx)
                     t45_repairable_warning = self._is_t45_repairable_warning(err)
-                    if not t45_quality_repair:
+                    if not t45_quality_repair and not t36_quality_repair:
                         self.progress.validation_result(
                             task_id=ctx.task_id,
                             ok=False,
@@ -1914,6 +2006,64 @@ class AgentRunner:
                         limit=validation_retry_limit,
                         reason=err,
                     )
+                    if t36_quality_repair:
+                        # Survey writing can require several evidence-bounded
+                        # source repairs. A numeric retry cap used to stop the
+                        # worker just as an audit had finally identified the
+                        # affected section. Continue only while the relevant
+                        # source inputs change; an unchanged repeat pauses
+                        # instead of silently spinning.
+                        no_source_progress = self._record_t36_quality_repair_attempt(
+                            ctx=ctx,
+                            error=str(err or "unknown validation error"),
+                        )
+                        if no_source_progress:
+                            stop_reason = AgentResult.STOP_INTERRUPTED
+                            error_msg = (
+                                "T3.6 质量校验在收到定向修复说明后再次出现同一诊断，"
+                                "但相关 survey source artifacts 没有变化。"
+                                f"最后原因：{err}。系统已暂停以避免无修改的 finish_task 循环；"
+                                "恢复后会把该诊断和最小修复范围再次交给 Survey Writer。"
+                            )
+                            self.progress.emit(
+                                "[T3.6 Quality Gate] 同一诊断未伴随相关 source 修改，已暂停以避免无声循环；"
+                                "保留 sections、audit 和定向修复原因。",
+                                important=True,
+                            )
+                            self._mark_runtime_recovery(
+                                ctx,
+                                kind="t36_quality_no_source_progress",
+                                error=error_msg,
+                                details={
+                                    "failure_count": validation_fails,
+                                    "validator_error": str(err or "unknown validation error"),
+                                    "repair_policy": "targeted_no_fixed_retry_limit",
+                                    "source_artifacts": list(T36_QUALITY_SOURCE_ARTIFACTS),
+                                },
+                            )
+                            break
+                        self.progress.validation_result(
+                            task_id=ctx.task_id,
+                            ok=False,
+                            error=str(err or "unknown validation error"),
+                        )
+                        self.progress.emit(
+                            "[T3.6 Quality Gate] 第 "
+                            f"{validation_fails} 次校验未通过；已把具体原因和最小修复范围注入 Survey Writer，"
+                            "修复后会重新运行全部质量校验（不设固定修复轮次上限）。",
+                            important=True,
+                        )
+                        feedback = Message.user(
+                            self._validation_repair_feedback(
+                                ctx=ctx,
+                                error=str(err or "unknown validation error"),
+                            )
+                            + semantic_adjudication_feedback,
+                            step=budget.steps,
+                        )
+                        messages.append(feedback)
+                        trace.write_message(feedback)
+                        continue
                     if t45_quality_repair:
                         # T4.5 is a source-first formalization workflow.  A
                         # generic retry counter makes it stop exactly when the
@@ -1975,7 +2125,8 @@ class AgentRunner:
                             self._validation_repair_feedback(
                                 ctx=ctx,
                                 error=str(err or "unknown validation error"),
-                            ),
+                            )
+                            + semantic_adjudication_feedback,
                             step=budget.steps,
                         )
                         messages.append(feedback)
@@ -4306,6 +4457,20 @@ class AgentRunner:
                 )
                 return True
             self.log.info("t36_compile_existing_artifacts_not_reusable", reason=err)
+            audit_error = str(err or "")
+            if any(
+                marker in audit_error.casefold()
+                for marker in (
+                    "survey_audit.json 存在硬失败",
+                    "survey audit",
+                    "citation_diversity",
+                )
+            ):
+                raise RecoverableRuntimePause(
+                    "T3.6-COMPILE 在启动编译前发现当前 survey audit 需要来源级修复。"
+                    f"原因：{audit_error[:1200]}。"
+                    "不会重复编译同一份 TeX；将保留 PDF、log、sections 和 audit，并回到定向 source-repair Gate。"
+                )
 
         compiler = tool_map.get("latex_compile")
         if compiler is None:
@@ -8306,7 +8471,13 @@ class AgentRunner:
             return False
         return value
 
-    def _maybe_truncate(self, messages: list[Message], binding: ModelBinding) -> list[Message]:
+    def _maybe_truncate(
+        self,
+        messages: list[Message],
+        binding: ModelBinding,
+        *,
+        task_id: str | None = None,
+    ) -> list[Message]:
         """按 message group 粒度做上下文裁剪。"""
         config = self.llm.get_truncation_config()
         limit = self.llm.get_context_window(binding)
@@ -8321,8 +8492,14 @@ class AgentRunner:
             configured_input_cap = 0
         if configured_input_cap > 0:
             limit = min(limit, configured_input_cap)
-        trigger = int(limit * config.get("trigger_ratio", 0.8))
-        target = int(limit * config.get("target_ratio", 0.6))
+        trigger_ratio = float(config.get("trigger_ratio", 0.8))
+        target_ratio = float(config.get("target_ratio", 0.6))
+        if task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"}:
+            limit = min(limit, T45_HISTORY_MAX_INPUT_TOKENS)
+            trigger_ratio = T45_HISTORY_TRIGGER_RATIO
+            target_ratio = T45_HISTORY_TARGET_RATIO
+        trigger = int(limit * trigger_ratio)
+        target = int(limit * target_ratio)
         current = self.llm.count_tokens([m.to_openai_dict() for m in messages], binding)
         if current <= trigger:
             return messages
@@ -8342,7 +8519,15 @@ class AgentRunner:
             return messages
 
         note = Message.user(
-            f"[Runtime] 由于上下文过长，已省略较早的 {omitted} 轮交互。如需回忆先前信息，请读取相关 artifact。",
+            (
+                f"[Runtime] 由于上下文过长，已省略较早的 {omitted} 轮交互。"
+                + (
+                    "T4.5 已保留当前结构化来源、hypotheses 和 Proposal；不要复用旧写入片段，"
+                    "请先 read_file 当前目标 artifact，再做一次完整、定向的修复。"
+                    if task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"}
+                    else "如需回忆先前信息，请读取相关 artifact。"
+                )
+            ),
             step=messages[-1].step,
         )
         flattened: list[Message] = []
@@ -8351,6 +8536,39 @@ class AgentRunner:
         for group in kept[1:]:
             flattened.extend(group)
         return flattened
+
+    @staticmethod
+    def _t45_checkpoint_repair_feedback(
+        *,
+        tool_name: str,
+        data: dict[str, object],
+        fallback_error: str,
+    ) -> str:
+        """Turn a failed read-only T4.5 checkpoint into the next-turn repair plan."""
+
+        error = " ".join(str(data.get("validation_error") or fallback_error).split())[:1400]
+        targets = data.get("repair_targets")
+        if isinstance(targets, list) and targets:
+            target_list = [str(item) for item in targets if str(item).strip()]
+        elif tool_name == "validate_t45_research_package":
+            target_list = ["ideation/hypotheses.md", "ideation/proposal/research_proposal.md"]
+        else:
+            target_list = [
+                "ideation/research_blueprint.yaml",
+                "ideation/claim_registry.yaml",
+                "ideation/exp_plan.yaml",
+            ]
+        target_text = ", ".join(target_list) or "the named source artifact"
+        return (
+            "[Runtime T4.5 checkpoint repair] The read-only checkpoint executed successfully but `valid=false`; "
+            "this is an actionable research-package failure, not a green success.\n"
+            f"Failure: {error}\n"
+            f"Repair scope: {target_text}\n"
+            "Before another checkpoint, read every target that you will modify. Repair the stated issue in the current "
+            "artifact and preserve all already-valid material. For hypotheses or Proposal, write a complete current "
+            "document, never a heading-only fragment, outline, or shorter replacement of a complete document. "
+            "Do not call the same checkpoint again until the relevant source has actually changed."
+        )
 
     def _repair_openai_tool_message_sequence(self, messages: list[Message]) -> list[Message]:
         """Ensure assistant tool_calls are immediately followed by tool messages.
@@ -8818,10 +9036,605 @@ class AgentRunner:
         return ctx.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"}
 
     @staticmethod
+    def _uses_t36_quality_repair_loop(ctx: ExecutionContext) -> bool:
+        """Whether a T3.6 writing phase uses source-aware repair progress."""
+
+        return ctx.task_id in {"T3.6-ASSEMBLE", "T3.6-REVIEW"} or ctx.task_id.startswith("T3.6-SEC-")
+
+    @staticmethod
     def _is_t45_repairable_warning(error: object) -> bool:
         """Whether an internal quality target should stay out of the normal UI."""
 
         return str(error or "").startswith("T45_REPAIRABLE_WARNING:")
+
+    async def _maybe_adjudicate_t36_semantic_failure(
+        self,
+        *,
+        ctx: ExecutionContext,
+        eff: EffectiveConfig,
+        budget: BudgetTracker,
+        error: str,
+        run_logger: RunLogger,
+    ) -> dict[str, object]:
+        """Independently review only allowlisted T3.6 prose false positives."""
+
+        if not self._uses_t36_quality_repair_loop(ctx):
+            return {}
+
+        candidates = [str(error or "").strip(), *collect_t36_semantic_errors(ctx.workspace_dir)]
+        accepted_errors = accepted_t36_semantic_errors(ctx.workspace_dir)
+        checks: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            if not candidate or candidate in seen or candidate in accepted_errors:
+                continue
+            seen.add(candidate)
+            scope = t36_semantic_adjudication_scope(candidate)
+            if scope is None:
+                continue
+            checks.append(
+                {
+                    "validator_error": candidate,
+                    "artifact": str(scope["artifact"]),
+                    "eligible_requirement": str(scope["requirement"]),
+                    "dependency_paths": list(scope["dependency_paths"]),
+                }
+            )
+        if not checks:
+            return {}
+
+        source_paths = list(
+            dict.fromkeys(
+                str(relative_path)
+                for check in checks
+                for relative_path in check["dependency_paths"]
+            )
+        )
+        source_payload: dict[str, str] = {}
+        for relative_path in source_paths:
+            path = ctx.workspace_dir / relative_path
+            try:
+                # The reviewed TeX or review memo matters. Supporting source
+                # state is bounded to prevent an independent check from
+                # inheriting an entire survey-writing transcript.
+                limit = 64_000 if relative_path.endswith(("survey.tex", "survey_review.md")) else 18_000
+                source_payload[relative_path] = path.read_text(encoding="utf-8", errors="replace")[:limit]
+            except OSError:
+                source_payload[relative_path] = "[unreadable or missing]"
+
+        system = (
+            "You are an independent T3.6 survey semantic adjudicator. For EVERY supplied check, decide only whether "
+            "the current survey prose ALREADY satisfies that exact requirement despite a deterministic surface-form "
+            "validator reporting failure. You are not the author: do not rewrite, infer missing argument, invent a "
+            "citation, or downgrade an actual weakness. Never waive files, schemas, state fingerprints, section structure, "
+            "citation coverage/diversity/alignment, bibliography integrity, source provenance, internal-process leakage, "
+            "graphics, LaTeX syntax, compiler reports, or PDF validation. Return exactly one JSON object: "
+            "{\"decisions\":[{\"verdict\":\"satisfied|needs_repair|inconclusive\","
+            "\"validator_error\":\"exact check error\",\"artifact\":\"exact check artifact\","
+            "\"evidence\":[{\"quote\":\"exact quote from artifact\",\"explanation\":\"why it satisfies the requirement\"}],"
+            "\"reason\":\"brief explanation\"}]}. Return one decision per supplied check. A satisfied decision needs one to "
+            "three exact quotes from the named artifact, each at least 20 characters. Otherwise return needs_repair or "
+            "inconclusive with no evidence."
+        )
+        user = json.dumps(
+            {
+                "checks": [
+                    {
+                        "validator_error": check["validator_error"],
+                        "eligible_requirement": check["eligible_requirement"],
+                        "artifact": check["artifact"],
+                        "hard_boundary": "A satisfied result may waive only this exact prose check while all listed source hashes remain unchanged.",
+                    }
+                    for check in checks
+                ],
+                "source_artifacts": source_payload,
+            },
+            ensure_ascii=False,
+        )
+        try:
+            self.progress.emit(
+                "[T3.6 Semantic Adjudication] 正在独立复核当前综述是否仅被中英文词面规则误判。",
+                important=True,
+            )
+            run_logger.event(
+                "T36_SEMANTIC_ADJUDICATION_CALL",
+                task=ctx.task_id,
+                step=budget.steps,
+                validator_errors=[str(check["validator_error"])[:500] for check in checks],
+                artifacts=[str(check["artifact"]) for check in checks],
+            )
+            response = await self._await_llm_with_progress(
+                ctx=ctx,
+                step=budget.steps,
+                progress_step_limit="unlimited" if eff.unlimited_budget else eff.max_steps,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                tools=None,
+                temperature=0.0,
+                tier=eff.llm_tier,
+                profile=eff.llm_profile,
+                model_override=eff.llm_model_override,
+                endpoint_override=eff.llm_endpoint_override,
+                max_context_override=eff.llm_max_context_override,
+                timeout=self._llm_request_timeout_seconds(),
+                max_retries_per_model=self._llm_retry_overrides()[0],
+                retry_base_delay=self._llm_retry_overrides()[1],
+            )
+            budget.add_tokens(response.tokens_in, response.tokens_out, response.cost_usd)
+            raw_content = str(getattr(response.raw.choices[0].message, "content", "") or "")
+            decision = self._parse_t45_semantic_adjudication_json(raw_content)
+        except (LLMProviderError, OSError, ValueError, KeyError, IndexError, json.JSONDecodeError) as exc:
+            run_logger.event(
+                "T36_SEMANTIC_ADJUDICATION_UNAVAILABLE",
+                task=ctx.task_id,
+                step=budget.steps,
+                error=str(exc)[:500],
+            )
+            self.progress.emit(
+                "[T3.6 Semantic Adjudication] 本轮未获得可核验结论；保持已有硬校验和定向修复。",
+                important=True,
+            )
+            return {
+                "feedback": (
+                    "\n\n独立语义复核本轮不可用或未返回可校验 JSON；没有放松任何 hard gate。"
+                    "请按当前具体诊断修复；下一次相关 source 发生变化后可再次复核。"
+                )
+            }
+
+        raw_decisions = decision.get("decisions")
+        decisions = raw_decisions if isinstance(raw_decisions, list) else [decision]
+        expected = {str(check["validator_error"]): check for check in checks}
+        accepted_receipts: list[dict[str, object]] = []
+        repair_reasons: list[str] = []
+        seen_decisions: set[str] = set()
+        for item in decisions:
+            if not isinstance(item, dict):
+                continue
+            validator_error = str(item.get("validator_error") or "").strip()
+            if validator_error not in expected or validator_error in seen_decisions:
+                continue
+            seen_decisions.add(validator_error)
+            check = expected[validator_error]
+            artifact = str(check["artifact"])
+            verdict = str(item.get("verdict") or "").strip().casefold()
+            reason = str(item.get("reason") or "").strip()
+            if verdict != "satisfied" or str(item.get("artifact") or "").strip() != artifact:
+                repair_reasons.append(
+                    f"- {validator_error}: {reason[:900] if reason else '独立复核未确认当前综述已满足该要求。'}"
+                )
+                continue
+            evidence = item.get("evidence")
+            normalized_evidence = [
+                {
+                    "quote": str(evidence_item.get("quote") or "").strip(),
+                    "explanation": str(evidence_item.get("explanation") or "").strip(),
+                }
+                for evidence_item in (evidence if isinstance(evidence, list) else [])
+                if isinstance(evidence_item, dict)
+            ]
+            try:
+                receipt = persist_t36_semantic_adjudication(
+                    ctx.workspace_dir,
+                    validator_error=validator_error,
+                    artifact=artifact,
+                    requirement=str(check["eligible_requirement"]),
+                    evidence=normalized_evidence,
+                    adjudicator_reason=reason,
+                    model=response.model_used,
+                )
+            except ValueError as exc:
+                repair_reasons.append(
+                    f"- {validator_error}: 返回的满足证据无法在当前文件逐字核验（{str(exc)[:300]}）。"
+                )
+                continue
+            accepted_receipts.append(receipt)
+
+        repair_reasons.extend(
+            f"- {validator_error}: 独立复核没有返回该项的有效结论。"
+            for validator_error in expected
+            if validator_error not in seen_decisions
+        )
+        if accepted_receipts:
+            run_logger.event(
+                "T36_SEMANTIC_ADJUDICATION_ACCEPTED",
+                task=ctx.task_id,
+                step=budget.steps,
+                validator_errors=[str(receipt["validator_error"])[:500] for receipt in accepted_receipts],
+                artifacts=[str(receipt["artifact"]) for receipt in accepted_receipts],
+                model=response.model_used,
+                receipt="_runtime/t36_semantic_adjudications.json",
+            )
+            self.progress.emit(
+                "[T3.6 Semantic Adjudication] 已用当前文件中的可核验原文确认语义项；引用、证据和编译门仍完整执行。",
+                important=True,
+            )
+        else:
+            run_logger.event(
+                "T36_SEMANTIC_ADJUDICATION_REJECTED",
+                task=ctx.task_id,
+                step=budget.steps,
+                validator_errors=[str(check["validator_error"])[:500] for check in checks],
+                verdict="needs_repair_or_invalid",
+            )
+            self.progress.emit(
+                "[T3.6 Semantic Adjudication] 独立复核未确认当前文本满足要求；继续定向修复。",
+                important=True,
+            )
+
+        feedback = ""
+        if accepted_receipts:
+            feedback += (
+                "\n\n独立语义复核已以当前文件的可核验原文确认部分语义要求；"
+                "仅对这些精确错误、且仅在来源哈希未变化时有效。其它 hard gate 仍完整执行。"
+            )
+        if repair_reasons:
+            feedback += "\n\n独立语义复核仍要求补足以下实际综述写作问题：\n" + "\n".join(repair_reasons)
+        return {"accepted": bool(accepted_receipts), "receipts": accepted_receipts, "feedback": feedback}
+
+    async def _maybe_adjudicate_t45_semantic_failure(
+        self,
+        *,
+        ctx: ExecutionContext,
+        eff: EffectiveConfig,
+        budget: BudgetTracker,
+        error: str,
+        run_logger: RunLogger,
+    ) -> dict[str, object]:
+        """Ask an independent LLM only for ambiguous, current prose failures.
+
+        This is intentionally a fallback after deterministic validation, never
+        a replacement for it. The allowlist in ``semantic_adjudication_scope``
+        excludes schema, evidence, lineage, audit-verdict, identifier,
+        experiment-mapping, anti-padding, and audit-language rules. An accepted
+        answer must quote the exact current artifact; persistence binds that
+        answer to hashes of every source relevant to the check.
+        """
+
+        if ctx.task_id not in {"T4.5-FORMALIZE", "T4.5-REVIEW"}:
+            return {}
+
+        # The regular validator exposes its first failure.  Once that failure
+        # is known to be prose-only, collect every other current, eligible
+        # prose issue from exactly the same source package.  A single
+        # independent review prevents one false-negative at a time from
+        # becoming a long finish -> repair -> finish loop.
+        candidate_errors = [str(error or "").strip()]
+        candidate_errors.extend(collect_t45_semantic_errors(ctx.workspace_dir))
+        accepted_errors = accepted_t45_semantic_errors(ctx.workspace_dir)
+        checks: list[dict[str, object]] = []
+        seen_errors: set[str] = set()
+        for candidate_error in candidate_errors:
+            if not candidate_error or candidate_error in seen_errors or candidate_error in accepted_errors:
+                continue
+            seen_errors.add(candidate_error)
+            scope = semantic_adjudication_scope(candidate_error)
+            if scope is None:
+                continue
+            checks.append(
+                {
+                    "validator_error": candidate_error,
+                    "artifact": str(scope["artifact"]),
+                    "eligible_requirement": str(scope["requirement"]),
+                    "dependency_paths": list(scope["dependency_paths"]),
+                }
+            )
+        if not checks:
+            return {}
+
+        source_paths = list(
+            dict.fromkeys(
+                str(relative_path)
+                for check in checks
+                for relative_path in check["dependency_paths"]
+            )
+        )
+        source_payload: dict[str, str] = {}
+        for relative_path in source_paths:
+            path = ctx.workspace_dir / relative_path
+            try:
+                # Preserve the complete researcher-facing artifact while
+                # bounding supporting sources.  The adjudicator needs the
+                # prose in context, not an unbounded workspace dump.
+                limit = 36_000 if relative_path in {
+                    "ideation/proposal/research_proposal.md",
+                    "ideation/hypotheses.md",
+                } else 14_000
+                source_payload[relative_path] = path.read_text(
+                    encoding="utf-8", errors="replace"
+                )[:limit]
+            except OSError:
+                source_payload[relative_path] = "[unreadable or missing]"
+
+        system = (
+            "You are an independent T4.5 Semantic Adjudicator. For EVERY supplied check, decide only whether "
+            "the current researcher-facing prose ALREADY satisfies that exact named requirement despite a "
+            "deterministic surface-form validator reporting failure. You are not the author and must not rewrite, "
+            "invent, strengthen, or infer missing research content. Never waive schema, file existence, audit "
+            "verdict, selection lineage, explicit IDs, claim-to-experiment mappings, component tests, evidence "
+            "boundaries, anti-repetition checks, or internal-audit-language restrictions. If prose is merely "
+            "plausible but incomplete, return needs_repair. Return one JSON object only: "
+            "{\"decisions\":[{\"verdict\":\"satisfied|needs_repair|inconclusive\","
+            "\"validator_error\":\"exact check error\",\"artifact\":\"exact check artifact\","
+            "\"evidence\":[{\"quote\":\"exact quote from artifact\","
+            "\"explanation\":\"why this quote satisfies the requirement\"}],\"reason\":\"brief explanation\"}]}. "
+            "Return one decision for each supplied check and no additional checks. For satisfied, provide one to "
+            "three exact quotes, each at least 20 characters, copied verbatim from the declared artifact. For "
+            "needs_repair or inconclusive, evidence may be empty."
+        )
+        user = json.dumps(
+            {
+                "checks": [
+                    {
+                        "validator_error": check["validator_error"],
+                        "eligible_requirement": check["eligible_requirement"],
+                        "artifact": check["artifact"],
+                        "hard_boundary": "A satisfied verdict can waive only this exact prose error for unchanged source hashes.",
+                    }
+                    for check in checks
+                ],
+                "source_artifacts": source_payload,
+            },
+            ensure_ascii=False,
+        )
+        try:
+            self.progress.emit(
+                "[T4.5 Semantic Adjudication] 正在独立复核当前正文是否已满足被词面规则误判的学术表达要求。",
+                important=True,
+            )
+            run_logger.event(
+                "T45_SEMANTIC_ADJUDICATION_CALL",
+                task=ctx.task_id,
+                step=budget.steps,
+                validator_errors=[str(check["validator_error"])[:500] for check in checks],
+                artifacts=[str(check["artifact"]) for check in checks],
+            )
+            response = await self._await_llm_with_progress(
+                ctx=ctx,
+                step=budget.steps,
+                progress_step_limit="unlimited" if eff.unlimited_budget else eff.max_steps,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                tools=None,
+                temperature=0.0,
+                tier=eff.llm_tier,
+                profile=eff.llm_profile,
+                model_override=eff.llm_model_override,
+                endpoint_override=eff.llm_endpoint_override,
+                max_context_override=eff.llm_max_context_override,
+                timeout=self._llm_request_timeout_seconds(),
+                max_retries_per_model=self._llm_retry_overrides()[0],
+                retry_base_delay=self._llm_retry_overrides()[1],
+            )
+            budget.add_tokens(response.tokens_in, response.tokens_out, response.cost_usd)
+            raw_content = str(getattr(response.raw.choices[0].message, "content", "") or "")
+            decision = self._parse_t45_semantic_adjudication_json(raw_content)
+        except (LLMProviderError, OSError, ValueError, KeyError, IndexError, json.JSONDecodeError) as exc:
+            run_logger.event(
+                "T45_SEMANTIC_ADJUDICATION_UNAVAILABLE",
+                task=ctx.task_id,
+                step=budget.steps,
+                error=str(exc)[:500],
+            )
+            self.progress.emit(
+                "[T4.5 Semantic Adjudication] 本轮未获得可核验结论；保持原有硬校验与定向修复。",
+                important=True,
+            )
+            return {
+                "feedback": (
+                    "\n\n独立语义复核本轮不可用或未返回可校验 JSON；未放松任何 hard gate。"
+                    "请根据当前确定性错误和已注入的质量目标修复；下一次有新的相关正文修改时可再次触发复核。"
+                )
+            }
+
+        raw_decisions = decision.get("decisions")
+        # Retain compatibility with an already-issued single-decision response
+        # during a resumed run. New calls receive the batch contract above.
+        decisions = raw_decisions if isinstance(raw_decisions, list) else [decision]
+        expected = {str(check["validator_error"]): check for check in checks}
+        accepted_receipts: list[dict[str, object]] = []
+        repair_reasons: list[str] = []
+        seen_decisions: set[str] = set()
+        for item in decisions:
+            if not isinstance(item, dict):
+                continue
+            validator_error = str(item.get("validator_error") or "").strip()
+            if validator_error not in expected or validator_error in seen_decisions:
+                continue
+            seen_decisions.add(validator_error)
+            check = expected[validator_error]
+            artifact = str(check["artifact"])
+            verdict = str(item.get("verdict") or "").strip().casefold()
+            reason = str(item.get("reason") or "").strip()
+            if verdict != "satisfied" or str(item.get("artifact") or "").strip() != artifact:
+                repair_reasons.append(
+                    f"- {validator_error}: {reason[:900] if reason else '独立复核未确认正文已满足该要求。'}"
+                )
+                continue
+            evidence = item.get("evidence")
+            normalized_evidence = [
+                {
+                    "quote": str(evidence_item.get("quote") or "").strip(),
+                    "explanation": str(evidence_item.get("explanation") or "").strip(),
+                }
+                for evidence_item in (evidence if isinstance(evidence, list) else [])
+                if isinstance(evidence_item, dict)
+            ]
+            try:
+                receipt = persist_t45_semantic_adjudication(
+                    ctx.workspace_dir,
+                    validator_error=validator_error,
+                    artifact=artifact,
+                    requirement=str(check["eligible_requirement"]),
+                    evidence=normalized_evidence,
+                    adjudicator_reason=reason,
+                    model=response.model_used,
+                )
+            except ValueError as exc:
+                repair_reasons.append(
+                    f"- {validator_error}: 返回的满足证据无法在当前正文逐字核验（{str(exc)[:300]}）。"
+                )
+                continue
+            accepted_receipts.append(receipt)
+
+        missing_decisions = [
+            validator_error
+            for validator_error in expected
+            if validator_error not in seen_decisions
+        ]
+        repair_reasons.extend(
+            f"- {validator_error}: 独立复核没有返回该项的有效结论。"
+            for validator_error in missing_decisions
+        )
+        if accepted_receipts:
+            run_logger.event(
+                "T45_SEMANTIC_ADJUDICATION_ACCEPTED",
+                task=ctx.task_id,
+                step=budget.steps,
+                validator_errors=[str(receipt["validator_error"])[:500] for receipt in accepted_receipts],
+                artifacts=[str(receipt["artifact"]) for receipt in accepted_receipts],
+                model=response.model_used,
+                receipt="_runtime/t45_semantic_adjudications.json",
+            )
+            self.progress.emit(
+                "[T4.5 Semantic Adjudication] 已用当前正文的可核验原文确认语义项；其余质量门继续执行。",
+                important=True,
+            )
+        else:
+            run_logger.event(
+                "T45_SEMANTIC_ADJUDICATION_REJECTED",
+                task=ctx.task_id,
+                step=budget.steps,
+                validator_errors=[str(check["validator_error"])[:500] for check in checks],
+                verdict="needs_repair_or_invalid",
+            )
+            self.progress.emit(
+                "[T4.5 Semantic Adjudication] 独立复核未确认当前文本已满足要求；保持定向修复。",
+                important=True,
+            )
+
+        feedback = ""
+        if accepted_receipts:
+            feedback += (
+                "\n\n独立语义复核已以当前文件中的可核验原文确认部分语义要求；"
+                "runtime 仅对已记录的错误、且仅在相关来源哈希不变时放行。其它 hard gate 仍完整执行。"
+            )
+        if repair_reasons:
+            feedback += "\n\n独立语义复核仍要求补足以下实际研究论证（请修复这些 source artifact）：\n" + "\n".join(repair_reasons)
+        return {
+            "accepted": bool(accepted_receipts),
+            "receipts": accepted_receipts,
+            "feedback": feedback,
+        }
+
+    @staticmethod
+    def _parse_t45_semantic_adjudication_json(content: str) -> dict[str, object]:
+        """Parse one JSON object, accepting a fenced provider response only."""
+
+        candidate = str(content or "").strip()
+        if candidate.startswith("```"):
+            candidate = re.sub(r"^```(?:json)?\s*", "", candidate, flags=re.IGNORECASE)
+            candidate = re.sub(r"\s*```$", "", candidate).strip()
+        value = json.loads(candidate)
+        if not isinstance(value, dict):
+            raise ValueError("semantic adjudicator did not return a JSON object")
+        return value
+
+    @staticmethod
+    def _t36_quality_source_fingerprint(
+        workspace_dir: Path,
+        *,
+        source_paths: tuple[str, ...] = T36_QUALITY_SOURCE_ARTIFACTS,
+    ) -> dict[str, str]:
+        """Fingerprint the writable T3.6 sources, including section trees.
+
+        Derived ``survey.tex``, audit reports, and PDFs are intentionally not
+        considered progress. Re-running assembly changes those artifacts even
+        when the LLM has not repaired the source section that caused the
+        failure.
+        """
+
+        fingerprints: dict[str, str] = {}
+        for relative_path in source_paths:
+            path = workspace_dir / relative_path
+            if path.is_dir():
+                digest = hashlib.sha256()
+                try:
+                    files = sorted(candidate for candidate in path.rglob("*") if candidate.is_file())
+                    for candidate in files:
+                        rel = candidate.relative_to(workspace_dir).as_posix()
+                        digest.update(rel.encode("utf-8"))
+                        digest.update(b"\0")
+                        digest.update(hashlib.sha256(candidate.read_bytes()).digest())
+                    fingerprints[relative_path] = digest.hexdigest()
+                except OSError:
+                    fingerprints[relative_path] = "unreadable"
+                continue
+            if not path.is_file():
+                fingerprints[relative_path] = "missing"
+                continue
+            try:
+                fingerprints[relative_path] = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                fingerprints[relative_path] = "unreadable"
+        return fingerprints
+
+    @staticmethod
+    def _t36_quality_repair_source_scope(ctx: ExecutionContext, error: str) -> tuple[str, ...]:
+        """Return the sources that could resolve one current survey diagnostic."""
+
+        normalized = str(error or "").casefold()
+        if ctx.task_id.startswith("T3.6-SEC-"):
+            section_id = ctx.task_id.removeprefix("T3.6-SEC-").lower().replace("-", "_")
+            return (
+                f"drafts/survey/sections/{section_id}.tex",
+                "drafts/survey/survey_state.json",
+                f"drafts/survey/section_outlines/{section_id}.md",
+                "literature/related_work.bib",
+            )
+        if "survey_review" in normalized:
+            return (
+                "drafts/survey/survey_review.md",
+                "drafts/survey/survey_review_actions.json",
+                "drafts/survey/sections",
+                "drafts/survey/survey_plan.json",
+                "drafts/survey/survey_state.json",
+            )
+        if any(marker in normalized for marker in ("citation", "bibliography", "references.bib")):
+            return (
+                "drafts/survey/sections",
+                "literature/related_work.bib",
+                "drafts/survey/survey_plan.json",
+                "drafts/survey/survey_state.json",
+            )
+        if any(marker in normalized for marker in ("survey_plan", "taxonomy", "compact_theme")):
+            return (
+                "drafts/survey/survey_plan.json",
+                "drafts/survey/survey_state.json",
+                "drafts/survey/sections",
+            )
+        return T36_QUALITY_SOURCE_ARTIFACTS
+
+    @classmethod
+    def _record_t36_quality_repair_attempt(cls, *, ctx: ExecutionContext, error: str) -> bool:
+        """Pause only when the same T3.6 diagnosis has no relevant source progress."""
+
+        normalized_error = " ".join(str(error or "unknown validation error").split()).casefold()
+        scope = cls._t36_quality_repair_source_scope(ctx, error)
+        current = cls._t36_quality_source_fingerprint(ctx.workspace_dir, source_paths=scope)
+        previous_error = str(ctx.extra.get("t36_quality_last_error") or "").casefold()
+        previous = ctx.extra.get("t36_quality_last_source_fingerprint")
+        no_source_progress = (
+            normalized_error == previous_error
+            and isinstance(previous, dict)
+            and previous == current
+        )
+        ctx.extra["t36_quality_last_error"] = normalized_error
+        ctx.extra["t36_quality_last_source_fingerprint"] = current
+        return no_source_progress
 
     @staticmethod
     def _t45_quality_source_fingerprint(
@@ -8949,6 +9762,70 @@ class AgentRunner:
         return no_source_progress
 
     @staticmethod
+    def _t36_quality_repair_feedback(*, ctx: ExecutionContext, error: str, base: str) -> str:
+        """Turn one T3.6 rejection into a source-specific writing task."""
+
+        common = (
+            "这是 T3.6 的定向修复，不是重写整个 survey 或直接编辑派生的 `drafts/survey/survey.tex`。"
+            "先读取当前错误对应的 source artifact、`drafts/survey/survey_audit.json` 与相关 section outline；"
+            "保留已经通过的章节、真实引用、模板和 Evidence boundary。"
+            "不能用 citation padding、无关文献、abstract-only 线索支撑强论断，不能伪造 audit、compile report 或 PDF。"
+        )
+        normalized = str(error or "").casefold()
+        if ctx.task_id.startswith("T3.6-SEC-"):
+            section_id = ctx.task_id.removeprefix("T3.6-SEC-").lower().replace("-", "_")
+            return (
+                base
+                + common
+                + f"只编辑 `drafts/survey/sections/{section_id}.tex`，并读取其 outline。"
+                "使用自然学术段落而不是关键词堆砌；保留首次出现术语的清晰定义。"
+                "完成后调用 `update_survey_section_state`，再 `finish_task`。"
+            )
+        if ctx.task_id == "T3.6-REVIEW":
+            if "survey_review.md 缺少审阅维度" in error:
+                return (
+                    base
+                    + common
+                    + "只完善 `drafts/survey/survey_review.md` 的缺失审阅维度，并同步 `survey_review_actions.json` 的具体 section action。"
+                    "可使用规范中文、英文或清晰的中英双语标题；每个维度必须给出当前文本中的证据、判断和实际采取的动作，"
+                    "不能只添加英文关键词。随后重新 assemble、audit，并更新 action 的输入指纹。"
+                )
+            return (
+                base
+                + common
+                + "读取 `survey_review.md`、`survey_review_actions.json`、audit 和相关 source section。"
+                "只修正 review 指出的具体章节、引用或模板来源；再调用 assemble_survey、audit_survey_coverage 和 bind_survey_review。"
+            )
+        if ctx.task_id == "T3.6-ASSEMBLE":
+            if "compact_theme_content_absorbed" in normalized:
+                return (
+                    base
+                    + common
+                    + "读取 `survey_state.json.shared_facts.theme_coverage_contract`。"
+                    "只在 taxonomy 与 comparison source sections 中补足每个紧凑 taxonomy class 的定义/关系与比较性讨论；"
+                    "可用等价专业表述，不要机械复制 class label。随后重新 assemble 和 audit。"
+                )
+            if "survey_language_consistency" in normalized:
+                return (
+                    base
+                    + common
+                    + "依据 `writing_template.json` 的 writing_language 检查被点名章节。"
+                    "中文稿可保留必要英文技术术语、专有名词和首次中英对照，但论证句必须以中文为主；"
+                    "英文稿同理。不要为了通过统计规则删除必要术语或引用键。随后重新 assemble 和 audit。"
+                )
+            citation_context = AgentRunner._t36_citation_repair_context(ctx.workspace_dir)
+            return (
+                base
+                + common
+                + "读取 `drafts/survey/survey_audit.md` 和 JSON，并只编辑被该 audit check 指向的 section、plan、state 或 bibliography 来源。"
+                "逐条打开 audit 列出的 source_file，先核验主题、对象、方法、证据等级与当前句子是否真正匹配。"
+                "FULL/PARTIAL 仅在核验后支持具体论断；ABSTRACT-ONLY 仅可用于背景、趋势、范围或证据边界。"
+                "完成来源修改后必须调用 `assemble_survey` 和 `audit_survey_coverage`，不要先反复运行派生步骤。\n"
+                + citation_context
+            )
+        return base + common
+
+    @staticmethod
     def _t36_citation_repair_context(workspace_dir: Path) -> str:
         """Inject deterministic, evidence-bounded T3.6 repair facts into the writer.
 
@@ -9024,6 +9901,12 @@ class AgentRunner:
         )
         if AgentRunner._uses_t45_quality_repair_loop(ctx):
             return AgentRunner._t45_quality_repair_feedback(error=error, base=base)
+        if AgentRunner._uses_t36_quality_repair_loop(ctx):
+            return AgentRunner._t36_quality_repair_feedback(
+                ctx=ctx,
+                error=error,
+                base=base,
+            )
         if ctx.task_id != "T4":
             if ctx.task_id == "T4.5":
                 proposal_context = (
@@ -9205,7 +10088,6 @@ class AgentRunner:
             "experiment plan",
             "exp_plan.yaml",
             "experiment mapped",
-            "main technical components lack an ablation or mechanism test",
         )
         hypothesis_markers = (
             "hypotheses.md",
@@ -9230,7 +10112,26 @@ class AgentRunner:
             "affected actor",
         )
 
+        if "evaluation.ablations or evaluation.mechanism_tests" in normalized:
+            return (
+                base
+                + common
+                + "只读取并修复 `ideation/research_blueprint.yaml`。这项共同契约校验读取的是 "
+                "`evaluation.ablations` 和 `evaluation.mechanism_tests`，不读取 `exp_plan.yaml` 来判断组件测试覆盖。"
+                "对错误列出的每个 `COMPn`，在两者之一加入一个实质测试对象，带完全相同的 "
+                "`component_id`（或 `component_ref`）和 `planned_test`；说明移除/改变该组件或观察其机制路径时"
+                "要比较什么、用什么观察来支持或证伪。"
+                "用 `write_structured_file(path=\"ideation/research_blueprint.yaml\", schema_name=\"research_blueprint\", "
+                "format=\"yaml\", data=...)` 完整写回。不要仅修改 `exp_plan.yaml`、不要写正文，"
+                "随后立即调用 `validate_t45_formalization_sources`；它返回 valid=true 后才可写 hypotheses 或 Proposal。"
+            )
         if any(marker in normalized for marker in proposal_markers):
+            central_insight_instruction = ""
+            if "central insight" in normalized:
+                central_insight_instruction = (
+                    "在技术方案章节的第一个 `COMPn` 之前，以 `### Central Insight`、`### Core Insight`、"
+                    "`### 核心洞见` 或 `### 核心洞察` 写出完整中心洞察段落；不要只添加标题。"
+                )
             return (
                 base
                 + common
@@ -9239,6 +10140,7 @@ class AgentRunner:
                 "central insight、技术方案与设计理由、可证伪 claims、实验设计、baseline/ablation/robustness/mechanism 验证、"
                 "预期贡献、现实中的受影响主体、风险和 fallback/kill criteria。不得以重复文本凑长度，"
                 "不得把审计 verdict、T4.5、true_collision、candidate_id 等内部过程语言作为内容主体。"
+                + central_insight_instruction
             )
         if any(marker in normalized for marker in plan_markers):
             return (

@@ -12,6 +12,7 @@ from researchos.agents.research_formalizer import ResearchFormalizerAgent
 from researchos.ideation.formalization import (
     T45_SELECTION_ISOLATION_REL_PATH,
     T45_REPAIRABLE_WARNING_PREFIX,
+    collect_t45_semantic_errors,
     collect_t45_quality_diagnostics,
     ensure_current_t45_selection_isolation,
     format_t45_repairable_quality_warnings,
@@ -23,12 +24,18 @@ from researchos.ideation.formalization import (
     validate_t45_formalization_core,
 )
 from researchos.ideation.proposal import validate_t45_research_proposal
+from researchos.ideation.t45_semantic_adjudication import (
+    accepted_t45_semantic_errors,
+    persist_t45_semantic_adjudication,
+    semantic_adjudication_scope,
+)
 from researchos.ideation.prompt_composer import compose_t4_role_prompt
 from researchos.orchestration.state_machine import StateMachine
 from researchos.orchestration.task_io_contract import task_import_paths
 from researchos.runtime.agent import Agent, AgentSpec, ExecutionContext, resolve_effective_config
 from researchos.runtime.orchestrator import AgentRunner
 from researchos.runtime.config import RuntimeSettings
+from researchos.runtime.message import Message, ToolCall
 from researchos.runtime.observability.extractors import extract_stage_insights
 from researchos.runtime.prompts import get_prompt_env
 from researchos.schemas.state import GateState, StateYaml
@@ -99,6 +106,35 @@ def test_formalizer_uses_explicit_chinese_research_facing_language(tmp_path: Pat
     assert "never expect a reader to infer an acronym from a component ID" in prompt
 
 
+def test_formalizer_defaults_to_chinese_when_the_project_brief_is_chinese(tmp_path: Path) -> None:
+    """An unconfigured Chinese workspace should not silently produce English-only formalization."""
+
+    populate_valid_t45_workspace(tmp_path)
+    project_path = tmp_path / "project.yaml"
+    project = yaml.safe_load(project_path.read_text(encoding="utf-8"))
+    project["research_direction"] = "研究生成式 AI（Generative AI）建议如何影响长期能力。"
+    project.pop("formalization_language", None)
+    project["metadata"] = {}
+    write_yaml(project_path, project)
+    # The automatic Chinese default applies only before a new formalization
+    # has researcher-facing prose; an accepted existing package keeps its
+    # historic language unless the project explicitly overrides it.
+    (tmp_path / "ideation" / "hypotheses.md").unlink()
+    (tmp_path / "ideation" / "proposal" / "research_proposal.md").unlink()
+    ctx = ExecutionContext(
+        workspace_dir=tmp_path,
+        project_id="formalizer-zh-default",
+        task_id="T4.5-FORMALIZE",
+        run_id="formalizer-zh-default-run",
+        mode="formalize",
+    )
+
+    prompt = ResearchFormalizerAgent(mode="formalize").system_prompt(ctx)
+
+    assert "formalization language: zh" in prompt
+    assert "所有研究者可读的正文和结构化字段值均使用中文" in prompt
+
+
 def test_t4_role_prompts_preserve_canonical_english_names_in_chinese_explanations() -> None:
     """All researcher-facing T4 roles share the bilingual naming guardrail."""
 
@@ -167,16 +203,16 @@ def test_formalizer_prompt_treats_live_structured_validation_as_authoritative(tm
     assert "If the initial snapshot and the latest tool result disagree, trust the latest" in prompt
 
 
-def test_formalizer_excludes_edit_file_from_its_runtime_tool_surface(tmp_path: Path) -> None:
-    """T4.5 should not tempt the model to patch schema-bound sources as text."""
+def test_formalizer_exposes_safe_edit_compatibility_for_prose_only(tmp_path: Path) -> None:
+    """A familiar prose edit cannot become an unknown-tool retry in T4.5."""
 
     agent = ResearchFormalizerAgent(mode="review")
-    assert agent.spec.allow_edit_file_compatibility is False
+    assert agent.spec.allow_edit_file_compatibility is True
 
     registry = ToolRegistry()
     register_builtin_tools(registry)
-    # The policy must also hold if an external registration happens to expose
-    # a tool with this compatibility name.
+    # The compatibility tool delegates to WriteFileTool, so its availability
+    # cannot bypass the schema guard for YAML or JSON sources.
     registry.grant_dynamic_tools(["edit_file"], allowed_agents=["research_formalizer"])
     runner = AgentRunner(
         agent,
@@ -195,10 +231,192 @@ def test_formalizer_excludes_edit_file_from_its_runtime_tool_surface(tmp_path: P
 
     tool_names = runner._resolve_run_tool_names(resolve_effective_config(agent.spec, ctx))
 
-    assert "edit_file" not in tool_names
+    assert "edit_file" in tool_names
     assert {"write_file", "write_structured_file", "validate_t45_formalization_sources"} <= set(tool_names)
     prompt = agent.system_prompt(ctx)
-    assert "`edit_file` is intentionally unavailable in this task" in prompt
+    assert "compatible\n`edit_file`" in prompt
+
+
+def test_t45_llm_semantic_adjudication_breaks_a_keyword_false_negative(tmp_path: Path) -> None:
+    """A quoted independent judgment can pass one ambiguous prose rule."""
+
+    populate_valid_t45_workspace(tmp_path)
+    proposal = _proposal_path(tmp_path)
+    proposal.write_text(
+        proposal.read_text(encoding="utf-8").replace("Central Insight:", "Key design premise:"),
+        encoding="utf-8",
+    )
+    error = (
+        "Proposal does not state a readable central insight in Proposed Approach and Design Rationale "
+        "(use Central Insight, Core Insight, 核心洞见, or 核心洞察)"
+    )
+    quote = (
+        "Key design premise: a representation-aware estimator and a diagnostic feedback component "
+        "should jointly expose the source of transport error before an intervention is ranked."
+    )
+    llm = MockLLMClient(
+        [
+            _finish_response("request review validation"),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    content=json.dumps(
+                        {
+                            "verdict": "satisfied",
+                            "validator_error": error,
+                            "artifact": "ideation/proposal/research_proposal.md",
+                            "evidence": [
+                                {
+                                    "quote": quote,
+                                    "explanation": "The opening premise states the causal design insight before COMP1 and COMP2 are introduced.",
+                                }
+                            ],
+                            "reason": "The Proposal uses a natural synonymous heading and immediately explains the central design premise.",
+                        }
+                    )
+                )
+            ),
+        ]
+    )
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    runner = AgentRunner(
+        ResearchFormalizerAgent(mode="review"),
+        registry,
+        llm,
+        MockHumanInterface(),
+        RuntimeSettings(),
+    )
+    ctx = ExecutionContext(
+        workspace_dir=tmp_path,
+        project_id="semantic-adjudication",
+        task_id="T4.5-REVIEW",
+        run_id="semantic-adjudication-run",
+        mode="review",
+    )
+
+    result = asyncio.run(runner.run(ctx))
+
+    assert result.ok is True, result.error or result.message
+    assert llm.call_count == 2
+    assert error in accepted_t45_semantic_errors(tmp_path)
+
+
+def test_t45_llm_semantic_adjudication_reviews_all_current_prose_candidates_once(tmp_path: Path) -> None:
+    """One final review adjudicates a coherent set instead of serial repair loops."""
+
+    populate_valid_t45_workspace(tmp_path)
+    proposal = _proposal_path(tmp_path)
+    text = proposal.read_text(encoding="utf-8")
+    text = text.replace("Central Insight:", "Key design premise:")
+    text = text.replace("A simpler alternative", "A lean comparator")
+    proposal.write_text(text, encoding="utf-8")
+    blueprint_path = tmp_path / "ideation" / "research_blueprint.yaml"
+    blueprint = yaml.safe_load(blueprint_path.read_text(encoding="utf-8"))
+    blueprint["proposed_approach"]["alternatives_considered"][0]["alternative"] = "静态固定方案甲乙丙丁"
+    write_yaml(blueprint_path, blueprint)
+    central_error = (
+        "Proposal does not state a readable central insight in Proposed Approach and Design Rationale "
+        "(use Central Insight, Core Insight, 核心洞见, or 核心洞察)"
+    )
+    alternative_error = "Proposal does not explain the simpler alternative from research_blueprint.yaml and why it is insufficient"
+    assert collect_t45_semantic_errors(tmp_path) == [central_error, alternative_error]
+    llm = MockLLMClient(
+        [
+            _finish_response("request batch semantic validation"),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    content=json.dumps(
+                        {
+                            "decisions": [
+                                {
+                                    "verdict": "satisfied",
+                                    "validator_error": central_error,
+                                    "artifact": "ideation/proposal/research_proposal.md",
+                                    "evidence": [
+                                        {
+                                            "quote": "Key design premise: a representation-aware estimator and a diagnostic feedback component should jointly expose the source of transport error before an intervention is ranked.",
+                                            "explanation": "The opening premise states the design insight before the component descriptions.",
+                                        }
+                                    ],
+                                    "reason": "The wording is a clear scholarly synonym for the central insight.",
+                                },
+                                {
+                                    "verdict": "satisfied",
+                                    "validator_error": alternative_error,
+                                    "artifact": "ideation/proposal/research_proposal.md",
+                                    "evidence": [
+                                        {
+                                            "quote": "A lean comparator that applies a static model without these components cannot distinguish contextual shift from a genuine treatment effect.",
+                                            "explanation": "The Proposal identifies a simpler comparator and the limitation that motivates the proposed design.",
+                                        }
+                                    ],
+                                    "reason": "The comparison is substantive even though it does not use the literal alternative label.",
+                                },
+                            ]
+                        }
+                    )
+                )
+            ),
+        ]
+    )
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    runner = AgentRunner(
+        ResearchFormalizerAgent(mode="review"),
+        registry,
+        llm,
+        MockHumanInterface(),
+        RuntimeSettings(),
+    )
+    ctx = ExecutionContext(
+        workspace_dir=tmp_path,
+        project_id="semantic-adjudication-batch",
+        task_id="T4.5-REVIEW",
+        run_id="semantic-adjudication-batch-run",
+        mode="review",
+    )
+
+    result = asyncio.run(runner.run(ctx))
+
+    assert result.ok is True, result.error or result.message
+    assert llm.call_count == 2
+    accepted = accepted_t45_semantic_errors(tmp_path)
+    assert {central_error, alternative_error} <= accepted
+
+
+def test_t45_semantic_adjudication_expires_when_its_source_changes(tmp_path: Path) -> None:
+    """A receipt cannot authorize a later edit to the Proposal or blueprint."""
+
+    populate_valid_t45_workspace(tmp_path)
+    error = "Proposal does not explain the simpler alternative from research_blueprint.yaml and why it is insufficient"
+    proposal = _proposal_path(tmp_path)
+    quote = "A simpler alternative that applies a static model without these components cannot distinguish contextual shift from a genuine treatment effect."
+    persist_t45_semantic_adjudication(
+        tmp_path,
+        validator_error=error,
+        artifact="ideation/proposal/research_proposal.md",
+        requirement="proposal_argument_semantics",
+        evidence=[{"quote": quote, "explanation": "The Proposal names the simpler static alternative and its insufficiency."}],
+        adjudicator_reason="Quoted prose directly supplies the requested design comparison.",
+        model="mock-model",
+    )
+
+    assert error in accepted_t45_semantic_errors(tmp_path)
+    proposal.write_text(proposal.read_text(encoding="utf-8") + "\nChanged source.\n", encoding="utf-8")
+    assert error not in accepted_t45_semantic_errors(tmp_path)
+
+
+def test_t45_hard_validation_errors_are_never_semantically_adjudicable() -> None:
+    """LLM fallback cannot waive structured, evidence, or anti-quality contracts."""
+
+    for error in (
+        "Missing required structured artifact: ideation/exp_plan.yaml",
+        "T4.5 derivatives require a passing Final Gate Verdict in novelty_audit.md",
+        "Experiment plan has no experiment mapped to active claims: TC1",
+        "research_proposal.md repeats the same sentence or near-identical sentence blocks instead of developing the argument",
+        "hypotheses.md leaks internal novelty-audit labels into researcher-facing claims",
+    ):
+        assert semantic_adjudication_scope(error) is None
 
 
 def test_t45_depth_warning_is_internal_prompt_guidance(tmp_path: Path) -> None:
@@ -287,7 +505,7 @@ def _finish_response(summary: str) -> FakeRawCompletion:
     )
 
 
-def _proposal_write_response(iteration: int) -> FakeRawCompletion:
+def _proposal_write_response(iteration: int, *, content: str | None = None) -> FakeRawCompletion:
     return FakeRawCompletion(
         message=FakeLLMMessage(
             tool_calls=[
@@ -295,7 +513,7 @@ def _proposal_write_response(iteration: int) -> FakeRawCompletion:
                     name="write_file",
                     arguments={
                         "path": "ideation/proposal/research_proposal.md",
-                        "content": f"repair iteration {iteration}",
+                        "content": content if content is not None else f"repair iteration {iteration}",
                     },
                 )
             ]
@@ -485,6 +703,59 @@ def test_short_heading_complete_proposal_fails_with_substantive_reason(tmp_path:
     assert "too short" in (error or "") or "fragments" in (error or "")
 
 
+def test_proposal_accepts_chinese_core_insight_before_components(tmp_path: Path) -> None:
+    """Natural Chinese `核心洞察` must not loop as a missing central insight."""
+
+    populate_valid_t45_workspace(tmp_path)
+    proposal = _proposal_path(tmp_path)
+    proposal.write_text(
+        proposal.read_text(encoding="utf-8").replace("Central Insight:", "核心洞察："),
+        encoding="utf-8",
+    )
+
+    ok, error = validate_t45_research_proposal(tmp_path, tmp_path / "ideation" / "novelty_audit.md")
+
+    assert ok is True, error
+
+
+def test_proposal_rejects_core_insight_after_component_detail(tmp_path: Path) -> None:
+    """The ordering contract must be real, rather than a heading keyword check."""
+
+    populate_valid_t45_workspace(tmp_path)
+    proposal = _proposal_path(tmp_path)
+    text = proposal.read_text(encoding="utf-8")
+    text = text.replace("Central Insight: ", "", 1)
+    text = text.replace(
+        "COMP1 learns a task-conditioned representation for C1",
+        "COMP1 learns a task-conditioned representation for C1. Central Insight: ",
+        1,
+    )
+    proposal.write_text(text, encoding="utf-8")
+
+    ok, error = validate_t45_research_proposal(tmp_path, tmp_path / "ideation" / "novelty_audit.md")
+
+    assert ok is False
+    assert "after the first technical component" in (error or "")
+
+
+def test_evaluation_requires_each_named_evidence_check(tmp_path: Path) -> None:
+    """One Chinese keyword cannot satisfy every evaluation requirement."""
+
+    populate_valid_t45_workspace(tmp_path)
+    proposal = _proposal_path(tmp_path)
+    text = proposal.read_text(encoding="utf-8")
+    text = text.replace(
+        "Mechanism validation tests the COMP2 pathway; an ablation removes COMP1 and a separate ablation removes COMP2. Robustness evaluates distribution shift and policy variation.",
+        "机制检验保留。",
+    )
+    proposal.write_text(text, encoding="utf-8")
+
+    ok, error = validate_t45_research_proposal(tmp_path, tmp_path / "ideation" / "novelty_audit.md")
+
+    assert ok is False
+    assert "baselines" in (error or "") or "ablations" in (error or "")
+
+
 def test_repetitive_or_audit_dominated_proposal_fails(tmp_path: Path) -> None:
     populate_valid_t45_workspace(tmp_path)
     path = _proposal_path(tmp_path)
@@ -596,7 +867,25 @@ def test_orientation_specific_failure_modes_are_blocked(tmp_path: Path) -> None:
     _proposal_path(utd).write_text(text, encoding="utf-8")
     ok, error = validate_t45_research_proposal(utd, utd / "ideation" / "novelty_audit.md")
     assert ok is False
-    assert "LLM/API" in (error or "") or "technical artifact" in (error or "")
+    assert (
+        "LLM/API" in (error or "")
+        or "technical artifact" in (error or "")
+        or "simpler alternative" in (error or "")
+    )
+
+    chinese_actor = tmp_path / "chinese-actor"
+    populate_valid_t45_workspace(chinese_actor, orientation="hybrid")
+    blueprint_path = chinese_actor / "ideation" / "research_blueprint.yaml"
+    blueprint = yaml.safe_load(blueprint_path.read_text(encoding="utf-8"))
+    blueprint["core_problem"]["affected_actors"] = ["Live-streaming sales anchors"]
+    write_yaml(blueprint_path, blueprint)
+    proposal = _proposal_path(chinese_actor)
+    proposal.write_text(
+        proposal.read_text(encoding="utf-8").replace("platform analysts and product decision owners", "直播主播"),
+        encoding="utf-8",
+    )
+    ok, error = validate_t45_research_proposal(chinese_actor, chinese_actor / "ideation" / "novelty_audit.md")
+    assert ok is True, error
 
     hybrid = tmp_path / "hybrid"
     populate_valid_t45_workspace(hybrid, orientation="hybrid")
@@ -688,9 +977,15 @@ def test_t45_quality_gate_repairs_past_legacy_limit_without_human_extension(tmp_
     """Exercise finish -> validation failure -> repair -> revalidate with mock LLM calls."""
 
     populate_valid_t45_workspace(tmp_path)
+    original_proposal = _proposal_path(tmp_path).read_text(encoding="utf-8")
     responses = [_finish_response("initial validation")]
     for iteration in range(1, 7):
-        responses.append(_proposal_write_response(iteration))
+        responses.append(
+            _proposal_write_response(
+                iteration,
+                content=original_proposal + f"\n\nrepair iteration {iteration} retains the complete research proposal.\n",
+            )
+        )
         responses.append(_finish_response(f"repair {iteration}"))
     llm = MockLLMClient(responses)
     human = MockHumanInterface()
@@ -874,3 +1169,103 @@ def test_pending_t5_recovery_is_upgraded_to_t45_formalization(tmp_path: Path) ->
     assert refreshed.current_task == "T4.5-FORMALIZE"
     assert refreshed.status == "RUNNING"
     assert refreshed.pending_gate is None
+
+
+def test_nonpassing_audit_cannot_enter_t45_formalizer_from_stale_state(tmp_path: Path) -> None:
+    """A stale T4.5-FORMALIZE state must not create an impossible Proposal loop."""
+
+    populate_valid_t45_workspace(tmp_path)
+    write(
+        tmp_path / "ideation" / "novelty_audit.md",
+        "# Novelty Audit\n\n## Final Gate Verdict\n\nFinal Gate Verdict: return_to_t4\n",
+    )
+    state = StateYaml(project_id="test", current_task="T4.5-FORMALIZE", status="PAUSED")
+
+    redirected = _state_machine()._redirect_unapproved_t45_formalization_to_human_review(
+        state,
+        tmp_path,
+        source="test",
+    )
+
+    assert redirected is state
+    assert state.current_task == "T4.5-HUMAN-REVIEW"
+    assert state.status == "RUNNING"
+    blocker = state.task_context["t45_formalization_verdict_blocker"]
+    assert blocker["normalized_verdict"] == "return_to_t4"
+    assert "cannot repair or override" in blocker["reason"]
+
+
+def test_t45_human_continue_does_not_reopen_formalizer_when_audit_is_nonpassing(tmp_path: Path) -> None:
+    """Continue intent cannot send a rejected audit to T5 or an impossible repair loop."""
+
+    populate_valid_t45_workspace(tmp_path)
+    write(tmp_path / "ideation" / "novelty_audit.md", "Final Gate Verdict: drop_due_to_collision\n")
+    state = StateYaml(
+        project_id="test",
+        current_task="T4.5-HUMAN-REVIEW",
+        status="WAITING_HUMAN",
+        pending_gate=GateState(
+            gate_id="t45_human_review_gate",
+            presented_at="2026-07-28T00:00:00+00:00",
+            presentation={},
+            options=[{"id": "continue_to_t5"}, {"id": "return_to_t4"}],
+        ),
+    )
+
+    resolved = _state_machine().resolve_pending_gate(
+        state,
+        {"option_id": "continue_to_t5", "captured": {}},
+        workspace_dir=tmp_path,
+    )
+
+    assert resolved.current_task == "T4.5-HUMAN-REVIEW"
+    assert resolved.status == "WAITING_HUMAN"
+    assert resolved.pending_gate is not None
+    assert "continuation_blocker" in resolved.pending_gate.presentation
+    assert "Proposal or hypothesis edits cannot change" in resolved.last_error
+
+
+def test_t45_history_cap_discards_old_full_document_writes_but_keeps_latest_tool_turn(tmp_path: Path) -> None:
+    """T4.5 repair loops must not carry every historic Proposal body forever."""
+
+    llm = MockLLMClient([], context_window=524_288)
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    runner = AgentRunner(
+        ResearchFormalizerAgent(mode="formalize"),
+        registry,
+        llm,
+        MockHumanInterface(),
+        RuntimeSettings(),
+    )
+    binding = llm.resolve(profile=None, tier="heavy")[0][0]
+    messages = [Message.system("T4.5 system contract")]
+    latest_call_id = ""
+    for index in range(8):
+        call = ToolCall.create(
+            "write_file",
+            {
+                "path": "ideation/proposal/research_proposal.md",
+                "content": f"proposal revision {index}: " + ("x" * 42_000),
+            },
+        )
+        latest_call_id = call.id
+        messages.append(Message.assistant(tool_calls=[call], step=index + 1))
+        messages.append(
+            Message.tool(
+                tool_call_id=call.id,
+                name="write_file",
+                content="Proposal write accepted.",
+                step=index + 1,
+            )
+        )
+
+    compacted = runner._maybe_truncate(messages, binding, task_id="T4.5-FORMALIZE")
+    compacted_tokens = llm.count_tokens([message.to_openai_dict() for message in compacted], binding)
+
+    assert compacted_tokens < 60_000
+    assert any("已省略较早的" in (message.content or "") for message in compacted)
+    assert any(
+        message.role.value == "assistant" and any(call.id == latest_call_id for call in message.tool_calls)
+        for message in compacted
+    )

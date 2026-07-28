@@ -35,7 +35,34 @@ from ..tools.survey_tools import (
     migrate_survey_visual_manifest,
     survey_audit_release_ready,
 )
+from ..survey_semantic_adjudication import (
+    accepted_t36_semantic_audit_checks,
+    accepted_t36_semantic_errors,
+)
 from ._common import ensure_seed_outline_profile, load_jsonl, load_project, prepend_resume_prefix, read_text_file
+
+
+_SURVEY_REVIEW_DIMENSION_ALIASES: dict[str, tuple[str, ...]] = {
+    "Taxonomy": ("taxonomy", "分类框架", "分类学", "分析框架", "知识结构"),
+    "Coverage": ("coverage", "覆盖", "代表性", "文献范围"),
+    "Comparative": ("comparative", "comparison", "比较", "对比", "研究进展"),
+    "Challenges": ("challenges", "critical assessment", "挑战", "不足", "局限"),
+    "Future": ("future", "research agenda", "未来", "展望", "研究议程"),
+    "Scope": ("scope", "boundary", "范围", "边界", "纳入"),
+    "Review Contribution": ("review contribution", "contribution", "综述贡献", "理论贡献", "贡献"),
+    "Language": ("language", "bilingual", "语言", "中英", "术语"),
+}
+
+
+def _missing_survey_review_dimensions(review: str) -> list[str]:
+    """Recognize legitimate Chinese and English review headings before fallback."""
+
+    normalized = str(review or "").casefold()
+    return [
+        label
+        for label, aliases in _SURVEY_REVIEW_DIMENSION_ALIASES.items()
+        if not any(alias.casefold() in normalized for alias in aliases)
+    ]
 
 
 class SurveyWriterAgent(Agent):
@@ -528,7 +555,10 @@ class SurveyWriterAgent(Agent):
                 return False, "fig_taxonomy_overview.pdf 不是有效 PDF 文件"
             return True, None
         if phase == "survey_section":
-            return _validate_survey_section(ws, self._section_id(ctx))
+            valid, error = _validate_survey_section(ws, self._section_id(ctx))
+            if not valid and error and error in accepted_t36_semantic_errors(ws):
+                return True, None
+            return valid, error
         if phase == "survey_assemble":
             tex = read_text_file(ws / "drafts" / "survey" / "survey.tex", default="")
             if "\\documentclass" not in tex or "\\begin{document}" not in tex or "\\end{document}" not in tex:
@@ -577,7 +607,10 @@ class SurveyWriterAgent(Agent):
             missing_checks = sorted(required_checks - present_checks)
             if missing_checks:
                 return False, "survey_audit.json 缺少新增质量检查，请重新运行 audit_survey_coverage: " + ", ".join(missing_checks)
-            audit_ready, hard_failures, _warnings = survey_audit_release_ready(audit)
+            audit_ready, hard_failures, _warnings = survey_audit_release_ready(
+                audit,
+                accepted_semantic_checks=accepted_t36_semantic_audit_checks(ws),
+            )
             if not audit_ready:
                 return False, "survey_audit.json 存在硬失败: " + ", ".join(hard_failures[:6])
             return True, None
@@ -586,19 +619,11 @@ class SurveyWriterAgent(Agent):
             review = read_text_file(review_path, default="")
             if len(review.strip()) < 300:
                 return False, "survey_review.md 过短，必须包含 taxonomy/coverage/fairness/challenges/future/scope 审阅"
-            required_markers = [
-                "Taxonomy",
-                "Coverage",
-                "Comparative",
-                "Challenges",
-                "Future",
-                "Scope",
-                "Review Contribution",
-                "Language",
-            ]
-            missing = [marker for marker in required_markers if marker.casefold() not in review.casefold()]
+            missing = _missing_survey_review_dimensions(review)
             if missing:
-                return False, "survey_review.md 缺少审阅维度: " + ", ".join(missing)
+                semantic_error = "survey_review.md 缺少审阅维度: " + ", ".join(missing)
+                if semantic_error not in accepted_t36_semantic_errors(ws):
+                    return False, semantic_error
             actions, err = _load_json(ws / "drafts" / "survey" / "survey_review_actions.json")
             if err:
                 return False, err
@@ -613,8 +638,12 @@ class SurveyWriterAgent(Agent):
             audit, audit_err = _load_json(ws / "drafts" / "survey" / "survey_audit.json")
             if audit_err:
                 return False, audit_err
-            if audit.get("passed") is not True:
-                return False, "survey_review 不能通过：survey_audit.json 仍未通过"
+            audit_ready, hard_failures, _warnings = survey_audit_release_ready(
+                audit,
+                accepted_semantic_checks=accepted_t36_semantic_audit_checks(ws),
+            )
+            if not audit_ready:
+                return False, "survey_review 不能通过：survey_audit.json 仍存在硬失败: " + ", ".join(hard_failures[:6])
             language_review_err = _validate_survey_review_language_gate(review, actions)
             if language_review_err:
                 return False, language_review_err
@@ -1489,7 +1518,10 @@ def _validate_current_survey_audit(ws: Path) -> tuple[bool, str | None]:
         return False, str(exc)
     if audit.get("semantics") != "deterministic_survey_coverage_audit_not_scientific_judgment":
         return False, "survey_audit.json semantics 不正确"
-    audit_ready, hard_failures, _warnings = survey_audit_release_ready(audit)
+    audit_ready, hard_failures, _warnings = survey_audit_release_ready(
+        audit,
+        accepted_semantic_checks=accepted_t36_semantic_audit_checks(ws),
+    )
     if not audit_ready:
         return False, "survey_audit.json 存在硬失败，不能编译放行: " + ", ".join(hard_failures[:6])
     ok, err = _validate_fingerprint_map(ws, audit.get("input_fingerprints"), "survey_audit.json")

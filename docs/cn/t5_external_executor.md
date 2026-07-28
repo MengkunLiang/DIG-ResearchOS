@@ -253,3 +253,5 @@ external_executor/report/phase_F/writer_handoff_validation.json
 还必须确认报告引用的 `external_executor/expr/`、`external_executor/raw_results/`、`external_executor/evidence_package/`、`external_executor/figure/` 和 `external_executor/table/` 文件仍存在，并与 `run_manifest.json` 的校验信息一致。正常情况下根 Skill 会把合格结果路由到 `launch-t8` 并自行运行 bridge。缺失、hash 不一致、Writer Handoff 未通过，或终态为 `blocked`/`failed` 时，应修复权威的外部执行产物后重新运行根路由；不要伪造 `drafts/` 文件或强行进入 T8。不要手工伪造终态、`result_pack.json` 或 manifest，也不要通过修改 `state.yaml` 跳过校验。
 
 在 `T5-EXTERNAL-WAIT` 期间，`resume` 会独立接收同一份现代 Writer Handoff，并核验或重新生成三份 ResearchOS 所有的 T8 摄取文件。它不会重跑 T4.5、REBOOST 或执行器，且只有外部执行已停止写入时才应使用。它不能把不合格的包变成 T8 启动。
+
+如果 workspace 已被重新打开到 `T4`、`T4-GATE1`、T4.5 或其他无关状态，同一份 handoff 会被有意拒绝。重新选择 Candidate 会形成新的研究契约；磁盘上保留的旧 T5 文件只是审计历史，不能成为新 Candidate 的实验依据。应先完成新的选择及其对应的 T4.5/T5 链，再由外部执行器产生新的 Writer Handoff；不要通过修改 `state.yaml` 绕过这一边界。

@@ -1424,6 +1424,12 @@ class ExportSurveyForIdeationParams(BaseModel):
 
 
 SURVEY_AUDIT_SCHEMA_VERSION = "survey_coverage_audit.v3"
+_SURVEY_SEMANTIC_ADJUDICABLE_CHECKS = frozenset(
+    {
+        "survey_language_consistency",
+        "compact_theme_content_absorbed",
+    }
+)
 
 
 def upgrade_survey_audit_document(audit: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]]]:
@@ -1569,7 +1575,11 @@ def migrate_survey_audit_artifact(path: Path) -> tuple[dict[str, Any], list[dict
     return upgraded, migrations
 
 
-def survey_audit_release_ready(audit: dict[str, Any]) -> tuple[bool, list[str], list[str]]:
+def survey_audit_release_ready(
+    audit: dict[str, Any],
+    *,
+    accepted_semantic_checks: set[str] | frozenset[str] | None = None,
+) -> tuple[bool, list[str], list[str]]:
     """Classify a persisted survey audit with hard traceable-citation coverage.
 
     Consumers call :func:`migrate_survey_audit_artifact` first.  This helper is
@@ -1581,6 +1591,7 @@ def survey_audit_release_ready(audit: dict[str, Any]) -> tuple[bool, list[str], 
     if not isinstance(raw_checks, list):
         return False, ["audit has no inspectable checks list"], []
 
+    accepted_semantic_checks = set(accepted_semantic_checks or ())
     hard_failures: list[str] = []
     soft_warnings: list[str] = []
     diversity_guidance = ((audit.get("repair_guidance") or {}).get("citation_diversity") or {})
@@ -1596,6 +1607,15 @@ def survey_audit_release_ready(audit: dict[str, Any]) -> tuple[bool, list[str], 
         detail = str(raw.get("detail") or "")
         if name == "citation_diversity":
             hard_failures.append(name + (f": {detail}" if detail else ""))
+            continue
+        # Only a caller that has already verified a fresh, quote-backed,
+        # runtime-owned semantic receipt can pass a named prose check here.
+        # The allowlist is intentionally supplied by the caller rather than
+        # trusting a field inside the LLM-authored audit document.
+        if name in _SURVEY_SEMANTIC_ADJUDICABLE_CHECKS and name in accepted_semantic_checks:
+            soft_warnings.append(
+                "independently adjudicated prose check " + name + (f": {detail}" if detail else "")
+            )
             continue
         level = str(raw.get("level") or "FAIL").upper()
         if level == "WARN":

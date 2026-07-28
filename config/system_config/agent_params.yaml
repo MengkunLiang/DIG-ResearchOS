@@ -470,12 +470,16 @@ agents:
       - ''
       - ideation/
       - literature/
-      allow_edit_file_compatibility: false
+      # Compatibility is safe for prose because EditFileTool delegates to the
+      # same WriteFileTool guard that requires write_structured_file for every
+      # schema-bound T4.5 artifact.
+      allow_edit_file_compatibility: true
       tool_names:
       - read_file
       - write_file
       - write_structured_file
       - validate_t45_formalization_sources
+      - validate_t45_research_package
       - list_files
       - finish_task
       allowed_write_prefixes:

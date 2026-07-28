@@ -33,6 +33,7 @@ from .novelty_verdict import (
     extract_final_gate_verdict,
     normalize_final_gate_verdict,
 )
+from .t45_semantic_adjudication import accepted_t45_semantic_errors
 
 
 PROPOSAL_REL_PATH = "ideation/proposal/research_proposal.md"
@@ -238,11 +239,60 @@ def repair_t45_proposal_manifest(workspace: Path, audit_path: Path) -> tuple[boo
     return True, "Proposal manifest deterministic metadata repair completed"
 
 
+def validate_t45_proposal_source(
+    workspace: Path,
+    *,
+    accepted_semantic_errors: set[str] | None = None,
+) -> tuple[bool, str | None]:
+    """Validate Proposal prose before runtime-owned metadata exists.
+
+    The Review agent previously learned semantic Proposal errors only after it
+    called ``finish_task``. That consumed a full final-validation cycle for a
+    local prose issue and made deterministic false negatives look like model
+    failures. This preflight intentionally excludes the Proposal manifest and
+    orientation review, which are unavailable or incomplete while the reviewer
+    is still repairing the researcher-facing argument.
+    """
+
+    workspace = Path(workspace)
+    accepted_semantic_errors = (
+        accepted_t45_semantic_errors(workspace)
+        if accepted_semantic_errors is None
+        else accepted_semantic_errors
+    )
+    formalization_ok, formalization_error = validate_t45_formalization_core(
+        workspace,
+        accepted_semantic_errors=accepted_semantic_errors,
+    )
+    if not formalization_ok:
+        return False, formalization_error
+    proposal_path = workspace / PROPOSAL_REL_PATH
+    if not proposal_path.is_file() or proposal_path.stat().st_size <= 0:
+        return False, "Missing ideation/proposal/research_proposal.md"
+    proposal_text = proposal_path.read_text(encoding="utf-8", errors="replace")
+    try:
+        blueprint = yaml.safe_load((workspace / BLUEPRINT_REL_PATH).read_text(encoding="utf-8")) or {}
+        registry = yaml.safe_load((workspace / CLAIM_REGISTRY_REL_PATH).read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        return False, f"Cannot read blueprint or claim registry for Proposal validation: {exc}"
+    if not isinstance(blueprint, dict) or not isinstance(registry, dict):
+        return False, "research_blueprint.yaml and claim_registry.yaml must both contain objects"
+    proposal_error = validate_research_proposal_text(
+        proposal_text,
+        blueprint=blueprint,
+        registry=registry,
+        orientation=load_orientation_configuration(workspace),
+        accepted_semantic_errors=accepted_semantic_errors,
+    )
+    return (False, proposal_error) if proposal_error else (True, None)
+
+
 def validate_t45_research_proposal(
     workspace: Path,
     audit_path: Path,
     *,
     require_accepted_lineage: bool = False,
+    accepted_semantic_errors: set[str] | None = None,
 ) -> tuple[bool, str | None]:
     """Validate a researcher-facing Proposal against the unified blueprint.
 
@@ -259,9 +309,12 @@ def validate_t45_research_proposal(
     if normalized_verdict not in _PASS_VERDICTS:
         return False, "research_proposal.md requires a passing Final Gate Verdict in novelty_audit.md"
 
-    formalization_ok, formalization_error = validate_t45_formalization_core(workspace)
-    if not formalization_ok:
-        return False, formalization_error
+    proposal_source_ok, proposal_source_error = validate_t45_proposal_source(
+        workspace,
+        accepted_semantic_errors=accepted_semantic_errors,
+    )
+    if not proposal_source_ok:
+        return False, proposal_source_error
     lineage_ok, lineage_error = validate_t45_selection_isolation(
         workspace,
         require_accepted=require_accepted_lineage,
@@ -276,24 +329,6 @@ def validate_t45_research_proposal(
     stale = [name for name, path in paths.items() if path.stat().st_mtime < audit_path.stat().st_mtime]
     if stale:
         return False, "post-novelty proposal predates the novelty audit: " + ", ".join(stale)
-
-    proposal_path = paths["research_proposal"]
-    proposal_text = proposal_path.read_text(encoding="utf-8", errors="replace")
-    try:
-        blueprint = yaml.safe_load((workspace / BLUEPRINT_REL_PATH).read_text(encoding="utf-8")) or {}
-        registry = yaml.safe_load((workspace / CLAIM_REGISTRY_REL_PATH).read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError) as exc:
-        return False, f"Cannot read blueprint or claim registry for Proposal validation: {exc}"
-    if not isinstance(blueprint, dict) or not isinstance(registry, dict):
-        return False, "research_blueprint.yaml and claim_registry.yaml must both contain objects"
-    proposal_error = validate_research_proposal_text(
-        proposal_text,
-        blueprint=blueprint,
-        registry=registry,
-        orientation=load_orientation_configuration(workspace),
-    )
-    if proposal_error:
-        return False, proposal_error
 
     manifest_path = paths["proposal_manifest"]
     try:

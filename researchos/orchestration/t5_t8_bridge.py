@@ -270,6 +270,37 @@ def validate_modern_t5_handoff(workspace: Path, *, allow_partial: bool = True) -
     }
 
 
+def validate_t8_entry_state(workspace: Path) -> tuple[bool, str | None]:
+    """Require that a modern handoff enters T8 from its own T5 wait state.
+
+    A user can explicitly reopen T4/T4-GATE1 to choose a different Candidate
+    while old T5 artifacts remain on disk for audit.  Accepting those old
+    results into T8 would silently connect evidence from the previous research
+    contract to a new choice.  ``T5-EXTERNAL-WAIT`` is the only persisted
+    state that proves the current workspace is waiting for this external
+    execution package.  State-less workspaces remain supported for an
+    intentional import-only handoff.
+    """
+
+    workspace = Path(workspace).resolve()
+    state_path = workspace / "state.yaml"
+    if not state_path.is_file():
+        return True, None
+    try:
+        state = StateYaml.load_yaml(state_path)
+    except Exception as exc:  # noqa: BLE001 - keep handoff diagnostics actionable
+        return False, f"state.yaml cannot be read before T5-to-T8 entry: {exc}"
+    current_task = str(state.current_task or "")
+    if current_task == "T5-EXTERNAL-WAIT":
+        return True, None
+    return (
+        False,
+        "T5-to-T8 entry is only authorized while current_task is T5-EXTERNAL-WAIT; "
+        f"current_task is {current_task or 'missing'}. Resume the matching T5 external-execution chain, "
+        "or finish the current T4/T4.5 reselection before creating a new T5 handoff.",
+    )
+
+
 def _records(section: Any) -> list[dict[str, Any]]:
     if isinstance(section, list):
         return [item for item in section if isinstance(item, dict)]
@@ -637,6 +668,21 @@ def validate_t8_ingest_artifacts(
 def accept_and_ingest_t5_handoff(workspace: Path, *, allow_partial: bool = True) -> dict[str, Any]:
     """Validate the handoff and atomically publish deterministic T8 inputs."""
 
+    entry_ok, entry_error = validate_t8_entry_state(workspace)
+    if not entry_ok:
+        return {
+            "schema_version": "researchos_t5_handoff_acceptance.v1",
+            "ok": False,
+            "status": "rejected",
+            "errors": [
+                {
+                    "code": "t8_entry_state_not_authorized",
+                    "path": "state.yaml",
+                    "message": str(entry_error or "T5-to-T8 entry state is not authorized"),
+                }
+            ],
+            "warnings": [],
+        }
     acceptance = validate_modern_t5_handoff(workspace, allow_partial=allow_partial)
     if not acceptance.get("ok"):
         return acceptance
@@ -666,6 +712,9 @@ def prepare_t8_state(workspace: Path, receipt: dict[str, Any]) -> dict[str, Any]
     if not receipt.get("ok"):
         raise ValueError("cannot prepare T8 state from a rejected handoff")
     workspace = workspace.resolve()
+    entry_ok, entry_error = validate_t8_entry_state(workspace)
+    if not entry_ok:
+        raise ValueError(str(entry_error or "T5-to-T8 entry state is not authorized"))
     state_path = workspace / "state.yaml"
     state_existed = state_path.is_file()
     if state_existed:

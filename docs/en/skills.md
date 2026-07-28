@@ -12,9 +12,26 @@ Each repository Skill has an execution-scope contract. Existing independent Skil
 python -m researchos.cli list-skills --workspace ./workspace/project-a
 python -m researchos.cli browse-skills --workspace ./workspace/project-a
 python -m researchos.cli describe-skill pdf-note-card --workspace ./workspace/project-a
+python -m researchos.cli audit-skills --check-script-help --no-banner
 ```
 
 `browse-skills` supports a number, full name, or a localized fuzzy keyword such as `literature` or `Idea`. Inspect the card before `run <id>`: it explains purpose, inputs, output artifacts, limits, and recovery command.
+
+### Repository Skill-Suite Audit
+
+The current repository contains **56 versioned Skill contracts**: **43 public ResearchOS Skills** (40 standalone, two state-machine-owned, and one internal-only compatibility Skill) plus **13 protected external-executor Skills** (one `research-execution` root and twelve child Skills). Counts are not a promise that every Skill may be invoked from the CLI: execution scope is the authority.
+
+Use the read-only audit before a release or after changing a Skill template:
+
+```bash
+# Metadata, duplicate names, local Markdown/reference/script links, and Python syntax
+python -m researchos.cli audit-skills --no-banner
+
+# Also import-smoke every external-executor script through its --help path
+python -m researchos.cli audit-skills --check-script-help --no-banner
+```
+
+The audit does not call an LLM, retrieve papers, run an experiment, or mutate a workspace. It is intentionally a deterministic diagnostic command rather than a new research Skill: a separate "Skill audit" workflow would duplicate the repository governance already owned by `code-and-protocol-review` and the T5 specializer, while adding an unnecessary execution surface.
 
 ## Guided Session Contract
 

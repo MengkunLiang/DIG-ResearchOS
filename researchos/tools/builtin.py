@@ -31,7 +31,10 @@ from .external_experiment import (
 )
 from .filesystem import EditFileTool, InspectUserSeedsTool, ListFilesTool, ReadFileTool, WriteFileTool
 from .finish_task import FinishTaskTool
-from .formalization_validation import ValidateT45FormalizationSourcesTool
+from .formalization_validation import (
+    ValidateT45FormalizationSourcesTool,
+    ValidateT45ResearchPackageTool,
+)
 from .structured_file import WriteStructuredFileTool
 from .survey_tools import (
     AssembleSurveyTool,
@@ -133,6 +136,7 @@ def register_builtin_tools(
     registry.register("edit_file", lambda ctx: EditFileTool(ctx.policy))
     registry.register("write_structured_file", lambda ctx: WriteStructuredFileTool(ctx.policy))
     registry.register("validate_t45_formalization_sources", lambda ctx: ValidateT45FormalizationSourcesTool(ctx.policy))
+    registry.register("validate_t45_research_package", lambda ctx: ValidateT45ResearchPackageTool(ctx.policy))
     registry.register("append_file", lambda ctx: AppendFileTool(ctx.policy))
     registry.register("list_files", lambda ctx: ListFilesTool(ctx.policy))
     registry.register("inspect_user_seeds", lambda ctx: InspectUserSeedsTool(ctx.policy))

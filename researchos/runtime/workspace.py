@@ -25,6 +25,7 @@ from .environment import write_runtime_environment
 
 
 DEFAULT_PROJECT_ID = "demo-project"
+DIRECTORY_GUIDE_CONTRACT_VERSION = "2026-07-skill-suite-t5-t8-v2"
 
 
 def _now_iso() -> str:
@@ -56,11 +57,17 @@ STANDARD_WORKSPACE_DIRS = [
     "external_executor/report/phase_D",
     "external_executor/report/phase_E",
     "external_executor/report/phase_F",
+    "external_executor/skills",
     "external_executor/expr",
     "external_executor/raw_results",
     "external_executor/configs",
     "external_executor/logs",
     "external_executor/patches",
+    "external_executor/runs",
+    "external_executor/reviews",
+    "external_executor/evidence_package",
+    "external_executor/figure",
+    "external_executor/table",
     "experiments",
     "experiments/runs",
     "experiments/configs",
@@ -598,14 +605,14 @@ def create_directory_guides(workspace_dir: Path, *, runtime_dir_name: str = "_ru
             "validation": "Candidates should include provenance, license/access notes, and runnability status.",
         },
         "ideation": {
-            "purpose": "研究假设、实验计划、风险、新颖性预审输入和候选 idea 记录。",
+            "purpose": "已选 Candidate、T4.5 研究方案、正式假设、实验计划、风险与新颖性审计记录。",
             "produced_by": "T4, T4.5.",
             "consumed_by": "T4.5, T5-HANDOFF, T8.",
-            "key_files": "hypotheses.md, exp_plan.yaml, risks.md, idea_scorecard.yaml, novelty_audit.md.",
+            "key_files": "selected/, research_blueprint.yaml, claim_registry.yaml, hypotheses.md, exp_plan.yaml, proposal/, novelty_audit.md, orientation_review.json, risks.md.",
             "human_editable": "Only for explicit corrections or gate decisions.",
             "agent_editable": "Ideation and novelty auditor agents.",
             "do_not_put": "Raw experiment outputs or manuscript drafts.",
-            "validation": "exp_plan.yaml must stay parseable and tied to hypotheses.",
+            "validation": "T5 only accepts a mutually consistent T4.5 formalization package; hypotheses and proposal are proposed research claims, never observed results.",
         },
         "novelty": {
             "purpose": "T4.5/legacy novelty/collision 复核和 required baseline 结构化要求。",
@@ -618,14 +625,14 @@ def create_directory_guides(workspace_dir: Path, *, runtime_dir_name: str = "_ru
             "validation": "Required baselines must not be silently dropped downstream.",
         },
         "external_executor": {
-            "purpose": "ResearchOS 与 Codex/Claude/manual 外部实验执行器的边界目录。",
+            "purpose": "ResearchOS 与 Codex/Claude/manual 外部执行器的受控边界：T5 handoff、项目特化的 13-Skill Suite、执行证据和 T8 Writer Handoff。",
             "produced_by": "T5-REBOOST-GATE, T5-HANDOFF, T5-SPECIALIZE-EXECUTOR-SKILLS, T5-EXPR-MATERIAL-GATE, T5-EXECUTOR-GATE, external executor, T5-DRY-RUN.",
             "consumed_by": "T5-EXTERNAL-WAIT, T8.",
-            "key_files": "AGENTS.md, CLAUDE.md, handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt, report/, skills/, expr/, executor_research_report.md, result_pack.json, executor_status.json.",
+            "key_files": "AGENTS.md, CLAUDE.md, handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt, project_skill_context.yaml, skills/, report/, expr/, raw_results/, evidence_package/, figure/, table/, executor_research_report.md, result_pack.json, executor_status.json.",
             "human_editable": "Optionally place source datasets, repositories, baselines, benchmarks, weights, and material notes under resources/ when already available. When they are not, the T5 bounded resource-preparation executor can search, acquire, review, and record authorized public resources. Put only already deployed runnable baseline/method assets in expr/. Manual executor outputs use the declared writable paths; skills/ is generated and customized by ResearchOS before execution.",
             "agent_editable": "ResearchOS customizes skills/ during T5; external executor may write only paths allowed by allowed_paths.txt.",
             "do_not_put": "Final paper text, API keys, unrelated notebooks, ResearchOS source edits.",
-            "validation": "Every metric must trace to raw result, config, log, run id, and sha256.",
+            "validation": "Every metric must trace to raw result, config, log, run id, and sha256. T8 accepts only the six-file Writer Handoff while state.yaml is waiting at T5-EXTERNAL-WAIT; never edit state.yaml or drafts/ to force entry.",
         },
         "experiments": {
             "purpose": "旧内部实验或可选归档的结果、证据索引和公平性审计；当前主链优先使用 external_executor/。",
@@ -648,14 +655,14 @@ def create_directory_guides(workspace_dir: Path, *, runtime_dir_name: str = "_ru
             "validation": "Decision should contain Situation, Options, and next_task.",
         },
         "drafts": {
-            "purpose": "论文写作资源索引、章节草稿、claim ledger、审计和 paper.tex。",
+            "purpose": "T8 论文写作资源索引、章节草稿、claim ledger、审计和 paper.tex。",
             "produced_by": "T8 writer/reviewer tools.",
             "consumed_by": "T8, T9.",
-            "key_files": "paper_state.json, sections/, paper.tex, result_to_claim.json, experiment_evidence_pack.json, must_not_claim.md, paper_claim_audit.json.",
+            "key_files": "t5_t8_handoff.json, experiment_evidence_pack.json, result_to_claim.json, paper_state.json, sections/, paper.tex, must_not_claim.md, paper_claim_audit.json.",
             "human_editable": "User corrections may be added in user_corrections.md.",
             "agent_editable": "Writer/Reviewer agents.",
             "do_not_put": "External executor raw experiment outputs.",
-            "validation": "Every empirical claim must trace to result_to_claim/evidence pack.",
+            "validation": "The three T5-to-T8 ingest files are ResearchOS-owned derived artifacts. Every empirical claim must trace to result_to_claim/evidence pack; repair the authoritative external handoff rather than hand-editing them.",
         },
         "submission": {
             "purpose": "投稿 bundle、LaTeX 编译报告和最终 PDF。",
@@ -741,8 +748,11 @@ def _should_generate_existing_dir_guide(rel_dir: str, *, runtime_dir_name: str) 
         "reviews",
         "reviews/review_rounds",
         "skills",
+        "external_executor/skills",
     }:
         return True
+    if normalized.startswith("external_executor/skills/"):
+        return normalized.count("/") == 2
     dynamic_prefixes = (
         "app_exp/",
         "pilot/",
@@ -774,7 +784,8 @@ def _render_dir_guide(guide: dict[str, str]) -> str:
         f"| 校验/恢复规则 | {guide['validation']} |\n\n"
         "## Key Files\n\n"
         f"{file_rows}\n\n"
-        "Generated by ResearchOS workspace initialization.\n"
+        "Generated by ResearchOS workspace initialization. "
+        f"Guide contract: {DIRECTORY_GUIDE_CONTRACT_VERSION}.\n"
     )
 
 
@@ -828,6 +839,9 @@ def _describe_key_file(item: str) -> str:
         "reproducibility_matrix.csv": "资源可复现性、许可和执行状态矩阵。",
         "resource_search_log.md": "资源检索过程和 provenance 记录。",
         "hypotheses.md": "T4.5 novelty/collision audit 通过后编译的正式研究档案，包含假设、机制、贡献、意义、证据边界与风险。",
+        "research_blueprint.yaml": "T4.5 的结构化研究蓝图；明确中心洞见、机制、设计理由、替代解释与研究边界。",
+        "claim_registry.yaml": "正式 claim、证据状态、机制链与验证映射的唯一结构化登记。",
+        "orientation_review.json": "T4.5 对方案方向、写作对象与研究边界的审阅回执。",
         "research_dossier.json": "与 hypotheses.md 对应的 T4.5 结构化研究档案，供 T5 保留研究动机、贡献、利益相关者、条件性影响和风险边界。",
         "exp_plan.yaml": "T4.5 formalization 后生成的正式实验协议，供外部执行器使用。",
         "risks.md": "Candidate 或 formal plan 的风险、失败模式和边界条件；可作为 legacy compatibility projection 保留。",
@@ -839,6 +853,7 @@ def _describe_key_file(item: str) -> str:
         "AGENTS.md": "外部执行器给 Codex/agent 的工作约束。",
         "CLAUDE.md": "外部执行器给 Claude Code 的工作约束。",
         "skills": "T5 编译出的项目特化外部执行器 skill suite。",
+        "project_skill_context.yaml": "T5 生成的项目专属 Skill 上下文；由专项编译器和 validator 共同校验。",
         "report": "T5 前置过程报告/回执、全局 run_manifest.json，以及按 phase_A 至 phase_F 分类的外部执行过程文件。",
         "expr": "用户手动放置 baseline model、dataset、权重和实验材料的位置。",
         "handoff_pack.json": "T5 编译的实验任务、协议、证据契约和 allowed paths。",
@@ -847,6 +862,23 @@ def _describe_key_file(item: str) -> str:
         "executor_research_report.md": "Writer Handoff 根据最终 result pack、manifest 和图表形成并验证的 T8 核心外部执行研究报告。",
         "result_pack.json": "外部执行器写回的支持性结果包，供 T8 需要时回查。",
         "executor_status.json": "外部执行器状态、accepted/mock/dry-run 标记。",
+        "executor_selection.json": "T5 Gate 记录的执行器、执行范围和允许的下一状态；不等于实验结果。",
+        "skill_specialization_report.json": "13 个项目专属外部 Skill 的发布、模板和输入指纹报告。",
+        "skill_specialization_execution.json": "专项编译任务的可恢复执行回执与独立校验状态。",
+        "preflight_context.json": "Phase A 对 handoff、控制文件、路径、能力与最低实验环的确定性预检。",
+        "context_source_inventory.json": "Phase A 输入来源、哈希和 alignment fingerprint 清单。",
+        "context_alignment_report.json": "Phase A 的字段级研究/协议/能力对齐报告。",
+        "resource_preparation_report.json": "Phase B 资源与 baseline 准备的结果、限制与下一步。",
+        "validation_report.json": "所属 Phase 的结构化验证回执；不得用文字摘要代替。",
+        "experiment_plan.json": "Phase C 可执行实验计划、协议和最低比较环。",
+        "claim_evidence_matrix.json": "claim 到实验、指标、baseline 与证据的可追溯映射。",
+        "iteration_plans": "Phase D 每次方法/调试迭代的冻结计划与来源关系。",
+        "review_report.json": "Code and Protocol Review 的独立批准、问题与修复归属。",
+        "writer_handoff_facts.json": "Phase F 供 T8 使用的、带来源约束的结构化研究事实。",
+        "writer_handoff_validation.json": "Phase F 对六件 Writer Handoff 文件的状态、错误与哈希验证回执。",
+        "t5_t8_handoff.json": "ResearchOS 独立验收六件 Writer Handoff 后生成的 T8 接收回执。",
+        "experiment_evidence_pack.json": "T8 使用的规范化实验指标、结果和完整性边界。",
+        "result_to_claim.json": "T8 论文中结果到候选 claim 的机械映射，不是最终科学结论。",
         "run_manifest.json": "运行记录、raw/config/log 路径和 provenance；当前标准位置是 external_executor/report/run_manifest.json。",
         "results_summary.json": "旧内部实验链标准化后的实验结果摘要。",
         "evidence_index.json": "指标、raw result、config、log、hash 的证据索引。",
@@ -1046,34 +1078,85 @@ def _default_dir_guide(rel_dir: str, *, runtime_dir_name: str) -> dict[str, str]
         }
     if normalized == "external_executor/report":
         return {
-            "purpose": "ResearchOS T5 pre-execution reports/receipts, the global external-executor run manifest, and Phase A-F report directories.",
+            "purpose": "ResearchOS T5 receipts, the external-executor global manifest, and the Phase A-F audit trail.",
             "produced_by": "T5-REBOOST-GATE, T5-SPECIALIZE-EXECUTOR-SKILLS, T5-EXECUTOR-GATE, research-execution, and T5-DRY-RUN.",
             "consumed_by": "ResearchOS validation/T8 ingestion and external executor Skills through explicit phase paths.",
-            "key_files": "reboost/specialization/executor gate receipts, run_manifest.json, and phase_A/ through phase_F/.",
+            "key_files": "reboost_report.json, reboost_validation_report.json, skill_specialization_report.json, skill_specialization_execution.json, executor_selection.json, run_manifest.json, phase_A/, phase_B/, phase_C/, phase_D/, phase_E/, phase_F/.",
             "human_editable": "No; rerun T5-REBOOST or repair upstream sources instead. External manual executors should not hand-edit report/run_manifest.json except as part of the explicit research-execution protocol.",
             "agent_editable": "ResearchOS T5 publication/gate tools and external research-execution root-control scripts.",
             "do_not_put": "Executor prompts, raw results, code, datasets, or manuscript text.",
-            "validation": "External Skill reports must use their owning phase directory. run_manifest.json is the only cross-phase external file kept directly in report/.",
+            "validation": "External Skill reports must use their owning phase directory. run_manifest.json is the only cross-phase executor file at report/. Writer Handoff validation in phase_F is the sole authority for T8 ingestion.",
         }
     if normalized.startswith("external_executor/report/phase_"):
         phase = normalized.rsplit("/", 1)[-1]
-        ownership = {
-            "phase_A": "context alignment and root input fingerprinting",
-            "phase_B": "resource and baseline preparation",
-            "phase_C": "experiment design and protocol validation",
-            "phase_D": "baseline reproduction, method refinement, implementation, review, and experiment execution control",
-            "phase_E": "result diagnosis and module attribution",
-            "phase_F": "evidence packaging and Writer Handoff",
-        }.get(phase, "the matching external-executor phase")
+        phase_specs = {
+            "phase_A": (
+                "context alignment and root input fingerprinting",
+                "input_fingerprint.json, preflight_context.json, context_source_inventory.json, context_alignment_report.json",
+                "Phase A must pin control inputs and record field-level authority before resource preparation.",
+            ),
+            "phase_B": (
+                "resource and baseline preparation",
+                "resource_preparation_report.json, resource_source_report.json, validation_report.json",
+                "Resource availability is not experiment evidence and cannot by itself enter T8.",
+            ),
+            "phase_C": (
+                "experiment design and protocol validation",
+                "claim_evidence_matrix.json, experiment_design_report.json, validation_report.json",
+                "The approved protocol must retain required baselines, metrics, seeds/repeats and claim boundaries.",
+            ),
+            "phase_D": (
+                "baseline reproduction, method refinement, implementation, review, and experiment execution control",
+                "iteration_plans/, implementation_change_contract.json, review reports, run checkpoints",
+                "Code and protocol review must approve the requested run level before an experiment run is valid.",
+            ),
+            "phase_E": (
+                "result diagnosis and module attribution",
+                "result diagnosis reports, module attribution reports, evidence snapshots",
+                "Failed, stale and partial runs stay auditable but cannot silently support stronger claims.",
+            ),
+            "phase_F": (
+                "evidence packaging and Writer Handoff",
+                "figure_table_inventory.json, evidence_mapping.json, evidence_package_manifest.json, writer_handoff_facts.json, writer_handoff_validation.json",
+                "T8 accepts only a valid six-file Writer Handoff with current hashes and source-bound empirical results.",
+            ),
+        }
+        ownership, key_files, validation = phase_specs.get(
+            phase,
+            ("the matching external-executor phase", "Phase-owned reports and validation artifacts", "Paths and references must remain workspace-relative and manifest-bound where required."),
+        )
         return {
             "purpose": f"Process, validation, and checkpoint artifacts for {ownership}.",
             "produced_by": f"External executor Skills assigned to {phase}.",
             "consumed_by": "The owning phase, later phase Skills through explicit references, Writer Handoff, and ResearchOS T8 ingestion.",
-            "key_files": "Phase-owned preflight, snapshot, report, validation, and versioned analysis files.",
+            "key_files": key_files,
             "human_editable": "No; rerun or repair the authoritative producing Skill.",
             "agent_editable": f"Only external executor Skills assigned to {phase}, subject to allowed_paths.txt.",
             "do_not_put": "run_manifest.json, pre-execution T5 receipts, raw experiment outputs, deployed code, datasets, or manuscript text.",
-            "validation": "Paths and references must remain workspace-relative and manifest-bound where required.",
+            "validation": validation,
+        }
+    if normalized == "external_executor/skills":
+        return {
+            "purpose": "T5 project-specialization output: one `research-execution` root Skill plus twelve child Skill templates with project-specific guidance inserted only between protected markers.",
+            "produced_by": "T5-SPECIALIZE-EXECUTOR-SKILLS deterministic compiler.",
+            "consumed_by": "The selected external executor, research-execution routing, and specialization validators.",
+            "key_files": "research-execution/, context-alignment/, resource-and-baseline-preparation/, experiment-design/, baseline-reproduction/, method-refinement/, implementation/, code-and-protocol-review/, experiment-run/, result-diagnosis/, module-attribution/, evidence-packaging/, writer-handoff/.",
+            "human_editable": "No; amend authoritative T4.5/T5 source artifacts and rebuild the Suite instead of editing project-specific blocks.",
+            "agent_editable": "Only the T5 specializer may publish or replace this Suite atomically.",
+            "do_not_put": "Manual executor patches, raw results, credentials, or a second unregistered Skill graph.",
+            "validation": "Every generated Skill must match its repository template outside the project-guidance markers and share the current specialization fingerprint.",
+        }
+    if normalized.startswith("external_executor/skills/") and normalized.count("/") == 2:
+        skill_name = normalized.rsplit("/", 1)[-1]
+        return {
+            "purpose": f"Project-specialized external executor Skill `{skill_name}`. It inherits repository protocol and receives only bounded project guidance.",
+            "produced_by": "T5-SPECIALIZE-EXECUTOR-SKILLS.",
+            "consumed_by": "research-execution root routing and the selected external executor.",
+            "key_files": "SKILL.md, references/, scripts/.",
+            "human_editable": "No; report a source or specialization issue and rebuild from T5.",
+            "agent_editable": "The external executor may follow this Skill but must not alter its template or guidance block.",
+            "do_not_put": "Run data, implementation worktrees, credentials, or manual prompt fragments.",
+            "validation": "This directory must remain template-consistent with the repository Skill and the current project context fingerprint.",
         }
     if normalized == "external_executor/expr":
         return {
@@ -1129,6 +1212,50 @@ def _default_dir_guide(rel_dir: str, *, runtime_dir_name: str) -> dict[str, str]
             "agent_editable": "External executor only.",
             "do_not_put": "ResearchOS runtime patches unrelated to the experiment.",
             "validation": "Patch records should correspond to run_manifest/code provenance when used.",
+        }
+    if normalized.startswith("external_executor/reviews"):
+        return {
+            "purpose": "Pinned code and protocol review snapshots, static candidates, verification evidence, and review verdicts for external experiment iterations.",
+            "produced_by": "code-and-protocol-review Skill.",
+            "consumed_by": "research-execution routing, implementation repair owners, and experiment-run authorization.",
+            "key_files": "input_snapshot.json, static_candidates.json, verification_evidence.json, review_report.json.",
+            "human_editable": "No; request a new review from a fixed current snapshot.",
+            "agent_editable": "code-and-protocol-review only, subject to allowed_paths.txt.",
+            "do_not_put": "Unpinned opinions, mutable code copies, or raw experiment outputs.",
+            "validation": "A review verdict must bind its snapshot hash and never approve above its evidence-backed run level.",
+        }
+    if normalized.startswith("external_executor/evidence_package"):
+        return {
+            "purpose": "Frozen, manifest-registered evidence package used to derive final figures, tables, realized-method facts, and Writer Handoff inputs.",
+            "produced_by": "evidence-packaging Skill.",
+            "consumed_by": "writer-handoff, ResearchOS T8 ingestion, and manuscript claim audit.",
+            "key_files": "realized_method_package.json, evidence snapshots, package manifest, source-bound summaries.",
+            "human_editable": "No; repair the authoritative run, diagnosis, attribution, or packaging producer.",
+            "agent_editable": "evidence-packaging only, subject to allowed_paths.txt.",
+            "do_not_put": "Unregistered results, speculative claims, or manuscript prose.",
+            "validation": "Every included item must be manifest-bound and trace to a current raw result or approved implementation artifact.",
+        }
+    if normalized.startswith("external_executor/figure"):
+        return {
+            "purpose": "Final framework and result figures derived from frozen external evidence for Writer Handoff and T8.",
+            "produced_by": "evidence-packaging Skill.",
+            "consumed_by": "writer-handoff and T8 manuscript resources.",
+            "key_files": "SVG or PNG figures registered in report/run_manifest.json.",
+            "human_editable": "No; regenerate from the registered evidence package.",
+            "agent_editable": "evidence-packaging only, subject to allowed_paths.txt.",
+            "do_not_put": "Decorative or manually redrawn figures that lack a manifest entry.",
+            "validation": "Each file must be non-empty, supported by the manifest, and hash-consistent with Writer Handoff validation.",
+        }
+    if normalized.startswith("external_executor/table"):
+        return {
+            "purpose": "Final comparison, ablation, and diagnostic tables derived from frozen external evidence for Writer Handoff and T8.",
+            "produced_by": "evidence-packaging Skill.",
+            "consumed_by": "writer-handoff and T8 manuscript resources.",
+            "key_files": "CSV or TSV tables registered in report/run_manifest.json.",
+            "human_editable": "No; regenerate from raw results and the evidence package.",
+            "agent_editable": "evidence-packaging only, subject to allowed_paths.txt.",
+            "do_not_put": "Manually edited metrics, unregistered tables, or prose-only claim summaries.",
+            "validation": "Each table must remain source-bound, manifest-registered, and hash-consistent with Writer Handoff validation.",
         }
     if normalized.startswith("experiments/runs/"):
         return {
