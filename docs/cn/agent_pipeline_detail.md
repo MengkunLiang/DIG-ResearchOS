@@ -32,7 +32,7 @@ T1 项目初始化
  -> T4 Evidence Routing、Candidate Population 形成与 Evolution
  -> T4-GATE1 研究者选择、组合、并行推进或 rollback gate
  -> T4 已选 Candidate 的 Pre-Novelty brief
- -> T4.5 novelty/collision audit，并在通过后 formalization
+ -> T4.5 研究方案审计：先做 novelty/collision review，通过后再做来源一致的 formalization
  -> T5-REBOOST-GATE 运行 research-reboost 并编译 handoff
  -> T5-SPECIALIZE-EXECUTOR-SKILLS 发布并校验项目专属 Skill Suite
  -> T5-PROTOCOL-GATE 区分可自动补齐的资源/运行设置与真正的研究边界变更
@@ -43,12 +43,12 @@ T1 项目初始化
  -> T5-EXECUTOR-GATE（仅协议 ready 后）外部执行器选择
     -> mock_dry_run: T5-DRY-RUN 外部执行器协议 dry-run
     -> codex_cli / claude_code_window / manual: T5-EXTERNAL-WAIT 等待外部结果
- -> T8-STYLE-GATE（`external_executor/executor_research_report.md` 可用后）
+ -> T8-STYLE-GATE（仅在完整 Writer Handoff 经 `T5-EXTERNAL-WAIT` 独立验收后）
  -> T8 资源索引 / 分章节写作 / 拼装审计 / 审稿 / 修订
  -> T9 投稿包构建、编译、修复与收尾
 ```
 
-当前主链已经废弃“ResearchOS 自己在 T5-T7 内部实现并长时间跑实验”的默认语义。ResearchOS 负责研究协议、执行器选择、AGENTS/CLAUDE 控制说明、文件契约和写作证据闭环；Codex CLI、Claude Code 窗口、人工外部执行器或 mock dry-run 负责在隔离路径中实现和运行实验。常规入口是 `T5-REBOOST-GATE`：它通过已配置模型运行 `research-reboost` 并校验 handoff。随后独立的 `T5-SPECIALIZE-EXECUTOR-SKILLS` 运行仓库内的 `project-skill-specialization` Skill，原子发布项目专属 Suite、做独立校验，并在选择执行器前记录输入 fingerprint。`T5-HANDOFF` 保留为 legacy-compatible 协议编译入口。T5 到 T8 的接口是必需文件 `external_executor/executor_research_report.md`；`external_executor/` 下其他文件继续作为 T8 可选上下文。旧 T7/T7.5 节点已从主状态机移除，普通 `run-task T7` / `run-task LEGACY-T7-FULL` 会直接以 removed 报错。
+当前主链已经废弃“ResearchOS 自己在 T5-T7 内部实现并长时间跑实验”的默认语义。ResearchOS 负责研究协议、执行器选择、AGENTS/CLAUDE 控制说明、文件契约和写作证据闭环；Codex CLI、Claude Code 窗口、人工外部执行器或 mock dry-run 负责在隔离路径中实现和运行实验。常规入口是 `T5-REBOOST-GATE`：它通过已配置模型运行 `research-reboost` 并校验 handoff。随后独立的 `T5-SPECIALIZE-EXECUTOR-SKILLS` 运行仓库内的 `project-skill-specialization` Skill，原子发布项目专属 Suite、做独立校验，并在选择执行器前记录输入 fingerprint。`T5-HANDOFF` 保留为 legacy-compatible 协议编译入口。T5 到 T8 的边界是一套**六件 Writer Handoff**：`external_executor/executor_research_report.md`、`external_executor/result_pack.json`、`external_executor/executor_status.json`、`external_executor/report/run_manifest.json`、`external_executor/report/phase_F/writer_handoff_facts.json` 与 `external_executor/report/phase_F/writer_handoff_validation.json`。报告是面向阅读者的摘要，但单独存在并不够；最终资产以及 raw/config/log 证据必须通过 manifest 与 hash 校验，且只有状态机正处于 `T5-EXTERNAL-WAIT` 时才能接收 handoff。若重新进入 T4、T4-GATE1、T4.5 或无关状态，系统会拒绝旧 handoff 证据，避免它被绑定到新选择的 Candidate。旧 T7/T7.5 节点已从主状态机移除，普通 `run-task T7` / `run-task LEGACY-T7-FULL` 会直接以 removed 报错。
 
 其中：
 
@@ -116,7 +116,7 @@ T1
 
 - `HELLO` 是显式运行的 smoke task，不是主链起点；主链的 `initial_state` 是 `T1`
 - 当前主链只有在 `T4.5` 的 `Final Gate Verdict` 明确写成 `pass_to_experiment` / `pass_with_required_baselines` 等通过枚举时才自动进入 `T5-REBOOST-GATE`；`return_to_T4_reframe`、`drop_due_to_collision`、`reject`、`collision`、`fail`、缺失 verdict 或无法识别的 verdict 都会进入 `T4.5-HUMAN-REVIEW`，由用户选择继续外部实验链、回 T4 重构或结束项目。系统不再自动拒绝、自动回退或默认放行，避免 T4.5-T4 死循环，也避免模型在新颖性不确定时替用户做价值裁决。T7/T7.5 不再是主链节点。
-- `T8` 不是一个节点，而是风格确认、资源索引、对齐矩阵、大纲、逐章节写作、拼装、自查、审稿、修订组成的多节点链；旧报告或旧 gate 中的 `next_task: T8` / `next_task: T8-WRITE` 会被状态机安全映射到 `T8-STYLE-GATE`，只有合法的 `drafts/writing_style.json` 已存在时才直接进入 `T8-RESOURCE`
+- `T8` 不是一个节点，而是风格确认、资源索引、对齐矩阵、大纲、逐章节写作、拼装、自查、审稿、修订组成的多节点链。它只有在 `T5-EXTERNAL-WAIT` 为当前 Candidate 接收了 hash-valid 的六件 Writer Handoff 后才能摄取外部证据；旧报告或旧 gate 中的 `next_task: T8` / `next_task: T8-WRITE` 会被状态机安全映射到 `T8-STYLE-GATE`，只有合法的 `drafts/writing_style.json` 已存在时才直接进入 `T8-RESOURCE`
 - Gate1 使用由 `_gate1_candidate_cards.md`、`_gate1_selection_brief.md` 和 native Population snapshot 支撑的 Rich Portfolio。Candidate card 会说明机制、实践含义、评分依据、论文阅读笔记依赖、风险和推荐动作；`_candidate_directions.json` 与 Pass1/Pass2 JSON 保持为兼容 projection。选择完整 Candidate 后，T4 写入 `_gate1_user_selection.json`、`hypothesis_brief.yaml`、lineage 和 T4.5 search targets。T4.5 必须先审计 novelty/collision；只有通过的 T4.5 formalization 才会更新正式 bundle 并授予 T5 authority。
 - `T8-REVIEW` 不是当前真实状态名，当前真实状态名是：
   - `T8-REVIEW-1`
@@ -287,7 +287,7 @@ ResearchOS 的核心设计是：**进度靠文件恢复，不靠模型记忆恢�
 
 - `T3` 会读取已有 `deep_read_notes/`
 - `T3.6` 会读取已有 `survey_plan.json`、`survey_state.json`、`sections/*.tex`、`survey_audit.json` 和编译日志，按 section 续写/续编译
-- 外部实验链会读取已有 handoff/result_pack/status/manifest 产物和必需的 `external_executor/executor_research_report.md`；T8 随后读取该报告和可选的 `external_executor/` 上下文
+- 外部实验链会读取已有 handoff/result_pack/status/manifest 产物，但 T8 只会在 `T5-EXTERNAL-WAIT` 接收当前 Candidate 对应、hash-valid 的六件 Writer Handoff；接收后 T8 才读取报告、冻结事实、evidence index 与已登记的 `external_executor/` 支撑材料
 - `T9` 会读取已有 `submission/bundle/` 和编译痕迹
 
 所以 ResearchOS 的恢复语义本质上是：

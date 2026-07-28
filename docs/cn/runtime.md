@@ -168,7 +168,7 @@ T4 明确区分当前成熟度与科研上行空间。`overall_readiness` 描述
 
 T4 的实时视图分开显示当前活动、当前产物和后续阶段。例如 Opportunity Map 统一显示为 `研究机会探索（Opportunity Map）`；运行中会明确“本次产出”为研究机会清单（不是最终 Candidate），“完成后”为多视角 Idea 发散，避免把同一个 Opportunity Map 同时写成当前活动和误导性的“下一步”。
 
-运行时生成的 `_DIR_GUIDE.md` 只是操作说明，不是科研输入，因此不会使输入指纹失效。对 T4 的证据可用性而言，缺失的笔记目录与空的笔记目录等价；真实笔记的字节内容仍会绑定进指纹。原生 Seed 与 `unscored` Candidate 保持可见。Seed 在已有独立评分、完整 LLM Final Card、可追溯命题和至少一条 LLM 草案假设时，可以以 provisional 方向进入 T4.5；成熟度与证据告警是审计输入，不能成为确认后重新打开 T4 的隐藏原因。`unscored` Candidate 或缺少上述结构输入的 Candidate 会在确认前阻塞。完全没有原生生命周期字段的历史 Candidate Artifact 继续使用其历史 resume 契约，不会被误判为新的 Seed。
+运行时生成的 `_DIR_GUIDE.md` 只是操作说明，不是科研输入，因此不会使输入指纹失效。其生成契约带有版本；正常初始化会刷新所有带生成标识的 guide，包括位于已退役或刻意不递归扫描的 legacy/code/data 子树中的旧 guide，而没有生成标识的研究者自定义 guide 会原样保留。对 T4 的证据可用性而言，缺失的笔记目录与空的笔记目录等价；真实笔记的字节内容仍会绑定进指纹。原生 Seed 与 `unscored` Candidate 保持可见。Seed 在已有独立评分、完整 LLM Final Card、可追溯命题和至少一条 LLM 草案假设时，可以以 provisional 方向进入 T4.5；成熟度与证据告警是审计输入，不能成为确认后重新打开 T4 的隐藏原因。`unscored` Candidate 或缺少上述结构输入的 Candidate 会在确认前阻塞。完全没有原生生命周期字段的历史 Candidate Artifact 继续使用其历史 resume 契约，不会被误判为新的 Seed。
 
 ## 扩展点
 

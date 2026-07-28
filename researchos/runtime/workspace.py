@@ -25,7 +25,7 @@ from .environment import write_runtime_environment
 
 
 DEFAULT_PROJECT_ID = "demo-project"
-DIRECTORY_GUIDE_CONTRACT_VERSION = "2026-07-skill-suite-t5-t8-v2"
+DIRECTORY_GUIDE_CONTRACT_VERSION = "2026-07-skill-suite-t5-t8-v3"
 
 
 def _now_iso() -> str:
@@ -628,7 +628,7 @@ def create_directory_guides(workspace_dir: Path, *, runtime_dir_name: str = "_ru
             "purpose": "ResearchOS 与 Codex/Claude/manual 外部执行器的受控边界：T5 handoff、项目特化的 13-Skill Suite、执行证据和 T8 Writer Handoff。",
             "produced_by": "T5-REBOOST-GATE, T5-HANDOFF, T5-SPECIALIZE-EXECUTOR-SKILLS, T5-EXPR-MATERIAL-GATE, T5-EXECUTOR-GATE, external executor, T5-DRY-RUN.",
             "consumed_by": "T5-EXTERNAL-WAIT, T8.",
-            "key_files": "AGENTS.md, CLAUDE.md, handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt, project_skill_context.yaml, skills/, report/, expr/, raw_results/, evidence_package/, figure/, table/, executor_research_report.md, result_pack.json, executor_status.json.",
+            "key_files": "AGENTS.md, CLAUDE.md, handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt, project_skill_context.yaml, skills/, report/, expr/, raw_results/, evidence_package/, figure/, table/, executor_research_report.md, result_pack.json, executor_status.json, report/run_manifest.json, report/phase_F/writer_handoff_facts.json, report/phase_F/writer_handoff_validation.json.",
             "human_editable": "Optionally place source datasets, repositories, baselines, benchmarks, weights, and material notes under resources/ when already available. When they are not, the T5 bounded resource-preparation executor can search, acquire, review, and record authorized public resources. Put only already deployed runnable baseline/method assets in expr/. Manual executor outputs use the declared writable paths; skills/ is generated and customized by ResearchOS before execution.",
             "agent_editable": "ResearchOS customizes skills/ during T5; external executor may write only paths allowed by allowed_paths.txt.",
             "do_not_put": "Final paper text, API keys, unrelated notebooks, ResearchOS source edits.",
@@ -733,6 +733,23 @@ def _workspace_dirs_requiring_guides(workspace_dir: Path, *, runtime_dir_name: s
             continue
         if _should_generate_existing_dir_guide(rel, runtime_dir_name=runtime_dir_name):
             guide_dirs.add(rel)
+
+    # A workspace may retain generated guides from a retired directory name or
+    # a formerly dynamic artifact shard.  Such a guide is safe to refresh: it
+    # carries the generated marker already, unlike a researcher-authored
+    # `_DIR_GUIDE.md`.  Including these paths closes the migration gap where a
+    # guide under an intentionally-pruned code/data tree could remain stale
+    # forever because the normal directory walk does not recurse into it.
+    for guide_path in workspace_dir.rglob("_DIR_GUIDE.md"):
+        if not _looks_like_generated_dir_guide(guide_path):
+            continue
+        try:
+            relative_parent = guide_path.parent.resolve().relative_to(workspace_dir.resolve())
+        except ValueError:
+            continue
+        if any(part in {".git", "__pycache__", ".pytest_cache"} for part in relative_parent.parts):
+            continue
+        guide_dirs.add(relative_parent.as_posix() if relative_parent.parts else ".")
 
     return sorted(guide_dirs, key=lambda item: (item.count("/"), item))
 
