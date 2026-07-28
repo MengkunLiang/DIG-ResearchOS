@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Deterministic reference-project mining tools.
 
 The tool extracts transferable system-design patterns from local reference
@@ -7,6 +5,9 @@ repositories. It intentionally does not judge scientific content; it only
 creates structured cards and a transfer matrix that later LLM agents can use as
 methodology hints.
 """
+
+from __future__ import annotations
+
 
 import csv
 import json

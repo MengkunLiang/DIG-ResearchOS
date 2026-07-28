@@ -1,10 +1,11 @@
-from __future__ import annotations
-
 """Gate 展示内容构造器。
 
 这里把“gate 配置如何转换成给用户展示的内容”从状态机主体中拆出来，
 避免 StateMachine 同时承担状态推进和展示拼装两类职责。
 """
+
+from __future__ import annotations
+
 
 from pathlib import Path
 from typing import Any

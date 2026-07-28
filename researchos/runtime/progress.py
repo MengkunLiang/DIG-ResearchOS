@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 """User-facing CLI progress narration.
 
 This module intentionally stays presentation-only.  It summarizes existing
 runtime events, tool calls, tool results, and progress markdown files without
 changing agent prompts, task contracts, artifact schemas, or research logic.
 """
+
+from __future__ import annotations
+
 
 from dataclasses import dataclass
 import json

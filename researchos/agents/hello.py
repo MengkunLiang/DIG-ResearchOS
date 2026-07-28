@@ -1,3 +1,9 @@
+"""Minimal runtime smoke-test Agent.
+
+The agent exercises the standard prompt, tool, output-validation, and resume
+paths with a deliberately deterministic ``Hello, Runtime!`` artifact.
+"""
+
 from __future__ import annotations
 
 from ..runtime.agent import Agent, ExecutionContext

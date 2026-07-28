@@ -1,6 +1,7 @@
+"""Durable, machine-readable events for the user-facing research timeline."""
+
 from __future__ import annotations
 
-"""Durable, machine-readable events for the user-facing research timeline."""
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone

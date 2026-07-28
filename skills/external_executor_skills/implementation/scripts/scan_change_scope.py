@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Scan declared inputs for bounded policy and safety signals for the implementation Skill.
+
+The ``scan change scope`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

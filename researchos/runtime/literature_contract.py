@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Shared Literature Artifact Contract for downstream ResearchOS tasks.
 
 This module is intentionally mechanical.  It does not decide scholarly
@@ -7,6 +5,9 @@ relevance; it only defines the canonical roots, migrates legacy note layouts,
 enumerates readable paper-note cards, and builds a durable manifest that T3.6,
 T4, T5, T8, Skills, and resume imports can all consume without guessing paths.
 """
+
+from __future__ import annotations
+
 
 from dataclasses import dataclass
 from datetime import datetime, timezone

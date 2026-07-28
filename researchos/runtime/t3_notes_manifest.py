@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Deterministic T3 note completion manifest.
 
 T3 completion used to be inferred from note filenames alone. That breaks when
@@ -8,6 +6,9 @@ deep-read structure contract. This module builds a small human-readable ledger
 from the queue records and actual notes so validators and resume logic can give
 precise diagnostics.
 """
+
+from __future__ import annotations
+
 
 from datetime import datetime, timezone
 import hashlib

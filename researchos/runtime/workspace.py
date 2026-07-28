@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """workspace 初始化与说明辅助。
 
 Runtime Spec 明确要求 workspace 是 artifact-first 的唯一事实来源。
@@ -9,6 +7,9 @@ Runtime Spec 明确要求 workspace 是 artifact-first 的唯一事实来源。
 - README 给出稳定目录结构；
 - 后续 agent 开发在同一套路径约定上协作，而不是每个人各建一套目录。
 """
+
+from __future__ import annotations
+
 
 from dataclasses import dataclass
 from datetime import datetime, timezone

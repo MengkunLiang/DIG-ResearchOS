@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 """Stage-specific summaries derived from existing artifacts.
 
 These functions deliberately report bounded descriptive facts.  They do not
 upgrade retrieval hints, score signals, or unverified metadata into scientific
 conclusions.
 """
+
+from __future__ import annotations
+
 
 from collections import Counter
 import csv

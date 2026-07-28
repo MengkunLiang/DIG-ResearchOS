@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Extract normalized values from declared source artifacts for the baseline reproduction Skill.
+
+The ``extract metrics`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

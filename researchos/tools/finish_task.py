@@ -1,3 +1,9 @@
+"""Tool that records an Agent's explicit completion request.
+
+The runtime still validates declared outputs and task contracts after this tool
+runs, preventing a textual completion claim from bypassing deterministic gates.
+"""
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field

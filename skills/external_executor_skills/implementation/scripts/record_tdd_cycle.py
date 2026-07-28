@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Record a traceable phase event without changing scientific claims for the implementation Skill.
+
+The ``record tdd cycle`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

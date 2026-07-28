@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """External experiment handoff and evidence tools.
 
 ResearchOS owns protocol, provenance, integrity checks, and claim mapping.
@@ -7,6 +5,9 @@ External executors such as Codex CLI, Claude Code, or a manual runner own code
 implementation and experiment execution in an isolated workspace. These tools
 only read/write workspace artifacts and provide a mock dry-run path for tests.
 """
+
+from __future__ import annotations
+
 
 import csv
 import hashlib

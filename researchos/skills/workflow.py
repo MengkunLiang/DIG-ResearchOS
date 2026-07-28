@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Declarative lifecycle metadata for multi-phase standalone Skills.
 
 An integrated Skill is still executed by the regular Skill runtime, but its
@@ -7,6 +5,9 @@ research phases are declared separately from an LLM prompt.  This gives the
 CLI, session store, and progress tool a shared vocabulary without introducing
 nested Skill sessions or hidden child agents.
 """
+
+from __future__ import annotations
+
 
 from dataclasses import dataclass
 from typing import Any, Mapping

@@ -1,6 +1,7 @@
+"""Repair helpers for literature/comparison_table.csv."""
+
 from __future__ import annotations
 
-"""Repair helpers for literature/comparison_table.csv."""
 
 import csv
 import io

@@ -1,3 +1,9 @@
+"""Render project context into protected executor Skill guidance markers.
+
+The renderer changes only owned marker regions and validates marker integrity
+so generated guidance cannot overwrite template instructions or policy text.
+"""
+
 from __future__ import annotations
 
 import json

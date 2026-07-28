@@ -1,3 +1,9 @@
+"""Prompt-template discovery and deterministic rendering helpers.
+
+The module resolves repository templates and injects only declared execution
+context, keeping prompt lookup failures explicit before a model call begins.
+"""
+
 from __future__ import annotations
 
 from functools import lru_cache

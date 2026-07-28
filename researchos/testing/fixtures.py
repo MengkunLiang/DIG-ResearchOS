@@ -1,3 +1,9 @@
+"""Reusable test fixtures for deterministic ResearchOS runtime scenarios.
+
+Fixtures create isolated artifact trees and test inputs without mutating user
+workspaces or relying on an external model provider.
+"""
+
 from __future__ import annotations
 
 import asyncio

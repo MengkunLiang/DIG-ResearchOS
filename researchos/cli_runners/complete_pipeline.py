@@ -1,6 +1,11 @@
+"""Complete state-machine pipeline runner with durable gates and recovery.
+
+It advances one declared task at a time, persists state before user-visible
+decisions, and routes validation failures to explicit repair or pause paths.
+"""
+
 from __future__ import annotations
 
-"""完整 pipeline 运行器。"""
 
 import asyncio
 from datetime import datetime, timezone

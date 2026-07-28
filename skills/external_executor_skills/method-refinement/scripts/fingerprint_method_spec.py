@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Fingerprint a declared artifact for stale-input detection for the method refinement Skill.
+
+The ``fingerprint method spec`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

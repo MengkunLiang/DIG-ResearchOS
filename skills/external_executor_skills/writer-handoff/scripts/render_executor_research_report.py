@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Render a declared evidence artifact without inventing research content for the writer handoff Skill.
+
+The ``render executor research report`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

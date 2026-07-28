@@ -1,3 +1,9 @@
+"""Normalized exception types for configuration, tool, and runtime failures.
+
+Callers use these exceptions to preserve actionable diagnostics across CLI,
+Agent, and recovery boundaries instead of collapsing failures into strings.
+"""
+
 from __future__ import annotations
 
 

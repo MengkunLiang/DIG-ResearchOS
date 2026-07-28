@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """种子论文处理工具。
 
 支持用户提供种子论文的多种方式：
@@ -8,6 +6,9 @@ from __future__ import annotations
 - DOI
 - 论文标题 + 作者
 """
+
+from __future__ import annotations
+
 
 import json
 import re

@@ -1,3 +1,9 @@
+"""Provider-neutral message and tool-call data structures.
+
+These types preserve the distinction between model text, tool requests, and
+validated tool results while adapters translate provider-specific payloads.
+"""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field

@@ -1,3 +1,9 @@
+"""Mock model and human-interface implementations for deterministic tests.
+
+These fakes model tool-call sequences and responses while keeping unit tests
+independent from live provider credentials and network availability.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

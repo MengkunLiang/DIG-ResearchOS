@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Assemble a durable phase report from validated artifacts for the experiment design Skill.
+
+The ``assemble experiment design report`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

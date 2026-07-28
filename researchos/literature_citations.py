@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 """Human-readable citation/index helpers for paper notes.
 
 ResearchOS stores notes by stable machine identifiers so resume/dedup remain
 safe. This module builds a separate human-facing ledger that maps note IDs,
 titles, DOI/arXiv/OpenAlex aliases, and BibTeX keys for downstream writing.
 """
+
+from __future__ import annotations
+
 
 from datetime import datetime, timezone
 import json

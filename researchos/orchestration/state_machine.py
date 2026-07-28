@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """ResearchOS 状态机解释器。
 
 本模块负责三件事：
@@ -7,6 +5,9 @@ from __future__ import annotations
 2. 基于 `AgentResult` 推进 `state.yaml`；
 3. 在 gate / resume / iteration 这些跨 task 语义上做统一处理。
 """
+
+from __future__ import annotations
+
 
 from dataclasses import dataclass
 from datetime import datetime, timezone

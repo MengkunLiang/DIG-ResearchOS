@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Compute a deterministic metric or gate from validated evidence for the baseline reproduction Skill.
+
+The ``compute reproduction gate`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

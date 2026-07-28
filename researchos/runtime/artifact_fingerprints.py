@@ -1,6 +1,7 @@
+"""Small helpers for binding generated artifacts to their input files."""
+
 from __future__ import annotations
 
-"""Small helpers for binding generated artifacts to their input files."""
 
 import hashlib
 import json

@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 """Manuscript writing support tools.
 
 These tools do mechanical organization for T8. They do not write scientific
 claims. The Writer LLM remains responsible for argumentation, section prose,
 claim selection, and venue-aware framing.
 """
+
+from __future__ import annotations
+
 
 import csv
 import hashlib

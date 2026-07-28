@@ -1,3 +1,9 @@
+"""Policy-constrained shell execution tool for approved Skill operations.
+
+The tool validates working-directory and command boundaries, captures durable
+output, and never turns a shell failure into an unreported research success.
+"""
+
 from __future__ import annotations
 
 import asyncio

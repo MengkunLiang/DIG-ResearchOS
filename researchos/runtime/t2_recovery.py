@@ -1,10 +1,11 @@
-from __future__ import annotations
-
 """T2 运行期恢复与确定性收尾。
 
 当 Scout Agent 已经拿到了足够的检索结果，但 LLM 在去重/写文件前中断时，
 这里提供一条纯代码路径，把 `papers_raw.jsonl` 收敛为 T2 所需的其余产物。
 """
+
+from __future__ import annotations
+
 
 import asyncio
 from collections.abc import Callable

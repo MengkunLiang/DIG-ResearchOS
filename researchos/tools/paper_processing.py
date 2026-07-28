@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """论文 PDF 处理工具。
 
 当前文件先实现 `extract_paper_sections` 这一项 runtime 能力，供后续 Reader 类 agent
@@ -12,6 +10,9 @@ from __future__ import annotations
 4. 返回给 LLM 的 `content` 做总量截断和格式化，`data.sections` 也只保留有界预览，
    避免 trace / 后续上下文被整篇 PDF 正文撑爆。
 """
+
+from __future__ import annotations
+
 
 import importlib
 import json

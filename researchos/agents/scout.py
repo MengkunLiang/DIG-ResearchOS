@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """T2 Scout Agent — 文献侦察员
 
 业务需求：
@@ -23,6 +21,9 @@ from __future__ import annotations
 
 契约详见 sections_revised §T2 和 Agent Dev Spec §7。
 """
+
+from __future__ import annotations
+
 
 from pathlib import Path
 import json

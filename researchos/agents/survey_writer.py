@@ -1,10 +1,11 @@
-from __future__ import annotations
-
 """T3.6 Survey Writer Agent.
 
 This optional branch writes a professional taxonomy-driven survey paper after
 T3.5. It is not a converter from synthesis.md to TeX.
 """
+
+from __future__ import annotations
+
 
 import json
 import re

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """运行 trace 写入与展示。
 
 与简单的“把对象 dump 成 JSONL”不同，这里明确区分事件类型，
@@ -7,6 +5,9 @@ from __future__ import annotations
 - 机器可解析：便于后续做审计、回归、可视化；
 - 人类可阅读：CLI `trace` 命令可以直接输出调试友好的摘要。
 """
+
+from __future__ import annotations
+
 
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone

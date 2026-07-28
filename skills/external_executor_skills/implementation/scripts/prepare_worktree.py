@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Prepare an isolated, policy-bound execution workspace for the implementation Skill.
+
+The ``prepare worktree`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

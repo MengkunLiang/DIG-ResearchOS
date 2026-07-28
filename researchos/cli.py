@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """ResearchOS 命令行入口。
 
 这里统一封装 runtime 的几个主要使用场景：
@@ -8,6 +6,9 @@ from __future__ import annotations
 - `run-skill`：独立运行一个 skill；
 - `validate` / `status` / `trace` / `selftest`：辅助诊断命令。
 """
+
+from __future__ import annotations
+
 
 import argparse
 import asyncio

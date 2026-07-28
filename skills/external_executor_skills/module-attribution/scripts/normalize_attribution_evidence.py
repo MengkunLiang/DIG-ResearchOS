@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Normalize evidence into the phase's canonical representation for the module attribution Skill.
+
+The ``normalize attribution evidence`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

@@ -1,3 +1,9 @@
+"""Minimal deterministic echo tool used by runtime smoke paths and examples.
+
+It has no workspace or network side effects and provides a stable tool-call
+surface for validating Agent orchestration behavior.
+"""
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field

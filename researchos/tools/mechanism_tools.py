@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Mechanism tuple extraction and comparison tools for T4.5 novelty auditing.
 
 Design:
@@ -9,6 +7,9 @@ Design:
 - compare_mechanism_tuples: deterministic similarity hint. It must not be treated
   as a final novelty verdict; the Novelty Auditor LLM makes the final call.
 """
+
+from __future__ import annotations
+
 
 import json
 import re

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Deterministic repository audit for public and executor Skill contracts.
 
 The public Skill loader validates frontmatter only for the top-level ``skills/``
@@ -9,6 +7,9 @@ release checks one read-only entry point for both collections without trying to
 run an LLM, acquire a resource, or mutate a workspace.
 """
 
+from __future__ import annotations
+
+
 from collections import Counter
 from pathlib import Path
 import re
@@ -16,7 +17,7 @@ import subprocess
 import sys
 from typing import Any
 
-from .loader import load_skill
+from .loader import discover_skills, load_skill, register_skill_tools
 
 
 PUBLIC_SKILLS_RELATIVE = Path("skills")
@@ -51,10 +52,38 @@ def _markdown_relative_links(text: str) -> list[str]:
 
 
 def _script_paths(skill_dir: Path) -> list[Path]:
+    """Return public command entrypoints, excluding private support modules.
+
+    Executor Skills keep shared parsers and lineage helpers in ``_*.py``.
+    Those modules are imported by real CLI entrypoints and deliberately do not
+    implement a ``--help`` contract. Treating them as commands produced a
+    misleading smoke-test success even though no user could invoke them.
+    """
+
     scripts_dir = skill_dir / "scripts"
     if not scripts_dir.is_dir():
         return []
-    return sorted(path for path in scripts_dir.glob("*.py") if path.name != "_common.py")
+    return sorted(path for path in scripts_dir.glob("*.py") if not path.name.startswith("_"))
+
+
+def _runtime_tool_names(public_root: Path) -> set[str]:
+    """Build the normal public-Skill registry and return its registered names.
+
+    A parsed ``tools`` list is not enough: the agent only fails after an LLM
+    session starts if a capability profile or explicit tool name lacks a
+    factory. Reconstructing the ordinary registry here keeps this audit
+    read-only while checking the same binding path used by the CLI.
+    """
+
+    from ..runtime.config import RuntimeSettings
+    from ..tools.builtin import register_builtin_tools
+    from ..tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    register_builtin_tools(registry, RuntimeSettings())
+    skills = discover_skills(public_root)
+    register_skill_tools(registry, [public_root], discovered_skills=skills)
+    return set(registry.available_names())
 
 
 def _audit_skill(
@@ -62,6 +91,7 @@ def _audit_skill(
     skill_dir: Path,
     kind: str,
     check_script_help: bool,
+    runtime_tool_names: set[str] | None = None,
 ) -> dict[str, Any]:
     """Audit one package without running its research workflow."""
 
@@ -91,6 +121,11 @@ def _audit_skill(
     except Exception as exc:  # noqa: BLE001 - an audit must collect every bad package
         _record_issue(record, "invalid_skill_contract", str(exc))
         return record
+
+    if runtime_tool_names is not None:
+        unknown_tools = sorted({name for name in skill.allowed_tools if name not in runtime_tool_names})
+        for name in unknown_tools:
+            _record_issue(record, "unregistered_declared_tool", name)
 
     text = skill_md.read_text(encoding="utf-8", errors="replace")
     for relative in _local_resource_references(text):
@@ -139,15 +174,21 @@ def audit_skill_suite(repo_root: Path, *, check_script_help: bool = False) -> di
     executor_root = root / EXECUTOR_SKILLS_RELATIVE
     records: list[dict[str, Any]] = []
     suite_errors: list[dict[str, str]] = []
+    runtime_tools: set[str] | None = None
     if not public_root.is_dir():
         suite_errors.append({"code": "missing_public_skills_root", "message": str(public_root)})
     else:
+        try:
+            runtime_tools = _runtime_tool_names(public_root)
+        except Exception as exc:  # noqa: BLE001 - keep auditing individual packages after registry failure
+            suite_errors.append({"code": "runtime_tool_registry_unavailable", "message": str(exc)})
         for skill_md in sorted(public_root.glob("*/SKILL.md")):
             records.append(
                 _audit_skill(
                     skill_dir=skill_md.parent,
                     kind="public",
                     check_script_help=check_script_help,
+                    runtime_tool_names=runtime_tools,
                 )
             )
     if not executor_root.is_dir():
@@ -184,6 +225,9 @@ def audit_skill_suite(repo_root: Path, *, check_script_help: bool = False) -> di
             "external_executor_skills": by_kind["external_executor"],
             "failed_skills": len(failed),
             "script_help_checked": sum(int(record["script_help_checked"]) for record in records),
+            "runtime_tool_bindings_checked": sum(
+                1 for record in records if record["kind"] == "public" and runtime_tools is not None
+            ),
         },
         "errors": suite_errors,
         "skills": records,

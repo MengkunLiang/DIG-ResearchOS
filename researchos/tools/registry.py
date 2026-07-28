@@ -1,3 +1,9 @@
+"""Runtime registry of named tool factories and dynamic capability grants.
+
+Factories delay construction until a task has its workspace policy and human
+interface, preventing one run's permissions from leaking into another run.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

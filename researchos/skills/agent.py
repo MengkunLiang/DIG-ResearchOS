@@ -1,6 +1,7 @@
+"""把外部 skill 包装成 ResearchOS Agent。"""
+
 from __future__ import annotations
 
-"""把外部 skill 包装成 ResearchOS Agent。"""
 
 import json
 

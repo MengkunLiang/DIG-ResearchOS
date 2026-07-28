@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """通用 task 恢复辅助。
 
 目标：
@@ -7,6 +5,9 @@ from __future__ import annotations
 - 为已有专项恢复逻辑（T3 / legacy T5）提供统一接入口；
 - 让 single-task 与完整 pipeline 两条执行链都能复用同一套恢复语义。
 """
+
+from __future__ import annotations
+
 
 import json
 import re

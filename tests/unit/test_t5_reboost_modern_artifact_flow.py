@@ -106,6 +106,7 @@ def test_repository_skill_suite_contract_audit_is_clean() -> None:
         "external_executor_skills": 13,
         "failed_skills": 0,
         "script_help_checked": 0,
+        "runtime_tool_bindings_checked": 43,
     }
 
 

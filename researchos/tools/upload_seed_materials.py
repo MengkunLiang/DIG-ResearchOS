@@ -1,10 +1,11 @@
-from __future__ import annotations
-
 """种子材料上传工具。
 
 支持用户上传本地 PDF、代码、数据文件到 workspace，
 用于提供种子论文、基线代码、数据集等外部资源。
 """
+
+from __future__ import annotations
+
 
 import shutil
 from pathlib import Path

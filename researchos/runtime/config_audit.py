@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 """配置接线审计。
 
 用于回答两个问题：
 1. 哪些全局配置当前真的被 runtime 读取并生效；
 2. 哪些参数虽然声明在 YAML 中，但当前仍未接线或仅部分接线。
 """
+
+from __future__ import annotations
+
 
 from pathlib import Path
 from typing import Any

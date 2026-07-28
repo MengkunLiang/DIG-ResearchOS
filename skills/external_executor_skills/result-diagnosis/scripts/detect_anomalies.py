@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Detect bounded anomalies without inferring unsupported causes for the result diagnosis Skill.
+
+The ``detect anomalies`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

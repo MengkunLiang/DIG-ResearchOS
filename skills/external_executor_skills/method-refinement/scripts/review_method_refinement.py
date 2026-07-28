@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Review a bounded phase artifact against its validation contract for the method refinement Skill.
+
+The ``review method refinement`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

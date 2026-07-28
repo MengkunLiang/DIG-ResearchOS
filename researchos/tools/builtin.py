@@ -1,10 +1,11 @@
-from __future__ import annotations
-
 """运行时内置工具注册。
 
 这里集中注册“所有进程默认可用”的工具工厂。
 后续 skill 自带工具、MCP 工具等扩展，会在 CLI 启动时追加注册到同一个 registry。
 """
+
+from __future__ import annotations
+
 
 import os
 

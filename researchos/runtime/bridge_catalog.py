@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Read and migrate Cross-domain catalogs without treating them as paper notes.
 
 Cross-domain retrieval is deliberately distinct from reading. New workspaces
@@ -10,6 +8,9 @@ permissions. Older workspaces placed catalog JSON beside those notes; this
 module migrates that data non-destructively and keeps a read fallback so a
 resume can never lose an already-retrieved Cross-domain track.
 """
+
+from __future__ import annotations
+
 
 import json
 import os

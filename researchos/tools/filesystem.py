@@ -1,3 +1,9 @@
+"""Workspace-scoped file tools and T4.5 structured-output safety boundaries.
+
+The module mediates reads, writes, edits, context sizing, and formalization
+artifacts so agents cannot bypass schema, lineage, or derived-output contracts.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

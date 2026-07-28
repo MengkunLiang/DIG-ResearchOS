@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 """Human-readable runtime timeline logger.
 
 `_runtime/logs/researchos.log` is intentionally concise: one line per event,
 with compact summaries rather than full prompts, full responses, or large JSON
 payloads. Machine-level details remain in `_runtime/traces/*.jsonl`.
 """
+
+from __future__ import annotations
+
 
 from datetime import datetime
 import json

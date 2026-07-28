@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Legacy internal experiment runtime recovery helpers.
 
 目标：
@@ -7,6 +5,9 @@ from __future__ import annotations
 2. 把续跑所需的最小恢复信息写成 artifact，方便 prompt 和调试复用；
 3. 避免 pilot/full 在重跑时盲目把已存在的代码和结果全部重写。
 """
+
+from __future__ import annotations
+
 
 import json
 from pathlib import Path

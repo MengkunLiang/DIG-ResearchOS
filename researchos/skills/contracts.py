@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Declarative input/output contracts for standalone ResearchOS skills.
 
 Historically a standalone skill was only a prompt plus a tool list.  That made
@@ -8,6 +6,9 @@ prepare, where to put it, or whether it was safe to spend an LLM call.  This
 module keeps those details declarative in ``SKILL.md`` frontmatter and performs
 the deterministic part of the check before the runtime is prepared.
 """
+
+from __future__ import annotations
+
 
 from dataclasses import dataclass
 from pathlib import Path

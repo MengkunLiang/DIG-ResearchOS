@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Optional Docker isolation tool for legacy experiment/debug workflows.
 
 ResearchOS Core does not depend on this tool. The default T5 external-execution path hands off
@@ -12,6 +10,9 @@ debugging or project-specific isolated commands.
 - 不再嵌套启动新的 Docker 容器（避免 Docker-in-Docker 复杂度）
 - 保持工具接口不变，确保向后兼容
 """
+
+from __future__ import annotations
+
 
 import asyncio
 import os

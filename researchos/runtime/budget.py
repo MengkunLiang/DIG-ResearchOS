@@ -1,3 +1,9 @@
+"""Budget accounting primitives for bounded runtime operations.
+
+The module represents token, step, and wall-clock limits without deciding
+research content or silently converting an exhausted budget into success.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

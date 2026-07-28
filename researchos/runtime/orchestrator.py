@@ -1,6 +1,11 @@
+"""AgentRunner execution loop for tool calls, validation, and recovery state.
+
+The runner owns turn sequencing and durable diagnostics; task-specific Agents
+retain scientific responsibility and cannot bypass policy or output contracts.
+"""
+
 from __future__ import annotations
 
-"""AgentRunner 主循环。"""
 
 import asyncio
 from contextlib import suppress

@@ -1,3 +1,9 @@
+"""Canonical path calculations for project Skill specialization artifacts.
+
+Keeping report, context, staging, template, and published-suite paths here
+prevents different compiler phases from publishing to inconsistent locations.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path

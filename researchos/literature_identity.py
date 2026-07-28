@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Conservative identity helpers for literature records and T3 notes.
 
 The same paper can appear as a title, DOI, arXiv id, OpenAlex id, URL, or a
@@ -7,6 +5,9 @@ filesystem-safe stem. These helpers intentionally generate several full-record
 keys, then compare records by set intersection. They do not perform substring
 matching or domain-knowledge classification.
 """
+
+from __future__ import annotations
+
 
 from pathlib import Path
 import re

@@ -1,6 +1,7 @@
+"""Mechanical validation helpers for literature search tools."""
+
 from __future__ import annotations
 
-"""Mechanical validation helpers for literature search tools."""
 
 from typing import Any
 

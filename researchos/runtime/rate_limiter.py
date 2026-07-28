@@ -1,3 +1,9 @@
+"""Local request-rate coordination for shared model-provider access.
+
+It limits bursts and records waiting behavior without treating throttling as a
+workflow deadlock or changing the configured research model.
+"""
+
 from __future__ import annotations
 
 import asyncio

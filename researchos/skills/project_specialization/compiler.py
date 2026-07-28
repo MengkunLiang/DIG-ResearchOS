@@ -1,3 +1,9 @@
+"""Atomic compiler for the 13 project-specific external-executor Skills.
+
+It coordinates source reading, context construction, rendering, validation,
+staging, publication, and rollback without asking an LLM to fill uncertainty.
+"""
+
 from __future__ import annotations
 
 import json

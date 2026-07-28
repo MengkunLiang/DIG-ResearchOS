@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 """Observable T4 candidate-generation telemetry.
 
 This tool accepts only bounded public execution facts. It intentionally has no
 free-form reasoning field, so the CLI can show useful candidate-level progress
 without exposing model deliberation or confusing telemetry with evidence.
 """
+
+from __future__ import annotations
+
 
 from datetime import datetime, timezone
 import json

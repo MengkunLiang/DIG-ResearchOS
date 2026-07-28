@@ -1,10 +1,11 @@
-from __future__ import annotations
-
 """Centralized T2/T3 literature-flow runtime parameters.
 
 These helpers keep mechanical thresholds in `config/system_config/agent_params.yaml` instead
 of scattering them across validators, recovery paths, and prompts.
 """
+
+from __future__ import annotations
+
 
 from dataclasses import asdict, dataclass
 from copy import deepcopy

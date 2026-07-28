@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """每个 task 的输入/输出 artifact 契约。
 
 说明：
@@ -9,6 +7,9 @@ from __future__ import annotations
 - HELLO 不是正式 T-stage，而是当前仓库已经跑通的最小 runtime 调试任务，因此也保留一份
   专用契约方便测试与 smoke run。
 """
+
+from __future__ import annotations
+
 
 from pathlib import Path, PurePosixPath
 

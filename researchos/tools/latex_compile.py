@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """LaTeX compilation with native-first, Docker-backed execution.
 
 ``auto`` prefers a local TeX installation, then uses the configured, allowlisted
@@ -8,6 +6,9 @@ only the current workspace bind mount, no network, and the same compile report
 contract as native execution.  This keeps T3.6, T8, and T9 runnable on a slim
 host without pretending that a PDF was compiled.
 """
+
+from __future__ import annotations
+
 
 import asyncio
 from datetime import datetime, timezone

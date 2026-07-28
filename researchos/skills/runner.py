@@ -1,6 +1,11 @@
+"""Standalone Skill execution and guided-intake entrypoints.
+
+These helpers build normal Agent contexts for a selected Skill while preserving
+its declared inputs, session metadata, workspace mode, and output contract.
+"""
+
 from __future__ import annotations
 
-"""独立运行 skill 的便捷入口。"""
 
 from pathlib import Path
 import uuid

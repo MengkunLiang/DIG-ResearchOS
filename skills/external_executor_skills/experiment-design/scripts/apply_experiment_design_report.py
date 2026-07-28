@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Atomically apply a validated phase report to its owned result-pack section for the experiment design Skill.
+
+The ``apply experiment design report`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

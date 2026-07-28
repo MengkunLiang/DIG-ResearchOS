@@ -1,6 +1,7 @@
+"""ResearchOS 当前可用 agent 的注册中心。"""
+
 from __future__ import annotations
 
-"""ResearchOS 当前可用 agent 的注册中心。"""
 
 from typing import Any
 

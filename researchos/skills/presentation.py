@@ -1,6 +1,7 @@
+"""Shared researcher-facing wording for standalone Skill terminal views."""
+
 from __future__ import annotations
 
-"""Shared researcher-facing wording for standalone Skill terminal views."""
 
 import re
 from typing import Iterable

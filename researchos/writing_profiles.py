@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Venue-aware *internal drafting* profiles for the paper Writer.
 
 The profiles deliberately describe argumentative emphasis and internal section
@@ -7,6 +5,9 @@ budgets only.  They are not a source of official page limits, anonymity rules,
 or submission-template requirements.  Those must be checked against the
 current venue materials immediately before submission.
 """
+
+from __future__ import annotations
+
 
 from copy import deepcopy
 from functools import lru_cache

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Initialize the durable report envelope for one executor phase for the implementation Skill.
+
+The ``initialize implementation report`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

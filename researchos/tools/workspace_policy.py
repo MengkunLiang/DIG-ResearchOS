@@ -1,3 +1,9 @@
+"""Read/write authorization model for workspace-scoped tools and agents.
+
+It normalizes relative paths, verifies permitted prefixes, and keeps each task's
+filesystem boundary explicit before any file operation is attempted.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

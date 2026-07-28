@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Run the declared bounded operation and preserve its outcome evidence for the implementation Skill.
+
+The ``run verification`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

@@ -1,3 +1,9 @@
+"""Structured logging setup shared by ResearchOS runtime components.
+
+It centralizes logger configuration so diagnostics remain machine-readable
+without allowing logging failures to change research workflow outcomes.
+"""
+
 from __future__ import annotations
 
 import logging

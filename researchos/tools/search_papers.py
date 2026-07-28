@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """学术论文搜索工具。
 
 实现策略：
@@ -7,6 +5,9 @@ from __future__ import annotations
 - auto 模式下若 S2 失败或无结果，则自动降级到 arXiv；
 - 返回给 LLM 的内容尽量紧凑，但 `data` 中保留结构化字段，方便后续 agent 写文件。
 """
+
+from __future__ import annotations
+
 
 import asyncio
 from datetime import datetime

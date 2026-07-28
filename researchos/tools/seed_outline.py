@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Seed-outline normalization tools.
 
 Users often start with a substantial Markdown outline rather than a list of
@@ -7,6 +5,9 @@ papers.  This module turns such outlines into structured, downstream-readable
 seed artifacts without pretending that literature directions are verified
 citations.
 """
+
+from __future__ import annotations
+
 
 from dataclasses import dataclass
 import hashlib

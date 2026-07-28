@@ -1,10 +1,11 @@
-from __future__ import annotations
-
 """Reusable LLM guidance blocks for built-in agents.
 
 These files follow a lightweight SKILL.md style: optional YAML frontmatter plus
 Markdown instructions. They are prompt guidance, not deterministic tools.
 """
+
+from __future__ import annotations
+
 
 from pathlib import Path
 

@@ -1,3 +1,9 @@
+"""Translate external executor tool labels into registered ResearchOS tool names.
+
+The mapping preserves compatibility with supported executor clients while
+rejecting unknown aliases instead of granting an unintended capability.
+"""
+
 from __future__ import annotations
 
 

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Public stage aliases accepted by the CLI.
 
 The state machine deliberately uses explicit node identifiers such as
@@ -7,6 +5,9 @@ The state machine deliberately uses explicit node identifiers such as
 refer to the public stage name (``T3.6``), so command entry points must resolve
 that name consistently before they validate prerequisites or create state.
 """
+
+from __future__ import annotations
+
 
 
 _PUBLIC_STAGE_ALIASES: dict[str, str] = {

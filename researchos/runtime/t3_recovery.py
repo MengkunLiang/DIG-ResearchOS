@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """T3 运行期恢复与剩余队列裁剪。
 
 目标：
@@ -7,6 +5,9 @@ from __future__ import annotations
 2. 把已完成的 `deep_read_notes/*.md` 从工作清单里裁掉，避免 T3 重复阅读；
 3. 为 Reader 额外生成一个“只包含未完成论文”的 pending queue。
 """
+
+from __future__ import annotations
+
 
 import json
 from pathlib import Path

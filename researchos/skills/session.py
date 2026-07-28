@@ -1,6 +1,7 @@
+"""Persistent, human-readable session state for guided standalone skills."""
+
 from __future__ import annotations
 
-"""Persistent, human-readable session state for guided standalone skills."""
 
 from datetime import datetime, timezone
 import io

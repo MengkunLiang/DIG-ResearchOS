@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Workspace-independent catalogue for bundled LaTeX templates.
 
 The catalogue records what is actually present under ``latex_templete``.  A
@@ -8,6 +6,9 @@ uploaded CCF packages contain only a class/style file; those remain selectable
 and use a clearly labelled anonymous shell instead of silently falling back to
 the generic article template.
 """
+
+from __future__ import annotations
+
 
 from dataclasses import dataclass
 from pathlib import Path

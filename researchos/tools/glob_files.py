@@ -1,3 +1,9 @@
+"""Policy-aware workspace globbing tool for bounded artifact discovery.
+
+It returns only paths allowed by the current task policy and avoids reading file
+contents, leaving semantic interpretation to an explicitly authorized step.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path

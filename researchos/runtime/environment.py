@@ -1,6 +1,7 @@
+"""Runtime environment provenance for native and container execution."""
+
 from __future__ import annotations
 
-"""Runtime environment provenance for native and container execution."""
 
 from datetime import datetime, timezone
 import json

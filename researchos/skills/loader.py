@@ -1,6 +1,11 @@
+"""Load, discover, and register declarative ResearchOS Skill packages.
+
+The loader validates frontmatter and capability profiles before an Agent starts,
+then binds optional Skill-owned tools without weakening workspace policy.
+"""
+
 from __future__ import annotations
 
-"""Skill 包加载与发现逻辑。"""
 
 from dataclasses import dataclass, field
 import hashlib

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Build a deterministic phase artifact from declared inputs for the result diagnosis Skill.
+
+The ``build evidence snapshot`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

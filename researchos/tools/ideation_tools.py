@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 """Soft-signal tools for T4 ideation.
 
 These tools produce diagnostic hints for the LLM/user. They intentionally do
 not return pass/fail decisions, because novelty and contribution quality remain
 scientific judgments.
 """
+
+from __future__ import annotations
+
 
 from collections import Counter
 import json

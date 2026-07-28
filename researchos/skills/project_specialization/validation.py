@@ -1,3 +1,9 @@
+"""Validate specialized Skill context, template markers, and publication state.
+
+The checks reject partial or stale suites before publication and return precise
+field-level diagnostics for deterministic recovery rather than silent repair.
+"""
+
 from __future__ import annotations
 
 import copy

@@ -1,6 +1,7 @@
+"""Deterministic literature-language and venue-quality policy helpers."""
+
 from __future__ import annotations
 
-"""Deterministic literature-language and venue-quality policy helpers."""
 
 from dataclasses import dataclass, field
 import json

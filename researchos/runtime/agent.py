@@ -1,6 +1,11 @@
+"""Agent abstraction plus typed execution context and result records.
+
+The module separates static Agent declarations from one invocation's paths,
+inputs, expected outputs, and completion status for deterministic validation.
+"""
+
 from __future__ import annotations
 
-"""Agent 抽象、执行上下文与运行结果模型。"""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field

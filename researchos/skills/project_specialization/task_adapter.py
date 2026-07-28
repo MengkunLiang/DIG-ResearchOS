@@ -1,3 +1,9 @@
+"""Adapt specialization outcomes to the T5 state-machine recovery contract.
+
+It converts compiler reports into resumable task status while preserving the
+original diagnostics and never rewriting upstream T4.5 research materials.
+"""
+
 from __future__ import annotations
 
 import hashlib

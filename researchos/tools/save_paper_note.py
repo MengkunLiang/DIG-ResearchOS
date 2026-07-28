@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """T3 paper note save tool.
 
 The Reader LLM should not manually choose opaque note filenames. It supplies a
@@ -7,6 +5,9 @@ queue rank and markdown content; this tool resolves the paper record, writes the
 canonical note path, validates the note immediately, and refreshes the T3 notes
 manifest.
 """
+
+from __future__ import annotations
+
 
 from pathlib import Path
 from typing import Any

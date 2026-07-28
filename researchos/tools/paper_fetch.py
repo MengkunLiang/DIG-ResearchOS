@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """论文PDF获取和文本提取工具。
 
 提供三个工具：
@@ -7,6 +5,9 @@ from __future__ import annotations
 2. fetch_paper_pdf - 下载论文PDF
 3. extract_pdf_text - 提取PDF全文文本
 """
+
+from __future__ import annotations
+
 
 import os
 import json

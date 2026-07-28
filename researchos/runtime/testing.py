@@ -1,6 +1,11 @@
+"""Reusable runtime test doubles for Docker, tools, and scripted outcomes.
+
+They support deterministic regression tests while preserving the result shapes
+that production orchestration and validation code actually consume.
+"""
+
 from __future__ import annotations
 
-"""runtime 层可复用的测试替身。"""
 
 from dataclasses import dataclass, field
 from typing import Any

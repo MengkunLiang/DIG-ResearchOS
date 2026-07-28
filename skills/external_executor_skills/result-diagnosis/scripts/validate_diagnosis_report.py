@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Validate schema, lineage, and decision-boundary requirements for the result diagnosis Skill.
+
+The ``validate diagnosis report`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

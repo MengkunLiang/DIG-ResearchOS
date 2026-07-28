@@ -1,6 +1,7 @@
+"""Small, terminal-safe brand and startup helpers for the ResearchOS CLI."""
+
 from __future__ import annotations
 
-"""Small, terminal-safe brand and startup helpers for the ResearchOS CLI."""
 
 from pathlib import Path
 import io

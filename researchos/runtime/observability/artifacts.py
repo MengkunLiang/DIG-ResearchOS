@@ -1,6 +1,7 @@
+"""Read-only artifact inspection and stage-before/stage-after comparison."""
+
 from __future__ import annotations
 
-"""Read-only artifact inspection and stage-before/stage-after comparison."""
 
 from dataclasses import asdict, dataclass
 import csv

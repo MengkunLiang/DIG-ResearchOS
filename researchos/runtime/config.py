@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """ResearchOS runtime 共享配置。
 
 这个模块的目标很明确：
@@ -20,6 +18,9 @@ from __future__ import annotations
 
 未来如果要继续扩展 runtime 级共享配置，优先在这里加字段，再逐步把调用点接过来。
 """
+
+from __future__ import annotations
+
 
 from dataclasses import dataclass, field
 import os

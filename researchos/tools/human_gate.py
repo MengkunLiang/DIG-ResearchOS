@@ -1,6 +1,11 @@
+"""Human-decision interfaces and Rich renderers for workflow authorization.
+
+The module presents durable choices and captures responses without allowing an
+LLM or a terminal rendering failure to silently decide a research transition.
+"""
+
 from __future__ import annotations
 
-"""人机交互抽象。"""
 
 from abc import ABC, abstractmethod
 import io

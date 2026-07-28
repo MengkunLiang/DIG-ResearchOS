@@ -1,3 +1,9 @@
+"""Typed records shared across project Skill specialization phases.
+
+The types make status, source lineage, uncertainty, publication, and rollback
+fields explicit so renderer and validator code share one durable contract.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

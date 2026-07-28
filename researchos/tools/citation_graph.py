@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 """Citation graph helpers for T2 literature scouting.
 
 The tools here only collect and organize repeatable metadata signals. They do
 not decide scholarly importance, novelty, or final research gaps. Downstream
 LLM agents use the resulting domain map as a review scaffold.
 """
+
+from __future__ import annotations
+
 
 from collections import Counter, defaultdict
 import json

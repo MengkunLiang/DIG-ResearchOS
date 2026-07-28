@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Validate prerequisites before the executor phase can mutate artifacts for the resource and baseline preparation Skill.
+
+The ``preflight resources`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

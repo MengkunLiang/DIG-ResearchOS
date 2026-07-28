@@ -1,6 +1,7 @@
+"""runtime `state.yaml` 的结构化模型。"""
+
 from __future__ import annotations
 
-"""runtime `state.yaml` 的结构化模型。"""
 
 from pathlib import Path
 from typing import Any, Literal

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Deterministic, auditable PDF acquisition for retained literature records.
 
 This module deliberately models *access* separately from *reading evidence*.
@@ -7,6 +5,9 @@ Downloading a PDF is useful for the Reader, but it is not a full-text reading
 event.  The only component allowed to promote a paper-note to ``FULL_TEXT`` or
 ``PARTIAL_TEXT`` is the reading/note workflow after it records coverage.
 """
+
+from __future__ import annotations
+
 
 import asyncio
 from collections.abc import Callable

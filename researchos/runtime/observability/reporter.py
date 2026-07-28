@@ -1,6 +1,7 @@
+"""Unified Stage Start / Progress / Summary rendering for research CLI runs."""
+
 from __future__ import annotations
 
-"""Unified Stage Start / Progress / Summary rendering for research CLI runs."""
 
 from dataclasses import dataclass
 import io

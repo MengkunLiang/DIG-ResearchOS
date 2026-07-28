@@ -1,6 +1,7 @@
+"""Human-facing catalog metadata and terminal rendering for standalone skills."""
+
 from __future__ import annotations
 
-"""Human-facing catalog metadata and terminal rendering for standalone skills."""
 
 from dataclasses import dataclass
 from difflib import SequenceMatcher

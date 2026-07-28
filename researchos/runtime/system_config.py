@@ -1,10 +1,11 @@
-from __future__ import annotations
-
 """Paths for versioned system configuration files.
 
 These files describe ResearchOS workflow contracts and writing schemas. They
 are intentionally separate from user-facing runtime settings.
 """
+
+from __future__ import annotations
+
 
 from pathlib import Path
 import os

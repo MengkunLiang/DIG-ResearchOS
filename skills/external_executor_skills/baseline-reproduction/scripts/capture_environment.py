@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Capture a bounded, non-secret execution environment record for the baseline reproduction Skill.
+
+The ``capture environment`` entrypoint is deterministic: it reports contract failures explicitly and never fills missing research facts, authorization, or execution evidence by inference.
+"""
+
 from __future__ import annotations
 
 import argparse

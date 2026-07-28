@@ -24,12 +24,14 @@ python -m researchos.cli audit-skills --check-script-help --no-banner
 发布前或修改 Skill 模板后，可运行只读审计：
 
 ```bash
-# 检查元数据、重名、本地 Markdown/reference/script 引用和 Python 语法
+# 检查元数据、重名、本地 Markdown/reference/script 引用、Python 语法，以及每个公共 Skill 的声明工具是否已在默认 ToolRegistry 注册
 python -m researchos.cli audit-skills --no-banner
 
-# 额外对每个外部执行器脚本执行 --help import smoke
+# 额外对每个公开外部执行器 CLI 脚本执行 --help import smoke
 python -m researchos.cli audit-skills --check-script-help --no-banner
 ```
+
+以下约束是刻意区分的：`scripts/_*.py` 是被命令入口导入的私有支持模块，不要求也不伪装为可直接调用的 CLI；其余 `scripts/*.py` 必须能够通过 Python 编译并在 `--check-script-help` 下展示帮助。审计还会构建正常的内置工具和公共 Skill ToolRegistry，故 capability profile 或 frontmatter 中引用了未注册工具时，会在模型启动前被拒绝，而不是运行到一半才出现 `Tool ... not registered`。
 
 该审计不会调用 LLM、检索论文、运行实验或修改 workspace。它应当是确定性诊断命令，而不是新建一个研究 Skill：单独的“Skill 审计”工作流会与 `code-and-protocol-review` 和 T5 specializer 已有的仓库治理职责重叠，并额外扩大执行面。
 

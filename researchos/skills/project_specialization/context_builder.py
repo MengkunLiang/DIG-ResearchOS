@@ -1,3 +1,9 @@
+"""Build the source-traceable Context injected into executor Skill templates.
+
+The builder applies source precedence and preserves unresolved values as
+``uncertain`` rather than silently selecting a convenient project fact.
+"""
+
 from __future__ import annotations
 
 import json

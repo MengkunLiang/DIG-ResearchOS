@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 """Deterministic literature synthesis workbench for T3.5.
 
 The tool does not try to replace the Reader agent's critical judgment. It
 turns many paper notes into a structured workbench, outline, and draft so the
 LLM starts from explicit evidence instead of a single broad prompt.
 """
+
+from __future__ import annotations
+
 
 import csv
 import json

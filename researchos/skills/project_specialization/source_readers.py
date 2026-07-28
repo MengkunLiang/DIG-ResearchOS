@@ -1,3 +1,9 @@
+"""Read and normalize authoritative artifacts for Skill specialization.
+
+Readers produce bounded, typed facts with provenance notes; they do not infer
+missing research content or treat a file's existence as evidence sufficiency.
+"""
+
 from __future__ import annotations
 
 import json

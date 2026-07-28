@@ -1,10 +1,11 @@
-from __future__ import annotations
-
 """Shared abstract normalization helpers.
 
 These helpers only clean repeatable metadata formats. They do not infer
 relevance, source quality, evidence level, or scholarly importance.
 """
+
+from __future__ import annotations
+
 
 from html import unescape
 import re

@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 """文献记录查找工具。
 
 T3 Reader 经常只需要某一篇论文的 metadata。如果直接 read_file 读取
 `papers_verified.jsonl`，会把整份 100KB+ JSONL 塞进上下文。这个工具按 ID /
 标题逐行扫描并只返回匹配记录，作为更稳的上下文入口。
 """
+
+from __future__ import annotations
+
 
 from collections.abc import Iterator
 import json

@@ -1,6 +1,7 @@
+"""Deterministic recovery helpers for manuscript-writing runtime boundaries."""
+
 from __future__ import annotations
 
-"""Deterministic recovery helpers for manuscript-writing runtime boundaries."""
 
 import json
 from pathlib import Path

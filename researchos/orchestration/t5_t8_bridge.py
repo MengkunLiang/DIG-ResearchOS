@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Deterministic acceptance and ingestion for the modern T5-to-T8 handoff.
 
 The external executor owns the production and Writer Handoff validation of its
@@ -7,6 +5,9 @@ artifacts.  This module performs a separate ResearchOS-side acceptance pass,
 normalizes structured evidence for the existing T8 claim-audit tools, and
 prepares an existing workspace for safe T8 re-entry.
 """
+
+from __future__ import annotations
+
 
 from datetime import datetime, timezone
 import hashlib

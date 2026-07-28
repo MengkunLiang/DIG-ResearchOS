@@ -1,3 +1,9 @@
+"""Tool adapter for explicit human decisions inside an Agent workflow.
+
+It records the question, options, and selected response through the configured
+interface rather than allowing a model to assume a missing authorization.
+"""
+
 from __future__ import annotations
 
 import json

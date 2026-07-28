@@ -1,6 +1,11 @@
+"""Model-provider routing, retry, and normalized completion handling layer.
+
+It isolates provider-specific request details from Agents while preserving
+timeouts, truncation, and failure evidence for runtime recovery and tracing.
+"""
+
 from __future__ import annotations
 
-"""LLM 路由与 provider 调用层。"""
 
 import asyncio
 from contextlib import suppress

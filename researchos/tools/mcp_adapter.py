@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """MCP tool 适配层。
 
 本模块只依赖一个“通用协议”而不是具体的 mcp Python SDK：
@@ -10,6 +8,9 @@ from __future__ import annotations
 1. runtime 代码可以先稳定下来，不被某个第三方 MCP 库绑定；
 2. 单元测试可以直接用 fake client 覆盖 happy path / error path。
 """
+
+from __future__ import annotations
+
 
 from collections.abc import Mapping, Sequence
 from contextlib import AsyncExitStack

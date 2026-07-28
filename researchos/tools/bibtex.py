@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Small BibTeX helpers used by runtime checks.
 
 The project intentionally avoids a hard dependency on a BibTeX parser. These
@@ -7,6 +5,9 @@ helpers implement conservative parsing for the generated bibliographies we
 control: extracting entry keys, checking common quality problems, deduplicating
 entries, and escaping generated field values.
 """
+
+from __future__ import annotations
+
 
 import re
 from typing import Any

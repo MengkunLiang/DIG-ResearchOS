@@ -1,3 +1,9 @@
+"""Small retry helpers for bounded transient runtime operations.
+
+Retries preserve the original exception and stop according to caller-supplied
+limits so infrastructure failures cannot become an unbounded hidden loop.
+"""
+
 from __future__ import annotations
 
 import asyncio

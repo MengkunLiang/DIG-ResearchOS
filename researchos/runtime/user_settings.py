@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Compatibility adapter for the retired ``user_settings.yaml`` format.
 
 New installations use only ``config/model_settings.yaml`` for the provider,
@@ -8,6 +6,9 @@ an existing workspace with the former overlay can start once and be migrated
 with ``configure-llm``; normal runtime code must not present it as a second
 configuration surface.
 """
+
+from __future__ import annotations
+
 
 from copy import deepcopy
 import os

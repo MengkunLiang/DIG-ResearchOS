@@ -17,6 +17,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import shlex
@@ -119,6 +120,45 @@ def _line_number(text: str, offset: int) -> int:
 
 def _iter_markdown_files(docs_root: Path) -> Iterable[Path]:
     yield from sorted(path for path in docs_root.rglob("*.md") if path.is_file())
+
+
+def _iter_documented_python_files(repo_root: Path) -> Iterable[Path]:
+    """Yield maintained Python modules whose top-level purpose is public API.
+
+    Generated workspaces and tests have a different lifecycle. The application
+    package and executor Skill scripts are the durable implementation surface
+    that researchers and maintainers need to navigate, so they must expose a
+    real Python module docstring rather than a detached comment after imports.
+    """
+
+    application_root = repo_root / "researchos"
+    if application_root.is_dir():
+        yield from sorted(application_root.rglob("*.py"))
+    skill_root = repo_root / "skills"
+    if skill_root.is_dir():
+        yield from sorted(skill_root.glob("**/scripts/*.py"))
+
+
+def _python_docstring_findings(path: Path, repo_root: Path) -> list[Finding]:
+    """Report missing or non-documentation module headers without importing code."""
+
+    relative = _repo_relative(path, repo_root)
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError, UnicodeError) as exc:
+        return [Finding("ERROR", "invalid_python_source", relative, 0, str(exc))]
+    docstring = ast.get_docstring(tree, clean=False)
+    if not docstring or len(docstring.strip()) < 24:
+        return [
+            Finding(
+                "ERROR",
+                "missing_module_docstring",
+                relative,
+                1,
+                "受维护 Python 模块必须以至少 24 个字符的模块 docstring 说明职责和边界。",
+            )
+        ]
+    return []
 
 
 def _iter_prose_audit_files(repo_root: Path, docs_root: Path) -> Iterable[Path]:
@@ -459,6 +499,8 @@ def audit_docs(repo_root: Path, docs_root: Path, *, include_prose_audit: bool = 
         for path in _iter_prose_audit_files(repo_root, docs_root):
             text = path.read_text(encoding="utf-8", errors="replace")
             findings.extend(_prose_wrap_findings(path, text, repo_root))
+    for path in _iter_documented_python_files(repo_root):
+        findings.extend(_python_docstring_findings(path, repo_root))
     return sorted(findings, key=lambda item: (item.severity != "ERROR", item.path, item.line, item.code))
 
 

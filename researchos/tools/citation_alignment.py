@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 """Conservative citation-to-claim alignment checks for generated TeX.
 
 These helpers are intentionally heuristic. They do not judge scholarship; they
 flag clear signs that a citation key is being used as padding for an unrelated
 claim. Low-confidence cases should remain writable review material.
 """
+
+from __future__ import annotations
+
 
 import json
 import re

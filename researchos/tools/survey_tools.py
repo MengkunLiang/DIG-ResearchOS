@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 """Mechanical support tools for the optional T3.6 survey-paper branch.
 
 These tools organize state, assemble section files, and audit coverage. They
 intentionally do not decide taxonomy quality or write scholarly prose; the LLM
 does that work section by section.
 """
+
+from __future__ import annotations
+
 
 import json
 import math

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Constrained interactive material collection for guided Skills.
 
 The intake agent can organize material supplied by a human into the declared
@@ -7,6 +5,9 @@ The intake agent can organize material supplied by a human into the declared
 or any other substantive Skill output, so a missing upload never becomes a
 license to invent research material.
 """
+
+from __future__ import annotations
+
 
 from pathlib import Path
 from typing import Iterable

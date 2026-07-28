@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """The single user-maintained model configuration.
 
 ``config/model_settings.yaml`` contains the one provider connection used by
@@ -7,6 +5,9 @@ every Agent and Skill, its retry behaviour, and the context-capacity defaults
 that must stay aligned with that connection. Workflow topology and prompt
 policy remain in ``system_config``.
 """
+
+from __future__ import annotations
+
 
 from collections.abc import Mapping
 import os

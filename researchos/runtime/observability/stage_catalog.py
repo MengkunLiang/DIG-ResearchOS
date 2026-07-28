@@ -1,6 +1,7 @@
+"""Stable user-facing semantics for state-machine tasks and artifacts."""
+
 from __future__ import annotations
 
-"""Stable user-facing semantics for state-machine tasks and artifacts."""
 
 from dataclasses import dataclass
 from pathlib import Path

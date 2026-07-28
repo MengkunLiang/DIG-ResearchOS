@@ -1,6 +1,11 @@
+"""Single-task runner for bounded debugging and compatibility execution.
+
+Unlike the complete runner, it launches one authorized task while retaining
+the same policy, validation, logging, and recovery diagnostics where possible.
+"""
+
 from __future__ import annotations
 
-"""单 task 调试运行器。"""
 
 import asyncio
 from datetime import datetime, timezone

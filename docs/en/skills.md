@@ -24,12 +24,14 @@ The current repository contains **56 versioned Skill contracts**: **43 public Re
 Use the read-only audit before a release or after changing a Skill template:
 
 ```bash
-# Metadata, duplicate names, local Markdown/reference/script links, and Python syntax
+# Metadata, duplicate names, local Markdown/reference/script links, Python syntax, and whether every public Skill tool is registered in the default ToolRegistry
 python -m researchos.cli audit-skills --no-banner
 
-# Also import-smoke every external-executor script through its --help path
+# Also import-smoke every public external-executor CLI script through its --help path
 python -m researchos.cli audit-skills --check-script-help --no-banner
 ```
+
+The distinction is intentional: `scripts/_*.py` files are private support modules imported by command entrypoints and must not masquerade as directly invokable CLIs. Every other `scripts/*.py` file must compile and expose `--help` under `--check-script-help`. The audit also builds the normal builtin and public-Skill ToolRegistry, so a capability profile or frontmatter declaration that names an unregistered tool fails before a model session starts rather than failing midway through execution with `Tool ... not registered`.
 
 The audit does not call an LLM, retrieve papers, run an experiment, or mutate a workspace. It is intentionally a deterministic diagnostic command rather than a new research Skill: a separate "Skill audit" workflow would duplicate the repository governance already owned by `code-and-protocol-review` and the T5 specializer, while adding an unnecessary execution surface.
 

@@ -1,3 +1,9 @@
+"""Public facade for Skill discovery, execution, and tool-name translation.
+
+The lazy ``run_skill`` export deliberately avoids importing the full Agent
+runner during tool-registry initialization, preventing an import cycle.
+"""
+
 from .agent import SkillAgent
 from .loader import (
     Skill,

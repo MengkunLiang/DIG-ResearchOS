@@ -1,3 +1,9 @@
+"""Allowlisted web-fetch tool and URL-policy enforcement helpers.
+
+The tool accepts only configured schemes and hosts, reports retrieval failures,
+and does not promote a downloaded page into verified research evidence.
+"""
+
 from __future__ import annotations
 
 import asyncio

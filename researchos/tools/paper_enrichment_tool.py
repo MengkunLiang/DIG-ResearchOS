@@ -1,4 +1,8 @@
-"""论文数据增强工具的 Tool 包装器。"""
+"""Tool wrappers that enrich paper records under explicit evidence boundaries.
+
+They expose metadata, abstract, access, and citation processing to Agents while
+recording source status instead of treating a retrieved field as verified fact.
+"""
 
 from __future__ import annotations
 

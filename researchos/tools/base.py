@@ -1,6 +1,11 @@
+"""Base protocol shared by all policy-aware ResearchOS tool implementations.
+
+It standardizes parameter schemas, result envelopes, and asynchronous execution
+so AgentRunner can validate tools without knowing their research-domain logic.
+"""
+
 from __future__ import annotations
 
-"""Tool 抽象。"""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field

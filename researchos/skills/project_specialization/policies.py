@@ -1,3 +1,9 @@
+"""Source-authority and uncertainty policies for Skill specialization.
+
+These rules decide which handoff or workspace artifact can populate a context
+field and when the compiler must retain an explicit unresolved boundary.
+"""
+
 from __future__ import annotations
 
 from typing import Any

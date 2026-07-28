@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 """Mechanical claim and visual registries for manuscript writing.
 
 This module intentionally contains pure helpers only. It does not decide
 scientific claims, captions, or figure messages; it turns existing plans into
 stable registries that Writer/Reviewer agents can fill and audit.
 """
+
+from __future__ import annotations
+
 
 import re
 from typing import Any

@@ -1,3 +1,9 @@
+"""Policy-aware text search tool for locating evidence within allowed files.
+
+Search results expose bounded excerpts and paths while respecting workspace
+prefixes, so models cannot use broad recursive search to escape task scope.
+"""
+
 from __future__ import annotations
 
 import asyncio
