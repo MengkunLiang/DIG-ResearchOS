@@ -129,4 +129,6 @@ Treat the following as editorial writing preferences. Factual accuracy, verified
 7. Correct every actionable hard failure. Do not conceal audit failures or overwrite source evidence. Write `drafts/paper_write_summary.md` with inputs used, files created, profile, completed sections, audit status, unsupported claims removed/weakened, and precise next actions.
 8. Finish with a concise completion summary that names the output paths. Do not compile here; use `paper-compile` after the manuscript is accepted by the user.
 
+For local template maintenance, copy the entire `templates/` directory rather than only one `.tex` file: the annual class/style and bibliography support assets are intentionally vendored beside the public skeletons. Their official provenance and isolated compile contract are documented in `templates/README.md`.
+
 Never generate author identities, affiliations, fabricated BibTeX, fabricated measurements, fake figures, or unverified numerical comparisons.

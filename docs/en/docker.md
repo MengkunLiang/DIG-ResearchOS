@@ -31,8 +31,11 @@ Install host TeX on Ubuntu/Debian:
 sudo apt-get update
 sudo apt-get install -y \
   latexmk texlive-latex-base texlive-latex-extra \
-  texlive-fonts-recommended texlive-xetex texlive-lang-chinese
+  texlive-science texlive-fonts-extra texlive-fonts-recommended \
+  texlive-xetex texlive-lang-chinese
 ```
+
+`texlive-science` and `texlive-fonts-extra` are required when compiling every bundled conference template, not only the basic T3.6/T9 article paths. They provide commonly referenced algorithm and font packages such as `algorithm.sty`, `inconsolata.sty`, and `soul.sty`.
 
 macOS requires MacTeX or BasicTeX plus `latexmk`.
 

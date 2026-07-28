@@ -54,6 +54,8 @@ RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=45 -o Acquire::https
     latexmk \
     texlive-latex-base \
     texlive-latex-extra \
+    texlive-science \
+    texlive-fonts-extra \
     texlive-fonts-recommended \
     texlive-xetex \
     texlive-lang-chinese \

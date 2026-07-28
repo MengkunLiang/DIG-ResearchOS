@@ -31,8 +31,11 @@ python -m researchos.cli doctor --workspace ./workspace/project-a
 sudo apt-get update
 sudo apt-get install -y \
   latexmk texlive-latex-base texlive-latex-extra \
-  texlive-fonts-recommended texlive-xetex texlive-lang-chinese
+  texlive-science texlive-fonts-extra texlive-fonts-recommended \
+  texlive-xetex texlive-lang-chinese
 ```
+
+若要编译仓库随附的全部会议模板，而不只是基础的 T3.6/T9 article 路径，还需要 `texlive-science` 与 `texlive-fonts-extra`；它们提供 `algorithm.sty`、`inconsolata.sty`、`soul.sty` 等常见算法和字体依赖。
 
 macOS 需要 MacTeX 或 BasicTeX 以及 `latexmk`。
 
