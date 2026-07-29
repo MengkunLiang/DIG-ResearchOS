@@ -96,7 +96,7 @@ cd DIG-ResearchOS
 
 conda env create -f environment.yml
 conda activate researchos
-pip install -e .
+python -m pip install -e ".[dev]"
 python -m researchos.cli configure-llm
 ```
 
@@ -105,17 +105,21 @@ python -m researchos.cli configure-llm
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
+python -m pip install -e ".[dev]"
 ```
 
-Windows PowerShell 使用 Python Launcher 与 Windows 虚拟环境路径：
+Windows PowerShell 优先使用仓库提供的一键安装器。它会自行解析仓库绝对路径，本次安装优先使用清华 Conda/PyPI 镜像，不修改用户全局 Conda 或 pip 设置，并在完成后运行依赖图和配置检查：
 
 ```powershell
-py -m venv .venv
+.\scripts\setup_windows.ps1
+```
+
+重建已有环境使用 `.\scripts\setup_windows.ps1 -Recreate`。若当前网络无法访问清华 PyPI 镜像，使用 `.\scripts\setup_windows.ps1 -UseOfficialPypi`。若自行维护 Windows 虚拟环境，显式选择受支持的 Python 3.11：
+
+```powershell
+py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python -m pip install -e .
+python -m pip install --index-url https://pypi.tuna.tsinghua.edu.cn/simple --prefer-binary -e ".[dev]"
 ```
 
 若 PowerShell 只阻止当前终端激活环境，先执行 `Set-ExecutionPolicy -Scope Process Bypass`，再重新运行激活命令即可。

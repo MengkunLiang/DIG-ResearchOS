@@ -7,9 +7,11 @@
 ```bash
 conda env create -f environment.yml
 conda activate researchos
-pip install -e .
+python -m pip install -e ".[dev]"
 python -m researchos.cli validate-config
 ```
+
+`environment.yml` deliberately contains only Conda's Python toolchain. Local editable package paths belong in the second command because Conda otherwise resolves `-r requirements.txt` and `-e .` against the caller's directory rather than this repository. On Windows, use `scripts/setup_windows.ps1`; it resolves the repository path before both steps and uses project-scoped Tsinghua mirrors.
 
 Use `.env` for local provider credentials. Never add it to a commit. Run commands from the repository root; before editable installation use `PYTHONPATH="$PWD" python -m researchos.cli ...`.
 

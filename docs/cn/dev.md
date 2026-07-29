@@ -7,9 +7,11 @@
 ```bash
 conda env create -f environment.yml
 conda activate researchos
-pip install -e .
+python -m pip install -e ".[dev]"
 python -m researchos.cli validate-config
 ```
+
+`environment.yml` 刻意只负责 Conda 的 Python 工具链。本地 editable package 路径必须放在第二条命令中，否则 Conda 会相对“调用者当前目录”而不是本仓库解析 `-r requirements.txt` 与 `-e .`。Windows 请使用 `scripts/setup_windows.ps1`；它会在两步安装前解析仓库路径，并仅对本次安装使用清华镜像。
 
 使用 `.env` 存放本地提供者凭据。切勿将其提交到版本库。从仓库根目录运行命令；在可编辑安装之前，使用 `PYTHONPATH="$PWD" python -m researchos.cli ...`。
 

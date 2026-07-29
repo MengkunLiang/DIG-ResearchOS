@@ -100,7 +100,7 @@ cd DIG-ResearchOS
 
 conda env create -f environment.yml
 conda activate researchos
-pip install -e .
+python -m pip install -e ".[dev]"
 python -m researchos.cli configure-llm
 ```
 
@@ -109,17 +109,21 @@ Pip-only setup is also supported:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
+python -m pip install -e ".[dev]"
 ```
 
-On Windows PowerShell, use the Python launcher and the Windows activation path:
+On Windows PowerShell, use the repository-owned installer. It resolves the repository path itself, uses the Tsinghua Conda/PyPI mirrors for this install, does not modify global Conda or pip settings, and verifies the finished environment:
 
 ```powershell
-py -m venv .venv
+.\scripts\setup_windows.ps1
+```
+
+To recreate an existing environment, run `.\scripts\setup_windows.ps1 -Recreate`. If the Tsinghua PyPI mirror is unavailable on the current network, use `.\scripts\setup_windows.ps1 -UseOfficialPypi`. For a manually managed Windows virtual environment, select the supported Python 3.11 interpreter explicitly:
+
+```powershell
+py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python -m pip install -e .
+python -m pip install --index-url https://pypi.tuna.tsinghua.edu.cn/simple --prefer-binary -e ".[dev]"
 ```
 
 If PowerShell blocks activation for the current shell, run `Set-ExecutionPolicy -Scope Process Bypass`, then activate the environment again.

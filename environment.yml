@@ -1,11 +1,19 @@
 name: researchos
 channels:
-  - defaults
+  # Keep environment creation fast and reproducible for mainland-China
+  # Windows/macOS/Linux users without altering their global .condarc.  These
+  # are the mirrors of Anaconda's default package channels, not conda-forge.
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/msys2
+  - nodefaults
 dependencies:
+  # Python 3.11 is the supported baseline for the CLI and its binary PDF
+  # dependencies.  Do not put relative pip paths here: conda resolves them
+  # from the caller's working directory, which leaves a half-installed
+  # environment when `conda env create -f C:\path\environment.yml` is run
+  # outside this repository.
   - python=3.11
   - pip
-  - pip:
-      # requirements.txt is the Docker-compatible Python dependency lockstep.
-      # The editable install exposes the local `researchos` CLI entry point.
-      - -r requirements.txt
-      - -e .
+  - setuptools>=68
+  - wheel

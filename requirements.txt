@@ -10,7 +10,9 @@ pyyaml>=6,<7
 structlog>=24.1,<26
 python-dotenv>=1.0,<2
 
-# LLM routing and provider adapters
+# LLM routing and provider adapters. Keep this exact pin in lockstep with
+# pyproject.toml: LiteLLM releases change provider adapters quickly, and this
+# version is validated with the current single-provider runtime on Python 3.11.
 litellm==1.65.8
 
 # Optional external Tool servers configured through config/mcp.yaml.

@@ -34,6 +34,7 @@ By default, pytest only collects `tests/unit/`. Real-environment tests under
 | `validate_llm_model.py` | Probe a model routing profile/tier without running the full pipeline |
 | `recover_t2_papers_raw_from_trace.py` | Recovery helper for reconstructing T2 raw paper data from traces |
 | `check_docs.py` | Read-only documentation quality gate for Markdown links/anchors, CLI examples, task IDs, legacy paths, and terminology |
+| `setup_windows.ps1` | Windows Conda bootstrap using repository-resolved paths, Tsinghua mirrors, editable install, dependency check, and configuration validation |
 
 New files in this directory should be maintained utilities. If a check is
 repeatable and should be part of the supported contract, put it under
