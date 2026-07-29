@@ -1179,11 +1179,9 @@ def _render_llm_context_capacity_notice(
     configured_history_cap = int(truncation.get("max_input_tokens") or 0)
     details.add_row(
         "单次保留输入上限",
-        (
-            f"{configured_history_cap:,} tokens；只压缩较早的会话/Tool 历史，不会减少 PDF 阅读或已保存笔记"
-            if configured_history_cap > 0
-            else "跟随有效总上下文容量（默认）；无需维护第二个数字",
-        ),
+        f"{configured_history_cap:,} tokens；只压缩较早的会话/Tool 历史，不会减少 PDF 阅读或已保存笔记"
+        if configured_history_cap > 0
+        else "跟随有效总上下文容量（默认）；无需维护第二个数字",
     )
     details.add_row(
         "本地限流",
