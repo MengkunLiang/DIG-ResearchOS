@@ -54,11 +54,11 @@ python -m researchos.cli configure-llm \
 
 `run`、`resume`、`run-task` 与 `run-skill` 在创建 Agent 前发现连接未配置时，会直接停在 Rich 配置卡。若真实 `config/model_settings.yaml` 已存在且字段完整，系统会跳过该向导，不会要求重复填写。若只缺少一个字段，例如已有 `provider`、API URL 和 API key 但未填写 `model`，选择“现在配置”后只会询问 `model`；已有 API key 的环境变量引用会原样保留，不会重新显示、输入或写入配置文件。若主动切换 provider，系统会要求补充该 provider 的 API key 和 model，不会沿用旧 provider 的凭据或 model。文件缺失、模板文件未复制，或 `provider`、`api_key`、`model` 等必要字段缺失时，才会展示以下选择：
 
-1. 现在配置：在终端输入字段并立即检查连接。
-2. 自己编辑 `config/model_settings.yaml`：ResearchOS 会展示真实生效路径、模板路径、必填字段和可直接复制的校验命令；修改后让它重新读取并检查。
+1. 现在配置：在终端输入字段并立即检查连接。检查通过后会回到原来的 `run`／`resume`／`run-task`／`run-skill` 命令，不会紧接着向 provider 发起第二次重复的启动检查。
+2. 自己编辑 `config/model_settings.yaml`：ResearchOS 会展示真实生效路径、模板路径、必填字段和可直接复制的校验命令；修改后让它重新读取该文件及其对应的 `.env`，再执行正常的启动检查。
 3. 退出：不改动 workspace。
 
-因此不会等到 T2、T3 或 T4 执行到一半才因为 API 配置失败。连接检查失败时，已经保存的配置会保留，用户只需修正 URL、key、provider 或 model 后再次检查。API key 在输入时不会回显，这既避免 shell history 和录屏泄露，也不表示输入丢失：每一步确认会显示掩码、字符数和末尾校验位，保存后还会显示 key 的保存位置。
+因此不会等到 T2、T3 或 T4 执行到一半才因为 API 配置失败。连接检查失败时，已经保存的配置会保留，用户只需修正 URL、key、provider 或 model 后再次检查；它会明确显示为“模型配置向导未完成”，不会伪装成通用 workspace/runtime 故障，原命令也不会推进 workspace。API key 在输入时不会回显，这既避免 shell history 和录屏泄露，也不表示输入丢失：每一步确认会显示掩码、字符数和末尾校验位，保存后还会显示 key 的保存位置。
 
 ## `model_settings.yaml`
 

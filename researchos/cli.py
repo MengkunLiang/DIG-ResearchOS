@@ -542,6 +542,22 @@ class PreparedRuntime:
                     await result
 
 
+class LLMConfigurationWizardError(RuntimeError):
+    """A setup-wizard failure that must not be rendered as a runtime outage.
+
+    The startup commands call the configuration wizard before the pipeline has
+    started.  A failed connection test or an unexpected wizard exception is a
+    configuration result, not evidence that the workspace, PDF tooling, or
+    pipeline runtime is unavailable.  Keeping that distinction explicit stops
+    higher-level command handlers from collapsing an actionable setup result
+    into the generic runtime-unavailable panel.
+    """
+
+    def __init__(self, message: str, *, exit_code: int = 1) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
 @dataclass
 class _CliSignalController:
     """Route an interrupt to one CLI command instead of every loop task.
@@ -1040,6 +1056,48 @@ def _render_runtime_unavailable(
     )
 
 
+def _render_llm_configuration_wizard_failure(
+    args: argparse.Namespace,
+    error: LLMConfigurationWizardError,
+) -> None:
+    """Report a nested setup failure without mislabelling it as runtime I/O.
+
+    ``configure-llm`` already renders provider-specific failures such as an
+    invalid key.  This follow-up panel only establishes the command boundary:
+    the original run has not started, saved configuration is retained, and the
+    next action is to repair the one model connection.
+    """
+
+    body: list[object] = [Text(str(error))]
+    body.append(Text("当前工作区未被推进；已保存的模型设置不会被回滚。", style="yellow"))
+    body.append(
+        Text(
+            "修正后可直接重新运行原命令；也可先运行 `python -m researchos.cli configure-llm` 单独检查连接。",
+            style="cyan",
+        )
+    )
+    if bool(getattr(args, "verbose", False)) and error.__cause__ is not None:
+        body.append(Text(f"诊断：{error.__cause__}", style="dim"))
+    _cli_console(args).print(
+        Panel(Group(*body), title="模型配置向导未完成", border_style="bright_yellow", expand=True)
+    )
+
+
+def _render_runtime_preparation_failure(
+    args: argparse.Namespace,
+    *,
+    message: str,
+    error: Exception,
+) -> int:
+    """Render the correct startup boundary error and return its exit code."""
+
+    if isinstance(error, LLMConfigurationWizardError):
+        _render_llm_configuration_wizard_failure(args, error)
+        return error.exit_code
+    _render_runtime_unavailable(args, message=message, error=error)
+    return 1
+
+
 def _safe_runtime_failure_detail(error: Exception | str | None) -> str:
     """Turn common startup failures into an actionable, secret-free sentence."""
 
@@ -1079,6 +1137,15 @@ async def _maybe_run_selftest(args: argparse.Namespace, llm_client: LLMClient) -
         )
 
     if getattr(args, "skip_startup_selftest", False):
+        return
+
+    # Selecting "现在配置" already performs the same endpoint selftest after
+    # persisting the missing fields.  A second request immediately afterwards
+    # adds latency and can turn a successful setup into an apparently random
+    # startup failure when a provider briefly throttles or disconnects.  The
+    # marker is scoped to this in-memory CLI invocation, never persisted in
+    # user settings or workspace state.
+    if bool(getattr(args, "_llm_connection_verified_during_setup", False)):
         return
 
     # 对 run / resume / run-task / run-skill，默认执行启动自检；
@@ -1265,6 +1332,31 @@ def _render_llm_configuration_saved(
     _cli_console(args).print(Panel(table, title="模型配置已保存", border_style="green", expand=True))
 
 
+def _configure_llm_args_from_startup(args: argparse.Namespace) -> argparse.Namespace:
+    """Create a full configure command namespace from the active command.
+
+    A prior implementation assembled a small hand-written ``Namespace`` for
+    the nested wizard.  The parser evolves over time, so that object silently
+    lost shared presentation and command fields.  Any helper that later read a
+    newly added field could fail only from the ``run -> 现在配置`` route.  Clone
+    the original parser output instead, then replace only configure-specific
+    values, so direct and nested setup always share the same command contract.
+    """
+
+    configure_values = dict(vars(args))
+    configure_values.update(
+        command="configure-llm",
+        provider=None,
+        api_base=None,
+        api_key=None,
+        model=None,
+        key_storage=None,
+        check=True,
+        model_settings=getattr(args, "model_settings", "config/model_settings.yaml"),
+    )
+    return argparse.Namespace(**configure_values)
+
+
 async def _ensure_llm_is_ready(args: argparse.Namespace, client: LLMClient) -> LLMClient:
     """Guide an interactive user through the one-time LLM setup before a run."""
 
@@ -1285,10 +1377,11 @@ async def _ensure_llm_is_ready(args: argparse.Namespace, client: LLMClient) -> L
         )
     )
     choice = input("请选择 [1/2/3]: ").strip()
+    settings_path = Path(status.get("settings_path") or getattr(args, "model_settings", "config/model_settings.yaml"))
     if choice in {"2", "edit", "e"}:
         _render_llm_manual_edit_instructions(
             args,
-            settings_path=Path(status.get("settings_path") or "config/model_settings.yaml"),
+            settings_path=settings_path,
         )
         input()
     elif choice not in {"1", "configure", "c"}:
@@ -1296,21 +1389,35 @@ async def _ensure_llm_is_ready(args: argparse.Namespace, client: LLMClient) -> L
         raise SystemExit(2)
     await client.aclose()
     if choice in {"1", "configure", "c"}:
-        exit_code = await configure_llm_command(argparse.Namespace(
-            provider=None,
-            api_base=None,
-            api_key=None,
-            model=None,
-            key_storage=None,
-            check=True,
-            no_banner=getattr(args, "no_banner", False),
-            no_color=getattr(args, "no_color", False),
-            quiet=getattr(args, "quiet", False),
-            model_settings=getattr(args, "model_settings", "config/model_settings.yaml"),
-        ))
+        try:
+            exit_code = await configure_llm_command(_configure_llm_args_from_startup(args))
+        except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:
+            raise LLMConfigurationWizardError(
+                "模型配置向导发生内部错误，原工作流尚未启动。"
+            ) from exc
         if exit_code != 0:
-            raise SystemExit(exit_code)
-    refreshed = LLMClient(Path(getattr(args, "model_settings", "config/model_settings.yaml")).resolve())
+            if exit_code == 1:
+                raise LLMConfigurationWizardError(
+                    "模型设置已保存，但连接检查未通过；请根据上一条连接诊断修正 provider、API key、API URL 或 model。",
+                    exit_code=exit_code,
+                )
+            raise LLMConfigurationWizardError(
+                "模型配置尚未完成；原工作流不会在未验证的连接上启动。",
+                exit_code=exit_code,
+            )
+        # ``configure-llm`` has just completed the connection selftest.  The
+        # runtime preparation path must not immediately make an identical
+        # network request and report a transient second failure as startup I/O.
+        args._llm_connection_verified_during_setup = True
+    else:
+        # The manual route may have added an environment-variable reference or
+        # a new .env file while this process was waiting.  Reload it before
+        # constructing the refreshed client, otherwise a correct edit can be
+        # misreported as an incomplete configuration.
+        load_dotenv_for_model_settings(settings_path.resolve())
+    refreshed = LLMClient(settings_path.resolve())
     refreshed_status = refreshed.configuration_status()
     if not refreshed_status.get("ready", False):
         await refreshed.aclose()
@@ -1809,12 +1916,11 @@ async def run_command(args: argparse.Namespace) -> int:
     try:
         prepared = await _prepare_runtime(args, workspace_dir)
     except Exception as exc:
-        _render_runtime_unavailable(
+        return _render_runtime_preparation_failure(
             args,
             message="模型连接或本地依赖暂时不可用。检查模型设置和依赖后重新运行或使用 resume。",
             error=exc,
         )
-        return 1
     _emit_startup_ui(
         args=args,
         runtime_settings=runtime_settings,
@@ -1952,12 +2058,11 @@ async def run_smoke_command(args: argparse.Namespace) -> int:
     try:
         prepared = await _prepare_runtime(args, workspace_dir)
     except Exception as exc:
-        _render_runtime_unavailable(
+        return _render_runtime_preparation_failure(
             args,
             message="模型连接或本地依赖暂时不可用。检查模型设置和依赖后重新运行或使用 resume。",
             error=exc,
         )
-        return 1
     _emit_startup_ui(
         args=args,
         runtime_settings=runtime_settings,
@@ -2859,12 +2964,11 @@ async def run_task_command(args: argparse.Namespace) -> int:
     try:
         prepared = await _prepare_runtime(args, workspace_dir)
     except Exception as exc:
-        _render_runtime_unavailable(
+        return _render_runtime_preparation_failure(
             args,
             message="模型连接或本地依赖暂时不可用。检查模型设置和依赖后重新运行此任务。",
             error=exc,
         )
-        return 1
     _emit_startup_ui(
         args=args,
         runtime_settings=runtime_settings,
@@ -3180,6 +3284,10 @@ async def run_skill_command(args: argparse.Namespace) -> int:
             if prepared is not None:
                 await prepared.aclose()
                 prepared = None
+            if isinstance(exc, LLMConfigurationWizardError):
+                _render_llm_configuration_wizard_failure(args, exc)
+                print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
+                return exc.exit_code
             record_runtime_pause(workspace=workspace_dir, session_id=session_id, error=exc)
             print(
                 "Skill 的材料准备暂时中断，当前进度已保存。修复运行环境或补充材料后，可用同一恢复标识继续。",
@@ -3237,6 +3345,10 @@ async def run_skill_command(args: argparse.Namespace) -> int:
         try:
             prepared = await _prepare_runtime(args, workspace_dir)
         except Exception as exc:
+            if isinstance(exc, LLMConfigurationWizardError):
+                _render_llm_configuration_wizard_failure(args, exc)
+                print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
+                return exc.exit_code
             record_runtime_pause(workspace=workspace_dir, session_id=session_id, error=exc)
             message = (
                 "运行环境暂时不可用，当前进度已保存。检查模型设置或本地依赖后，使用同一 "
