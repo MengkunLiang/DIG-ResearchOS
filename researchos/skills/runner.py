@@ -16,7 +16,7 @@ from ..runtime.orchestrator import AgentRunner
 from ..tools.human_gate import HumanInterface
 from ..tools.registry import ToolRegistry
 from .agent import SkillAgent
-from .contracts import SkillInteraction
+from .contracts import SkillInteraction, parse_skill_tool_call_budget
 from .intake import SkillIntakeAgent
 from .loader import Skill
 
@@ -41,6 +41,7 @@ async def run_skill(
     selected_inputs: dict[str, Path] | None = None,
     workspace_mode: str = "standalone",
     intake_packet_path: str = "",
+    resume: bool = False,
 ) -> AgentResult:
     """在当前 workspace 中执行一个 skill。"""
     agent = SkillAgent(
@@ -66,8 +67,20 @@ async def run_skill(
                 key: str(path.relative_to(workspace)) if path.is_relative_to(workspace) else str(path)
                 for key, path in (selected_inputs or {}).items()
             },
+            # This is an opt-in operation safety boundary declared by the
+            # Skill itself.  It is enforced by AgentRunner before remote calls
+            # execute, rather than hoping the model remembers a prose limit.
+            "skill_tool_call_budget": parse_skill_tool_call_budget(skill.metadata).as_runtime_dict(),
         },
     )
+    if resume and outputs_expected and all(path.exists() for path in outputs_expected.values()):
+        # A resumed Skill can carry outputs written by an older prompt or
+        # runtime version. Validate them before asking the model to restart
+        # discovery; a failure becomes a focused repair context, not a reason
+        # to blindly overwrite source-backed work or spend another search pass.
+        valid, validation_error = agent.validate_outputs(ctx)
+        if not valid and validation_error:
+            ctx.extra["skill_resume_validation_error"] = str(validation_error)
     runner = AgentRunner(
         agent,
         tool_registry,

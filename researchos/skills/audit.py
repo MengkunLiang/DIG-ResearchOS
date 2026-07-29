@@ -14,6 +14,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import re
+import json
 import subprocess
 import sys
 import tempfile
@@ -298,11 +299,166 @@ def _audit_managed_route(
         _record_issue(record, "managed_route_not_actionable", "direct-run refusal did not include a safe next command")
 
 
+def _audit_standalone_initial_launch(
+    *,
+    skill_dir: Path,
+    record: dict[str, Any],
+    repo_root: Path,
+    workspace: Path,
+) -> None:
+    """Exercise the first real user CLI turn without allowing an LLM call.
+
+    A user can choose a Skill before they know its task wording or exact input
+    path.  This audit therefore calls ``run-skill`` with an empty request and
+    a non-interactive terminal, then verifies that the durable session is a
+    recoverable ``WAITING_INPUT`` state rather than a provider attempt, an
+    ambiguous failure, or a fake completion.  File-requiring Skills receive a
+    second pass with a stated request so their *actual* missing-material screen
+    is checked too.  Zero-required-input Skills are intentionally not forced
+    through that second pass: it would start their real LLM workflow and no
+    longer be an isolated no-model interaction audit.
+    """
+
+    skill = load_skill(skill_dir)
+    interaction = parse_skill_interaction(skill.metadata)
+    if interaction is None or interaction.mode != "guided":
+        _record_issue(record, "launch_requires_guided_interaction", "standalone launch audit requires guided interaction")
+        return
+
+    initial_workspace = workspace / "initial" / skill.name
+    initial_workspace.mkdir(parents=True, exist_ok=True)
+    completed = _run_skill_launch_command(
+        repo_root=repo_root,
+        skill_name=skill.name,
+        workspace=initial_workspace,
+        request=None,
+    )
+    record["initial_launch_checked"] = True
+    _assert_waiting_input_launch(
+        completed=completed,
+        skill_name=skill.name,
+        workspace=initial_workspace,
+        record=record,
+        expect_request_ready=not interaction.request_required,
+        expect_missing_material=bool(interaction.required_inputs),
+    )
+
+    if not interaction.required_inputs:
+        record["live_execution_candidate"] = True
+        return
+
+    requested_workspace = workspace / "request_without_files" / skill.name
+    requested_workspace.mkdir(parents=True, exist_ok=True)
+    completed = _run_skill_launch_command(
+        repo_root=repo_root,
+        skill_name=skill.name,
+        workspace=requested_workspace,
+        request="这是一次隔离的用户路径测试；请先显示需要补充的文件材料。",
+    )
+    record["request_without_files_checked"] = True
+    _assert_waiting_input_launch(
+        completed=completed,
+        skill_name=skill.name,
+        workspace=requested_workspace,
+        record=record,
+        expect_request_ready=True,
+        expect_missing_material=True,
+    )
+
+
+def _run_skill_launch_command(
+    *,
+    repo_root: Path,
+    skill_name: str,
+    workspace: Path,
+    request: str | None,
+) -> subprocess.CompletedProcess[str]:
+    """Run a bounded initial CLI launch in an isolated temporary workspace."""
+
+    command = [
+        sys.executable,
+        "-m",
+        "researchos.cli",
+        "run-skill",
+        skill_name,
+    ]
+    if request:
+        command.append(request)
+    command.extend(
+        [
+            "--workspace",
+            str(workspace),
+            "--non-interactive",
+            "--no-banner",
+            "--no-color",
+        ]
+    )
+    return subprocess.run(
+        command,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+
+def _assert_waiting_input_launch(
+    *,
+    completed: subprocess.CompletedProcess[str],
+    skill_name: str,
+    workspace: Path,
+    record: dict[str, Any],
+    expect_request_ready: bool,
+    expect_missing_material: bool,
+) -> None:
+    """Require the user-facing safe-pause semantics of one initial launch."""
+
+    if completed.returncode != 2:
+        _record_issue(
+            record,
+            "initial_launch_not_waiting_input",
+            f"expected exit 2 before model execution, received {completed.returncode}",
+        )
+        return
+    output = completed.stdout
+    missing_copy = "待补充 · 必需" if expect_request_ready else "还需要你说明任务"
+    required_copy = (f"Skill 准备 · {skill_name}", missing_copy, "恢复命令：")
+    if any(copy not in output for copy in required_copy):
+        _record_issue(
+            record,
+            "initial_launch_copy_incomplete",
+            "initial CLI panel did not clearly show the pending task/material and resume route",
+        )
+    session_path = workspace / "_runtime" / "skill_sessions" / f"{skill_name}.json"
+    try:
+        payload = json.loads(session_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 - a missing durable session is a user-visible regression
+        _record_issue(record, "initial_launch_session_missing", str(exc))
+        return
+    readiness = payload.get("readiness") if isinstance(payload.get("readiness"), dict) else {}
+    if payload.get("status") != "WAITING_INPUT":
+        _record_issue(record, "initial_launch_session_status", f"expected WAITING_INPUT, got {payload.get('status')!r}")
+    if readiness.get("request_ready") is not expect_request_ready:
+        _record_issue(
+            record,
+            "initial_launch_request_state",
+            f"expected request_ready={expect_request_ready}, got {readiness.get('request_ready')!r}",
+        )
+    if expect_missing_material and not any(
+        item.get("state") == "missing"
+        for item in readiness.get("inputs", [])
+        if isinstance(item, dict)
+    ):
+        _record_issue(record, "initial_launch_missing_input_not_recorded", "request launch did not preserve a missing required input")
+
+
 def audit_skill_suite(
     repo_root: Path,
     *,
     check_script_help: bool = False,
     check_interactions: bool = False,
+    check_user_journeys: bool = False,
 ) -> dict[str, Any]:
     """Audit all repository-owned public and external-executor Skill packages.
 
@@ -349,7 +505,7 @@ def audit_skill_suite(
         if not record.get("errors"):
             _audit_execution_boundary(record=record)
 
-    if check_interactions:
+    if check_interactions or check_user_journeys:
         # The audit creates one isolated empty workspace.  Readiness checks are
         # non-mutating; subprocesses only render descriptions or reject managed
         # routes before workspace initialization and model setup.
@@ -384,6 +540,7 @@ def audit_skill_suite(
                         repo_root=root,
                         workspace=workspace,
                         skills_root=skills_root,
+                        check_user_journeys=check_user_journeys,
                     ): record
                     for record, job_kind, skill_dir, skills_root in jobs
                 }
@@ -432,6 +589,15 @@ def audit_skill_suite(
             "managed_routes_checked": sum(
                 1 for record in records if record.get("managed_route_checked") is True
             ),
+            "initial_launches_checked": sum(
+                1 for record in records if record.get("initial_launch_checked") is True
+            ),
+            "request_without_files_checked": sum(
+                1 for record in records if record.get("request_without_files_checked") is True
+            ),
+            "live_execution_candidates": sum(
+                1 for record in records if record.get("live_execution_candidate") is True
+            ),
         },
         "errors": suite_errors,
         "skills": records,
@@ -446,6 +612,7 @@ def _run_interaction_audit_job(
     repo_root: Path,
     workspace: Path,
     skills_root: Path | None,
+    check_user_journeys: bool,
 ) -> None:
     """Dispatch one independent no-model interaction audit job."""
 
@@ -456,6 +623,13 @@ def _run_interaction_audit_job(
             repo_root=repo_root,
             workspace=workspace,
         )
+        if check_user_journeys:
+            _audit_standalone_initial_launch(
+                skill_dir=skill_dir,
+                record=record,
+                repo_root=repo_root,
+                workspace=workspace,
+            )
         return
     _audit_managed_route(
         skill_dir=skill_dir,
@@ -493,6 +667,13 @@ def render_skill_suite_audit(report: dict[str, Any]) -> str:
             f"{summary.get('interaction_contracts_checked', 0)} readiness, "
             f"{summary.get('description_commands_checked', 0)} descriptions, "
             f"{summary.get('managed_routes_checked', 0)} managed routes"
+        )
+    if summary.get("initial_launches_checked", 0):
+        lines.append(
+            "User-journey launch checks: "
+            f"{summary.get('initial_launches_checked', 0)} initial screens, "
+            f"{summary.get('request_without_files_checked', 0)} stated-request material screens, "
+            f"{summary.get('live_execution_candidates', 0)} zero-file live-execution candidates"
         )
     for issue in report.get("errors", []):
         lines.append(f"- {issue.get('code')}: {issue.get('message')}")

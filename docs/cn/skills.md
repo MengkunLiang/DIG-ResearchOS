@@ -33,6 +33,10 @@ python -m researchos.cli audit-skills --check-script-help --no-banner
 # 额外逐项渲染 40 个独立 Skill 的说明页并检查空工作区就绪状态；
 # 同时验证 2 个 pipeline 模块与 13 个 executor 模板都会拒绝直接运行并给出安全入口
 python -m researchos.cli audit-skills --check-interactions --no-banner
+
+# 进一步从用户启动视角运行全部 40 个独立 Skill 的无模型首轮路径：
+# 空请求、已说明任务但缺文件、可恢复会话与恢复命令；不会读取或写入正式 workspace
+python -m researchos.cli audit-skills --check-user-journeys --no-banner
 ```
 
 以下约束是刻意区分的：`scripts/_*.py` 是被命令入口导入的私有支持模块，不要求也不伪装为可直接调用的 CLI；其余 `scripts/*.py` 必须能够通过 Python 编译并在 `--check-script-help` 下展示帮助。审计还会构建正常的内置工具和公共 Skill ToolRegistry，故 capability profile 或 frontmatter 中引用了未注册工具时，会在模型启动前被拒绝，而不是运行到一半才出现 `Tool ... not registered`。
@@ -60,6 +64,12 @@ python -m researchos.cli run-skill pdf-note-card \
 在引导式技能被列出或运行之前，ResearchOS 会验证其约定中的每个输入路径是否可读，以及每个声明的输出在该技能的工作区权限下是否可写。运行时向技能显示的能力边界与之完全相同。这是有意为之的严格限制：公共技能不得声明一个随后会变成 `access_denied` 的文件位置。
 
 当正在运行的技能识别到语义上的证据缺口时，它会在向人类提问前写入 `user_inputs/<skill>/_followup_request.md`。它不得猜测缺失的来源、出处、引用、实验或结果信息。
+
+### 有界检索与定向恢复
+
+Skill 可在 frontmatter 中选择性声明共享的 `tool_call_groups`（例如一组发现检索最多五次）以及 `remote_retrieval_policy.stop_on_rate_limit`。这不是全局步数或 token 限制：它只在该 Skill 明确声明的远程操作上生效。达到共享预算时，runtime 会拒绝同组后续调用，并要求 Skill 利用已返回的来源数据写出诚实的 partial output；某个声明的远程源返回 `429` / `rate_limited` 时，`stop_on_rate_limit` 会在当前运行内封存后续声明远程调用。已成功取得的资料不会被删除，也不会被伪装为完整覆盖。
+
+`run-skill --resume` 会先验证已有的声明输出。若输出文件存在但当前契约发现标识符、结构或跨文件统计不一致，runtime 将确切错误作为定向修复上下文传给 Skill：它应先读取当前文件、只改受影响内容、再重新完成校验，而不是重新检索、重写无关材料或把暂停状态伪装成成功。需要人工回答的非交互运行则保存为 `WAITING_HUMAN`；普通中断保存为 `PAUSED`，两者都不再触发“最终输出缺失”的假失败。
 
 ### 远程论文来源和暂停语义
 
@@ -151,7 +161,7 @@ python -m researchos.cli run-skill pdf-note-card \
 
 T4 使用职责分离的 Generator、Scorer 和 Evolver，Gate1 后的状态路径取决于研究者确认的操作。选择已经准备好的 Candidate 走 `T4 -> T4-GATE1 -> T4.5`；演化、定向优化、重跑 Route 或确认后的组合走 `T4 -> T4-GATE1 -> T4`，完成新版本后再次回到 Gate1；查看和比较则是留在 Gate1 的只读操作。Generator 形成证据校准但可创造性发散的 Candidate；Scorer 独立评估已脱敏的 Candidate，绝不生成 Idea；Evolver 只能创建受 plan 约束的 Mutation Child 或通过 Compatibility Check 的 Crossover Child。证据不是封闭的 Idea 空间：正常 Generator Route 可以使用通用学术知识、反事实推演和结构性跨域类比，只要相关内容始终明确为 conjectural、需要验证。若 Workspace 中没有可辩护的结构性迁移关系，Bridge Route 可以返回带 escape-hatch record 的 `unsupported`。
 
-当研究者需要安全地进入原生 T4 时，使用 `t4-evolution`。它会检查当前的 Evidence Index、pre-run confirmation、Population、Portfolio 和 resume 状态，再用研究者能理解的语言说明下一步是新建 P0、恢复未完成的 Route 或评分批次、等待 Gate1，还是在确认选择后进入 T4.5。该 Skill 只写可读的启动说明，绝不编辑原生 T4 产物。新进入 T4 使用 `python -m researchos.cli run --workspace <workspace> --from-task T4`；中断或等待中的运行使用 `python -m researchos.cli resume --workspace <workspace>`。同一 workspace 不能并发运行多个命令。
+当研究者需要安全地进入原生 T4 时，使用 `t4-evolution`。它会检查当前的 Evidence Index、pre-run confirmation、Population、Portfolio 和 resume 状态，再用研究者能理解的语言说明下一步是新建 P0、恢复未完成的 Route 或评分批次、等待 Gate1，还是在确认选择后进入 T4.5。该 Skill 只写可读的启动说明，绝不编辑原生 T4 产物。空 workspace 只能用 `python -m researchos.cli run --workspace <workspace>` 从配置的初始状态开始，不能伪装成已经具备 T4 前置材料；若要新建 workspace、从另一项目复制声明的上游材料并从 T4 开始，使用 `python -m researchos.cli run --workspace <new-workspace> --from <source-workspace> --start-task T4`。中断或等待中的 T4 使用 `python -m researchos.cli resume --workspace <workspace>`，已经位于 `T4-GATE1` 时同样使用 resume 以重新展示选择。`run --from-task ...` 不是有效命令。同一 workspace 不能并发运行多个命令。
 
 T4 把语义格式恢复与科研安全分开处理，并统一记录 `valid`、`repairable`、`degraded`、`blocked` 四种结果。`blocked` 仅保护 Hard Invariant：来源/证据权限越界、虚假或不可追溯引用、Candidate/Parent/Plan 谱系冲突、ID 覆盖、fingerprint 或工作区状态损坏，以及 Legacy 覆盖风险。Markdown fence、YAML、字段别名、对象/列表外层差异、非核心字段缺失、一个 Route 或评分调用失败、数量不足和 Crossover 不兼容不会直接终止整轮；它们依次经过 tolerant extraction、确定性归一、schema-only repair、定向语义 repair 和重新验证，仍不完整时以 `degraded` 连续运行并留下诊断。
 

@@ -235,6 +235,116 @@ class SkillReadiness:
         }
 
 
+@dataclass(frozen=True)
+class SkillToolCallGroup:
+    """One opt-in, runtime-enforced budget for related Skill tools.
+
+    Skills normally remain free to choose their own evidence workflow.  A
+    narrow group budget is useful only when repeated remote lookups would make
+    a partial but already useful answer slower, more expensive, or less
+    reliable.  It is deliberately separate from the Agent step/token budget:
+    it limits a named operation family, never a research conclusion.
+    """
+
+    label: str
+    tools: tuple[str, ...]
+    max_calls: int
+
+
+@dataclass(frozen=True)
+class SkillToolCallBudget:
+    """Parsed opt-in operation limits passed from a Skill to the runtime."""
+
+    per_tool: dict[str, int]
+    groups: tuple[SkillToolCallGroup, ...]
+    stop_remote_on_rate_limit: bool = False
+    remote_tools: tuple[str, ...] = ()
+
+    def as_runtime_dict(self) -> dict[str, object]:
+        """Return JSON-like state safe to place in an execution context."""
+
+        return {
+            "per_tool": dict(self.per_tool),
+            "groups": [
+                {"label": group.label, "tools": list(group.tools), "max_calls": group.max_calls}
+                for group in self.groups
+            ],
+            "stop_remote_on_rate_limit": self.stop_remote_on_rate_limit,
+            "remote_tools": list(self.remote_tools),
+        }
+
+
+def parse_skill_tool_call_budget(metadata: Mapping[str, Any]) -> SkillToolCallBudget:
+    """Parse optional, bounded tool-call budgets from Skill frontmatter.
+
+    The contract uses ``tool_call_limits`` for one tool and
+    ``tool_call_groups`` for a shared budget across related tools.  Both are
+    optional.  Parsing occurs at discovery time, so a malformed budget can
+    never first surface after an expensive model request.
+    """
+
+    raw_per_tool = metadata.get("tool_call_limits", {})
+    if raw_per_tool is None:
+        raw_per_tool = {}
+    if not isinstance(raw_per_tool, Mapping):
+        raise ConfigurationError("tool_call_limits must be a YAML object mapping tool names to positive integers")
+    per_tool: dict[str, int] = {}
+    for raw_name, raw_limit in raw_per_tool.items():
+        name = _as_string(raw_name, label="tool_call_limits key")
+        if isinstance(raw_limit, bool) or not isinstance(raw_limit, int) or not 1 <= raw_limit <= 10_000:
+            raise ConfigurationError(f"tool_call_limits.{name} must be an integer from 1 to 10000")
+        per_tool[name] = raw_limit
+
+    raw_groups = metadata.get("tool_call_groups", {})
+    if raw_groups is None:
+        raw_groups = {}
+    if not isinstance(raw_groups, Mapping):
+        raise ConfigurationError("tool_call_groups must be a YAML object")
+    groups: list[SkillToolCallGroup] = []
+    for raw_label, raw_group in raw_groups.items():
+        label = _as_string(raw_label, label="tool_call_groups key")
+        if not _IDENTIFIER_RE.fullmatch(label):
+            raise ConfigurationError(
+                "tool_call_groups keys must use lowercase letters, digits, '_' or '-': "
+                f"{label!r}"
+            )
+        item = _as_mapping(raw_group, label=f"tool_call_groups.{label}")
+        raw_tools = item.get("tools")
+        if not isinstance(raw_tools, list) or not raw_tools:
+            raise ConfigurationError(f"tool_call_groups.{label}.tools must be a non-empty list of tool names")
+        tools: list[str] = []
+        for raw_tool in raw_tools:
+            tool_name = _as_string(raw_tool, label=f"tool_call_groups.{label}.tools")
+            if tool_name not in tools:
+                tools.append(tool_name)
+        raw_limit = item.get("max_calls")
+        if isinstance(raw_limit, bool) or not isinstance(raw_limit, int) or not 1 <= raw_limit <= 10_000:
+            raise ConfigurationError(f"tool_call_groups.{label}.max_calls must be an integer from 1 to 10000")
+        groups.append(SkillToolCallGroup(label=label, tools=tuple(tools), max_calls=raw_limit))
+    raw_remote_policy = metadata.get("remote_retrieval_policy", {})
+    if raw_remote_policy is None:
+        raw_remote_policy = {}
+    if not isinstance(raw_remote_policy, Mapping):
+        raise ConfigurationError("remote_retrieval_policy must be a YAML object")
+    stop_remote_on_rate_limit = raw_remote_policy.get("stop_on_rate_limit", False)
+    if not isinstance(stop_remote_on_rate_limit, bool):
+        raise ConfigurationError("remote_retrieval_policy.stop_on_rate_limit must be a boolean")
+    raw_remote_tools = raw_remote_policy.get("tools", [])
+    if not isinstance(raw_remote_tools, list) or not all(isinstance(item, str) and item.strip() for item in raw_remote_tools):
+        raise ConfigurationError("remote_retrieval_policy.tools must be a list of non-empty tool names")
+    remote_tools = tuple(dict.fromkeys(item.strip() for item in raw_remote_tools))
+    if stop_remote_on_rate_limit and not remote_tools:
+        raise ConfigurationError(
+            "remote_retrieval_policy.tools must name the remote tools to block when stop_on_rate_limit is true"
+        )
+    return SkillToolCallBudget(
+        per_tool=per_tool,
+        groups=tuple(groups),
+        stop_remote_on_rate_limit=stop_remote_on_rate_limit,
+        remote_tools=remote_tools,
+    )
+
+
 def _parse_input_requirement(raw: Any, *, required: bool, label: str) -> SkillInputRequirement:
     item = _as_mapping(raw, label=label)
     key = _as_string(item.get("id"), label=f"{label}.id")
@@ -398,6 +508,7 @@ def validate_skill_metadata(metadata: Mapping[str, Any], *, source: Path) -> Non
 
     resolve_capability_profiles(str(metadata.get("name") or source.parent.name), metadata)
     skill_execution_owner(metadata)
+    parse_skill_tool_call_budget(metadata)
     interaction = parse_skill_interaction(metadata)
     # Parse the optional integrated-workflow declaration during discovery so a
     # malformed phase list cannot become a late runtime failure after an LLM

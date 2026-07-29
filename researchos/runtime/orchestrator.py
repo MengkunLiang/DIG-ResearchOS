@@ -863,6 +863,7 @@ class AgentRunner:
             max_wall_seconds=effective_wall_seconds,
             unlimited_budget=eff.unlimited_budget,
         )
+        skill_tool_budget = self._new_skill_tool_budget_state(ctx)
         trace_file: Path | None = None
         if self.runtime_settings.debug.enable_trace:
             trace_file = self.runtime_settings.traces_dir(ctx.workspace_dir) / f"{ctx.run_id}.jsonl"
@@ -1722,6 +1723,7 @@ class AgentRunner:
                                 step=budget.steps,
                                 tool_failure_cache=tool_failure_cache,
                                 run_logger=run_logger,
+                                skill_tool_budget=skill_tool_budget,
                             )
                         )
                 else:
@@ -1745,6 +1747,7 @@ class AgentRunner:
                                 step=budget.steps,
                                 tool_failure_cache=tool_failure_cache,
                                 run_logger=run_logger,
+                                skill_tool_budget=skill_tool_budget,
                             )
                             for tc in assistant_msg.tool_calls
                         ]
@@ -2524,7 +2527,226 @@ class AgentRunner:
         # concurrent.
         if sum(call.name == "latex_compile" for call in tool_calls) > 1:
             return True
+        # A Skill-owned tool budget is stateful across one run. Execute its
+        # calls serially so two calls in the same model response cannot race
+        # past a shared discovery/lookup cap.
+        if isinstance(ctx.extra.get("skill_tool_call_budget"), dict) and tool_calls:
+            return True
         return ctx.task_id == "T4" and bool(tool_calls)
+
+    @staticmethod
+    def _new_skill_tool_budget_state(ctx: ExecutionContext) -> dict[str, object] | None:
+        """Build mutable counters for an already-validated Skill budget.
+
+        Skill metadata is validated at discovery. This defensive parser keeps
+        programmatic callers harmless if they construct an ExecutionContext by
+        hand: malformed optional limits simply do not alter normal tool access.
+        """
+
+        raw = ctx.extra.get("skill_tool_call_budget")
+        if not isinstance(raw, dict):
+            return None
+        raw_per_tool = raw.get("per_tool")
+        per_tool = {
+            str(name): int(limit)
+            for name, limit in raw_per_tool.items()
+            if isinstance(name, str) and isinstance(limit, int) and not isinstance(limit, bool) and limit > 0
+        } if isinstance(raw_per_tool, dict) else {}
+        groups: list[dict[str, object]] = []
+        raw_groups = raw.get("groups")
+        if isinstance(raw_groups, list):
+            for raw_group in raw_groups:
+                if not isinstance(raw_group, dict):
+                    continue
+                label = str(raw_group.get("label") or "").strip()
+                raw_tools = raw_group.get("tools")
+                raw_limit = raw_group.get("max_calls")
+                tools = tuple(
+                    str(name).strip()
+                    for name in raw_tools
+                    if isinstance(name, str) and str(name).strip()
+                ) if isinstance(raw_tools, list) else ()
+                if label and tools and isinstance(raw_limit, int) and not isinstance(raw_limit, bool) and raw_limit > 0:
+                    groups.append({"label": label, "tools": tools, "max_calls": raw_limit})
+        if not per_tool and not groups:
+            # A rate-limit boundary can be useful without a numeric call cap.
+            # Keep building state when that independent policy is declared.
+            if not bool(raw.get("stop_remote_on_rate_limit")):
+                return None
+        raw_remote_tools = raw.get("remote_tools")
+        remote_tools = tuple(
+            str(name).strip()
+            for name in raw_remote_tools
+            if isinstance(name, str) and str(name).strip()
+        ) if isinstance(raw_remote_tools, list) else ()
+        return {
+            "per_tool": per_tool,
+            "groups": groups,
+            "tool_counts": {},
+            "group_counts": {},
+            "stop_remote_on_rate_limit": bool(raw.get("stop_remote_on_rate_limit")),
+            "remote_tools": remote_tools,
+            "remote_stop": {},
+        }
+
+    @staticmethod
+    def _consume_skill_tool_budget(
+        *,
+        tool_name: str,
+        state: dict[str, object] | None,
+    ) -> tuple[bool, str, dict[str, object]]:
+        """Reserve one declared Skill operation or explain why it is blocked.
+
+        A rejected call is an explicit evidence boundary: the model must turn
+        material already obtained into its declared output rather than retrying
+        a rate-limited or duplicate source request.
+        """
+
+        if state is None:
+            return True, "", {}
+        remote_tools = state.get("remote_tools")
+        remote_stop = state.get("remote_stop")
+        if (
+            bool(state.get("stop_remote_on_rate_limit"))
+            and isinstance(remote_tools, tuple)
+            and tool_name in remote_tools
+            and isinstance(remote_stop, dict)
+            and remote_stop
+        ):
+            trigger_tool = str(remote_stop.get("trigger_tool") or "another remote tool")
+            trigger_signal = str(remote_stop.get("signal") or "rate limit")
+            return False, (
+                "SKILL_REMOTE_RETRIEVAL_STOPPED: "
+                f"`{trigger_tool}` reported {trigger_signal}; this Skill stops all further remote retrieval in this run. "
+                "Do not try another source. Use already returned source data, record the failure boundary, write the partial declared outputs, then finish."
+            ), {
+                "skill_remote_retrieval_stopped": True,
+                "trigger_tool": trigger_tool,
+                "trigger_signal": trigger_signal,
+                "blocked_tool": tool_name,
+            }
+        raw_tool_counts = state.get("tool_counts")
+        tool_counts = raw_tool_counts if isinstance(raw_tool_counts, dict) else {}
+        raw_group_counts = state.get("group_counts")
+        group_counts = raw_group_counts if isinstance(raw_group_counts, dict) else {}
+        per_tool = state.get("per_tool")
+        if isinstance(per_tool, dict):
+            limit = per_tool.get(tool_name)
+            used = int(tool_counts.get(tool_name, 0) or 0)
+            if isinstance(limit, int) and used >= limit:
+                return False, (
+                    "SKILL_TOOL_BUDGET_REACHED: "
+                    f"`{tool_name}` already used {used}/{limit} allowed call(s). Do not retry it. "
+                    "Use prior tool data, record the retrieval boundary in the declared outputs, then finish."
+                ), {
+                    "skill_tool_budget_reached": True,
+                    "budget_kind": "tool",
+                    "tool_name": tool_name,
+                    "used": used,
+                    "limit": limit,
+                }
+        groups = state.get("groups")
+        matching_groups = [
+            group
+            for group in (groups if isinstance(groups, list) else [])
+            if isinstance(group, dict) and tool_name in group.get("tools", ())
+        ]
+        for group in matching_groups:
+            label = str(group.get("label") or "tool_group")
+            limit = group.get("max_calls")
+            used = int(group_counts.get(label, 0) or 0)
+            if isinstance(limit, int) and used >= limit:
+                return False, (
+                    "SKILL_TOOL_BUDGET_REACHED: "
+                    f"shared budget `{label}` already used {used}/{limit} call(s). Do not try another tool in this group. "
+                    "Use prior tool data, record the retrieval boundary in the declared outputs, then finish."
+                ), {
+                    "skill_tool_budget_reached": True,
+                    "budget_kind": "group",
+                    "budget_group": label,
+                    "tool_name": tool_name,
+                    "used": used,
+                    "limit": limit,
+                }
+        if isinstance(per_tool, dict) and isinstance(per_tool.get(tool_name), int):
+            tool_counts[tool_name] = int(tool_counts.get(tool_name, 0) or 0) + 1
+        for group in matching_groups:
+            label = str(group.get("label") or "tool_group")
+            group_counts[label] = int(group_counts.get(label, 0) or 0) + 1
+        state["tool_counts"] = tool_counts
+        state["group_counts"] = group_counts
+        return True, "", {}
+
+    @staticmethod
+    def _observe_skill_remote_rate_limit(
+        *,
+        tool_name: str,
+        result: ToolResult,
+        state: dict[str, object] | None,
+    ) -> None:
+        """Close a Skill's remote boundary after explicit or embedded 429 data.
+
+        Multi-source retrieval can return useful papers while one provider is
+        already rate-limited, so checking only ``ToolResult.ok`` would miss the
+        condition that its Skill contract promised to respect.  Inspect the
+        narrow result/error surface recursively for a rate-limit marker; the
+        next remote call is then rejected before it reaches the network.
+        """
+
+        if (
+            state is None
+            or not bool(state.get("stop_remote_on_rate_limit"))
+            or tool_name not in state.get("remote_tools", ())
+            or state.get("remote_stop")
+        ):
+            return
+
+        def find_rate_limit(value: object) -> str | None:
+            if isinstance(value, str):
+                normalized = value.casefold()
+                if "rate_limit" in normalized or "rate limit" in normalized or "http_429" in normalized or "429" == normalized:
+                    return value
+                return None
+            if isinstance(value, dict):
+                for key, nested in value.items():
+                    key_text = str(key).casefold()
+                    if key_text in {"status", "error", "failure_class", "http_status"}:
+                        marker = find_rate_limit(nested)
+                        if marker:
+                            return marker
+                    elif key_text in {
+                        "source_stats",
+                        "source_failures",
+                        "failed_sources",
+                        "failures",
+                        "errors",
+                        "providers",
+                        "details",
+                    }:
+                        marker = find_rate_limit(nested)
+                        if marker:
+                            return marker
+                    elif isinstance(nested, (dict, list)):
+                        # Provider diagnostics are often keyed by provider
+                        # name (for example ``source_stats.openalex``). Walk
+                        # those containers, but never scan arbitrary paper
+                        # title/abstract strings for a coincidental phrase.
+                        marker = find_rate_limit(nested)
+                        if marker:
+                            return marker
+                return None
+            if isinstance(value, list):
+                for nested in value:
+                    marker = find_rate_limit(nested)
+                    if marker:
+                        return marker
+            if isinstance(value, int) and value == 429:
+                return "http_429"
+            return None
+
+        marker = find_rate_limit(result.error) or find_rate_limit(result.data)
+        if marker:
+            state["remote_stop"] = {"trigger_tool": tool_name, "signal": marker}
 
     @staticmethod
     def _t4_artifact_write_order_error(ctx: ExecutionContext, tc: ToolCall) -> str | None:
@@ -7058,6 +7280,7 @@ class AgentRunner:
         budget: BudgetTracker | None = None,
         tool_failure_cache: dict[tuple[str, str], Message] | None = None,
         run_logger: RunLogger | None = None,
+        skill_tool_budget: dict[str, object] | None = None,
     ) -> Message:
         started = time.time()
         tool = tool_map.get(tc.name)
@@ -7078,6 +7301,34 @@ class AgentRunner:
                     content=tool_msg.content,
                     data={},
                     error="unknown_tool",
+                    duration_ms=tool_msg.duration_ms,
+                    metadata=tool_msg.metadata,
+                    step=step,
+                )
+            return tool_msg
+
+        budget_ok, budget_content, budget_data = self._consume_skill_tool_budget(
+            tool_name=tc.name,
+            state=skill_tool_budget,
+        )
+        if not budget_ok:
+            tool_msg = Message.tool(
+                tool_call_id=tc.id,
+                name=tc.name,
+                content=budget_content,
+                is_error=True,
+                step=step,
+                duration_ms=int((time.time() - started) * 1000),
+                metadata={"data": budget_data, "error": "skill_tool_budget_reached"},
+            )
+            if run_logger is not None:
+                run_logger.tool_result(
+                    tc.name,
+                    tc.arguments,
+                    ok=False,
+                    content=tool_msg.content,
+                    data=budget_data,
+                    error="skill_tool_budget_reached",
                     duration_ms=tool_msg.duration_ms,
                     metadata=tool_msg.metadata,
                     step=step,
@@ -7389,6 +7640,11 @@ class AgentRunner:
             tool_name=tc.name,
             tool_arguments=model_dump(parsed),
             result=result,
+        )
+        self._observe_skill_remote_rate_limit(
+            tool_name=tc.name,
+            result=result,
+            state=skill_tool_budget,
         )
         self._record_t2_search_ledger(
             ctx=ctx,
@@ -9911,6 +10167,23 @@ class AgentRunner:
                 ctx=ctx,
                 error=error,
                 base=base,
+            )
+        if (
+            ctx.task_id == "SKILL_literature-evidence-scout"
+            and (
+                "literature-evidence-scout identifier contract failed" in error
+                or "literature-evidence-scout report" in error
+            )
+        ):
+            return (
+                base
+                + "只读取 `literature/skill_evidence_records.json` 和 `literature/skill_evidence_scout.md`，修复保留记录的标识符或报告一致性契约。"
+                "每条保留记录只能复制本轮工具已经返回的 DOI、arXiv ID、OpenAlex ID、Semantic Scholar paperId，"
+                "或这些 ID 对应的 canonical paper landing URL；不得根据标题构造检索 URL、补猜标识符，或保留任何“needs resolution”状态。"
+                "报告中的 `retained_record_count`、稳定标识符记录数量、以及“all N papers”一类总数必须全部等于 JSON 数组长度；"
+                "排除的 title-only lead 不能计入 retained records。"
+                "若已返回数据没有可用稳定标识符，正确修复是把 records 写为 `[]`，并在报告中如实说明检索边界和未保留原因。"
+                "不要继续远程检索来绕过已达到的工具预算；写回两个声明的输出后调用 finish_task。"
             )
         if ctx.task_id != "T4":
             if ctx.task_id == "T4.5":

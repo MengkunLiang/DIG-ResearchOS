@@ -89,7 +89,8 @@ Markdown fences, YAML instead of JSON, known field aliases, a one-item list/obje
 
 | Command | Use | Execution model |
 | --- | --- | --- |
-| `python -m researchos.cli run --workspace <ws> --from-task T4` | Run or enter T4 through the full pipeline | Complete Pipeline Runner and State Machine |
+| `python -m researchos.cli run --workspace <new-ws> --from <source-ws> --start-task T4` | Import declared prerequisites into a new workspace and enter T4 | Complete Pipeline Runner and State Machine |
+| `python -m researchos.cli resume --workspace <ws>` | Resume an existing T4 or T4-GATE1 state | Complete Pipeline Runner and State Machine |
 | `python -m researchos.cli resume --workspace <ws>` | Resume a `PAUSED` or `WAITING_HUMAN` workspace | Re-present a persisted Gate or continue from checkpoint |
 | `python -m researchos.cli run-task T4 --workspace <ws>` | Isolated T4 debugging | SingleTask Runner, including pre-run and recoverable Gate handling |
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 import json
+import re
 
 from jinja2 import StrictUndefined, Template
 
@@ -11,6 +12,7 @@ from ..runtime.errors import ConfigurationError
 from ..runtime.agent import Agent, AgentSpec, ExecutionContext
 from .loader import Skill
 from .tool_aliases import translate_tool_names
+from .contracts import parse_skill_tool_call_budget
 from .workflow import parse_skill_workflow, workflow_prompt_block
 
 
@@ -81,6 +83,7 @@ class SkillAgent(Agent):
         self.use_jinja = bool(metadata.get("use-jinja", False))
         self.translation_warnings = warnings
         self.workflow = workflow
+        self.tool_call_budget = parse_skill_tool_call_budget(metadata)
 
     def _bundled_reference_block(self) -> str:
         """Expose repo-bundled Skill references without granting workspace file access."""
@@ -155,6 +158,38 @@ class SkillAgent(Agent):
             "- Start with the verified inputs listed below. Do not probe unrelated workspace paths just because they are conventional names. "
             "When a needed material is absent, request it through the guided follow-up protocol instead of attempting an unauthorized read.\n\n"
         )
+        if self.tool_call_budget.per_tool or self.tool_call_budget.groups:
+            budget_lines = []
+            for name, limit in self.tool_call_budget.per_tool.items():
+                budget_lines.append(f"- `{name}`: at most {limit} call(s)")
+            for group in self.tool_call_budget.groups:
+                budget_lines.append(
+                    f"- `{group.label}`: at most {group.max_calls} call(s) shared by "
+                    + ", ".join(f"`{name}`" for name in group.tools)
+                )
+            header += (
+                "# Runtime Tool Budget\n"
+                + "\n".join(budget_lines)
+                + "\n- When a tool reports `SKILL_TOOL_BUDGET_REACHED`, do not retry any tool in that budget. "
+                "Use already returned source data, write the required outputs honestly (an empty retained-record list is allowed), and call finish_task.\n\n"
+            )
+        if self.tool_call_budget.stop_remote_on_rate_limit:
+            header += (
+                "# Remote Retrieval Failure Boundary\n"
+                "- If any declared remote tool reports a rate limit, do not call another remote retrieval tool in this run. "
+                "The runtime will enforce this boundary. Preserve the successful source records, record the unavailable sources, "
+                "write the partial declared outputs, and call finish_task.\n\n"
+            )
+        resume_validation_error = str(ctx.extra.get("skill_resume_validation_error") or "").strip()
+        if resume_validation_error:
+            header += (
+                "# Resumed Output Repair\n"
+                "- The existing declared outputs failed their current validation before this resumed run: "
+                f"{resume_validation_error}\n"
+                "- This is a focused repair, not a fresh discovery pass. Read the named existing output first, preserve valid source-backed material, "
+                "repair the smallest affected content, then call finish_task so the full current validation reruns.\n"
+                "- Do not call remote retrieval merely to repair an output-contract or consistency error.\n\n"
+            )
         session_path = ctx.extra.get("skill_session_path")
         selected_inputs = ctx.extra.get("skill_selected_inputs")
         if session_path:
@@ -188,6 +223,19 @@ class SkillAgent(Agent):
             "- If the user asks for a plan but the detail is not yet sourced, describe it to the user as “待验证提议” or “暂未确定”; reserve raw values such as `proposed_not_verified` and `unknown` for structured files. State what material would resolve it. Do not turn a plausible convention into an existing protocol.\n"
             "- Never infer experimental details from the project topic, a method name, an adjacent paper, a generic benchmark convention, or an earlier example. Missing protocol inputs require a focused human question, not a fabricated default.\n\n"
         )
+        if ctx.outputs_expected:
+            output_lines = "\n".join(
+                f"  - {name}: {path.relative_to(ctx.workspace_dir)}"
+                for name, path in ctx.outputs_expected.items()
+            )
+            header += (
+                "# Required Output Contract\n"
+                "- Before calling finish_task, write every required deliverable at exactly these paths:\n"
+                f"{output_lines}\n"
+                "- Do not substitute generic, legacy, or similarly named files for these paths. "
+                "An auxiliary log is allowed only after the required deliverables exist and must not replace them.\n"
+                "- If evidence is partial or a remote source fails, preserve the successful evidence and state the limitation inside the declared outputs; do not defer their creation while searching for an ideal result.\n\n"
+            )
         header += (
             "# 面向用户的沟通规则\n"
             "- 默认使用清楚、自然的中文。先说明已经检查了什么、当前能做什么、还需要什么，再给出下一步。\n"
@@ -207,6 +255,13 @@ class SkillAgent(Agent):
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         # CLI run-skill 时，用户请求会放在 ctx.extra["user_request"]。
+        resume_validation_error = str(ctx.extra.get("skill_resume_validation_error") or "").strip()
+        if resume_validation_error:
+            return (
+                "这是一次已存在输出的定向恢复修复。先读取当前声明的输出文件，"
+                "只修复以下校验问题，不要重新开始检索或重做无关工作："
+                + resume_validation_error
+            )
         user_request = ctx.extra.get("user_request")
         if user_request:
             return str(user_request)
@@ -216,8 +271,13 @@ class SkillAgent(Agent):
         """Require a durable evidence-aware manifest from integrated Skills."""
 
         ok, error = super().validate_outputs(ctx)
-        if not ok or self.workflow is None:
+        if not ok:
             return ok, error
+        semantic_error = _validate_skill_semantic_outputs(self.skill.name, ctx)
+        if semantic_error:
+            return False, semantic_error
+        if self.workflow is None:
+            return True, None
         interaction = self.skill.metadata.get("interaction")
         outputs = interaction.get("outputs") if isinstance(interaction, dict) else []
         manifest_path = ""
@@ -263,3 +323,109 @@ class SkillAgent(Agent):
         if unresolved:
             return False, "workflow manifest has unresolved phases: " + ", ".join(unresolved)
         return True, None
+
+
+_STABLE_IDENTIFIER_KINDS = frozenset({"doi", "arxiv", "openalex", "semantic_scholar", "url"})
+_UNRESOLVED_IDENTIFIER_RE = re.compile(
+    r"(?i)\b(?:needs?\s+(?:manual\s+)?(?:resolution|lookup)|unresolved|missing\s+(?:doi|arxiv|identifier)|not\s+resolved|requires?\s+(?:manual\s+)?resolution)\b"
+)
+
+
+def _validate_skill_semantic_outputs(skill_name: str, ctx: ExecutionContext) -> str | None:
+    """Apply narrow deterministic contracts where filename checks are unsafe.
+
+    The evidence scout promises source-identifiable literature evidence. A
+    JSON file of title-only leads therefore cannot be accepted merely because
+    it exists; this compact validator prevents that false completion without
+    imposing unrelated schemas on other standalone Skills.
+    """
+
+    if skill_name != "literature-evidence-scout":
+        return None
+    records_path = ctx.workspace_dir / "literature" / "skill_evidence_records.json"
+    try:
+        records = json.loads(records_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return f"literature-evidence-scout records must be readable JSON: {exc}"
+    if not isinstance(records, list):
+        return "literature-evidence-scout records must be a JSON list"
+    if len(records) > 20:
+        return "literature-evidence-scout records exceed the declared 20-record retrieval boundary"
+    report_path = ctx.workspace_dir / "literature" / "skill_evidence_scout.md"
+    try:
+        report = report_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return f"literature-evidence-scout report must be readable text: {exc}"
+    count_match = re.search(r"(?im)^\s*-\s*`?retained_record_count`?\s*[:：]\s*(\d+)\s*$", report)
+    if count_match is None:
+        return (
+            "literature-evidence-scout report must state '- retained_record_count: N' "
+            "in its retrieval delivery status"
+        )
+    if int(count_match.group(1)) != len(records):
+        return (
+            "literature-evidence-scout report retained_record_count does not match "
+            "literature/skill_evidence_records.json"
+        )
+    reported_counts: list[int] = []
+    for pattern in (
+        r"(?im)^\|\s*Retained with stable identifiers\s*\|\s*(\d+)\b",
+        r"(?i)\b(\d+)\s+papers retained with verified arXiv IDs\b",
+        r"(?i)\bAll\s+(\d+)\s+papers have confirmed arXiv IDs\b",
+    ):
+        reported_counts.extend(int(match.group(1)) for match in re.finditer(pattern, report))
+    inconsistent = sorted({value for value in reported_counts if value != len(records)})
+    if inconsistent:
+        return (
+            "literature-evidence-scout report has retained-record counts that conflict with "
+            "literature/skill_evidence_records.json: "
+            + ", ".join(str(value) for value in inconsistent)
+        )
+    errors: list[str] = []
+    for index, record in enumerate(records):
+        if not isinstance(record, dict):
+            errors.append(f"records[{index}] is not an object")
+            continue
+        if not str(record.get("title") or "").strip():
+            errors.append(f"records[{index}] has no title")
+        stable = record.get("stable_identifier")
+        if not isinstance(stable, dict):
+            errors.append(f"records[{index}] lacks stable_identifier")
+            continue
+        kind = str(stable.get("kind") or "").strip().casefold()
+        value = str(stable.get("value") or "").strip()
+        source = str(stable.get("source") or "").strip()
+        if kind not in _STABLE_IDENTIFIER_KINDS or not value or not source:
+            errors.append(f"records[{index}] has an invalid stable_identifier")
+            continue
+        if kind == "doi" and not re.search(r"10\.\d{4,9}/\S+", value, flags=re.IGNORECASE):
+            errors.append(f"records[{index}] has an invalid DOI identifier")
+        elif kind == "arxiv" and not re.fullmatch(r"(?:arXiv:)?\d{4}\.\d{4,5}(?:v\d+)?", value, flags=re.IGNORECASE):
+            errors.append(f"records[{index}] has an invalid arXiv identifier")
+        elif kind == "openalex" and not re.fullmatch(r"W\d+", value, flags=re.IGNORECASE):
+            errors.append(f"records[{index}] has an invalid OpenAlex identifier")
+        elif kind == "semantic_scholar" and not re.fullmatch(
+            r"(?:[0-9a-f]{40}|CorpusId:\d+)", value, flags=re.IGNORECASE
+        ):
+            errors.append(f"records[{index}] has an invalid Semantic Scholar identifier")
+        elif kind == "url" and not _is_canonical_paper_url(value):
+            errors.append(f"records[{index}] has a non-canonical paper URL")
+        status = str(record.get("identifier_status") or "")
+        if _UNRESOLVED_IDENTIFIER_RE.search(status):
+            errors.append(f"records[{index}] retains an unresolved identifier status")
+    if errors:
+        return "literature-evidence-scout identifier contract failed: " + "; ".join(errors[:8])
+    return None
+
+
+def _is_canonical_paper_url(value: str) -> bool:
+    """Accept only a stable paper landing page, never a search result URL."""
+
+    normalized = value.strip()
+    patterns = (
+        r"https?://(?:dx\.)?doi\.org/10\.\d{4,9}/\S+$",
+        r"https?://arxiv\.org/(?:abs|pdf)/\d{4}\.\d{4,5}(?:v\d+)?(?:\.pdf)?$",
+        r"https?://openalex\.org/W\d+$",
+        r"https?://(?:www\.)?semanticscholar\.org/paper/[A-Za-z0-9-]+$",
+    )
+    return any(re.fullmatch(pattern, normalized, flags=re.IGNORECASE) for pattern in patterns)

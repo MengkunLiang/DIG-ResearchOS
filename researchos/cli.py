@@ -119,6 +119,7 @@ from .skills.session import (
     record_skill_execution_confirmation_pending,
     record_input_collection_finished,
     record_input_collection_started,
+    record_human_input_pause,
     record_readiness,
     record_runtime_pause,
     record_run_result,
@@ -2923,6 +2924,21 @@ def _skill_user_paused(value: str) -> bool:
     return _normalized_skill_answer(value) in _SKILL_PAUSE_ANSWERS
 
 
+def _skill_result_waits_for_human_input(result: AgentResult) -> bool:
+    """Recognize an in-workflow ``ask_human`` pause without masking errors.
+
+    ``AgentRunner`` deliberately represents an unavailable human response as
+    ``STOP_INTERRUPTED`` so pipeline state machines can pause safely.  A
+    standalone guided session must preserve the same semantics in its durable
+    session record; it must not turn the pause into a failed output contract.
+    """
+
+    if result.stop_reason != AgentResult.STOP_INTERRUPTED:
+        return False
+    detail = " ".join(str(value or "") for value in (result.error, result.message)).casefold()
+    return "human input unavailable" in detail or "human_input_unavailable" in detail
+
+
 def _parse_skill_intake_followup_action(value: str) -> str | None:
     """Parse the numbered continue/pause control without leaking it into other gates."""
 
@@ -3268,15 +3284,38 @@ async def run_skill_command(args: argparse.Namespace) -> int:
             intake_packet_path=(
                 str(intake_packet.relative_to(workspace_dir)) if intake_packet is not None else ""
             ),
+            resume=bool(getattr(args, "resume", False)),
         )
     finally:
         await prepared.aclose()
+    if _skill_result_waits_for_human_input(result):
+        record_human_input_pause(
+            workspace=workspace_dir,
+            session_id=session_id,
+            result=result,
+            outputs_expected=outputs_expected,
+        )
+        print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
+        return 2
+    if result.stop_reason in {AgentResult.STOP_INTERRUPTED, AgentResult.STOP_HUMAN_REJECT}:
+        # Cancellation, a resumable tool pause, or an explicit human stop is
+        # not a failed final-output contract. Preserve the current session and
+        # let the researcher resume after reviewing the durable trace.
+        record_run_result(
+            workspace=workspace_dir,
+            session_id=session_id,
+            result=result,
+            outputs_expected=outputs_expected,
+        )
+        print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
+        return 2
     if outputs_expected:
         ok, errors = validate_declared_outputs(workspace_dir, outputs_expected)
         if not ok:
+            error_text = errors if isinstance(errors, str) else "; ".join(str(item) for item in (errors or []))
             result.ok = False
             result.stop_reason = AgentResult.STOP_ERROR
-            result.error = "Skill output validation failed: " + "; ".join(errors)
+            result.error = "Skill output validation failed: " + error_text
             result.message = result.error
 
     result_session = record_run_result(
@@ -4133,7 +4172,11 @@ def audit_skills_command(args: argparse.Namespace) -> int:
     report = audit_skill_suite(
         repo_root,
         check_script_help=bool(getattr(args, "check_script_help", False)),
-        check_interactions=bool(getattr(args, "check_interactions", False)),
+        check_interactions=(
+            bool(getattr(args, "check_interactions", False))
+            or bool(getattr(args, "check_user_journeys", False))
+        ),
+        check_user_journeys=bool(getattr(args, "check_user_journeys", False)),
     )
     if bool(getattr(args, "json", False)):
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -4692,6 +4735,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--check-interactions",
         action="store_true",
         help="逐个验证独立 Skill 的说明页/空工作区就绪检查，以及受管理模块的安全路由；不调用模型。",
+    )
+    audit_skills_parser.add_argument(
+        "--check-user-journeys",
+        action="store_true",
+        help=(
+            "在隔离临时 workspace 中逐个真实启动独立 Skill 的初始无模型路径，"
+            "核验缺任务/缺文件提示、持久会话和恢复命令；包含 --check-interactions。"
+        ),
     )
     audit_skills_parser.add_argument(
         "--json",

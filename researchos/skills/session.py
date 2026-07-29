@@ -345,6 +345,65 @@ def record_runtime_pause(*, workspace: Path, session_id: str, error: Exception |
     return write_session(workspace, session_id, session)
 
 
+def record_human_input_pause(
+    *,
+    workspace: Path,
+    session_id: str,
+    result: Any,
+    outputs_expected: dict[str, Path],
+) -> Path:
+    """Persist an in-workflow question as a resumable human pause.
+
+    A guided Skill can pass its deterministic material gate and later discover
+    a semantic ambiguity that needs ``ask_human``.  In a redirected terminal
+    that is a normal wait state, not an execution failure and not a reason to
+    validate final outputs that the Skill was explicitly unable to finish.
+    """
+
+    session = load_session(workspace, session_id)
+    if session is None:
+        raise ConfigurationError(f"skill session '{session_id}' does not exist")
+    output_status = {
+        name: {
+            "path": str(path.relative_to(workspace)),
+            "exists": path.exists(),
+        }
+        for name, path in outputs_expected.items()
+    }
+    message = str(getattr(result, "error", None) or getattr(result, "message", "等待你的输入。"))
+    session["status"] = "WAITING_HUMAN"
+    session["last_result"] = {
+        "ok": False,
+        "stop_reason": str(getattr(result, "stop_reason", "interrupted")),
+        "message": "运行已暂停，等待你回答 Skill 的问题。",
+        "error": message,
+        "trace_file": str(result.trace_file) if getattr(result, "trace_file", None) else None,
+        "outputs": output_status,
+    }
+    session["progress"] = {
+        "step": int(getattr(result, "steps_used", 0) or 0),
+        "step_limit": None,
+        "phase": "waiting_human",
+        "tool_name": "ask_human",
+        "detail": "Skill 需要你的回答后才能继续；已有材料、工作流进度与 trace 已保留。",
+        "updated_at": _now(),
+    }
+    session["metrics"] = {
+        "steps": int(getattr(result, "steps_used", 0) or 0),
+        "tokens": int(getattr(result, "tokens_in", 0) or 0) + int(getattr(result, "tokens_out", 0) or 0),
+        "duration_seconds": round(float(getattr(result, "duration_seconds", 0.0) or 0.0), 2),
+    }
+    _append_turn(
+        session,
+        {
+            "event": "human_input_required_during_run",
+            "stop_reason": str(getattr(result, "stop_reason", "interrupted")),
+            "detail": message[:500],
+        },
+    )
+    return write_session(workspace, session_id, session)
+
+
 def record_run_progress(
     *,
     workspace: Path,
@@ -404,7 +463,8 @@ def record_run_result(
         }
         for name, path in outputs_expected.items()
     }
-    session["status"] = "COMPLETED" if bool(result.ok) else "FAILED"
+    paused = str(getattr(result, "stop_reason", "")) in {"interrupted", "human_reject"}
+    session["status"] = "PAUSED" if paused else ("COMPLETED" if bool(result.ok) else "FAILED")
     session["last_result"] = {
         "ok": bool(result.ok),
         "stop_reason": str(result.stop_reason),
@@ -416,7 +476,7 @@ def record_run_result(
     session["progress"] = {
         "step": int(getattr(result, "steps_used", 0) or 0),
         "step_limit": None,
-        "phase": "completed" if bool(result.ok) else "stopped",
+        "phase": "paused" if paused else ("completed" if bool(result.ok) else "stopped"),
         "tool_name": None,
         "detail": str(result.message),
         "updated_at": _now(),
@@ -832,6 +892,8 @@ def render_skill_completion_panel(*, workspace: Path, session_id: str) -> str:
         "WAITING_RUNTIME": "等待运行环境恢复",
         "WAITING_INPUT": "等待补齐输入",
         "WAITING_CONFIRMATION": "等待人工确认执行",
+        "WAITING_HUMAN": "等待回答 Skill 问题",
+        "PAUSED": "已暂停，等待恢复",
         "COLLECTING_INPUT": "正在收集输入",
         "RUNNING": "仍在运行",
     }.get(status, status)
@@ -867,7 +929,7 @@ def render_skill_completion_panel(*, workspace: Path, session_id: str) -> str:
     if trace_file:
         lines.append(f"运行轨迹：{trace_file}")
     lines.append("─" * width)
-    if status in {"WAITING_RUNTIME", "WAITING_INPUT", "WAITING_CONFIRMATION", "FAILED"}:
+    if status in {"WAITING_RUNTIME", "WAITING_INPUT", "WAITING_CONFIRMATION", "WAITING_HUMAN", "PAUSED", "FAILED"}:
         lines.append(
             "恢复：researchos run-skill "
             f"{session.get('skill_name', 'SKILL')} --workspace {workspace} "
@@ -896,6 +958,8 @@ def render_skill_completion_panel_rich(*, workspace: Path, session_id: str, no_c
         "WAITING_RUNTIME": ("等待运行环境", "yellow"),
         "WAITING_INPUT": ("等待补齐材料", "yellow"),
         "WAITING_CONFIRMATION": ("等待执行确认", "bright_yellow"),
+        "WAITING_HUMAN": ("等待回答问题", "bright_yellow"),
+        "PAUSED": ("已暂停", "yellow"),
         "COLLECTING_INPUT": ("正在收集材料", "cyan"),
         "RUNNING": ("正在运行", "cyan"),
     }
@@ -940,7 +1004,7 @@ def render_skill_completion_panel_rich(*, workspace: Path, session_id: str, no_c
     trace_file = result.get("trace_file")
     if trace_file:
         body.append(Text(f"运行轨迹：{trace_file}", style="dim"))
-    if status in {"WAITING_RUNTIME", "WAITING_INPUT", "WAITING_CONFIRMATION", "FAILED"}:
+    if status in {"WAITING_RUNTIME", "WAITING_INPUT", "WAITING_CONFIRMATION", "WAITING_HUMAN", "PAUSED", "FAILED"}:
         body.append(
             Text(
                 f"恢复：researchos run-skill {session.get('skill_name', 'SKILL')} --workspace {workspace} --session-id {session_id} --resume",
@@ -971,6 +1035,8 @@ def render_skill_status_panel(
         "WAITING_INPUT": "等待补齐输入",
         "WAITING_CONFIRMATION": "等待人工确认执行",
         "WAITING_RUNTIME": "等待运行环境恢复",
+        "WAITING_HUMAN": "等待回答 Skill 问题",
+        "PAUSED": "已暂停，等待恢复",
         "COMPLETED": "已完成",
         "FAILED": "执行失败",
     }
@@ -983,7 +1049,9 @@ def render_skill_status_panel(
         "tool_completed": "工具已完成",
         "tool_failed": "工具执行失败",
         "waiting_runtime": "等待运行环境",
+        "waiting_human": "等待回答问题",
         "completed": "已完成",
+        "paused": "已暂停，等待恢复",
         "stopped": "已停止",
     }
     for path, session in cards:
@@ -1033,7 +1101,7 @@ def render_skill_status_panel(
         intake_packet = session.get("intake_packet")
         if intake_packet:
             lines.append(f"│ 材料清单：{intake_packet}")
-        if raw_status in {"WAITING_INPUT", "WAITING_CONFIRMATION", "WAITING_RUNTIME", "FAILED"}:
+        if raw_status in {"WAITING_INPUT", "WAITING_CONFIRMATION", "WAITING_RUNTIME", "WAITING_HUMAN", "PAUSED", "FAILED"}:
             lines.append(
                 "│ 恢复：researchos run-skill "
                 f"{skill_name} --workspace {workspace} --session-id {session_id} --resume"
@@ -1064,7 +1132,9 @@ def render_skill_status_panel_rich(
         "tool_completed": "工具完成",
         "tool_failed": "工具失败",
         "waiting_runtime": "等待运行环境",
+        "waiting_human": "等待回答问题",
         "completed": "已完成",
+        "paused": "已暂停，等待恢复",
         "stopped": "已停止",
     }
     status_styles = {
@@ -1073,6 +1143,8 @@ def render_skill_status_panel_rich(
         "WAITING_INPUT": ("等待补齐材料", "yellow"),
         "WAITING_CONFIRMATION": ("等待执行确认", "bright_yellow"),
         "WAITING_RUNTIME": ("等待运行环境", "yellow"),
+        "WAITING_HUMAN": ("等待回答问题", "bright_yellow"),
+        "PAUSED": ("已暂停", "yellow"),
         "COMPLETED": ("已完成", "green"),
         "FAILED": ("执行失败", "bright_red"),
     }
@@ -1113,7 +1185,7 @@ def render_skill_status_panel_rich(
             detail = (phase_line + "\n" + detail) if detail else phase_line
         if missing:
             detail = (detail + "\n" if detail else "") + "待补充：" + "、".join(missing)
-        if raw_status in {"WAITING_INPUT", "WAITING_CONFIRMATION", "WAITING_RUNTIME", "FAILED"}:
+        if raw_status in {"WAITING_INPUT", "WAITING_CONFIRMATION", "WAITING_RUNTIME", "WAITING_HUMAN", "PAUSED", "FAILED"}:
             action = f"恢复：--session-id {session_id} --resume"
         elif raw_status == "COMPLETED":
             action = "查看已声明的产物"

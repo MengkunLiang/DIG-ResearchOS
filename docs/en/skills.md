@@ -34,6 +34,11 @@ python -m researchos.cli audit-skills --check-script-help --no-banner
 # surface, and verify that pipeline/executor modules reject direct execution
 # with a safe route. This remains model-free and read-only.
 python -m researchos.cli audit-skills --check-interactions --no-banner
+
+# Exercise the first no-model CLI journey for all 40 direct Skills in isolated
+# temporary workspaces: empty request, stated request with missing files, durable
+# session, and resume route. No formal workspace is read or written.
+python -m researchos.cli audit-skills --check-user-journeys --no-banner
 ```
 
 The distinction is intentional: `scripts/_*.py` files are private support modules imported by command entrypoints and must not masquerade as directly invokable CLIs. Every other `scripts/*.py` file must compile and expose `--help` under `--check-script-help`. The audit also builds the normal builtin and public-Skill ToolRegistry, so a capability profile or frontmatter declaration that names an unregistered tool fails before a model session starts rather than failing midway through execution with `Tool ... not registered`.
@@ -61,6 +66,12 @@ In a TTY, the default flow is:
 Before a guided Skill is listed or run, ResearchOS validates that every input path in its contract is readable and every declared output is writable under that Skill's workspace permissions. The runtime displays the same capability boundary to the Skill. This is intentionally strict: a public Skill must not advertise a file location that later becomes `access_denied`.
 
 When a running Skill identifies a semantic evidence gap, it writes `user_inputs/<skill>/_followup_request.md` before asking the human. It may not guess missing source, venue, citation, experiment, or result information.
+
+### Bounded Retrieval And Targeted Resume
+
+A Skill may opt into shared `tool_call_groups` in frontmatter, such as five discovery calls across several search tools, and into `remote_retrieval_policy.stop_on_rate_limit`. This is not a global step or token quota: it affects only the remote operations explicitly named by that Skill. Once a shared budget is reached, runtime rejects later calls in that group and requires an honest partial output built from already returned source data. When a declared remote source reports `429` or `rate_limited`, `stop_on_rate_limit` closes later declared remote calls for that run. Successful material remains preserved and is never presented as complete coverage.
+
+`run-skill --resume` validates existing declared outputs before a new model turn. If a file exists but the current contract finds an identifier, structure, or cross-file count inconsistency, runtime gives the exact error to the Skill as a targeted repair context: it must read the current output, change only the affected content, and complete validation again instead of restarting retrieval, overwriting unrelated material, or presenting a pause as success. A non-interactive human question persists as `WAITING_HUMAN`; an ordinary interruption persists as `PAUSED`. Neither state is misreported as a missing-final-output failure.
 
 ### Remote Paper Sources And Pause Semantics
 
@@ -152,7 +163,7 @@ Profiles are additive and visible, but they are not ambient authority. They do n
 
 T4 uses role-separated Generator, Scorer, and Evolver capabilities. Its Gate1 transition is action-dependent: selecting a ready Candidate follows `T4 -> T4-GATE1 -> T4.5`, while evolution, focused optimization, route regeneration, or confirmed composition follows `T4 -> T4-GATE1 -> T4` and later returns to Gate1. Inspection and comparison remain read-only at Gate1. Generator forms evidence-calibrated, creatively divergent Candidates; Scorer independently evaluates blinded Candidates and never creates an Idea; Evolver creates only plan-bounded Mutation Children or Compatibility-gated Crossover Children. Evidence is not a closed idea space: normal Generator routes may use scholarly knowledge, counterfactual reasoning, and structural cross-domain analogy when the resulting claims remain visibly conjectural and verification-required. A Bridge route may return `unsupported` with an escape-hatch record when the workspace does not contain a defensible structural transfer.
 
-Use `t4-evolution` when the researcher needs a safe native-T4 entry point. It checks the current Evidence Index, pre-run confirmation, Population, Portfolio, and resume state; it then explains whether the next pipeline action creates P0, resumes an unfinished Route or scoring batch, waits for Gate1, or continues a confirmed selection toward T4.5. The Skill writes a researcher-readable launch note and never edits native T4 artifacts. Start a new entry with `python -m researchos.cli run --workspace <workspace> --from-task T4`; resume an interrupted or waiting run with `python -m researchos.cli resume --workspace <workspace>`. Do not run concurrent commands for one workspace.
+Use `t4-evolution` when the researcher needs a safe native-T4 entry point. It checks the current Evidence Index, pre-run confirmation, Population, Portfolio, and resume state; it then explains whether the next pipeline action creates P0, resumes an unfinished Route or scoring batch, waits for Gate1, or continues a confirmed selection toward T4.5. The Skill writes a researcher-readable launch note and never edits native T4 artifacts. An empty workspace must use `python -m researchos.cli run --workspace <workspace>` and start from the configured initial state. To create a new workspace, import declared prerequisites from another project, and enter T4, use `python -m researchos.cli run --workspace <new-workspace> --from <source-workspace> --start-task T4`. Resume an interrupted or waiting run with `python -m researchos.cli resume --workspace <workspace>`; this is also the correct route for `T4-GATE1`. `run --from-task ...` is not a valid command. Do not run concurrent commands for one workspace.
 
 T4 treats semantic format recovery separately from scientific safety and records `valid`, `repairable`, `degraded`, or `blocked`. `blocked` protects Hard Invariants only: source/evidence-permission violations, fabricated or untraceable citations, Candidate/Parent/Plan lineage conflicts, ID overwrite, fingerprint/workspace corruption, and Legacy overwrite risk. Markdown fences, YAML, aliases, object/list envelope differences, absent enrichable fields, one failed Route or scoring call, quota shortfall, and incompatible Crossover do not abort a Round. They go through tolerant extraction, deterministic normalization, schema-only repair, targeted semantic repair, and revalidation; usable but incomplete work continues as `degraded` with a diagnostic.
 

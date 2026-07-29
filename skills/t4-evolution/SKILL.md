@@ -73,9 +73,19 @@ workflow:
 
 Start by reading only the declared T4 material and state files: `project.yaml`, `literature/deep_read_notes/`, `literature/shallow_read_notes/`, `literature/bridge_notes/` for real Bridge reading notes, `literature/cross_domain_catalogs/` for B1–B# retrieval context, `ideation/evidence/evidence_index_summary.json`, `ideation/evolution/pre_run_confirmation.json`, `ideation/evolution/state.json`, `ideation/portfolio.json`, `ideation/selected/`, and the current `_runtime` resume record when it exists. Catalogs may expand analogies and validation questions but are never direct claim evidence. Do not inspect unrelated conventional filenames.
 
+### Empty workspace route
+
+When `project.yaml` and the T1/T2/T3 materials are absent, say that native T4 cannot start yet and preserve the empty workspace. The only safe command for a new workspace is exactly:
+
+```bash
+python -m researchos.cli run --workspace <workspace>
+```
+
+Do **not** suggest `run --from-task T1`, `run --start-task T1`, `resume --from-task T1`, or any made-up stage flag. A fresh `run` already enters the configured initial state. Before asking the researcher whether to start, supply materials, or stop, write the declared launch note and workflow manifest with the detected state, missing inputs, preservation boundary, and this exact command. In a non-interactive session, an unavailable `ask_human` response is a normal pause for later resume, not a failed T4 or a reason to claim the final outputs were completed.
+
 Explain the state in researcher language. Say whether T4 will create a new P0, resume an unfinished Route or score batch, reuse P0/P1, wait for Gate1, or continue into T4.5 after a confirmed selection. State which existing Candidate versions remain preserved, whether rollback is available, and whether an input fingerprint makes existing work stale. Do not expose raw JSON in normal interaction.
 
-Use the native pipeline for every state-changing operation. The safe commands are `python -m researchos.cli run --workspace <workspace> --from-task T4` for a fresh T4 entry and `python -m researchos.cli resume --workspace <workspace>` for an interrupted or waiting T4 run. When the workspace is already at `T4-GATE1`, resume so ResearchOS can present the Gate1 choices. Never tell a researcher to run a second concurrent `run` or `resume` process for the same workspace.
+Use the native pipeline for every state-changing operation. For an empty workspace, the safe command is `python -m researchos.cli run --workspace <workspace>`; it starts at the configured initial state and must not pretend that upstream evidence already exists. For a new workspace that intentionally imports another project's declared prerequisites and enters T4, use `python -m researchos.cli run --workspace <new-workspace> --from <source-workspace> --start-task T4`. For an interrupted or waiting T4 run, use `python -m researchos.cli resume --workspace <workspace>`; when it is already at `T4-GATE1`, resume so ResearchOS can present the Gate1 choices. Never suggest the invalid `run --from-task ...` form or run a second concurrent `run` or `resume` process for the same workspace.
 
 This Skill does not create, edit, delete, or select native T4 artifacts. In particular, never write `ideation/evidence/`, `ideation/populations/`, `ideation/evolution/`, `ideation/scoring/`, `ideation/portfolio.json`, `ideation/final_cards/`, `ideation/hypotheses.md`, or `ideation/exp_plan.yaml`. T4 owns Evidence Routing, P0, Independent Scoring, Mutation Child, Crossover Child, Survival Selection, Portfolio, Gate1, and the handoff to T4.5. A request to combine components from different Candidates must be passed to Gate1, where ResearchOS performs Compatibility Check, Gene Donor Map, Independent Scoring, and a second confirmation.
 

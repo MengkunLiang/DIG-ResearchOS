@@ -88,7 +88,8 @@ P0、每一代 Population、Candidate 版本、评分、Plan、Child、Deferral�
 
 | 命令 | 用途 | 说明 |
 | --- | --- | --- |
-| `python -m researchos.cli run --workspace <ws> --from-task T4` | 从完整主管道进入 T4 | 使用完整 Pipeline Runner 与 State Machine |
+| `python -m researchos.cli run --workspace <new-ws> --from <source-ws> --start-task T4` | 新建 workspace 时导入已声明的上游材料并进入 T4 | 使用完整 Pipeline Runner 与 State Machine |
+| `python -m researchos.cli resume --workspace <ws>` | 恢复已有的 T4 或 T4-GATE1 状态 | 使用完整 Pipeline Runner 与 State Machine |
 | `python -m researchos.cli resume --workspace <ws>` | 恢复 `PAUSED` / `WAITING_HUMAN` 工作区 | 优先重新展示持久化 Gate 或从 checkpoint 继续 |
 | `python -m researchos.cli run-task T4 --workspace <ws>` | 隔离调试 T4 | SingleTask Runner 也会处理 T4 Pre-run 与可恢复 Gate |
 
