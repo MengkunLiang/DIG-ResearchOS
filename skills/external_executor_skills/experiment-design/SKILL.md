@@ -1,5 +1,7 @@
 ---
 name: experiment-design
+execution_scope: executor_template
+execution_owner: T5-SPECIALIZE-EXECUTOR-SKILLS
 description: Convert the confirmed ResearchOS external-executor scope and Phase B resource readiness into a versioned, claim-bound, budget-feasible experiment plan with a locked protocol fingerprint, mechanism-linked ablations, an execution DAG, predeclared interpretation rules, and a deterministic Phase C readiness gate. Use when `research-execution` dispatches Phase C after resource readiness is `ready` or constrained `partial`, when the experiment plan is missing or stale, or when an approved claim boundary, protocol, resource, or diagnostic requirement changes. Do not implement or run experiments, change the research idea, fetch resources, select results after seeing outcomes, silently alter primary metrics or seeds, or overwrite sibling-owned result-pack sections.
 ---
 

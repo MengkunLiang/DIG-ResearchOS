@@ -1,5 +1,7 @@
 ---
 name: result-diagnosis
+execution_scope: executor_template
+execution_owner: T5-SPECIALIZE-EXECUTOR-SKILLS
 description: Diagnose one ResearchOS experiment iteration from durable run records and raw metric evidence. Use when `research-execution` dispatches Phase E1 because a new usable experiment-run set has not yet been diagnosed, or when a prior diagnosis became stale after run, protocol, metric, fairness, or claim-boundary changes. Pin an evidence snapshot, normalize metrics, aggregate repeats, compare ours with required baselines, identify strongest baselines, winning and failing settings, variance and protocol anomalies, plausible confounds, and pre-audit claim implications. Produce a per-iteration diagnosis with evidence references, confidence, risks, and an advisory next-action surface. Do not run experiments, modify code or protocol, perform module-level causal attribution, make the root iteration decision, approve claims, or convert smoke/small-scale evidence into formal support.
 ---
 

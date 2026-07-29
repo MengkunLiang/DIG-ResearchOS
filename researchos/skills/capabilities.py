@@ -140,7 +140,6 @@ DEFAULT_PUBLIC_SKILL_PROFILES: dict[str, tuple[str, ...]] = {
         "structured_artifacts", "literature_discovery", "paper_acquisition", "paper_curation",
         "literature_processing", "survey_workflow",
     ),
-    "method-builder": ("structured_artifacts", "idea_analysis", "claim_review"),
     "paper-claim-audit": ("claim_review",),
     "paper-comparison": ("structured_artifacts", "literature_discovery", "paper_acquisition", "paper_curation"),
     "paper-compile": ("tex_delivery", "claim_review"),

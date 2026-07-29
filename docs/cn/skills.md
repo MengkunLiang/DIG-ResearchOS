@@ -4,7 +4,7 @@
 
 技能是存储在 `skills/<name>/SKILL.md` 中的可发现工作流。它们可以是原子性的，也可以是集成式的：集成式技能声明了持久的研究阶段、证据边界和人类决策点，同时复用与流水线智能体相同的工作区策略、ToolRegistry、追踪、事件、输出验证和恢复模型。受保护的 `skills/external_executor_skills/` 目录具有独立的所有权，不属于公共技能重写路径。
 
-仓库中的每个 Skill 都有执行范围约定。已有独立 Skill 保留兼容的 `standalone` 默认值，所有非独立的仓库 Skill 都会显式声明范围和归属。`list-skills`、`browse-skills` 和 `run-skill` 只展示并启动具有独立会话约定的 Skill。由流水线负责的 Skill 仍可由其所属阶段加载，但直接调用会在创建工作区和连接模型之前停止，并说明实际归属。具体而言，`research-reboost` 属于 `T5-REBOOST-GATE`，`project-skill-specialization` 属于 `T5-SPECIALIZE-EXECUTOR-SKILLS`，历史 `method-builder` 仅供项目专属 external-executor Skill Suite 内部使用。这样不会把依赖流水线 Artifact 的契约错误地当成空工作区中的自由提示词。
+仓库中的 Skill 分为三层。40 个独立 Skill 使用 `standalone` 契约，可由 `list-skills`、`browse-skills` 与 `run-skill` 发现和启动；每个都会先展示材料、输出和恢复方式。`research-reboost` 与 `project-skill-specialization` 是由状态机拥有的阶段模块，分别属于 `T5-REBOOST-GATE` 与 `T5-SPECIALIZE-EXECUTOR-SKILLS`，只能通过完整 pipeline 的 `resume` 在正确上游材料就绪后调用。13 个 external-executor 模板使用 `executor_template` 契约：T5 专属化后才发布到 workspace 的 `external_executor/skills/`，由选定的外部执行器调用，绝不能通过 `run-skill` 绕过 handoff、允许路径和状态检查。使用 `list-skills --include-managed` 可查看三层清单；`audit-skills --check-interactions` 会逐项审计独立交互与受管理模块的安全路由。
 
 ## 先发现再运行
 
@@ -19,7 +19,7 @@ python -m researchos.cli audit-skills --check-script-help --no-banner
 
 ### 仓库 Skill Suite 审计
 
-当前仓库共有 **56 个受版本管理的 Skill 契约**：**43 个公共 ResearchOS Skill**（40 个 standalone、2 个由状态机拥有、1 个仅内部兼容使用）以及 **13 个受保护的 external-executor Skill**（1 个 `research-execution` 总控和 12 个子 Skill）。数量不表示每个 Skill 都能通过 CLI 直接运行；是否可运行以 execution scope 为准。
+当前仓库共有 **55 个受版本管理的 Skill 契约**：**42 个顶层 ResearchOS 模块**（40 个 standalone、2 个由状态机拥有）以及 **13 个 external-executor 模板**（1 个 `research-execution` 总控和 12 个子 Skill）。数量不表示每个模块都能通过 CLI 直接运行；是否可运行以 execution scope 为准。
 
 发布前或修改 Skill 模板后，可运行只读审计：
 
@@ -29,6 +29,10 @@ python -m researchos.cli audit-skills --no-banner
 
 # 额外对每个公开外部执行器 CLI 脚本执行 --help import smoke
 python -m researchos.cli audit-skills --check-script-help --no-banner
+
+# 额外逐项渲染 40 个独立 Skill 的说明页并检查空工作区就绪状态；
+# 同时验证 2 个 pipeline 模块与 13 个 executor 模板都会拒绝直接运行并给出安全入口
+python -m researchos.cli audit-skills --check-interactions --no-banner
 ```
 
 以下约束是刻意区分的：`scripts/_*.py` 是被命令入口导入的私有支持模块，不要求也不伪装为可直接调用的 CLI；其余 `scripts/*.py` 必须能够通过 Python 编译并在 `--check-script-help` 下展示帮助。审计还会构建正常的内置工具和公共 Skill ToolRegistry，故 capability profile 或 frontmatter 中引用了未注册工具时，会在模型启动前被拒绝，而不是运行到一半才出现 `Tool ... not registered`。

@@ -1,5 +1,7 @@
 ---
 name: implementation
+execution_scope: executor_template
+execution_owner: T5-SPECIALIZE-EXECUTOR-SKILLS
 description: Implement an approved ResearchOS method, baseline adapter, bounded repair, training/evaluation entrypoint, configuration, ablation switch, diagnostic switch, logging path, or test in a controlled versioned worktree. Use when `research-execution` dispatches Phase D2 because an active iteration plan contains an approved implementation delta and an implementation specification or bounded repair contract is ready. Produce code, config, tests, patch evidence, module-to-code and ablation mappings, fresh verification records, scope/drift findings, and an `ready_for_review`, `needs_fix`, or `blocked` implementation gate. Do not redesign the research idea, self-approve the implementation, run formal experiments, change the locked protocol, install or download without authority, edit original resources, or implement an unapproved scope change.
 ---
 

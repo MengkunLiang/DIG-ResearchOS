@@ -1,5 +1,7 @@
 ---
 name: resource-and-baseline-preparation
+execution_scope: executor_template
+execution_owner: T5-SPECIALIZE-EXECUTOR-SKILLS
 description: Prepare and statically validate the datasets, benchmarks, baseline implementations, evaluation code, preprocessing assets, checkpoints, environments, protocols, and references required by the confirmed ResearchOS external-executor scope. Use when `research-execution` dispatches Phase B after non-blocking context alignment, when resource readiness is missing or stale, or when authorized local resource review, public remote acquisition, or baseline reimplementation is needed. Produce a requirement matrix, provenance-rich inventory, candidate and review records, material gaps, propagated risks, and a `ready`, `partial`, or `blocked` readiness gate. Do not run baseline experiments, redesign claims, silently replace required baselines, execute unreviewed third-party code, or broaden network, dataset, license, path, or reimplementation authority.
 ---
 

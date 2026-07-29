@@ -1,5 +1,7 @@
 ---
 name: method-refinement
+execution_scope: executor_template
+execution_owner: T5-SPECIALIZE-EXECUTOR-SKILLS
 description: Compile the approved ResearchOS method intent and current root-owned iteration decision into a versioned, implementation-ready method specification with stable module contracts, training/inference flows, config and ablation interfaces, failure modes, intent/spec fingerprints, an explicit delta ledger, and a pre-implementation scope-drift gate. Use when `research-execution` dispatches initial method engineering before implementation, when an approved minor refinement follows diagnosis or attribution, or when a stale method specification must be rebuilt after an authorized plan or protocol change. Do not write production code, run experiments, approve a major scope change, redesign the central hypothesis, alter the benchmark or contribution type, or overwrite sibling-owned result-pack sections.
 ---
 

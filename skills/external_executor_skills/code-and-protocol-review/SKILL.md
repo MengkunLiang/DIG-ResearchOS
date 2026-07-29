@@ -1,5 +1,7 @@
 ---
 name: code-and-protocol-review
+execution_scope: executor_template
+execution_owner: T5-SPECIALIZE-EXECUTOR-SKILLS
 description: Independently review ResearchOS external-executor implementation changes and experiment protocols before smoke, small-scale, or formal runs. Use when `research-execution` dispatches Phase D3 after code, config, adapter, dataset split, metric, evaluation, ablation, logging, or protocol changes; when a prior review is stale; or when deciding `review_status`, `approved_for`, required fixes, repair owner, fairness risk, data-leakage risk, reproducibility, security/path compliance, and contribution drift. Do not use to implement fixes, run formal experiments, reinterpret results, approve major scope changes, or review static resource acquisition fidelity owned by the resource-preparation skill.
 ---
 

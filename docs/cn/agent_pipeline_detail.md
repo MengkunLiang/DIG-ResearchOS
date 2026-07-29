@@ -3722,7 +3722,7 @@ T4.5 不能只靠关键词、字数或单一英文标题判断研究论证是否
 
 ### 11.6 Public Skill 能力档位：更强工具面，不放开任意执行
 
-43 个公开 Skill 现在通过可审计的 capability profile 获得相应工具组合。每个 Skill 至少有 `workspace_navigation`：`list_files`、`glob_files`、`grep_search`；它们仍受该 Skill 自己的 `allowed_read_prefixes` 约束，因此不会因为“可列目录”而读到其它项目。根据任务类型，catalog 还会叠加 `literature_discovery`、`paper_acquisition`、`paper_curation`、`literature_processing`、`structured_artifacts`、`idea_analysis`、`claim_review`、`manuscript_planning`、`survey_workflow`、`tex_delivery` 或 `external_handoff`。仓库级 `researchos audit-skills` 会独立检查全部 43 个公共契约与 13 个受保护的 executor 模板；它是只读诊断，不会把审计变成新的 LLM Skill。
+40 个可独立启动的公开 Skill 现在通过可审计的 capability profile 获得相应工具组合；另有 2 个 T5 状态机模块和 13 个 external-executor 模板，它们不属于 `run-skill` 目录。每个独立 Skill 至少有 `workspace_navigation`：`list_files`、`glob_files`、`grep_search`；它们仍受该 Skill 自己的 `allowed_read_prefixes` 约束，因此不会因为“可列目录”而读到其它项目。根据任务类型，catalog 还会叠加 `literature_discovery`、`paper_acquisition`、`paper_curation`、`literature_processing`、`structured_artifacts`、`idea_analysis`、`claim_review`、`manuscript_planning`、`survey_workflow`、`tex_delivery` 或 `external_handoff`。仓库级 `researchos audit-skills --check-interactions` 会独立检查全部 40 个独立交互、2 个 pipeline 路由与 13 个 executor 模板路由；它是只读诊断，不会把审计变成新的 LLM Skill。
 
 这解决了 PDF note card、论文对比、综述、Idea fanout、领域综合等流程过去“只有读写和提问、却不能解析 DOI/下载 PDF/搜索或抽取 section”的能力断裂。授权仍是最小而不是随意扩张：profile 不包含 `bash_run` 或 `docker_exec`；所有 workspace 路径仍通过 `WorkspaceAccessPolicy`；网络取源仍需要用户明确提供 DOI/arXiv/OpenAlex ID、URL、精确标题，或有边界的“主题 + 篇数”请求，并只能写入该 Skill 已声明的目的地。可用以下命令在演示前查看真实解析结果：
 

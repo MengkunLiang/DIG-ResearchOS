@@ -1,5 +1,7 @@
 ---
 name: writer-handoff
+execution_scope: executor_template
+execution_owner: T5-SPECIALIZE-EXECUTOR-SKILLS
 description: Compile the final external-executor state into `executor_research_report.md` and validate the complete ResearchOS writing handoff. Use after evidence-packaging and all experiment skills finish, when final terminal `executor_status.json`, `result_pack.json`, `report/run_manifest.json`, and assets under `figure/` and `table/` are ready. Build a source-bound research fact file, produce the eight-section academic report consumed by ResearchOS T8, and verify the four core files plus every final figure and table. Do not run or reinterpret experiments, modify final executor state or result data, update the manifest, write manuscript sections, invent citations or values, hide negative results, or make final paper-claim decisions.
 ---
 

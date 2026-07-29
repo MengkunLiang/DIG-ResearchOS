@@ -1,5 +1,7 @@
 ---
 name: evidence-packaging
+execution_scope: executor_template
+execution_owner: T5-SPECIALIZE-EXECUTOR-SKILLS
 description: Compile one pinned final ResearchOS external-executor evidence snapshot into a realized method package, an evidence-bound final framework figure, a reproducible result figure/table inventory, and bidirectional method/code/config/result/visual mappings. Use when `research-execution` has stopped the build-review-run loop, when Phase F1-F3 artifacts are missing or stale, or when valid partial evidence must be packaged after completion, budget exhaustion, blocking, or failure. Do not approve paper claims, write the paper, perform T7 audit, replace missing visuals with fabricated placeholders, mix evidence from different protocol or iteration snapshots, or change code, experiments, attribution, scope, budgets, executor status, or global manifest state.
 ---
 

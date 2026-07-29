@@ -111,6 +111,7 @@ from .skills.loader import (
     register_skill_tools,
     resolve_skill,
 )
+from .skills.routing import managed_skill_route
 from .skills.runner import run_skill, run_skill_intake
 from .skills.session import (
     iter_sessions,
@@ -390,6 +391,7 @@ def _render_skill_description_for_cli(
     tools: list[str] | None = None,
     execution_scope: str = "standalone",
     execution_owner: str = "",
+    managed_route: str = "",
 ) -> str:
     return render_skill_description_rich(
         skill_name=skill_name,
@@ -401,9 +403,21 @@ def _render_skill_description_for_cli(
         tools=tools,
         execution_scope=execution_scope,
         execution_owner=execution_owner,
+        managed_route=managed_route,
         no_color=not _skill_ui_uses_color(args),
         verbose=bool(getattr(args, "verbose", False)),
     )
+
+
+def _managed_skill_route_text(skill: Any, workspace: Path) -> str:
+    """Return an actionable, state-aware route for a non-standalone Skill."""
+
+    return managed_skill_route(
+        skill_name=skill.name,
+        execution_scope=skill.execution_scope,
+        execution_owner=skill.execution_owner,
+        workspace=workspace,
+    ).render()
 
 
 def _render_skill_catalog_for_cli(
@@ -422,6 +436,48 @@ def _render_skill_catalog_for_cli(
         heading=heading,
         notice=notice,
         no_color=not _skill_ui_uses_color(args),
+    )
+
+
+def _print_managed_skill_catalog_for_cli(
+    args: argparse.Namespace,
+    *,
+    workspace: Path,
+    pipeline_skills: list[Any],
+    executor_templates: list[Any],
+) -> None:
+    """Show managed modules separately without making them look runnable.
+
+    ``list-skills`` is intentionally a directory of direct sessions.  The
+    explicit ``--include-managed`` view exists for auditing and orientation,
+    but does not add managed modules to the interactive browser or its numeric
+    launch choices.
+    """
+
+    table = lightweight_ruled_table(title="受流程管理的 Skill 模块（不能用 run-skill 启动）", header_style="bold yellow", expand=True)
+    table.add_column("类型", min_width=16, max_width=24, overflow="fold")
+    table.add_column("模块", min_width=26, max_width=42, overflow="fold")
+    table.add_column("正确入口", min_width=44, max_width=86, overflow="fold")
+    for skill in sorted(pipeline_skills, key=lambda item: item.name):
+        route = _managed_skill_route_text(skill, workspace).replace("\n", " ")
+        table.add_row("Pipeline-owned", skill.name, route)
+    for skill in sorted(executor_templates, key=lambda item: item.name):
+        route = _managed_skill_route_text(skill, workspace).replace("\n", " ")
+        table.add_row("External-executor template", skill.name, route)
+    _cli_console(args).print(
+        Panel(
+            Group(
+                Text(
+                    "这些模块是工作流或外部执行器的组成部分。它们不会出现在 `browse-skills` 的可启动序号中，"
+                    "也不能通过 `run-skill` 绕过上游材料和状态检查。",
+                    style="yellow",
+                ),
+                table,
+            ),
+            title="ResearchOS · Skill 分层说明",
+            border_style="yellow",
+            expand=True,
+        )
     )
 
 
@@ -2891,16 +2947,9 @@ async def run_skill_command(args: argparse.Namespace) -> int:
         print(f"Skill 启动前检查失败: {exc}", file=sys.stderr)
         return 2
     if not is_standalone_skill(requested_skill):
-        owner = requested_skill.execution_owner
-        if requested_skill.execution_scope == "state_machine":
-            boundary = f"它由工作流阶段 {owner} 负责调用和恢复"
-        elif requested_skill.execution_scope == "executor_template":
-            boundary = f"它是由 {owner} 发布和调用的外部执行器模板"
-        else:
-            boundary = f"它由 {owner} 管理"
         print(
-            f"Skill '{requested_skill.name}' 不支持独立运行。{boundary}，"
-            "因此 `run-skill` 已在启动模型和创建工作区前安全停止。"
+            f"Skill '{requested_skill.name}' 不支持独立运行；`run-skill` 已在启动模型和创建工作区前安全停止。\n"
+            + _managed_skill_route_text(requested_skill, workspace_dir)
         )
         return 2
     ensure_workspace_layout(workspace_dir, runtime_settings)
@@ -3987,6 +4036,15 @@ def list_skills_command(args: argparse.Namespace) -> int:
         return 1
 
     standalone_skills = [skill for skill in discovered.values() if is_standalone_skill(skill)]
+    pipeline_skills = [skill for skill in discovered.values() if not is_standalone_skill(skill)]
+    executor_templates: list[Any] = []
+    if bool(getattr(args, "include_managed", False)):
+        executor_root = Path(__file__).resolve().parents[1] / "skills" / "external_executor_skills"
+        try:
+            executor_templates = list(discover_skills_from_roots([executor_root]).values())
+        except Exception as exc:
+            print(f"无法读取外部执行器 Skill 模板: {exc}", file=sys.stderr)
+            return 1
     for skill in ordered_skills(standalone_skills):
         interaction = parse_skill_interaction(skill.metadata)
         skill_info = {
@@ -4039,13 +4097,31 @@ def list_skills_command(args: argparse.Namespace) -> int:
         return 0
 
     if args.verbose:
+        payload: dict[str, Any] = {"catalog": catalog_entries(standalone_skills), "skills": all_skills}
+        if bool(getattr(args, "include_managed", False)):
+            payload["managed_modules"] = [
+                {
+                    "name": skill.name,
+                    "execution_scope": skill.execution_scope,
+                    "execution_owner": skill.execution_owner,
+                    "route": _managed_skill_route_text(skill, workspace_dir),
+                }
+                for skill in sorted(pipeline_skills + executor_templates, key=lambda item: item.name)
+            ]
         print(yaml.safe_dump(
-            {"catalog": catalog_entries(standalone_skills), "skills": all_skills},
+            payload,
             allow_unicode=True,
             sort_keys=False,
         ))
     else:
         print(_render_skill_catalog_for_cli(args, skills=standalone_skills, workspace=workspace_dir))
+        if bool(getattr(args, "include_managed", False)):
+            _print_managed_skill_catalog_for_cli(
+                args,
+                workspace=workspace_dir,
+                pipeline_skills=pipeline_skills,
+                executor_templates=executor_templates,
+            )
 
     return 0
 
@@ -4057,6 +4133,7 @@ def audit_skills_command(args: argparse.Namespace) -> int:
     report = audit_skill_suite(
         repo_root,
         check_script_help=bool(getattr(args, "check_script_help", False)),
+        check_interactions=bool(getattr(args, "check_interactions", False)),
     )
     if bool(getattr(args, "json", False)):
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -4234,6 +4311,11 @@ def describe_skill_command(args: argparse.Namespace) -> int:
                 tools=skill.allowed_tools,
                 execution_scope=skill.execution_scope,
                 execution_owner=skill.execution_owner,
+                managed_route=(
+                    _managed_skill_route_text(skill, workspace_dir)
+                    if not is_standalone_skill(skill)
+                    else ""
+                ),
             )
         )
     except Exception as exc:
@@ -4588,8 +4670,13 @@ def build_parser() -> argparse.ArgumentParser:
     run_skill_parser.add_argument("--startup-selftest", action="store_true")
     run_skill_parser.add_argument("--skip-startup-selftest", action="store_true")
 
-    list_skills_parser = subparsers.add_parser("list-skills", help="列出所有可用的 skills")
+    list_skills_parser = subparsers.add_parser("list-skills", help="列出可独立启动的 Skill")
     _add_shared_cli_options(list_skills_parser, runtime_settings, use_defaults=False)
+    list_skills_parser.add_argument(
+        "--include-managed",
+        action="store_true",
+        help="额外展示由 pipeline 或外部执行器管理、不能通过 run-skill 直接启动的模块。",
+    )
 
     audit_skills_parser = subparsers.add_parser(
         "audit-skills",
@@ -4600,6 +4687,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--check-script-help",
         action="store_true",
         help="额外逐个执行外部 Skill 脚本的 --help import smoke。",
+    )
+    audit_skills_parser.add_argument(
+        "--check-interactions",
+        action="store_true",
+        help="逐个验证独立 Skill 的说明页/空工作区就绪检查，以及受管理模块的安全路由；不调用模型。",
     )
     audit_skills_parser.add_argument(
         "--json",

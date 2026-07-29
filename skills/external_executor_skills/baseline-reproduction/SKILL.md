@@ -1,5 +1,7 @@
 ---
 name: baseline-reproduction
+execution_scope: executor_template
+execution_owner: T5-SPECIALIZE-EXECUTOR-SKILLS
 description: Reproduce, repair, and validate required ResearchOS baselines against the locked experiment protocol using Phase B approved resources and a root-owned iteration plan. Use when `research-execution` dispatches D1 because a required baseline has no valid reproduction, a reproduction fingerprint became stale, or a bounded repair/rerun is authorized. Capture command, config, dataset/split, seed/repeat, metric output, raw logs, code/resource/environment provenance, failure classification, repair attempts, sanity comparison, comparability status, reviewer verdict, and claim risk. Do not search for new resources, silently replace a required baseline, redesign the experiment protocol, approve formal comparison, modify the proposed method, or run unreviewed third-party setup/install scripts.
 ---
 

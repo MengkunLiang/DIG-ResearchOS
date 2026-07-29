@@ -637,6 +637,7 @@ def render_skill_description(
     tools: list[str] | None = None,
     execution_scope: str = "standalone",
     execution_owner: str = "",
+    managed_route: str = "",
 ) -> str:
     """Render the deterministic, copyable user contract for ``describe-skill``."""
 
@@ -644,6 +645,12 @@ def render_skill_description(
     lines = ["═" * width, f"Skill · {skill_name}", "═" * width]
     lines.append(f"路径：{skill_path}")
     lines.append(_skill_execution_scope_text(execution_scope, execution_owner))
+    if execution_scope != "standalone":
+        lines.append("此模块不接受 `run-skill` 直接启动。")
+        if managed_route:
+            lines.extend(managed_route.splitlines())
+        lines.append("═" * width)
+        return "\n".join(lines)
     if capability_profiles:
         lines.append("能力档位：" + ", ".join(capability_profiles))
     if tools:
@@ -696,10 +703,30 @@ def render_skill_description_rich(
     tools: list[str] | None = None,
     execution_scope: str = "standalone",
     execution_owner: str = "",
+    managed_route: str = "",
     no_color: bool = False,
     verbose: bool = False,
 ) -> str:
     """Render a selected Skill's full, human-actionable contract."""
+
+    if execution_scope != "standalone":
+        route_lines = [
+            Text(brief_skill_copy(description), style="bold"),
+            Text(f"位置：{skill_path}", style="dim"),
+            Text(_skill_execution_scope_text(execution_scope, execution_owner), style="yellow"),
+            Text("此模块没有独立的材料收集或 `run-skill` 会话。", style="yellow"),
+        ]
+        if managed_route:
+            route_lines.append(Text(managed_route, style="cyan"))
+        return _render_skill_rich(
+            Panel(
+                Group(*route_lines),
+                title=f"Skill 路由 · {skill_name}",
+                border_style="yellow",
+                expand=True,
+            ),
+            no_color=no_color,
+        )
 
     if interaction is None:
         return _render_skill_rich(

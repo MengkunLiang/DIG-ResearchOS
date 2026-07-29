@@ -11,12 +11,15 @@ from __future__ import annotations
 
 
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 from typing import Any
 
+from .contracts import check_skill_readiness, parse_skill_interaction
 from .loader import discover_skills, load_skill, register_skill_tools
 
 
@@ -161,7 +164,146 @@ def _audit_skill(
     return record
 
 
-def audit_skill_suite(repo_root: Path, *, check_script_help: bool = False) -> dict[str, Any]:
+def _audit_execution_boundary(*, record: dict[str, Any]) -> None:
+    """Check that a package's declared scope matches its repository layer."""
+
+    kind = str(record.get("kind") or "")
+    scope = str(record.get("execution_scope") or "")
+    owner = str(record.get("execution_owner") or "")
+    if kind == "public" and scope == "internal_only":
+        _record_issue(
+            record,
+            "internal_skill_in_public_catalog",
+            "internal_only packages must not live directly under skills/",
+        )
+    if kind == "external_executor" and scope != "executor_template":
+        _record_issue(
+            record,
+            "executor_template_scope_required",
+            "external executor templates must declare execution_scope: executor_template",
+        )
+    if scope != "standalone" and not owner:
+        _record_issue(record, "managed_skill_owner_missing", "non-standalone Skill has no execution_owner")
+
+
+def _audit_standalone_interaction(
+    *,
+    skill_dir: Path,
+    record: dict[str, Any],
+    repo_root: Path,
+    workspace: Path,
+) -> None:
+    """Run the no-model interaction surfaces of one public standalone Skill.
+
+    This checks the interface a researcher actually receives: an empty
+    workspace must yield a precise readiness state, and ``describe-skill``
+    must render successfully without preparing an LLM runtime.  It does not
+    claim that arbitrary source material would make the subsequent research
+    task scientifically complete.
+    """
+
+    skill = load_skill(skill_dir)
+    interaction = parse_skill_interaction(skill.metadata)
+    if interaction is None or interaction.mode != "guided":
+        _record_issue(
+            record,
+            "standalone_guided_interaction_required",
+            "repository standalone Skills must declare interaction.mode: guided",
+        )
+        return
+    if not interaction.request_prompt.strip():
+        _record_issue(record, "interaction_request_prompt_missing", "guided interaction has no request_prompt")
+    if not interaction.outputs:
+        _record_issue(record, "interaction_outputs_missing", "guided interaction has no declared outputs")
+    readiness = check_skill_readiness(
+        skill_name=skill.name,
+        metadata=skill.metadata,
+        workspace=workspace,
+        request="audit request",
+    )
+    record["interaction_readiness"] = "ready" if readiness.ready else "waiting_inputs"
+    record["interaction_inputs_checked"] = len(readiness.input_statuses)
+    if not readiness.request_ready:
+        _record_issue(record, "interaction_request_not_accepted", "non-empty audit request was not accepted")
+    if len(readiness.input_statuses) != len(interaction.required_inputs) + len(interaction.optional_inputs):
+        _record_issue(record, "interaction_readiness_incomplete", "readiness did not report every declared input")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "researchos.cli",
+            "describe-skill",
+            skill.name,
+            "--workspace",
+            str(workspace),
+            "--no-banner",
+            "--no-color",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    record["description_checked"] = True
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip().replace("\n", " ")[:500]
+        _record_issue(record, "describe_skill_failed", f"exit {completed.returncode}; {detail}")
+        return
+    output = completed.stdout
+    if skill.name not in output or "开始前需要提供" not in output or "完成后会得到" not in output:
+        _record_issue(record, "describe_skill_incomplete", "description omitted the guided input/output contract")
+
+
+def _audit_managed_route(
+    *,
+    skill_dir: Path,
+    record: dict[str, Any],
+    repo_root: Path,
+    workspace: Path,
+    skills_root: Path | None = None,
+) -> None:
+    """Verify managed modules reject direct execution with an actionable route."""
+
+    skill = load_skill(skill_dir)
+    command = [
+        sys.executable,
+        "-m",
+        "researchos.cli",
+        "run-skill",
+        skill.name,
+        "audit",
+        "--workspace",
+        str(workspace),
+        "--non-interactive",
+        "--no-banner",
+        "--no-color",
+    ]
+    if skills_root is not None:
+        command.extend(["--skills-root", str(skills_root)])
+    completed = subprocess.run(
+        command,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    record["managed_route_checked"] = True
+    output = (completed.stdout + "\n" + completed.stderr).strip()
+    if completed.returncode != 2:
+        _record_issue(record, "managed_run_not_rejected", f"expected exit 2, received {completed.returncode}")
+    if "不支持独立运行" not in output or "建议命令：" not in output:
+        _record_issue(record, "managed_route_not_actionable", "direct-run refusal did not include a safe next command")
+
+
+def audit_skill_suite(
+    repo_root: Path,
+    *,
+    check_script_help: bool = False,
+    check_interactions: bool = False,
+) -> dict[str, Any]:
     """Audit all repository-owned public and external-executor Skill packages.
 
     ``repo_root`` must be the directory containing ``skills/``.  The return
@@ -203,6 +345,55 @@ def audit_skill_suite(repo_root: Path, *, check_script_help: bool = False) -> di
                 )
             )
 
+    for record in records:
+        if not record.get("errors"):
+            _audit_execution_boundary(record=record)
+
+    if check_interactions:
+        # The audit creates one isolated empty workspace.  Readiness checks are
+        # non-mutating; subprocesses only render descriptions or reject managed
+        # routes before workspace initialization and model setup.
+        with tempfile.TemporaryDirectory(prefix="researchos_skill_interaction_audit_") as temp_dir:
+            workspace = Path(temp_dir) / "workspace"
+            workspace.mkdir()
+            jobs: list[tuple[dict[str, Any], str, Path, Path | None]] = []
+            for record in records:
+                if record.get("errors"):
+                    continue
+                skill_dir = root / str(record["path"])
+                kind = str(record.get("kind"))
+                scope = str(record.get("execution_scope"))
+                if kind == "public" and scope == "standalone":
+                    jobs.append((record, "standalone", skill_dir, None))
+                elif kind == "public":
+                    jobs.append((record, "managed", skill_dir, None))
+                elif kind == "external_executor":
+                    jobs.append((record, "managed", skill_dir, executor_root))
+
+            # Each job reads only its own immutable contract and starts an
+            # isolated subprocess.  A bounded pool keeps the audit responsive
+            # (55 Python imports would otherwise take minutes) without an
+            # unbounded process burst on shared research machines.
+            with ThreadPoolExecutor(max_workers=min(8, len(jobs) or 1)) as executor:
+                futures = {
+                    executor.submit(
+                        _run_interaction_audit_job,
+                        record=record,
+                        kind=job_kind,
+                        skill_dir=skill_dir,
+                        repo_root=root,
+                        workspace=workspace,
+                        skills_root=skills_root,
+                    ): record
+                    for record, job_kind, skill_dir, skills_root in jobs
+                }
+                for future in as_completed(futures):
+                    record = futures[future]
+                    try:
+                        future.result()
+                    except Exception as exc:  # noqa: BLE001 - retain the remaining audit findings
+                        _record_issue(record, "interaction_audit_runtime_error", str(exc))
+
     seen: dict[str, str] = {}
     for record in records:
         name = str(record["name"])
@@ -214,6 +405,7 @@ def audit_skill_suite(repo_root: Path, *, check_script_help: bool = False) -> di
         record["status"] = "pass" if not record["errors"] else "fail"
 
     by_kind = Counter(str(record["kind"]) for record in records)
+    by_scope = Counter(str(record.get("execution_scope") or "unknown") for record in records)
     failed = [record for record in records if record["status"] != "pass"]
     return {
         "schema_version": "researchos_skill_suite_audit.v1",
@@ -228,10 +420,50 @@ def audit_skill_suite(repo_root: Path, *, check_script_help: bool = False) -> di
             "runtime_tool_bindings_checked": sum(
                 1 for record in records if record["kind"] == "public" and runtime_tools is not None
             ),
+            "standalone_skills": by_scope["standalone"],
+            "pipeline_owned_skills": by_scope["state_machine"],
+            "executor_templates": by_scope["executor_template"],
+            "interaction_contracts_checked": sum(
+                1 for record in records if record.get("interaction_readiness") is not None
+            ),
+            "description_commands_checked": sum(
+                1 for record in records if record.get("description_checked") is True
+            ),
+            "managed_routes_checked": sum(
+                1 for record in records if record.get("managed_route_checked") is True
+            ),
         },
         "errors": suite_errors,
         "skills": records,
     }
+
+
+def _run_interaction_audit_job(
+    *,
+    record: dict[str, Any],
+    kind: str,
+    skill_dir: Path,
+    repo_root: Path,
+    workspace: Path,
+    skills_root: Path | None,
+) -> None:
+    """Dispatch one independent no-model interaction audit job."""
+
+    if kind == "standalone":
+        _audit_standalone_interaction(
+            skill_dir=skill_dir,
+            record=record,
+            repo_root=repo_root,
+            workspace=workspace,
+        )
+        return
+    _audit_managed_route(
+        skill_dir=skill_dir,
+        record=record,
+        repo_root=repo_root,
+        workspace=workspace,
+        skills_root=skills_root,
+    )
 
 
 def render_skill_suite_audit(report: dict[str, Any]) -> str:
@@ -248,7 +480,20 @@ def render_skill_suite_audit(report: dict[str, Any]) -> str:
             f"{summary.get('external_executor_skills', 0)} external executor)"
         ),
         f"External script help checks: {summary.get('script_help_checked', 0)}",
+        (
+            "Execution scopes: "
+            f"{summary.get('standalone_skills', 0)} standalone, "
+            f"{summary.get('pipeline_owned_skills', 0)} pipeline-owned, "
+            f"{summary.get('executor_templates', 0)} executor templates"
+        ),
     ]
+    if summary.get("interaction_contracts_checked", 0) or summary.get("managed_routes_checked", 0):
+        lines.append(
+            "Interaction checks: "
+            f"{summary.get('interaction_contracts_checked', 0)} readiness, "
+            f"{summary.get('description_commands_checked', 0)} descriptions, "
+            f"{summary.get('managed_routes_checked', 0)} managed routes"
+        )
     for issue in report.get("errors", []):
         lines.append(f"- {issue.get('code')}: {issue.get('message')}")
     for record in report.get("skills", []):

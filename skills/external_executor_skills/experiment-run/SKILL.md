@@ -1,5 +1,7 @@
 ---
 name: experiment-run
+execution_scope: executor_template
+execution_owner: T5-SPECIALIZE-EXECUTOR-SKILLS
 description: Execute and checkpoint approved ResearchOS T5 external-executor runs with complete provenance. Use when `research-execution` dispatches a reviewed iteration run, or when an approved smoke, small-scale, formal, ablation, robustness, diagnostic, or efficiency experiment must be launched, observed, recorded, validated, or safely reused. Enforce review level, protocol fingerprint, budget, allowed paths, environment isolation, immutable logs, metrics, checksums, and failure preservation. Do not use to design experiments, modify code, approve a protocol, diagnose scientific meaning, choose the next iteration, or promote smoke/toy evidence to formal evidence.
 ---
 

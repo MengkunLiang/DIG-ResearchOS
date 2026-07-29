@@ -1,5 +1,7 @@
 ---
 name: module-attribution
+execution_scope: executor_template
+execution_owner: T5-SPECIALIZE-EXECUTOR-SKILLS
 description: Attribute observed ResearchOS experiment behavior to implemented modules and bounded mechanisms using direct ablations, controlled diagnostics, implementation mappings, subset evidence, and explicitly labeled correlational hints. Use when `research-execution` dispatches Phase E2 after a usable per-iteration result diagnosis exists and the evidence surface is sufficient for module or mechanism analysis. Pin an attribution snapshot, inventory ours and baseline modules, normalize interventions, estimate paired ablation and interaction effects, assess confounds, and produce evidence-graded module/mechanism attributions plus keep/modify/drop/narrow recommendations. Do not run experiments, invent missing ablations, treat implementation presence as empirical support, promote correlation to causation, make the root iteration decision, change claims or scope, or write the realized method package.
 ---
 

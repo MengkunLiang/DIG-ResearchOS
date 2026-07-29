@@ -101,12 +101,18 @@ def test_repository_skill_suite_contract_audit_is_clean() -> None:
 
     assert report["status"] == "pass"
     assert report["summary"] == {
-        "total_skills": 56,
-        "public_skills": 43,
+        "total_skills": 55,
+        "public_skills": 42,
         "external_executor_skills": 13,
         "failed_skills": 0,
         "script_help_checked": 0,
-        "runtime_tool_bindings_checked": 43,
+        "runtime_tool_bindings_checked": 42,
+        "standalone_skills": 40,
+        "pipeline_owned_skills": 2,
+        "executor_templates": 13,
+        "interaction_contracts_checked": 0,
+        "description_commands_checked": 0,
+        "managed_routes_checked": 0,
     }
 
 

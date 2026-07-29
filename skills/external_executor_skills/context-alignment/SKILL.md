@@ -1,5 +1,7 @@
 ---
 name: context-alignment
+execution_scope: executor_template
+execution_owner: T5-SPECIALIZE-EXECUTOR-SKILLS
 description: Validate and normalize the ResearchOS T5 external-executor handoff before resource preparation or experiments. Use when `research-execution` dispatches Phase A, when handoff/control inputs changed, when resuming with a stale alignment checkpoint, or when checking project goal, hypothesis, method intent, baselines, experiment minimum loop, claim boundaries, resource policy, executor capabilities, allowed paths, and expected-output schema authority. Produce an evidence-backed `context_alignment` section with pass, mismatch, or blocked status. Do not use to redesign the research idea, prepare resources, implement methods, run experiments, or resolve material scope conflicts without human review.
 ---
 

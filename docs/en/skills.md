@@ -4,7 +4,7 @@
 
 Skills are discoverable workflows stored as `skills/<name>/SKILL.md`. They may be atomic or integrated: an integrated Skill declares durable research phases, evidence boundaries, and human decision points while reusing the same workspace policy, ToolRegistry, trace, event, output validation, and recovery model as pipeline agents. The protected `skills/external_executor_skills/` directory has separate ownership and is not part of the public-Skill rewrite path.
 
-Each repository Skill has an execution-scope contract. Existing independent Skills retain the compatible `standalone` default, while every non-standalone repository Skill declares its scope and owner explicitly. `list-skills`, `browse-skills`, and `run-skill` expose only Skills with a standalone session contract. Pipeline-owned Skills remain loadable by their declared stage, but direct invocation stops before workspace initialization or model setup and explains the owning stage. In particular, `research-reboost` belongs to `T5-REBOOST-GATE`, `project-skill-specialization` belongs to `T5-SPECIALIZE-EXECUTOR-SKILLS`, and the legacy `method-builder` is internal to the project-specific external-executor suite. This separation prevents a command-line session from treating a pipeline artifact contract as an empty-workspace prompt.
+Repository Skills use three execution layers. Forty direct researcher Skills declare `standalone`; `list-skills`, `browse-skills`, and `run-skill` expose their material checklist, outputs, and resumable session before any model call. `research-reboost` and `project-skill-specialization` are state-machine-owned modules for `T5-REBOOST-GATE` and `T5-SPECIALIZE-EXECUTOR-SKILLS`; resume the complete pipeline so they run only after their authoritative upstream artifacts are ready. The 13 external-executor templates declare `executor_template`: T5 specialization publishes them under a workspace's `external_executor/skills/`, where the selected executor—not `run-skill`—uses them under the handoff, allowed-path, and state contracts. Use `list-skills --include-managed` to inspect all layers and `audit-skills --check-interactions` to verify direct interaction surfaces and managed routes without a model call.
 
 ## Discover Before Running
 
@@ -19,7 +19,7 @@ python -m researchos.cli audit-skills --check-script-help --no-banner
 
 ### Repository Skill-Suite Audit
 
-The current repository contains **56 versioned Skill contracts**: **43 public ResearchOS Skills** (40 standalone, two state-machine-owned, and one internal-only compatibility Skill) plus **13 protected external-executor Skills** (one `research-execution` root and twelve child Skills). Counts are not a promise that every Skill may be invoked from the CLI: execution scope is the authority.
+The current repository contains **55 versioned Skill contracts**: **42 top-level ResearchOS modules** (40 standalone and two state-machine-owned) plus **13 external-executor templates** (one `research-execution` root and twelve child Skills). Counts are not a promise that every module may be invoked from the CLI: execution scope is the authority.
 
 Use the read-only audit before a release or after changing a Skill template:
 
@@ -29,6 +29,11 @@ python -m researchos.cli audit-skills --no-banner
 
 # Also import-smoke every public external-executor CLI script through its --help path
 python -m researchos.cli audit-skills --check-script-help --no-banner
+
+# Also render every direct Skill description and empty-workspace readiness
+# surface, and verify that pipeline/executor modules reject direct execution
+# with a safe route. This remains model-free and read-only.
+python -m researchos.cli audit-skills --check-interactions --no-banner
 ```
 
 The distinction is intentional: `scripts/_*.py` files are private support modules imported by command entrypoints and must not masquerade as directly invokable CLIs. Every other `scripts/*.py` file must compile and expose `--help` under `--check-script-help`. The audit also builds the normal builtin and public-Skill ToolRegistry, so a capability profile or frontmatter declaration that names an unregistered tool fails before a model session starts rather than failing midway through execution with `Tool ... not registered`.

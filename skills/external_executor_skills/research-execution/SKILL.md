@@ -1,5 +1,7 @@
 ---
 name: research-execution
+execution_scope: executor_template
+execution_owner: T5-SPECIALIZE-EXECUTOR-SKILLS
 description: Orchestrate or resume the complete ResearchOS external-executor workflow from T5 handoff through resource readiness, claim-bound experiment planning, build-review-run iterations, diagnosis, attribution, evidence packaging, and Writer Handoff. Use when Codex or Claude Code is launched in a ResearchOS workspace to execute `external_executor/skills/research-execution/SKILL.md`, continue an interrupted external experiment, decide the next project-specific child skill, or enforce gates and budgets. Do not use for an isolated child-stage task when that child skill is explicitly requested.
 ---
 
