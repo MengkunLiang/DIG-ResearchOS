@@ -4333,8 +4333,9 @@ class StateMachine:
     ) -> StateYaml | None:
         """Apply one durable T4 confirmation that was interrupted before execution.
 
-        A confirmation is written before the state transition so Ctrl+D,
-        process termination, or an old runtime error cannot lose the user's
+        A confirmation is written before the state transition so a terminal
+        EOF gesture (Ctrl+D on POSIX or Ctrl+Z then Enter on Windows), process
+        termination, or an old runtime error cannot lose the user's
         decision.  Historically, a selection blocked by the now-soft
         ``revise_before_selection`` label left that confirmation on disk but
         dropped ``t4_pending_directive``; every later ``resume`` then merely

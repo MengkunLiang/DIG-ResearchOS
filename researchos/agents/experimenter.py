@@ -1255,31 +1255,11 @@ class ExperimenterAgent(Agent):
             return prepend_resume_prefix(
                 ctx,
                 (
-                    "请执行 T5-REBOOST：使用系统 prompt 中的 `skills/research-reboost` skill contract，"
-                    "调用当前 LLM API 完成 Pre-T5 → external executor handoff 的语义重编译。"
-                    "不要要求用户手动拉起 Codex CLI，不要执行实验、实现代码、选择执行器或写 result_pack。\n\n"
-                    "系统 prompt 已加载 `skills/research-reboost` 的 Skill contract 和 references；"
-                    "不要用 read_file 读取仓库级 `skills/...`、`references/...` 或 `scripts/...`。"
-                    "先读取当前 workspace 的 `ideation/orientation_config.yaml`、`ideation/research_blueprint.yaml`、"
-                    "`ideation/claim_registry.yaml`、`ideation/orientation_review.json` 与 `ideation/exp_plan.yaml`；"
-                    "它们是 T4.5 已通过质量 gate 的结构化研究来源，优先于从长 Markdown 猜测研究任务。"
-                    "若存在 `ideation/proposal/research_proposal.md`，"
-                    "必须同时读取 `ideation/proposal/proposal_manifest.json`，将其记录为 planning context，"
-                    "保留其 required baselines、claim boundaries、kill criteria 和 unknown fields；不得把 Proposal 作为实验结果或最终论文事实。"
-                    "然后由当前 LLM 编译完整 `handoff_pack` 对象。"
-                    "然后调用 `compile_research_reboost_handoff(handoff_pack=...)`。该工具会按 "
-                    "`references/handoff_pack.schema.json` 和 `scripts/validate_handoff.py` 校验并 pretty-print "
-                    "`external_executor/handoff_pack.json`，同时写 `external_executor/report/reboost_report.json`、"
-                    "`external_executor/report/reboost_validation_report.json`、paper_card_evidence_index、"
-                    "expected schema、allowed paths、AGENTS/CLAUDE。executor_selection 由后续 "
-                    "T5-EXECUTOR-GATE 按所选执行器生成；不会生成 Codex/Claude/manual prompt 文件。项目专属 executor Skills 会在下一步 "
-                    "`T5-SPECIALIZE-EXECUTOR-SKILLS` 中由确定性编译器单独发布。\n\n"
-                    "完成后读取 `external_executor/report/reboost_report.json` 与 handoff_pack；只有 validation_ok=true 且 "
-                    "generation_status=completed 时才能调用 finish_task。若 status 不是 completed，必须重新调用 "
-                    "compile_research_reboost_handoff 处理当前权威 T4.5 产物，不得把可恢复的 blocked/needs_review 手册伪装成成功。"
-                    "`compile_research_reboost_handoff` 是 handoff pack 的唯一写入者；"
-                    "不要用 write_file 修改它，不要手写压缩成一行的 JSON；不要生成或改写 "
-                    "`external_executor/skills/`。"
+                    "T5-REBOOST 是确定性 Runtime 步骤，正常完整 pipeline 不会调用本 Agent 或 LLM。"
+                    "若旧 workspace 的兼容路径仍进入此模式，只能调用不带参数的 "
+                    "`compile_research_reboost_handoff()` 并读取其 receipt；不得由模型构造 `handoff_pack`，"
+                    "不得臆造 T4.5 evidence、baseline、experiment plan 或 Proposal 内容。"
+                    "验证失败时保留具体 `blocked` 诊断并停止，不调用 finish_task；成功后才可完成当前任务。"
                 ),
             )
         if mode == "handoff":

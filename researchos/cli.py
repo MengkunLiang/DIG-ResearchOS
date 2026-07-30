@@ -38,7 +38,7 @@ from .cli_runners import CompletePipelineRunner, SingleTaskRunner
 from .orchestration.task_aliases import resolve_public_stage_alias
 from .orchestration.t5_t8_bridge import accept_and_ingest_t5_handoff, prepare_t8_state
 from .orchestration.task_io_contract import get_task_io, task_import_paths, task_io_contract_source
-from .orchestration.state_machine import StateMachine
+from .orchestration.state_machine import StateMachine, _validate_t45_post_novelty_formalization
 from .pydantic_compat import model_dump
 from .runtime.agent import AgentResult
 from .runtime.config_audit import build_config_audit_summary
@@ -78,6 +78,7 @@ from .runtime.workspace import (
     migrate_workspace_note_directories,
 )
 from .ideation.formalization import legacy_t45_upgrade_reason
+from .ideation.novelty_verdict import extract_final_gate_verdict, is_passing_final_gate_verdict
 from .schemas.state import StateYaml
 from .schemas.validator import (
     build_declared_outputs_from_state_machine,
@@ -221,7 +222,6 @@ def _detect_environment_warnings() -> list[str]:
     # 宿主机模式：执行完整检查
     warnings: list[str] = []
     conda_prefix_raw = os.getenv("CONDA_PREFIX")
-    conda_env_name = os.getenv("CONDA_DEFAULT_ENV")
     sys_prefix = Path(sys.prefix).resolve()
     sys_executable = Path(sys.executable).resolve()
 
@@ -248,10 +248,17 @@ def _detect_environment_warnings() -> list[str]:
                 f"`researchos` 命令来自 {researchos_path}，但当前 Python 前缀是 {sys_prefix}。"
             )
 
-    if warnings and conda_env_name:
+    if warnings:
+        # ``CONDA_DEFAULT_ENV`` describes the shell which *launched* this
+        # process.  It can legitimately be ``base`` when a caller invokes an
+        # environment's Python by absolute path.  Recommending that shell
+        # value used to send an otherwise healthy ResearchOS process back to
+        # base, where its editable package or dependencies might be absent.
+        # The running interpreter is the sole reliable recovery target.
         warnings.append(
-            f"建议优先使用 `conda run -n {conda_env_name} python -m researchos.cli ...` "
-            "或修正 PATH 顺序后再运行。"
+            "请使用当前解释器重新运行："
+            f'`"{sys_executable}" -m researchos.cli ...`；'
+            "或激活包含该解释器的环境后，再使用 `python -m researchos.cli ...`。"
         )
     return warnings
 
@@ -1783,13 +1790,25 @@ def _emit_startup_ui(
         print(summary)
 
 
-async def _prepare_runtime(args: argparse.Namespace, workspace_dir: Path) -> PreparedRuntime:
+async def _prepare_runtime(
+    args: argparse.Namespace,
+    workspace_dir: Path,
+    *,
+    require_llm: bool = True,
+) -> PreparedRuntime:
     """为 CLI 运行模式准备公共依赖。
 
     两种运行模式共享同一套启动检查：
     - 注册 builtin / skill tools；
     - 校验正式 agent 的 tool 是否齐全；
     - 构造 LLMClient 并按需跑 endpoint selftest。
+
+    ``require_llm=False`` is deliberately narrow.  It is used only by direct
+    ``run-task`` entry points whose entire implementation is a local,
+    deterministic T5 compiler.  The client object is still supplied to keep
+    the runner interface uniform, but an incomplete provider configuration
+    cannot prevent that no-model repair from running.  Full pipeline runs and
+    every LLM-capable task retain the ordinary setup and endpoint checks.
     """
 
     # MCP server configuration can reference credentials from the same .env
@@ -1806,7 +1825,8 @@ async def _prepare_runtime(args: argparse.Namespace, workspace_dir: Path) -> Pre
     _validate_agent_tools(registry)
     try:
         llm_client = LLMClient(Path(args.model_settings).resolve())
-        llm_client = await _ensure_llm_is_ready(args, llm_client)
+        if require_llm:
+            llm_client = await _ensure_llm_is_ready(args, llm_client)
     except BaseException:
         for client in reversed(mcp_clients):
             close = getattr(client, "aclose", None)
@@ -1814,7 +1834,8 @@ async def _prepare_runtime(args: argparse.Namespace, workspace_dir: Path) -> Pre
                 await close()
         raise
     try:
-        await _maybe_run_selftest(args, llm_client)
+        if require_llm:
+            await _maybe_run_selftest(args, llm_client)
     except BaseException:
         # A startup selftest can create aiohttp sessions before a provider
         # reports its first failure. Close them on this early exit so a
@@ -2962,7 +2983,11 @@ async def run_task_command(args: argparse.Namespace) -> int:
     if import_code != 0:
         return import_code
     try:
-        prepared = await _prepare_runtime(args, workspace_dir)
+        prepared = await _prepare_runtime(
+            args,
+            workspace_dir,
+            require_llm=task_id not in {"T5-REBOOST-GATE", "T5-SPECIALIZE-EXECUTOR-SKILLS"},
+        )
     except Exception as exc:
         return _render_runtime_preparation_failure(
             args,
@@ -3633,6 +3658,71 @@ def doctor_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _t45_public_package_check(workspace: Path) -> dict[str, Any]:
+    """Report the public T4.5 package state without changing FSM node meaning.
+
+    Internally, ``T4.5`` is the novelty/collision-audit node.  A passing audit
+    deliberately continues through ``T4.5-FORMALIZE`` and ``T4.5-REVIEW``
+    before it authorizes T5.  Treating an audit-only success as a complete
+    researcher-facing plan was a recurrent source of confusing diagnostics:
+    ``validate --task T4.5`` could be green while the blueprint, hypotheses,
+    experiment plan, Proposal, or accepted orientation review did not exist.
+
+    This helper preserves the state machine's granular node contract while
+    making the CLI's public ``T4.5`` report a truthful composite phase view.
+    It is read-only and does not reinterpret a non-passing novelty verdict as
+    an error: in that branch formalization is correctly not yet authorized.
+    """
+
+    audit_path = workspace / "ideation" / "novelty_audit.md"
+    if not audit_path.is_file() or audit_path.stat().st_size <= 0:
+        return {
+            "ok": False,
+            "status": "audit_missing",
+            "formalization_required": False,
+            "errors": "Missing ideation/novelty_audit.md",
+            "semantics": "T4.5 audit must exist before its public phase state can be determined",
+        }
+    try:
+        audit_text = audit_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return {
+            "ok": False,
+            "status": "audit_unreadable",
+            "formalization_required": False,
+            "errors": f"Cannot read ideation/novelty_audit.md: {exc}",
+            "semantics": "T4.5 audit must be readable before its public phase state can be determined",
+        }
+    verdict = extract_final_gate_verdict(audit_text)
+    audit_passed = is_passing_final_gate_verdict(verdict, allow_legacy=True)
+    if not audit_passed:
+        return {
+            "ok": True,
+            "status": "audit_complete_formalization_not_authorized",
+            "formalization_required": False,
+            "audit_final_gate_verdict": verdict or "missing_or_unrecognized",
+            "errors": None,
+            "semantics": (
+                "The novelty/collision audit is the completed T4.5 node. "
+                "Because its Final Gate Verdict is not a formalization-pass verdict, "
+                "hypotheses, Proposal, and T5 authority are intentionally not required yet."
+            ),
+        }
+    package_ok, package_error = _validate_t45_post_novelty_formalization(workspace, audit_path)
+    return {
+        "ok": package_ok,
+        "status": "formalization_complete" if package_ok else "audit_passed_formalization_pending_or_invalid",
+        "formalization_required": True,
+        "audit_final_gate_verdict": verdict,
+        "errors": package_error,
+        "semantics": (
+            "A passing novelty/collision audit authorizes, but does not itself create, the full T4.5 research package. "
+            "The package is complete only after T4.5-FORMALIZE and T4.5-REVIEW produce and accept the source-bound "
+            "blueprint, claim registry, hypotheses, experiment plan, Proposal, orientation review, and formalization receipt."
+        ),
+    }
+
+
 def validate_command(args: argparse.Namespace) -> int:
     """校验指定 task 的输入或产物。"""
 
@@ -3681,6 +3771,15 @@ def validate_command(args: argparse.Namespace) -> int:
             "errors": output_errors,
             "semantics": "declared task outputs and stage-specific artifact validators",
         }
+        # ``T4.5`` is the name researchers use for the whole decision-to-plan
+        # phase, while it remains only the novelty-audit node inside the
+        # state machine.  Include an explicit composite package check here so
+        # a green audit cannot be mistaken for a green hypothesis/Proposal
+        # package or T5 authorization.  Granular node validation remains in
+        # `checks.outputs`; the additional key names the later formalization
+        # boundary rather than silently changing the node's own semantics.
+        if task_id == "T4.5":
+            checks["t45_research_package"] = _t45_public_package_check(workspace)
 
     ok = all(item.get("ok") is True for item in checks.values())
     errors = "; ".join(
@@ -3696,6 +3795,16 @@ def validate_command(args: argparse.Namespace) -> int:
                 "scope": scope,
                 "errors": errors,
                 "checks": checks,
+                **(
+                    {
+                        "note": (
+                            "T4.5 output validation reports both the novelty-audit node and the public full research-package state. "
+                            "A passing audit alone does not authorize T5."
+                        )
+                    }
+                    if task_id == "T4.5" and scope in {"outputs", "all"}
+                    else {}
+                ),
             },
             allow_unicode=True,
             sort_keys=False,

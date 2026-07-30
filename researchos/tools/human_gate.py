@@ -10,6 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 import io
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -28,6 +29,26 @@ from ..ui.candidate_cards import CandidateCardRenderer, CandidateViewModel
 
 
 _READLINE_CONFIGURED = False
+
+
+def _terminal_eof_submit_gesture() -> str:
+    """Return the EOF gesture that Python's interactive input accepts here.
+
+    POSIX terminals send EOF with ``Ctrl+D``.  The Windows console convention
+    is ``Ctrl+Z`` followed by Enter; presenting the POSIX gesture there leaves
+    a multiline Gate apparently frozen because it is simply ordinary input on
+    that platform.  A literal ``END`` remains the cross-platform fallback for
+    IDE terminals, remote consoles, and users who prefer not to send EOF.
+    """
+
+    return "Ctrl+Z 后按 Enter" if os.name == "nt" else "Ctrl+D"
+
+
+def _terminal_eof_submit_instruction(*, include_end: bool = True) -> str:
+    """Build one consistent, platform-aware multiline submission instruction."""
+
+    gesture = _terminal_eof_submit_gesture()
+    return f"按 {gesture} 提交" + ("（或单独一行 `END`）" if include_end else "")
 
 
 _T2_LLM_CAPTURE_FIELDS = {
@@ -128,8 +149,9 @@ def _read_cli_multiline(
     evidence concern, and a requested action in one turn.  Requiring the
     researcher to encode that in a single shell line is both fragile and
     unnecessarily unlike the rest of the human interface.  ``Ctrl+D`` ends
-    the block on POSIX terminals; a standalone ``END`` is a discoverable
-    fallback for terminals where EOF is intercepted by an IDE.
+    the block on POSIX terminals; Windows uses ``Ctrl+Z`` followed by Enter.
+    A standalone ``END`` is a discoverable cross-platform fallback for
+    terminals where EOF is intercepted by an IDE.
 
     ``EOFError`` is intentionally consumed when at least one line was typed:
     it is the normal submit gesture.  With no content it is re-raised so the
@@ -846,7 +868,11 @@ class CLIHumanInterface(HumanInterface):
                 lines.append(f"  [{idx}] {_compact_text(item, 180)}")
         self._render_panel(title="需要你的输入", border_style="bright_yellow", lines=lines)
         for attempt in range(1, self.CLARIFICATION_EMPTY_RETRIES + 1):
-            print("请输入回答（输入完成后，在最后输入单独一行 END，或按 Ctrl+D 提交）:")
+            print(
+                "请输入回答（输入完成后，在最后输入单独一行 END，或"
+                + _terminal_eof_submit_instruction(include_end=False)
+                + "）:"
+            )
 
             lines: list[str] = []
             try:
@@ -856,7 +882,7 @@ class CLIHumanInterface(HumanInterface):
                         break
                     lines.append(line)
             except EOFError:
-                pass  # Ctrl+D 正常提交
+                pass  # Current platform's EOF gesture normally submits the block.
 
             answer = "\n".join(lines).strip()
             if answer:
@@ -953,7 +979,11 @@ class CLIHumanInterface(HumanInterface):
                     print(f"    作用: {option['description']}")
         if gate_id == "t4_gate1_selection_gate":
             print("直接输入即可：`推进 D1`、`优化 D2`、`再探索一轮`、`暂停`。也可以输入：`查看 D1`、`对比 D1 和 D3`、`更多操作`。只输入 `D1` 时系统会先追问，不会直接改变候选。")
-            print("这是持续对话：可输入多行研究说明；Enter 只换行，输入完成后按 Ctrl+D 提交（或单独一行 `END`）。确认、取消和只读查看也按同样方式提交。")
+            print(
+                "这是持续对话：可输入多行研究说明；Enter 只换行，输入完成后"
+                + _terminal_eof_submit_instruction()
+                + "。确认、取消和只读查看也按同样方式提交。"
+            )
         selected = None
         while selected is None:
             try:
@@ -961,7 +991,11 @@ class CLIHumanInterface(HumanInterface):
                     raw_answer = _read_cli_multiline(
                         prompt="T4> ",
                         continuation_prompt="T4... ",
-                        submit_hint="已记录这一行；可以继续补充说明，提交请按 Ctrl+D，或单独输入 END。",
+                        submit_hint=(
+                            "已记录这一行；可以继续补充说明，提交请"
+                            + _terminal_eof_submit_instruction()
+                            + "。"
+                        ),
                     )
                     if raw_answer:
                         print(

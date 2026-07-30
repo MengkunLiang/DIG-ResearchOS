@@ -192,6 +192,19 @@ REQUIRED_SOURCE_GROUPS = (
 REQUIRED_SOURCE_PATHS = {path for group in REQUIRED_SOURCE_GROUPS for path in group}
 
 
+def is_generated_directory_guide_path(path: object) -> bool:
+    """Recognize generated workspace navigation files in legacy manifests.
+
+    New inventories omit `_DIR_GUIDE.md`. Older handoffs can retain those
+    entries, however, and a generated-guide refresh must not invalidate
+    research evidence or block Resume. The entry remains visible for audit but
+    is excluded from hash enforcement because it never participates in a
+    required source group or claim/evidence decision.
+    """
+
+    return Path(str(path or "")).name == "_DIR_GUIDE.md"
+
+
 def _source_group_label(group: tuple[str, ...]) -> str:
     return " or ".join(group)
 
@@ -311,6 +324,8 @@ class SemanticValidator:
 
         for index, entry in enumerate(entries):
             path = f"/source_manifest/{index}"
+            if is_generated_directory_guide_path(entry.get("path")):
+                continue
             if entry["availability"] == "available" and "content_sha256" not in entry:
                 self.error("source.hash_missing", path, "available source must include content_sha256")
             if entry["availability"] != "available" and not entry.get("omission_reason"):

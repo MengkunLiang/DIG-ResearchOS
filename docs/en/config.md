@@ -12,6 +12,17 @@ Run this once from the repository root:
 python -m researchos.cli configure-llm
 ```
 
+### Use the same Python that contains ResearchOS
+
+The command must use the interpreter into which ResearchOS was installed. In a Conda installation, activate `researchos` before running it:
+
+```bash
+conda activate researchos
+python -m researchos.cli configure-llm
+```
+
+If the CLI reports that the `python` found on `PATH` differs from the running interpreter, do not copy a guessed Conda environment name from the shell prompt. The warning prints the exact safe command, in the form `"/absolute/path/to/python" -m researchos.cli ...`. Run that command, or activate the environment containing that exact interpreter. This prevents a Python from `base` or another environment from loading a different package set.
+
 The interactive flow asks for:
 
 | Field | Meaning |
@@ -52,7 +63,7 @@ python -m researchos.cli configure-llm \
 
 ## Edit or Configure Interactively
 
-When `run`, `resume`, `run-task`, or `run-skill` finds a missing connection, it stops before creating an Agent and shows a Rich setup card. A complete real `config/model_settings.yaml` skips this guide, so setup is never repeated unnecessarily. If only one field is missing, for example `model` while the provider, API URL, and API key already work, choosing setup asks only for `model`; an existing API-key environment reference is preserved and is never redisplayed, re-entered, or written back as a literal secret. When the provider changes, ResearchOS requests that provider's API key and model rather than carrying over the old provider's credential or model. The choices appear only when the file is missing, the example has not been copied, or a required field such as `provider`, `api_key`, or `model` is absent:
+When `run`, `resume`, `run-task`, or `run-skill` finds a missing connection, it stops before creating an Agent and shows a Rich setup card. A complete real `config/model_settings.yaml` skips this guide, so setup is never repeated unnecessarily. The narrow exception is direct `run-task T5-REBOOST-GATE` and `run-task T5-SPECIALIZE-EXECUTOR-SKILLS`: both are local deterministic compilers, so they may validate/rebuild an existing T5 handoff or Skill Suite without a provider configuration or endpoint request. This exception does not make the whole pipeline model-free; a later LLM stage still requires normal configuration. If only one field is missing, for example `model` while the provider, API URL, and API key already work, choosing setup asks only for `model`; an existing API-key environment reference is preserved and is never redisplayed, re-entered, or written back as a literal secret. When the provider changes, ResearchOS requests that provider's API key and model rather than carrying over the old provider's credential or model. The choices appear only when the file is missing, the example has not been copied, or a required field such as `provider`, `api_key`, or `model` is absent:
 
 1. Configure now: enter the values in the terminal and immediately test them. A passing test returns to the original `run`/`resume`/`run-task`/`run-skill` invocation without issuing a duplicate startup request to the provider.
 2. Edit `config/model_settings.yaml`: ResearchOS shows the exact active path, template path, required fields, and a copyable validation command; make the change, then let it reload that file and its matching `.env` before the ordinary startup check.

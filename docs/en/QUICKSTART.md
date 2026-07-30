@@ -78,7 +78,7 @@ Ordinary `resume` returning to T2/T3 first presents a lightweight Gate: T2 can c
 
 Press `Ctrl+C` once to pause a running project. ResearchOS stops the current command, marks `state.yaml` as `PAUSED`, and prints a copyable `resume` command; persisted papers, notes, and stage artifacts remain in place. The same path applies while the terminal is waiting for a provider or for user input. A second `Ctrl+C` requests an immediate exit and should be used only when you do not need to wait for cleanup.
 
-Do not use `Ctrl+Z` to end a project. It only suspends the shell job: the process remains in the job list and has neither exited normally nor established a safe project pause. After an accidental `Ctrl+Z`, run `fg` in that terminal and press `Ctrl+C` once, or inspect `state.yaml` and `workspace-status` before handling the suspended job.
+For a multiline Gate answer, press `Ctrl+D` on POSIX terminals to submit the entered block. On Windows Console, PowerShell, and most Windows Terminal sessions, press `Ctrl+Z` and then Enter instead. A line containing only `END` is the cross-platform alternative and also works in IDE terminals that intercept EOF. The POSIX `Ctrl+Z` warning is different: do not use it to end a project there, because it only suspends the shell job. After an accidental POSIX `Ctrl+Z`, run `fg` in that terminal and press `Ctrl+C` once, or inspect `state.yaml` and `workspace-status` before handling the suspended job.
 
 ## Command Index
 

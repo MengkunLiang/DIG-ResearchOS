@@ -899,9 +899,9 @@ Pass2 只补充接地、风险与选择建议，不能隐藏 Candidate。尤其�
 
 选择后产生的是 pre-novelty material，如 `ideation/selected/selected_candidate.json`、`hypothesis_brief.yaml`、`hypothesis_lineage.json`、`t45_search_targets.json` 和 `pre_novelty_brief.md`。它们是 T4.5 检索与 collision audit 的输入，绝不是“已通过外部 novelty 审计”的宣告。
 
-Gate1 是持续的研究对话，不是一行命令后就结束的菜单。研究者可以先输入“查看 D1”，继续追问评分原因或比较 D1 与 D3，再回到尚未确认的研究操作，而不会重新生成 T4。Enter 只是在当前轮加入新行。Ctrl+D 会提交已经输入的文本；若终端或 IDE 截获 EOF，则可单独输入 `END` 完成同样的提交。只输入 `D1` 被视为有歧义，系统必须追问是查看、推进还是优化。查看和比较是本地只读操作。推进、优化、组合或再探索会先被复述为操作计划，随后进入二次确认。
+Gate1 是持续的研究对话，不是一行命令后就结束的菜单。研究者可以先输入“查看 D1”，继续追问评分原因或比较 D1 与 D3，再回到尚未确认的研究操作，而不会重新生成 T4。Enter 只是在当前轮加入新行。POSIX 终端用 Ctrl+D 提交已经输入的文本；Windows 中应按 Ctrl+Z **再按 Enter**。若终端或 IDE 截获 EOF，则可单独输入 `END` 作为跨平台提交方式。只输入 `D1` 被视为有歧义，系统必须追问是查看、推进还是优化。查看和比较是本地只读操作。推进、优化、组合或再探索会先被复述为操作计划，随后进入二次确认。
 
-确认后的状态路径取决于操作本身。选择一个已准备好的 Candidate 走 `T4 -> T4-GATE1 -> T4.5`，并写入 pre-novelty 选择回执，不会重新运行 T4。演化、聚焦优化、重跑 Route 或已批准的组合走 `T4 -> T4-GATE1 -> T4`，先创建独立的新版本，再返回 Gate1。只读操作仍停留在 Gate1。没有提交任何文本就按 Ctrl+D 时，系统会保存 Gate 并暂停。已有待确认操作计划时按 Ctrl+D，只会保留草稿，绝不会执行。`resume` 会重新打开这个持久 Gate，不会重复已完成的 T4 模型调用。
+确认后的状态路径取决于操作本身。选择一个已准备好的 Candidate 走 `T4 -> T4-GATE1 -> T4.5`，并写入 pre-novelty 选择回执，不会重新运行 T4。演化、聚焦优化、重跑 Route 或已批准的组合走 `T4 -> T4-GATE1 -> T4`，先创建独立的新版本，再返回 Gate1。只读操作仍停留在 Gate1。没有提交任何文本就发送 EOF 时，系统会保存 Gate 并暂停（POSIX 为 Ctrl+D；Windows 为 Ctrl+Z 后 Enter）。已有待确认操作计划时发送 EOF，只会保留草稿，绝不会执行。`resume` 会重新打开这个持久 Gate，不会重复已完成的 T4 模型调用。
 
 ---
 

@@ -13,8 +13,10 @@ import csv
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Literal
 
@@ -130,14 +132,36 @@ def _workspace_relative(workspace: Path, path: Path) -> str:
         return path.as_posix()
 
 
-def _write_json(path: Path, data: dict[str, Any]) -> None:
+def _write_atomic_text(path: Path, content: str) -> None:
+    """Replace one workspace artifact without exposing a partial file.
+
+    External-executor handoff files can be read by the StateMachine, executor
+    Skills, and a researcher in separate processes. A direct ``write_text``
+    could expose truncated JSON or a half-written control document. Write a
+    same-directory temporary file and replace the destination only after the
+    complete payload has been flushed.
+    """
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary_path.open("w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        # ``replace`` removes the source on success. A failed write must only
+        # remove this private temporary path, never the last complete output.
+        temporary_path.unlink(missing_ok=True)
+
+
+def _write_json(path: Path, data: dict[str, Any]) -> None:
+    _write_atomic_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
 def _write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    _write_atomic_text(path, content)
 
 
 def _now_iso() -> str:
@@ -4487,6 +4511,33 @@ LLM_REBOOST_CANDIDATE_PATH = "external_executor/report/reboost_llm_candidate_han
 LLM_REBOOST_CANDIDATE_VALIDATION_REPORT_PATH = (
     "external_executor/report/reboost_llm_candidate_validation_report.json"
 )
+_REBOOST_SUCCESS_ONLY_OUTPUTS = (
+    "external_executor/paper_card_evidence_index.json",
+    "external_executor/expected_outputs_schema.json",
+    "external_executor/allowed_paths.txt",
+    "external_executor/AGENTS.md",
+    "external_executor/CLAUDE.md",
+)
+
+
+def _blocked_reboost_pack(pack: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Return a non-authorizing T5 marker for a failed or interrupted build.
+
+    ``generation_status`` is the authorization bit used by the task checker
+    and external executor. A rebuild must clear it before validation starts so
+    an old completed pack cannot outlive changed T4.5 source artifacts.
+    """
+
+    blocked = dict(pack or {"schema_version": "external_executor_handoff.v1"})
+    blocked["generation_status"] = "blocked"
+    return blocked
+
+
+def _remove_reboost_success_only_outputs(policy: WorkspaceAccessPolicy) -> None:
+    """Remove compiler-owned controls that cannot outlive a failed handoff."""
+
+    for rel_path in _REBOOST_SUCCESS_ONLY_OUTPUTS:
+        policy.resolve_write(rel_path).unlink(missing_ok=True)
 
 
 class CompileResearchReboostHandoffParams(BaseModel):
@@ -4647,6 +4698,15 @@ class CompileResearchReboostHandoffTool(Tool):
         params = CompileResearchReboostHandoffParams(**kwargs)
         try:
             ws = self.policy.workspace_dir
+            canonical_handoff_path = self.policy.resolve_write(params.output_path)
+            staged_handoff_path = canonical_handoff_path.with_name(
+                f".{canonical_handoff_path.name}.{uuid.uuid4().hex}.validation-candidate"
+            )
+            # A T5 recompile is an authorization boundary. Invalidate an old
+            # completed marker before touching discovery data so an interrupt
+            # or a late validator failure cannot leave stale work executable.
+            _write_json(canonical_handoff_path, _blocked_reboost_pack())
+            _remove_reboost_success_only_outputs(self.policy)
             existing_selection, _selection_hash = _executor_selection_payload(ws)
             selected_executor = str(existing_selection.get("selected_executor") or "")
             preserve_existing_selection = selected_executor in {
@@ -4729,23 +4789,31 @@ class CompileResearchReboostHandoffTool(Tool):
             # rationale without treating paper notes as empirical results.
             paper_card_index_path = "external_executor/paper_card_evidence_index.json"
             paper_card_index = _paper_card_evidence_index(ws)
-            _write_json(self.policy.resolve_write(paper_card_index_path), paper_card_index)
             pack["paper_card_evidence_index"] = paper_card_index_path
             pack["paper_card_evidence_policy"] = {
                 "allowed_uses": paper_card_index["allowed_uses"],
                 "prohibited_uses": paper_card_index["prohibited_uses"],
             }
-            _write_json(self.policy.resolve_write(params.output_path), pack)
-            ok, err, validation_report = _validate_research_reboost_pack(
-                ws,
-                self.policy.resolve_read(params.output_path),
-            )
+            # Validate a private staged candidate. The canonical handoff stays
+            # blocked until its receipt and every executor-facing control file
+            # have been successfully published.
+            _write_json(staged_handoff_path, pack)
+            try:
+                ok, err, validation_report = _validate_research_reboost_pack(ws, staged_handoff_path)
+            finally:
+                staged_handoff_path.unlink(missing_ok=True)
             _write_json(self.policy.resolve_write(params.validation_report_path), validation_report)
             report["validation_ok"] = ok
             report["validation_error"] = err
             report["validator"] = "skills/research-reboost/scripts/validate_handoff.py"
+            report["generation_status"] = "completed" if ok else "blocked"
             _write_json(self.policy.resolve_write(params.report_path), report)
             if not ok:
+                # Preserve diagnostics while removing every generated control
+                # that could otherwise be paired with an older successful
+                # handoff by a human or an external executor.
+                _write_json(canonical_handoff_path, _blocked_reboost_pack(pack))
+                _remove_reboost_success_only_outputs(self.policy)
                 return ToolResult(
                     ok=False,
                     content=f"research-reboost validation failed: {err}",
@@ -4754,6 +4822,7 @@ class CompileResearchReboostHandoffTool(Tool):
                 )
 
             guide_handoff = _guide_view_from_reboost_pack(pack, project, metrics)
+            _write_json(self.policy.resolve_write(paper_card_index_path), paper_card_index)
             _write_json(self.policy.resolve_write(params.expected_schema_path), _build_expected_outputs_schema())
             _write_text(self.policy.resolve_write(params.allowed_paths_path), "\n".join(_allowed_path_rules_for_external_executor()) + "\n")
             _write_external_executor_guides(
@@ -4772,9 +4841,54 @@ class CompileResearchReboostHandoffTool(Tool):
                 patch_external_executor_files_with_selection(ws, existing_selection)
             report["existing_executor_selection_preserved"] = preserve_existing_selection
             _write_json(self.policy.resolve_write(params.report_path), report)
+            # Atomic replacement of this file is the final commit signal.
+            # StateMachine and executors may trust `completed` only after all
+            # dependent T5 artifacts above are already present.
+            _write_json(canonical_handoff_path, pack)
         except ToolAccessDenied as exc:
             return ToolResult(ok=False, content=str(exc), error="access_denied")
         except Exception as exc:
+            # A failure before staged validation (for example catalog refresh
+            # I/O) must also invalidate an earlier completed handoff. These
+            # diagnostics are best effort: if the filesystem is unavailable,
+            # retain the original exception as the actionable failure.
+            try:
+                _write_json(
+                    self.policy.resolve_write(params.output_path),
+                    _blocked_reboost_pack(),
+                )
+                _write_json(
+                    self.policy.resolve_write(params.validation_report_path),
+                    {
+                        "validator": "researchos.tools.external_experiment",
+                        "valid": False,
+                        "findings": [
+                            {
+                                "severity": "error",
+                                "code": "compiler.runtime",
+                                "path": "/",
+                                "message": str(exc) or type(exc).__name__,
+                            }
+                        ],
+                        "error_count": 1,
+                        "warning_count": 0,
+                    },
+                )
+                _write_json(
+                    self.policy.resolve_write(params.report_path),
+                    {
+                        "version": "1.0",
+                        "semantics": "external_executor_context_reboost_report",
+                        "handoff_pack": params.output_path,
+                        "generation_status": "blocked",
+                        "validation_ok": False,
+                        "validation_error": str(exc) or type(exc).__name__,
+                        "validator": "researchos.tools.external_experiment",
+                    },
+                )
+                _remove_reboost_success_only_outputs(self.policy)
+            except Exception:
+                pass
             return ToolResult(ok=False, content=f"research reboost failed: {exc}", error="research_reboost_failed")
         return ToolResult(
             ok=True,

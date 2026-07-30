@@ -198,20 +198,84 @@ class WriteStructuredFileTool(Tool):
             abs_path.parent.mkdir(parents=True, exist_ok=True)
             abs_path.write_text(content, encoding="utf-8")
 
+            # A successful schema write is deliberately not mislabeled as a
+            # successful T4.5 formalization.  The three source files share
+            # claim references, design rationales, and component-test
+            # coverage; each individual file can validate while their joint
+            # research contract remains unusable for hypotheses, Proposal,
+            # or T5.  Report that state immediately after every relevant
+            # write so the Formalizer sees all remaining independent repairs
+            # before attempting a prose write and triggering an avoidable
+            # blocked-write loop.
+            t45_contract_errors: list[str] = []
+            is_t45_source = (
+                self.policy.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"}
+                and normalized_path
+                in {
+                    "ideation/research_blueprint.yaml",
+                    "ideation/claim_registry.yaml",
+                    "ideation/exp_plan.yaml",
+                }
+            )
+            if is_t45_source:
+                from ..ideation.formalization import collect_t45_structured_source_errors
+
+                t45_contract_errors = [
+                    str(error).strip()
+                    for error in collect_t45_structured_source_errors(self.policy.workspace_dir)
+                    if str(error).strip()
+                ]
+            shared_contract_passed = is_t45_source and not t45_contract_errors
+            data = {
+                "path": path,
+                "bytes": len(content.encode("utf-8")),
+                "format": format_type,
+                "schema_name": schema_name,
+                "normalizations": normalizations,
+            }
+            if is_t45_source:
+                data.update(
+                    {
+                        "t45_shared_contract_valid": shared_contract_passed,
+                        "t45_shared_contract_errors": t45_contract_errors,
+                    }
+                )
+                if t45_contract_errors:
+                    # The write itself is durable and therefore remains
+                    # model-readable `ok=True`; the display disposition makes
+                    # clear that this is an incomplete checkpoint, not a
+                    # green formalization success.
+                    data.update(
+                        {
+                            "display_disposition": "validation_failed",
+                            "repairable": True,
+                            "repair_scope": "t45_shared_structured_contract",
+                        }
+                    )
+                    remaining = "\n".join(f"- {error}" for error in t45_contract_errors)
+                    completion = (
+                        "文件已通过自身 schema 并保存，但 T4.5 三份来源尚未共同通过研究契约；"
+                        "不要写 hypotheses 或 Proposal。当前仍需一次性修复：\n"
+                        + remaining
+                        + "\n修复后再次调用 validate_t45_formalization_sources；只有其 valid=true 才能写正文。"
+                    )
+                else:
+                    completion = (
+                        "文件已保存，且 research_blueprint、claim_registry 与 exp_plan 已共同通过 T4.5 研究契约。"
+                        "现在可写或修复 researcher-facing hypotheses 与 Proposal。"
+                    )
+            else:
+                completion = ""
+
             return ToolResult(
                 ok=True,
                 content=(
                     f"✅ 成功写入 {len(content)} 字符到 {path}\n"
                     f"格式: {format_type}, Schema: {schema_name}"
                     + ("\n已规范化兼容字段: " + "; ".join(normalizations) if normalizations else "")
+                    + ("\n" + completion if completion else "")
                 ),
-                data={
-                    "path": path,
-                    "bytes": len(content.encode("utf-8")),
-                    "format": format_type,
-                    "schema_name": schema_name,
-                    "normalizations": normalizations,
-                },
+                data=data,
             )
 
         except ToolAccessDenied as exc:

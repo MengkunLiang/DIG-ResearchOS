@@ -16,6 +16,8 @@ import yaml
 
 from ..agents.registry import TASK_TO_AGENT_MAP, get_agent_by_id
 from ..orchestration.task_aliases import resolve_public_stage_alias
+from ..orchestration.deterministic_t5_reboost import run_deterministic_t5_reboost
+from ..orchestration.deterministic_t5_specialization import run_deterministic_t5_specialization
 from ..orchestration.state_machine import StateMachine
 from ..orchestration.task_io_contract import get_task_io, resolve_inputs, resolve_outputs, task_import_paths
 from ..runtime.agent import AgentResult, ExecutionContext, resolve_effective_config
@@ -322,19 +324,32 @@ class SingleTaskRunner:
         state = self._record_started(state, ctx.run_id)
         state.dump_yaml(state_path)
 
-        self.progress.emit("[SingleTask] 启动 Agent 执行...", important=True)
-        effective = resolve_effective_config(agent.spec, ctx)
-        step_limit = "unlimited" if effective.unlimited_budget else str(effective.max_steps)
-        self.progress.emit(f"[SingleTask] Agent 将执行最多 {step_limit} 步", verbose_only=True)
-        runner = AgentRunner(
-            agent,
-            self.tools,
-            self.llm,
-            self.human,
-            runtime_settings=self.runtime_settings,
-        )
         try:
-            result = await runner.run(ctx)
+            if ctx.task_id == "T5-REBOOST-GATE":
+                self.progress.emit(
+                    "[Research Reboost] 正在从已通过的 T4.5 产物编译并校验执行交接，不调用模型重写 handoff。",
+                    important=True,
+                )
+                result = await run_deterministic_t5_reboost(ctx)
+            elif ctx.task_id == "T5-SPECIALIZE-EXECUTOR-SKILLS":
+                self.progress.emit(
+                    "[Project Skill Specialization] 正在从已校验 handoff 确定性发布项目专属 Skill Suite，不调用模型或 shell 诊断。",
+                    important=True,
+                )
+                result = await run_deterministic_t5_specialization(ctx)
+            else:
+                self.progress.emit("[SingleTask] 启动 Agent 执行...", important=True)
+                effective = resolve_effective_config(agent.spec, ctx)
+                step_limit = "unlimited" if effective.unlimited_budget else str(effective.max_steps)
+                self.progress.emit(f"[SingleTask] Agent 将执行最多 {step_limit} 步", verbose_only=True)
+                runner = AgentRunner(
+                    agent,
+                    self.tools,
+                    self.llm,
+                    self.human,
+                    runtime_settings=self.runtime_settings,
+                )
+                result = await runner.run(ctx)
         except (asyncio.CancelledError, KeyboardInterrupt):
             self.progress.emit("\n[SingleTask] 任务被中断", important=True)
             state = self._record_interrupted(state)

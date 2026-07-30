@@ -127,6 +127,18 @@ OPTIONAL_PATHS = (
 )
 
 
+def is_generated_directory_guide(path: Path) -> bool:
+    """Return whether a file is workspace navigation metadata, not evidence.
+
+    Workspace initialization refreshes ``_DIR_GUIDE.md`` whenever the directory
+    guide contract changes. Treating those generated navigation files as paper
+    notes, resources, or optional sources made an otherwise unchanged T5
+    handoff fail its source-hash check after a documentation-only update.
+    """
+
+    return path.name == "_DIR_GUIDE.md"
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -179,10 +191,11 @@ def iter_optional_files(root: Path) -> Iterable[tuple[Path, str, str]]:
     for relative, category, purpose in OPTIONAL_PATHS:
         target = root / relative
         if target.is_file():
-            yield target, category, purpose
+            if not is_generated_directory_guide(target):
+                yield target, category, purpose
         elif target.is_dir():
             for path in sorted(target.rglob("*")):
-                if path.is_file():
+                if path.is_file() and not is_generated_directory_guide(path):
                     yield path, category, purpose
 
 

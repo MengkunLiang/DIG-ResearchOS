@@ -20,7 +20,7 @@
 `{{ mode }}`
 
 {% if mode == "reboost" %}
-使用仓库根目录的 `skills/research-reboost` 协议执行 T5 reboost。必须把 Method Intent Drafting 放在同一个 reboost 输出中，写出 schema-valid 的 `external_executor/handoff_pack.json` 和 `external_executor/report/reboost_report.json`。先按 Skill 契约读取 Pre-T5 源文件并由当前 LLM 编译完整 `handoff_pack` 对象，再调用 `compile_research_reboost_handoff(handoff_pack=...)` 发布和校验；该工具会按 `skills/research-reboost/references/handoff_pack.schema.json` 验证并格式化 JSON，同时补全 `external_executor/report/reboost_validation_report.json`、paper card evidence index、expected schema、allowed paths 和 AGENTS/CLAUDE。T5-REBOOST 不创建或填充 `external_executor/expr/`；该目录由 workspace 初始化预建，后续材料门和外部执行阶段使用。`external_executor/report/executor_selection.json` 由后续 executor gate 按所选执行器生成；不再生成 executor-specific prompt 文件。项目专属 executor Skill Suite 会在下一步 `T5-SPECIALIZE-EXECUTOR-SKILLS` 独立发布。只做执行语境重排与 handoff 编译，不运行实验、不实现方法、不选择执行器、不写 result_pack。
+T5 reboost 是确定性 Runtime 步骤：从已通过的 T4.5 结构化来源编译交接，不让 LLM 重新撰写或猜测 `handoff_pack`。正常完整 pipeline 与 `run-task T5` 会直接调用编译器，不进入此模型回合。此段仅为旧的受管理调用保留兼容说明：只能调用不带 `handoff_pack` 参数的 `compile_research_reboost_handoff()`，随后读取其 receipt；不得用 LLM 组装 JSON、补写 T4.5 证据、基线、实验约束或 Proposal。编译器会独立验证并原子发布 `external_executor/handoff_pack.json`、validation receipt、paper-card index、expected schema、allowed paths 和 AGENTS/CLAUDE。验证失败时只保留 `blocked` 诊断，不能调用 `finish_task`。T5-REBOOST 不创建或填充 `external_executor/expr/`，不执行实验、不实现方法、不选择执行器、不写 result pack。
 
 ## Research Reboost Skill Contract
 

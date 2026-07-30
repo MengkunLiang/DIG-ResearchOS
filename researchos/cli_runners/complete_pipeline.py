@@ -15,6 +15,8 @@ import shutil
 from uuid import uuid4
 
 from ..agents.registry import get_agent_by_id
+from ..orchestration.deterministic_t5_reboost import run_deterministic_t5_reboost
+from ..orchestration.deterministic_t5_specialization import run_deterministic_t5_specialization
 from ..orchestration.state_machine import StateMachine, validate_t4_gate1_selection_file
 from ..orchestration.task_io_contract import get_task_io
 from ..runtime.agent import AgentResult
@@ -669,9 +671,22 @@ class CompletePipelineRunner:
         self.run_logger.event("TASK_START", task=ctx.task_id, run_id=ctx.run_id, status=state.status)
         state.dump_yaml(state_path)
 
-        runner = self._build_runner(node, ctx)
         try:
-            result = await runner.run(ctx)
+            if ctx.task_id == "T5-REBOOST-GATE":
+                self.progress.emit(
+                    "[Research Reboost] 正在从已通过的 T4.5 产物编译并校验执行交接，不调用模型重写 handoff。",
+                    important=True,
+                )
+                result = await run_deterministic_t5_reboost(ctx)
+            elif ctx.task_id == "T5-SPECIALIZE-EXECUTOR-SKILLS":
+                self.progress.emit(
+                    "[Project Skill Specialization] 正在从已校验 handoff 确定性发布项目专属 Skill Suite，不调用模型或 shell 诊断。",
+                    important=True,
+                )
+                result = await run_deterministic_t5_specialization(ctx)
+            else:
+                runner = self._build_runner(node, ctx)
+                result = await runner.run(ctx)
         except (asyncio.CancelledError, KeyboardInterrupt):
             # CLI 层会把 Ctrl-C / SIGTERM 转成 cancel；runner 这里只负责把状态落到
             # `PAUSED`，保证后续 `resume` 有据可依。

@@ -26,7 +26,7 @@ class ValidateT45FormalizationSourcesTool(Tool):
     name = "validate_t45_formalization_sources"
     description = (
         "只读校验 T4.5 的 research_blueprint、claim_registry 与 exp_plan 是否构成可写正文的共同研究契约；"
-        "返回唯一的确定性失败原因，不改写文件。"
+        "返回全部彼此独立的确定性失败项及最小修复集合，不改写文件。"
     )
     parameters_schema = ValidateT45FormalizationSourcesParams
     timeout_seconds = 10.0

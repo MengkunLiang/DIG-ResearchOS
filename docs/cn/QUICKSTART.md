@@ -81,7 +81,7 @@ python -m researchos.cli workspace-status --workspace-root ./workspace
 
 运行中的项目需要暂停时按一次 `Ctrl+C`。ResearchOS 会停止当前命令、把 `state.yaml` 标记为 `PAUSED`，并显示可直接复制的 `resume` 命令；已落盘的论文、笔记和阶段产物会保留。终端正在等待 provider 或用户输入时，第一次 `Ctrl+C` 也会走同一保存路径。第二次 `Ctrl+C` 表示立即退出，仅在不需要等待清理完成时使用。
 
-不要使用 `Ctrl+Z` 结束项目。它只是 shell 的 suspend，进程仍会停留在任务列表中，既不会正常退出，也不能作为项目已安全暂停的依据。误按后可在原终端输入 `fg` 恢复进程，再按一次 `Ctrl+C`；或先确认 `state.yaml` 和 `workspace-status`，再处理该 suspended job。
+多行 Gate 输入的提交方式取决于平台：POSIX 终端按 `Ctrl+D`；Windows Console、PowerShell 与多数 Windows Terminal 会话应按 `Ctrl+Z`，**再按 Enter**。任意平台也都可以在单独一行输入 `END`；这同样适合会截获 EOF 的 IDE 终端。上面对 `Ctrl+Z` 的警告只针对 POSIX：在那里它只是 shell 的 suspend，进程仍会停留在任务列表中，既不会正常退出，也不能作为项目已安全暂停的依据。若在 POSIX 误按，可在原终端输入 `fg` 恢复进程，再按一次 `Ctrl+C`；或先确认 `state.yaml` 和 `workspace-status`，再处理该 suspended job。
 
 ## 命令索引
 

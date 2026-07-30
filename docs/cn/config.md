@@ -12,6 +12,17 @@ ResearchOS 只保留一个面向用户的 LLM 配置入口。所有 Agent 和 Sk
 python -m researchos.cli configure-llm
 ```
 
+### 确认使用安装了 ResearchOS 的 Python
+
+命令必须由安装 ResearchOS 的解释器执行。使用 Conda 时，先激活 `researchos` 环境：
+
+```bash
+conda activate researchos
+python -m researchos.cli configure-llm
+```
+
+如果 CLI 提示 `PATH` 中的 `python` 与当前解释器不同，不要根据终端提示符猜测或复制 Conda 环境名。提示会给出可直接使用的精确命令，形如 `"/absolute/path/to/python" -m researchos.cli ...`。应运行这条命令，或激活包含该解释器的环境后再运行 `python -m researchos.cli ...`；这样可避免 `base` 或其他环境加载了不同的依赖和 ResearchOS 安装。
+
 交互式流程会询问：
 
 | 字段 | 含义 |
@@ -52,7 +63,7 @@ python -m researchos.cli configure-llm \
 
 ## 缺少配置时的交互
 
-`run`、`resume`、`run-task` 与 `run-skill` 在创建 Agent 前发现连接未配置时，会直接停在 Rich 配置卡。若真实 `config/model_settings.yaml` 已存在且字段完整，系统会跳过该向导，不会要求重复填写。若只缺少一个字段，例如已有 `provider`、API URL 和 API key 但未填写 `model`，选择“现在配置”后只会询问 `model`；已有 API key 的环境变量引用会原样保留，不会重新显示、输入或写入配置文件。若主动切换 provider，系统会要求补充该 provider 的 API key 和 model，不会沿用旧 provider 的凭据或 model。文件缺失、模板文件未复制，或 `provider`、`api_key`、`model` 等必要字段缺失时，才会展示以下选择：
+`run`、`resume`、`run-task` 与 `run-skill` 在创建 Agent 前发现连接未配置时，会直接停在 Rich 配置卡。若真实 `config/model_settings.yaml` 已存在且字段完整，系统会跳过该向导，不会要求重复填写。唯一的窄例外是直接执行 `run-task T5-REBOOST-GATE` 与 `run-task T5-SPECIALIZE-EXECUTOR-SKILLS`：两者都是本地确定性编译器，因此可以在没有 provider 配置、也不发送 endpoint 请求的情况下校验/重建已有 T5 handoff 或 Skill Suite；这**不代表**完整 pipeline 不再需要模型，后续 LLM 阶段仍必须正常配置。若只缺少一个字段，例如已有 `provider`、API URL 和 API key 但未填写 `model`，选择“现在配置”后只会询问 `model`；已有 API key 的环境变量引用会原样保留，不会重新显示、输入或写入配置文件。若主动切换 provider，系统会要求补充该 provider 的 API key 和 model，不会沿用旧 provider 的凭据或 model。文件缺失、模板文件未复制，或 `provider`、`api_key`、`model` 等必要字段缺失时，才会展示以下选择：
 
 1. 现在配置：在终端输入字段并立即检查连接。检查通过后会回到原来的 `run`／`resume`／`run-task`／`run-skill` 命令，不会紧接着向 provider 发起第二次重复的启动检查。
 2. 自己编辑 `config/model_settings.yaml`：ResearchOS 会展示真实生效路径、模板路径、必填字段和可直接复制的校验命令；修改后让它重新读取该文件及其对应的 `.env`，再执行正常的启动检查。

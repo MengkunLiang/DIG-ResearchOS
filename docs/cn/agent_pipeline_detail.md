@@ -48,7 +48,7 @@ T1 项目初始化
  -> T9 投稿包构建、编译、修复与收尾
 ```
 
-当前主链已经废弃“ResearchOS 自己在 T5-T7 内部实现并长时间跑实验”的默认语义。ResearchOS 负责研究协议、执行器选择、AGENTS/CLAUDE 控制说明、文件契约和写作证据闭环；Codex CLI、Claude Code 窗口、人工外部执行器或 mock dry-run 负责在隔离路径中实现和运行实验。常规入口是 `T5-REBOOST-GATE`：它通过已配置模型运行 `research-reboost` 并校验 handoff。随后独立的 `T5-SPECIALIZE-EXECUTOR-SKILLS` 运行仓库内的 `project-skill-specialization` Skill，原子发布项目专属 Suite、做独立校验，并在选择执行器前记录输入 fingerprint。`T5-HANDOFF` 保留为 legacy-compatible 协议编译入口。T5 到 T8 的边界是一套**六件 Writer Handoff**：`external_executor/executor_research_report.md`、`external_executor/result_pack.json`、`external_executor/executor_status.json`、`external_executor/report/run_manifest.json`、`external_executor/report/phase_F/writer_handoff_facts.json` 与 `external_executor/report/phase_F/writer_handoff_validation.json`。报告是面向阅读者的摘要，但单独存在并不够；最终资产以及 raw/config/log 证据必须通过 manifest 与 hash 校验，且只有状态机正处于 `T5-EXTERNAL-WAIT` 时才能接收 handoff。若重新进入 T4、T4-GATE1、T4.5 或无关状态，系统会拒绝旧 handoff 证据，避免它被绑定到新选择的 Candidate。旧 T7/T7.5 节点已从主状态机移除，普通 `run-task T7` / `run-task LEGACY-T7-FULL` 会直接以 removed 报错。
+当前主链已经废弃“ResearchOS 自己在 T5-T7 内部实现并长时间跑实验”的默认语义。ResearchOS 负责研究协议、执行器选择、AGENTS/CLAUDE 控制说明、文件契约和写作证据闭环；Codex CLI、Claude Code 窗口、人工外部执行器或 mock dry-run 负责在隔离路径中实现和运行实验。常规入口是 `T5-REBOOST-GATE`：它从已接受的 T4.5 研究包**确定性编译并校验** `research-reboost`，不会再调用 LLM 重写 handoff。随后独立的 `T5-SPECIALIZE-EXECUTOR-SKILLS` 运行仓库内的 `project-skill-specialization` Skill，原子发布项目专属 Suite、做独立校验，并在选择执行器前记录输入 fingerprint。`T5-HANDOFF` 保留为 legacy-compatible 协议编译入口。T5 到 T8 的边界是一套**六件 Writer Handoff**：`external_executor/executor_research_report.md`、`external_executor/result_pack.json`、`external_executor/executor_status.json`、`external_executor/report/run_manifest.json`、`external_executor/report/phase_F/writer_handoff_facts.json` 与 `external_executor/report/phase_F/writer_handoff_validation.json`。报告是面向阅读者的摘要，但单独存在并不够；最终资产以及 raw/config/log 证据必须通过 manifest 与 hash 校验，且只有状态机正处于 `T5-EXTERNAL-WAIT` 时才能接收 handoff。若重新进入 T4、T4-GATE1、T4.5 或无关状态，系统会拒绝旧 handoff 证据，避免它被绑定到新选择的 Candidate。旧 T7/T7.5 节点已从主状态机移除，普通 `run-task T7` / `run-task LEGACY-T7-FULL` 会直接以 removed 报错。
 
 其中：
 
@@ -84,7 +84,7 @@ T1
  -> T4
     -> Population/Portfolio ready: T4-GATE1 -> 用户选择、继续 Evolution、组合、并行保留、查看、重跑 Route、rollback 或 pause -> T4
     -> complete Candidate selection: Pre-Novelty brief -> T4.5
-    -> pass*: T5-REBOOST-GATE
+    -> novelty audit 明确通过: T4.5-FORMALIZE -> T4.5-REVIEW -> T5-REBOOST-GATE
     -> reframe/drop/reject/collision: T4.5-HUMAN-REVIEW -> user chooses T5-REBOOST-GATE/T4/done
  -> T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS
  -> T5-EXECUTOR-GATE
@@ -115,7 +115,7 @@ T1
 几个最容易记错的点：
 
 - `HELLO` 是显式运行的 smoke task，不是主链起点；主链的 `initial_state` 是 `T1`
-- 当前主链只有在 `T4.5` 的 `Final Gate Verdict` 明确写成 `pass_to_experiment` / `pass_with_required_baselines` 等通过枚举时才自动进入 `T5-REBOOST-GATE`；`return_to_T4_reframe`、`drop_due_to_collision`、`reject`、`collision`、`fail`、缺失 verdict 或无法识别的 verdict 都会进入 `T4.5-HUMAN-REVIEW`，由用户选择继续外部实验链、回 T4 重构或结束项目。系统不再自动拒绝、自动回退或默认放行，避免 T4.5-T4 死循环，也避免模型在新颖性不确定时替用户做价值裁决。T7/T7.5 不再是主链节点。
+- `T4.5` 的 `Final Gate Verdict` 明确写成 `pass_to_experiment` / `pass_with_required_baselines` 等通过枚举时，只是授权进入 `T4.5-FORMALIZE`，**不会**直接跳到 `T5-REBOOST-GATE`；必须再由 `T4.5-REVIEW` 接受来源绑定的完整研究包，T5 才可用。`return_to_T4_reframe`、`drop_due_to_collision`、`reject`、`collision`、`fail`、缺失 verdict 或无法识别的 verdict 都会进入 `T4.5-HUMAN-REVIEW`，由用户选择继续外部实验链、回 T4 重构或结束项目。系统不再自动拒绝、自动回退或默认放行，避免 T4.5-T4 死循环，也避免模型在新颖性不确定时替用户做价值裁决。T7/T7.5 不再是主链节点。
 - `T8` 不是一个节点，而是风格确认、资源索引、对齐矩阵、大纲、逐章节写作、拼装、自查、审稿、修订组成的多节点链。它只有在 `T5-EXTERNAL-WAIT` 为当前 Candidate 接收了 hash-valid 的六件 Writer Handoff 后才能摄取外部证据；旧报告或旧 gate 中的 `next_task: T8` / `next_task: T8-WRITE` 会被状态机安全映射到 `T8-STYLE-GATE`，只有合法的 `drafts/writing_style.json` 已存在时才直接进入 `T8-RESOURCE`
 - Gate1 使用由 `_gate1_candidate_cards.md`、`_gate1_selection_brief.md` 和 native Population snapshot 支撑的 Rich Portfolio。Candidate card 会说明机制、实践含义、评分依据、论文阅读笔记依赖、风险和推荐动作；`_candidate_directions.json` 与 Pass1/Pass2 JSON 保持为兼容 projection。选择完整 Candidate 后，T4 写入 `_gate1_user_selection.json`、`hypothesis_brief.yaml`、lineage 和 T4.5 search targets。T4.5 必须先审计 novelty/collision；只有通过的 T4.5 formalization 才会更新正式 bundle 并授予 T5 authority。
 - `T8-REVIEW` 不是当前真实状态名，当前真实状态名是：
@@ -311,7 +311,7 @@ ResearchOS 的核心设计是：**进度靠文件恢复，不靠模型记忆恢�
 | `T4` | `IdeationAgent` + 内部 evolution controller | - | pre-run confirmation、Evidence Routing、非对称 P0、职责分离的评分、P0->P1 Evolution 与 Gate1-compatible projection；选择完整 Candidate 后只编译 Pre-Novelty 材料 | `evidence/`、`populations/P0.json`、`populations/P1.json`、`genomes/`、`families/`、`scoring/`、`evolution/`、`candidates/`、`archive/`、保留的 Pass1/Pass2/Gate1 projection、`hypothesis_brief.yaml`、`selected/t45_search_targets.json` |
 | `T4-GATE1` | runtime gate | - | 状态机级决策面板：选择 Portfolio、保留并行方向、继续 Evolution、聚焦、Crossover、组件组合、查看详情、重跑 Route、rollback 或 pause；来源版本保持不变 | `ideation/human_directives/`、`human_compositions/`、`_gate1_user_selection.json` |
 | `T4.5` | `NoveltyAuditorAgent` + `ResearchFormalizerAgent` | audit → formalize → review | 对已选 Pre-Novelty idea 做 novelty/collision audit，再生成并独立审阅来源一致的研究包；非通过 audit verdict 进入人工决策 gate | `novelty_audit.md`、蓝图、claim registry、hypotheses、Proposal、实验计划、Contribution/Validation Map、Kill Criteria、orientation review、formalization manifest |
-| `T5-REBOOST-GATE` | `SkillAgent(research-reboost)` | `reboost` | 用已配置模型编译并校验受来源约束的实验 handoff；不运行真实实验、不选择执行器、不发布 executor Skill Suite，也不写执行器专属 prompt | `external_executor/handoff_pack.json`、`external_executor/report/reboost_report.json`、`external_executor/report/reboost_validation_report.json`、`paper_card_evidence_index.json`、`expected_outputs_schema.json`、`allowed_paths.txt`、`AGENTS.md`、`CLAUDE.md` |
+| `T5-REBOOST-GATE` | 确定性 reboost compiler | `reboost` | 直接依据已通过的 T4.5 产物编译并校验受来源约束的实验 handoff；不调用 LLM 重写 handoff，不运行真实实验、不选择执行器、不发布 executor Skill Suite，也不写执行器专属 prompt | `external_executor/handoff_pack.json`、`external_executor/report/reboost_report.json`、`external_executor/report/reboost_validation_report.json`、`paper_card_evidence_index.json`、`expected_outputs_schema.json`、`allowed_paths.txt`、`AGENTS.md`、`CLAUDE.md` |
 | `T5-SPECIALIZE-EXECUTOR-SKILLS` | `ProjectSkillSpecializationAgent` | `build` | 运行仓库内的项目专属化 Skill，原子发布 13 个完整 executor Skill 目录，独立校验并记录可用于 resume 的输入 fingerprint | `project_skill_context.yaml`、`schemas/project_skill_context.schema.json`、`skills/`、`report/skill_specialization_report.json`、`report/skill_specialization_execution.json` |
 | `T5-HANDOFF` | `ExperimenterAgent` | `handoff` | legacy-compatible 协议编译入口；用于旧 workspace 或显式恢复路径，保持同一外部执行器契约 | `external_executor/handoff_pack.json` 与外部执行器控制文件 |
 | `T5-EXECUTOR-GATE` | `ExperimenterAgent` | `executor_gate` | 状态机级 immediate gate；用户选择 mock/Claude Code/Codex CLI/manual，写 executor 控制回执，并确定性 patch AGENTS/CLAUDE | `external_executor/report/executor_selection.json`、`external_executor/report/executor_capabilities.json` |
@@ -2741,6 +2741,10 @@ validator 会检查：
 
 `T4.5-FORMALIZE` 使用新的 `ResearchFormalizerAgent` 上下文，只生成或修复构成同一研究方案所需的 source artifact：`research_blueprint.yaml`、`claim_registry.yaml`、`hypotheses.md`、`exp_plan.yaml` 和七部分 Proposal。正式化每轮以 `validate_t45_formalization_sources` 的**最新** `valid` 结果为准：启动时的 prompt 诊断只是快照，不能在同一轮结构化修复后继续阻止 prose 写作。`valid=false` 时只修复错误指定的结构化来源或最小同步集合；`valid=true` 后只写 hypotheses/Proposal 并回读。运行时随后确定性编译 contribution-hypothesis map、validation map、kill criteria、research dossier 与 proposal manifest；这些派生产物不能由 Formalizer 直接写入。Formalizer 不能把计划结果提升为实证结果，也不能覆盖 novelty audit。
 
+每次对 blueprint、claim registry 或 experiment plan 调用 `write_structured_file` 时，系统先验证该文件自身的 schema，再立即报告**三份文件合在一起**是否通过 T4.5 共同研究契约。因此，若仍有 claim 映射、design rationale 或组件 ablation/mechanism-test 覆盖问题，界面不会把“文件已保存”伪装成“正式化已完成”。报告会同时列出所有彼此独立的当前失败项，让 Formalizer 一次修复最小来源集合，而不是每次尝试写 Proposal 才发现一个新阻塞项。
+
+同样地，`researchos validate --task T4.5 --scope outputs` 现在明确输出两类结果：`checks.outputs` 仅表示新颖性审计节点本身；`checks.t45_research_package` 才表示面向研究者的完整研究包。若 audit verdict 已通过但 `t45_research_package.ok=false`，说明仍需完成 T4.5-FORMALIZE 或 T4.5-REVIEW，T5 尚未被授权。若 audit 未通过，则会如实显示正式化尚未获授权，而不是误报成缺文件。
+
 研究者可见正文还遵循术语与缩写规范：非显然术语在第一次承担论证作用时说明其在本研究中的含义、机制角色和适用边界；非通用缩写在每个文档首次出现时展开，中文稿采用“Full English Name（简洁中文释义，ABBR）”形式，只有稳定且后续确实复用的缩写才可使用。`COMP1`、`TC1` 等内部 trace ID 只用于追溯，不能替代术语或组件的研究者可读名称与解释。术语、中文释义和稳定缩写必须在 blueprint、claim registry、hypotheses、exp plan 与 Proposal 中保持一致。
 
 T4.5 的有效性不是“只看关键词”的单层判断。schema、文件存在、selection lineage、Final Gate Verdict、claim-to-experiment 映射、组件 ablation/mechanism test、证据边界、重复文本和内部审计语言仍是**不可覆盖的确定性硬门**。只有当一个已写入的 hypotheses/Proposal 自然语言论证被词面规则误判时，runtime 才会启动一个与作者上下文隔离的 LLM Semantic Adjudicator。它只能审阅预先列举的 prose 条件（例如中心洞察、替代方案论证、实际主体、评测逻辑或自然语言 claim 完整性），不能改写文件或补充事实；要放行必须返回 1--3 条可在当前 artifact 中逐字找到的原文证据。确认结论写入 `_runtime/t45_semantic_adjudications.json`，并绑定 Proposal/blueprint/registry/exp plan（或 hypotheses/registry）的 SHA-256 指纹。任一相关来源变化即自动失效，随后重新执行全部硬门。若裁决器不可用、JSON 无效、证据不可核验或结论为 needs_repair，系统不降低要求，而是把具体缺口注入 Formalizer。
@@ -2797,15 +2801,15 @@ T6 不应该从零重跑一次 T4.5，这个逻辑现在已经明确分开了。
 
 ### 角色
 
-- Agent：`SkillAgent(research-reboost)`
+- Runtime：确定性 T5 reboost compiler
 - mode：`reboost`
-- Runtime Skill：[skills/research-reboost/SKILL.md](../../skills/research-reboost/SKILL.md)
+- 契约：[skills/research-reboost/SKILL.md](../../skills/research-reboost/SKILL.md)
 - 编译 Tool：`compile_research_reboost_handoff`
 - 项目 Skill 编译器：[researchos/skills/project_specialization/compiler.py](../../researchos/skills/project_specialization/compiler.py)
 
 ### 语义
 
-`T5-REBOOST-GATE` 是外部实验链的常规入口。它不写实验代码、不运行 Docker、不碰 GPU、不选择执行器，也不把模型生成的自然语言当实验结果。它读取受来源约束的 Pre-T5 artifacts，让已配置模型把研究意图和证据边界组织为完整 handoff candidate，再调用 `compile_research_reboost_handoff(handoff_pack=...)`。该工具按 handoff schema 校验 candidate、记录必要修复，并写出可审计的执行器契约。模型 candidate 无效时，确定性 recovery compiler 只能修复结构，不能补造缺失的科研协议事实。`generation_status=completed` 仅表示交接编译完成；真实运行授权由 `execution_contract.execution_readiness` 单独表达。
+`T5-REBOOST-GATE` 是外部实验链的常规入口。它不写实验代码、不运行 Docker、不碰 GPU、不选择执行器，也不把模型生成的自然语言当实验结果。它直接从已通过的 T4.5 包编译 handoff；正常主链和 `run-task T5` 都不会让 LLM 再次生成 handoff candidate。编译器先在私有暂存位置按 handoff schema 校验，再原子发布 validation receipt 和执行器控制文件，最后才以 `generation_status=completed` 写入 `handoff_pack.json`。重建失败时会把旧的完成标记替换为 `blocked` 并移除生成的执行器控制文件，因此 Resume 不会把不完整或过期 handoff 误当作授权。真实运行授权仍由 `execution_contract.execution_readiness` 单独表达。
 
 ### 输出文件
 
@@ -2819,7 +2823,7 @@ T6 不应该从零重跑一次 T4.5，这个逻辑现在已经明确分开了。
 | `external_executor/allowed_paths.txt` | 外部执行器允许写入的路径白名单 |
 | `external_executor/AGENTS.md` | Codex/generic coding agent 的最高优先级执行说明；执行模式在 T5-EXECUTOR-GATE 前保持 `UNSET` |
 | `external_executor/CLAUDE.md` | Claude Code 窗口执行说明；执行模式在 T5-EXECUTOR-GATE 前保持 `UNSET` |
-| `external_executor/report/reboost_llm_candidate_handoff_pack.json` / `external_executor/report/reboost_llm_candidate_validation_report.json` | 当模型把 handoff candidate 交给发布工具时写出的诊断文件；不是声明的下游输入 |
+| `external_executor/report/reboost_llm_candidate_handoff_pack.json` / `external_executor/report/reboost_llm_candidate_validation_report.json` | 仅在审计显式提供的 legacy candidate 时保留的兼容诊断；不是常规 T5 输出，也不是下游输入 |
 
 `resources/` 是 Phase B 的源资源根，也是**可选的**研究者已有材料入口：已有数据集、baseline、benchmark、代码与权重可以放入这里，但缺少它们不会阻止 T5。选择“让外部执行器自动准备资源”后，受限执行器会先检查本地材料，再从公开来源检索、固定版本下载、许可证/安全审查、来源留痕，并在授权时形成可审计的 baseline 重实现；它只运行 Phase A/B，绝不运行实验或生成结果。`external_executor/expr/` 在 workspace 初始化时创建，只保存已部署、可运行的 baseline 和方法资产。T5-REBOOST 不创建 `expr/MATERIALS_CHECKLIST.json` / `expr/README.md`。具体操作、目录流向与恢复边界见 [T5 外部执行器使用指南](t5_external_executor.md)。
 
@@ -2827,7 +2831,7 @@ T6 不应该从零重跑一次 T4.5，这个逻辑现在已经明确分开了。
 
 ### 实际执行过程
 
-`research-reboost` Skill 会在 system prompt 中得到 bundled contract 与 references，因此只读取 workspace artifacts。它依据 `project.yaml`、post-novelty formalization bundle、synthesis/comparison artifacts 和三类 Paper Note 根目录准备语义 handoff candidate。编译器会落盘 candidate、进行校验并生成控制文件。它不会发布 executor Skill：将语义 handoff 编译与 Suite 发布分开，能让两组 artifact 独立 resume，也不会把不完整的 Suite 误报为 ready。
+`research-reboost` 是编译器使用的 bundled contract，而不是常规 LLM 写作回合。编译器读取 `project.yaml`、post-novelty formalization bundle、synthesis/comparison artifacts 和三类 Paper Note 根目录，确定性地推导语义 handoff，在私有暂存位置校验后才发布控制文件。它不会发布 executor Skill：将 handoff 编译与 Suite 发布分开，能让两组 artifact 独立 Resume，也不会把不完整的 Suite 误报为 ready。
 
 此时执行模式仍为 `UNSET`。下一步 `T5-SPECIALIZE-EXECUTOR-SKILLS` 运行仓库维护的 `project-skill-specialization` Skill。它的确定性 wrapper 先做 preflight，再构建并原子发布全部 13 个 Skill；随后 runtime 独立校验 context、template integrity、report 与输入 fingerprint。它会写出 `external_executor/report/skill_specialization_execution.json`；没有这份可追溯执行回执时，后续 Gate 不会解除阻塞。Suite 发布后先进入 `T5-PROTOCOL-GATE`。`protocol_decision_required` 不是“请先手工找资源”：数据、代码、baseline、benchmark、权重和可由来源决定的运行环境会由受限 Phase A/B 自动准备流程检索、审查和记录；随机种子在未声明时采用可审计的稳定默认 ensemble。此时可直接选择“让外部执行器自动准备资源”，完成后停止执行器并 `resume`，ResearchOS 会用 Phase B 记录重新编译 T5。只有一项操作会把 T4.5 已定义的研究任务、核心机制、必需 baseline 集合、benchmark 范围或 claim/贡献边界改成另一项时，系统才保留人工确认；它不是普通资源获取。`ready` 后才允许选择完整实验执行器。`T5-HANDOFF` 继续作为旧 workspace 或显式恢复路径的 legacy-compatible 协议编译器，但不是 T4.5 的默认目的地。
 
@@ -3436,7 +3440,7 @@ researchos run \
 
 - CLI gate 接受数字选择，也接受常见别名，例如 `继续` / `确认` / `extend`，以及 `停止` / `stop`
 - `ask_human` 是 agent 工具级的人类输入；如果当前 stdin 不可交互或已关闭，runtime 会暂停任务，而不是把空输入当成用户选择继续喂给 LLM
-- `ask_human` 的 CLI 输入完成后用单独一行 `END` 或 Ctrl+D 提交；如果误触提交空回答，CLI 会最多重试 3 次；连续空回答才会进入可恢复暂停
+- `ask_human` 的 CLI 输入完成后可用单独一行 `END`，或发送 EOF 提交（POSIX 为 Ctrl+D；Windows 为 Ctrl+Z 后 Enter）；如果误触提交空回答，CLI 会最多重试 3 次；连续空回答才会进入可恢复暂停
 - 非空回答提交后会立即打印 `已收到输入，继续处理...` 和一整行 `-----` 分隔线，让用户知道输入已经被 runtime 接收
 - 每个 task/agent 开始时会输出一整行 `==== <task_id> | <agent_name> ==== ` 风格分隔线，随后输出任务目标、阶段、预期产物、模型层级和最大步数，便于在长 pipeline 输出中判断当前切换到了哪里
 - 如果模型明确向用户索取选择/确认/补充信息但忘记调 `ask_human`，runtime 会自动桥接成 `ask_human`，并把“为什么弹出输入框”写在问题开头；状态说明或内部计划不会触发桥接

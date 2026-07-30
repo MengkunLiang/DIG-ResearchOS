@@ -103,22 +103,40 @@ T45_RUNTIME_DERIVED_ARTIFACTS = frozenset(
 )
 
 
-def _t45_structured_source_validation_error(policy: WorkspaceAccessPolicy) -> str | None:
-    """Return the exact common-contract failure before T4.5 prose is written.
+def _t45_structured_source_validation_errors(policy: WorkspaceAccessPolicy) -> list[str]:
+    """Return every current T4.5 common-contract failure before prose is written.
 
     A markdown Proposal must be derived from the same validated blueprint,
     claim registry, and experiment plan that T5 will consume. Checking only
     file existence or isolated schemas previously admitted a misleading state:
     all three files existed, yet their references or planned tests disagreed.
+
+    The first version of this guard returned one fail-fast message.  That was
+    technically safe but operationally poor: a Formalizer could correctly
+    create all three schema-valid files, then learn about only one
+    cross-artifact mismatch when it tried to write prose.  Returning the full
+    independent set makes the causal distinction explicit: file persistence
+    is not acceptance of the shared research contract, and unrelated repairs
+    can be completed together rather than triggering one retry per error.
     """
 
     try:
-        from ..ideation.formalization import validate_t45_structured_sources
+        from ..ideation.formalization import collect_t45_structured_source_errors
 
-        valid, error = validate_t45_structured_sources(policy.workspace_dir)
+        return [
+            str(error).strip()
+            for error in collect_t45_structured_source_errors(policy.workspace_dir)
+            if str(error).strip()
+        ]
     except Exception as exc:  # pragma: no cover - defensive tool diagnosis
-        return f"无法核对 T4.5 三份结构化来源: {exc}"
-    return None if valid else str(error or "T4.5 structured-source validation failed")
+        return [f"无法核对 T4.5 三份结构化来源: {exc}"]
+
+
+def _t45_structured_source_validation_error(policy: WorkspaceAccessPolicy) -> str | None:
+    """Keep the legacy first-error API for callers that need one headline."""
+
+    errors = _t45_structured_source_validation_errors(policy)
+    return errors[0] if errors else None
 
 
 def _t45_structured_source_hint(error: str) -> tuple[str, str]:
@@ -152,6 +170,25 @@ def _t45_structured_source_repair_scope(error: str) -> tuple[list[str], str]:
         ],
         "三份结构化来源共同构成研究契约；请只修改错误直接指向的来源或最小同步集合。",
     )
+
+
+def _t45_structured_source_repair_summary(errors: list[str]) -> tuple[list[str], str]:
+    """Merge minimal repair scopes for a full source-contract diagnostic.
+
+    The prose writer is intentionally blocked until the complete shared
+    contract passes.  This summary is presentation-only: it does not relax
+    any source, schema, lineage, evidence, or experiment-coverage rule.
+    """
+
+    paths: list[str] = []
+    scopes: list[str] = []
+    for error in errors:
+        current_paths, current_scope = _t45_structured_source_repair_scope(error)
+        paths.extend(current_paths)
+        if current_scope not in scopes:
+            scopes.append(current_scope)
+    deduped_paths = list(dict.fromkeys(paths))
+    return deduped_paths, " ".join(scopes)
 
 
 def _note_card_stem_lookup_keys(stem: str) -> set[str]:
@@ -472,14 +509,19 @@ class WriteFileTool(Tool):
                 error="t45_runtime_derived_artifact",
             )
         if self.policy.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"} and normalized_path in _T45_RESEARCHER_FACING_PROSE_ARTIFACTS:
-            requirement_error = _t45_structured_source_validation_error(self.policy)
-            if requirement_error:
+            requirement_errors = _t45_structured_source_validation_errors(self.policy)
+            if requirement_errors:
+                requirement_error = requirement_errors[0]
                 required_path, required_schema = _t45_structured_source_hint(requirement_error)
-                required_paths, repair_scope = _t45_structured_source_repair_scope(requirement_error)
+                required_paths, repair_scope = _t45_structured_source_repair_summary(requirement_errors)
+                findings = "\n".join(f"- {item}" for item in requirement_errors)
                 return ToolResult(
                     ok=False,
                     content=(
-                        f"不能写入 {normalized_path}：{requirement_error}。"
+                        f"不能写入 {normalized_path}：三份结构化来源即使已存在，也尚未共同通过 T4.5 研究契约。"
+                        "当前独立失败项如下（请在下一次 prose 写入前一起处理）：\n"
+                        + findings
+                        + "\n"
                         + repair_scope
                         + "请只用 write_structured_file 修复该错误指向的来源，再写 researcher-facing prose。"
                         + "不要用 write_file 写这些 YAML，也不要把缺失结构化来源描述为已 formalized。"
@@ -491,6 +533,7 @@ class WriteFileTool(Tool):
                         "required_tool": "write_structured_file",
                         "required_schema": required_schema,
                         "validation_error": requirement_error,
+                        "validation_errors": requirement_errors,
                         "repair_scope": "t45_blueprint_claims_exp_plan_before_prose",
                     },
                     error="t45_formalization_requires_structured_sources",
