@@ -563,7 +563,7 @@ T1 的本质不是“自由聊天”，而是一个结构化初始化阶段：
 
 启动 gate 完成后，`PIAgent(init)` 才从 CLI / `ExecutionContext.extra` 读取用户主题，并调用 `inspect_user_seeds`、`list_files` 和 `read_file` 检查 workspace 中已经存在的 `user_seeds/seed_papers.jsonl`、`user_seeds/seed_ideas.md`、`user_seeds/seed_constraints.md`、`user_seeds/seed_external_resources.jsonl` 和用户 Markdown 提纲。若发现类似 `/mnt/data/reference/算法风险综述_种子提纲.md` 这类 seed outline，必须先规范化为 `user_seeds/seed_outline_profile.json`；runtime 也有 deterministic helper 兜底。规范化只派生 seed ideas、constraints 和 external resources，不会把 `representative_literature_directions` 写成 `seed_papers.jsonl`。这一步只是收集上下文，不应该再额外弹输入框；如果日志里出现“我来检查已有材料”，那只是状态说明。任何真正需要用户选择、确认或补充的地方，仍必须调用 `ask_human`，不能只在普通文本里提问然后继续执行。
 
-随后它会通过 `ask_human` 分轮访谈。每个 `ask_human.question` 必须说明三件事：当前处于 T1 第几轮、为什么需要用户回答、用户应该补哪些字段。草案确认和 Bridge Domain Plan 选择必须把 `project.yaml` 草案或候选方向清单直接写进 `question`，不能只写“请确认以上”。如果模型仍写了依赖前文的短问题，runner 会把同一轮 Agent 正文自动并入输入问题，避免用户只看到输入框却看不到草案/候选。典型轮次是：
+随后它会通过 `ask_human` 分轮访谈。每个 `ask_human.question` 必须说明三件事：当前处于 T1 第几轮、为什么需要用户回答、用户应该补哪些字段。草案确认和 Bridge Domain Plan 选择必须把 `project.yaml` 草案或候选方向清单直接写进 `question`，不能只写“请确认以上”。终端会把长的参考回答渲染为可换行的编号列表，因此 Agent 提供的 suggestion 应是可直接提交的完整回答，不带自编号，也不能把内部状态或“未提供预算”等缺失信息当作一个选项。如果模型仍写了依赖前文的短问题，runner 会把同一轮 Agent 正文自动并入输入问题，避免用户只看到输入框却看不到草案/候选。典型轮次是：
 
 | 轮次 | 为什么需要问用户 | 需要回答什么 |
 | --- | --- | --- |

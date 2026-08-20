@@ -878,15 +878,20 @@ class CLIHumanInterface(HumanInterface):
     ) -> str:
         lines = [question]
         if suggestions:
-            # Markdown collapses ordinary newlines into one paragraph.  The
-            # former indented ``[1] ...`` lines therefore became a single
-            # dense terminal row when suggestions themselves were long.
-            # Give each suggestion an explicit visual block so a researcher
-            # can scan, copy, or edit one answer without parsing a wall of
-            # inline alternatives.
-            lines.extend(["", "## 可直接输入的参考回答"])
+            # Markdown collapses ordinary newlines into one paragraph. Use a
+            # real list so its marker and answer stay together and continuation
+            # lines wrap beneath that answer. Suggestions sometimes arrive
+            # pre-numbered from an LLM; remove that local marker to avoid a
+            # confusing ``1. 1. ...`` display.
+            lines.extend(["", "## 可直接输入的参考回答", ""])
             for idx, item in enumerate(suggestions, start=1):
-                lines.extend(["", f"### 选项 {idx}", _compact_text(item, 240)])
+                suggestion = re.sub(
+                    r"^\s*(?:\[\s*\d+\s*\]|\(?\d+\)?[.、)])\s*",
+                    "",
+                    _compact_text(item, 240),
+                )
+                if suggestion:
+                    lines.extend([f"{idx}. {suggestion}", ""])
         self._render_panel(title="需要你的输入", border_style="bright_yellow", lines=lines)
         for attempt in range(1, self.CLARIFICATION_EMPTY_RETRIES + 1):
             print("请输入回答（输入完成后，" + _terminal_eof_submit_instruction() + "）:")
