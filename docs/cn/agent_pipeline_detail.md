@@ -2085,7 +2085,7 @@ Agent 调用 `expand_corpus_for_survey`。这个工具读取 `survey_plan.json`�
 
 这一步不是 T4 -> T2 回路，也不自动宣称“领域缺口”。它只是一次性组织补检计划：哪些 taxonomy class 需要更多文献、建议查什么关键词、哪些 neighbor 只能作为邻接提示。LLM 可以在工具输出后补 `llm_review`，但不能循环补检。
 
-该工具有自己的长操作窗口，不继承普通工具的 60 秒默认值。每完成一条查询都会更新 `literature/survey_supplement/expansion_checkpoint.json`、部分检索记录和 search log；网络超时、进程中断或 resume 后会跳过已完成查询，从未完成处继续。这个 checkpoint 只保证同一份 query plan 的恢复，不会把一次性补检变成无限检索循环。
+该工具有自己的长操作窗口，不继承普通工具的 60 秒默认值。每完成一条查询都会更新 `literature/survey_supplement/expansion_checkpoint.json`、部分检索记录和 search log；网络超时、进程中断或 resume 后会跳过已完成查询，从未完成处继续。若出现实质不同的新 query plan，旧补检的检索回执与该工具生成的 shallow note 会归档到 `literature/survey_supplement/archive/`，并在构建新 manifest 前撤回对应的自动生成 BibTeX 条目；人工写入的笔记和普通 T2/T3 笔记绝不删除。这个 checkpoint 只保证同一份 query plan 的恢复，不会把一次性补检变成无限检索循环。
 
 #### `T3.6-STATE`
 

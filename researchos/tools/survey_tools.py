@@ -12,6 +12,7 @@ import json
 import math
 import hashlib
 import re
+import shutil
 import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
@@ -2791,6 +2792,14 @@ class ExpandSurveyCorpusTool(Tool):
                     data=completed_payload,
                 )
 
+        stale_supplement_archive: dict[str, Any] | None = None
+        if checkpoint.get("query_plan_fingerprint") != query_plan_fingerprint:
+            stale_supplement_archive = _archive_stale_survey_supplement(
+                self.policy.workspace_dir,
+                supplement_dir=supplement_dir,
+                output_path=output,
+                prior_fingerprint=str(checkpoint.get("query_plan_fingerprint") or ""),
+            )
         resume_search = checkpoint.get("query_plan_fingerprint") == query_plan_fingerprint
         if resume_search:
             retrieved = _read_jsonl_path_optional(partial_records_path)
@@ -2967,6 +2976,7 @@ class ExpandSurveyCorpusTool(Tool):
                 "max_results_per_query": params.max_results_per_query,
             },
             "supplement_focus": str(decision.get("supplement_focus") or "").strip(),
+            "stale_supplement_archive": stale_supplement_archive,
             "successful_searches": sum(1 for item in search_log if item["ok"]),
             "reading_notes": {
                 "root": "literature/shallow_read_notes",
@@ -3105,6 +3115,82 @@ def _materialize_survey_supplement_shallow_notes(
         "no_abstract_count": no_abstract_count,
         "note_paths": note_paths,
         "note_paths_by_paper_id": paths_by_paper_id,
+    }
+
+
+def _archive_stale_survey_supplement(
+    workspace_dir: Path,
+    *,
+    supplement_dir: Path,
+    output_path: Path,
+    prior_fingerprint: str,
+) -> dict[str, Any] | None:
+    """Archive a superseded T3.6 supplement and retract only its own notes.
+
+    A changed plan must not leave old, low-quality supplement hits available to
+    later stages merely because they were once materialized as shallow notes.
+    We identify generated notes by their explicit marker, archive rather than
+    delete all retrieval receipts, and never touch ordinary T2/T3 notes or a
+    researcher-authored bibliography entry.
+    """
+
+    previous_records = _read_jsonl_path_optional(supplement_dir / "papers_retrieved.jsonl")
+    has_old_artifacts = bool(previous_records) or any(
+        child.name != "archive" for child in supplement_dir.iterdir()
+    )
+    if not has_old_artifacts and not output_path.exists():
+        return None
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    fingerprint_label = re.sub(r"[^a-zA-Z0-9]", "", prior_fingerprint)[:12] or "unknown"
+    archive_dir = supplement_dir / "archive" / f"{stamp}-{fingerprint_label}"
+    archive_dir.mkdir(parents=True, exist_ok=False)
+    for child in list(supplement_dir.iterdir()):
+        if child.name == "archive":
+            continue
+        shutil.move(str(child), str(archive_dir / child.name))
+    if output_path.is_file():
+        shutil.move(str(output_path), str(archive_dir / "survey_expansion.json"))
+
+    shallow_root = workspace_dir / "literature" / "shallow_read_notes"
+    archived_notes_dir = archive_dir / "canonical_shallow_notes"
+    removed_bib_keys: set[str] = set()
+    archived_notes = 0
+    for record in previous_records:
+        paper_id = record_note_id(record)
+        if not paper_id:
+            continue
+        note_path = shallow_root / f"{paper_id}.md"
+        if not note_path.is_file():
+            continue
+        text = note_path.read_text(encoding="utf-8", errors="replace")
+        if "survey_supplement_reading_note: abstract_only" not in text:
+            continue
+        archived_notes_dir.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(note_path), str(archived_notes_dir / note_path.name))
+        archived_notes += 1
+        bib_seed = record.get("doi") or record.get("arxiv_id") or record.get("id") or record.get("title")
+        removed_bib_keys.add(stable_bib_key(bib_seed, fallback="abstract_note"))
+
+    bib_path = workspace_dir / "literature" / "related_work.bib"
+    removed_bib_entries = 0
+    if removed_bib_keys and bib_path.is_file():
+        existing_bib = bib_path.read_text(encoding="utf-8", errors="replace")
+        entries = parse_bib_entries(existing_bib)
+        retained = [entry for entry in entries if str(entry.get("key") or "") not in removed_bib_keys]
+        removed_bib_entries = len(entries) - len(retained)
+        if removed_bib_entries:
+            bib_path.write_text(
+                "\n\n".join(str(entry.get("raw") or "").strip() for entry in retained if str(entry.get("raw") or "").strip())
+                + "\n",
+                encoding="utf-8",
+            )
+    return {
+        "archive_path": archive_dir.relative_to(workspace_dir).as_posix(),
+        "prior_query_plan_fingerprint": prior_fingerprint,
+        "archived_retrieved_record_count": len(previous_records),
+        "archived_canonical_note_count": archived_notes,
+        "removed_generated_bib_entry_count": removed_bib_entries,
     }
 
 
