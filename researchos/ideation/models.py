@@ -359,7 +359,11 @@ class ProvisionalHypothesis(_StrictModel):
     # a Child retain useful scientific interpretation without confusing it
     # with a Contribution-level result.
     what_changes_if_true: str = ""
+    # These fields describe the status of a proposed test. They are not
+    # evidence permissions and must never be treated as verified findings.
     evidence_status: str = "proposed_not_verified"
+    uncertainty: str = ""
+    supporting_refs: list[str] = Field(default_factory=list)
 
     _id = field_validator("hypothesis_id")(_validate_identifier)
 
@@ -375,6 +379,11 @@ class Contribution(_StrictModel):
     statement: str = Field(min_length=1)
     contribution_type: Literal["invention", "improvement", "exaptation", "measurement", "mechanism", "theory", "design"]
     what_changes_if_true: str = Field(min_length=1)
+    # Contributions are prospective research claims. Their status, caveat,
+    # and retrieval leads remain explicitly non-factual until verified.
+    evidence_status: str = "proposed_not_verified"
+    uncertainty: str = ""
+    supporting_refs: list[str] = Field(default_factory=list)
 
     _id = field_validator("contribution_id")(_validate_identifier)
 

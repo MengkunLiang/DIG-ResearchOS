@@ -2726,6 +2726,114 @@ def _normalize_candidate_dossier_payload(payload: dict[str, Any]) -> dict[str, A
 
     if "version" in normalized:
         normalized["version"] = normalize_integral_version(normalized.get("version"))
+
+    # Candidate enrichment is intentionally free to express a scientific
+    # proposal in ordinary disciplinary language. Providers nevertheless
+    # often use sensible aliases such as ``methodological`` or attach an
+    # explicit uncertainty to a prospective contribution. Canonicalize those
+    # structural variants before strict validation. An unfamiliar scientific
+    # distinction remains invalid for the dedicated repair instead of being
+    # silently recast into a different contribution type.
+    contribution_type_aliases = {
+        "method": "design",
+        "methodological": "design",
+        "methodology": "design",
+        "method_or_model": "design",
+        "construct_and_measurement": "measurement",
+        "measurement_or_evaluation": "measurement",
+        "construct_and_identification": "theory",
+        "boundary": "theory",
+        "boundary_conditions": "theory",
+        "insight": "theory",
+    }
+    safe_contribution_fields = {
+        "contribution_id",
+        "statement",
+        "contribution_type",
+        "what_changes_if_true",
+        "evidence_status",
+        "uncertainty",
+        "supporting_refs",
+    }
+    untracked_provenance: list[str] = []
+    contributions = normalized.get("contributions")
+    if isinstance(contributions, list):
+        normalized_contributions: list[object] = []
+        for item in contributions:
+            if not isinstance(item, dict):
+                normalized_contributions.append(item)
+                continue
+            contribution = dict(item)
+            raw_type = contribution.get("contribution_type")
+            if isinstance(raw_type, str):
+                normalized_type = re.sub(r"[\\s-]+", "_", raw_type.strip().casefold())
+                if normalized_type in contribution_type_aliases:
+                    contribution["contribution_type"] = contribution_type_aliases[normalized_type]
+            if isinstance(contribution.get("supporting_refs"), str):
+                contribution["supporting_refs"] = [contribution["supporting_refs"]]
+            provenance = contribution.get("provenance")
+            if provenance not in (None, "", [], {}):
+                contribution_id = str(contribution.get("contribution_id") or "unidentified_contribution")
+                untracked_provenance.append(
+                    f"untracked_contribution_provenance: {contribution_id} returned a provenance payload outside the Candidate genome; "
+                    "it is not a verified source and must be mapped to existing Gene provenance before citation or factual use."
+                )
+            normalized_contributions.append({key: value for key, value in contribution.items() if key in safe_contribution_fields})
+        normalized["contributions"] = normalized_contributions
+
+    # The same caveat/lead fields are legitimate on a provisional hypothesis.
+    # They remain explicitly prospective and cannot change Evidence Permission.
+    safe_hypothesis_fields = {
+        "hypothesis_id",
+        "statement",
+        "mechanism",
+        "observable_prediction",
+        "discriminating_test",
+        "what_changes_if_true",
+        "evidence_status",
+        "uncertainty",
+        "supporting_refs",
+    }
+    hypotheses = normalized.get("hypotheses")
+    if isinstance(hypotheses, list):
+        normalized_hypotheses: list[object] = []
+        for item in hypotheses:
+            if not isinstance(item, dict):
+                normalized_hypotheses.append(item)
+                continue
+            hypothesis = dict(item)
+            if isinstance(hypothesis.get("supporting_refs"), str):
+                hypothesis["supporting_refs"] = [hypothesis["supporting_refs"]]
+            normalized_hypotheses.append({key: value for key, value in hypothesis.items() if key in safe_hypothesis_fields})
+        normalized["hypotheses"] = normalized_hypotheses
+
+    creative_context = normalized.get("creative_context")
+    if isinstance(creative_context, dict):
+        context = dict(creative_context)
+        # ``deferred`` is a common provider spelling for an unexecuted
+        # validation design. Preserve the explanation as an upgrade rather
+        # than rejecting an otherwise coherent Candidate.
+        validation_status = str(context.pop("validation_status", "")).strip().casefold()
+        validation_notes = context.pop("validation_notes", "")
+        if validation_status and validation_status not in {"validated", "supported", "complete"}:
+            context["verification_required"] = True
+        if validation_notes:
+            raw_upgrades = context.get("reading_or_validation_upgrades")
+            upgrades = (
+                [str(item) for item in raw_upgrades]
+                if isinstance(raw_upgrades, list)
+                else [str(raw_upgrades)]
+                if raw_upgrades
+                else []
+            )
+            upgrades.append(str(validation_notes))
+            context["reading_or_validation_upgrades"] = list(dict.fromkeys(upgrades))
+        normalized["creative_context"] = context
+
+    if untracked_provenance:
+        existing_warnings = normalized.get("warnings")
+        warnings = [str(item) for item in existing_warnings] if isinstance(existing_warnings, list) else []
+        normalized["warnings"] = list(dict.fromkeys([*warnings, *untracked_provenance]))
     raw_status = normalized.get("status")
     if isinstance(raw_status, str):
         status_key = re.sub(r"[\s-]+", "_", raw_status.strip().casefold())

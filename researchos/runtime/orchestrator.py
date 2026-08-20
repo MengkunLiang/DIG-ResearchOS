@@ -6029,9 +6029,9 @@ class AgentRunner:
             # provider disconnect. Keep a small, visible automatic window,
             # then return through the normal recoverable T4 boundary.
             try:
-                t4_retry_batches = int(self.retry_policy.get("t4_provider_retry_batches", 2))
+                t4_retry_batches = int(self.retry_policy.get("t4_provider_retry_batches", 1))
             except (TypeError, ValueError):
-                t4_retry_batches = 2
+                t4_retry_batches = 1
             retry_batches = max(1, min(t4_retry_batches, 5))
         failed_batches = 0
         while True:
@@ -6051,7 +6051,12 @@ class AgentRunner:
                     endpoint_override=eff.llm_endpoint_override,
                     max_context_override=eff.llm_max_context_override,
                     timeout=self._llm_request_timeout_seconds(),
-                    max_retries_per_model=self._llm_retry_overrides()[0],
+                    # Native T4 has a durable checkpoint and a controller
+                    # recovery boundary. Retrying the same large structured
+                    # request in both layers can turn one provider stall into
+                    # many minutes of invisible waiting without improving the
+                    # scientific result. A failure pauses safely for resume.
+                    max_retries_per_model=1 if native_t4_recovery else self._llm_retry_overrides()[0],
                     retry_base_delay=self._llm_retry_overrides()[1],
                     # T4 roles return strict structured artifacts. Current
                     # reasoning providers default to high hidden thinking,

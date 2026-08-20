@@ -30,10 +30,13 @@ budget_escalation:
 # never repeated merely because a Card explanation fails.  The Card compiler
 # may make one typed semantic repair and one fresh bounded retry, while provider outages pause after
 # a durable retry window instead of waiting on an in-memory prompt. Card
-# retries never re-run Candidate/Population evolution.
+# retries never re-run Candidate/Population evolution. Native T4 role calls
+# make one provider attempt before pausing from their durable checkpoint: a
+# second nested retry only repeats the same large structured prompt and can
+# make a transient provider stall look like a pipeline deadlock.
 retry_policy:
   t4_final_card_compiler_attempts: 2
-  t4_provider_retry_batches: 3
+  t4_provider_retry_batches: 1
 
 agents:
   hello:

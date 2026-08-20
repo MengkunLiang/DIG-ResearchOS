@@ -266,6 +266,8 @@ Current route ranges are exploration-cost guidance, not output obligations:
 
 Each route has an independent checkpoint at `ideation/evolution/routes/round_0/<route>.json` and may be `supported`, `partial`, or `unsupported`. One bounded replacement call is available only when the first response is malformed or the provider fails. Returning fewer Candidates than the ceiling is a valid scientific outcome and does not trigger another creative call. A researcher can explicitly regenerate a Route when another perspective is materially useful.
 
+Candidate enrichment is also checkpointed per Seed. The contract accepts canonical disciplinary aliases such as `methodological` as a `design` contribution and retains prospective uncertainty and retrieval leads on Contributions and Hypotheses. Those fields are explicitly non-factual: they cannot elevate an Evidence Permission, become a citation, or substitute for Genome provenance. A model-supplied nested provenance object is retained only as an untracked warning until it is mapped to existing Gene provenance.
+
 Adaptive routing does not mean shallow initialization. In Standard mode, Literature and Informed Brainstorm always establish two complementary starting lenses; the Opportunity Map then adds only those challenge, reversal, subgroup, gap, or Bridge lenses that expose a distinct scientific question. Deep mode runs every configured lens. Candidate count is never a completion target, but a Candidate can advance as `evolved` only with a coherent mechanism, a challenged assumption, non-duplicative 1--4 contributions and provisional hypotheses, a competing explanation, and a falsifiable validation path. T4.5 then requires every retained challenge to drive a technical component and requires every active claim to name a counterfactual, competing explanation, and falsification condition. A focused one-challenge proposal is therefore allowed only when it survives these discriminating checks; otherwise distinct challenges remain visible rather than being collapsed for cosmetic simplicity. Thus the controller avoids filler while preserving the substantive checks that make a direction decision-ready.
 
 ### 4.5 Minimal IdeaSeed contract
@@ -439,7 +441,7 @@ Final cards translate existing structured research content for a researcher; the
 | `CandidateDossier` | Native research entity | Dossier/Genome/Lineage IDs agree; evolved candidates need one to four non-duplicative contributions and hypotheses |
 | `CreativeContext` | Preserves exploratory reasoning | Leap, alternatives, surprising prediction, program potential, origin, and upgrades |
 | `CandidatePresentation` | LLM-authored presentation layer | Mature display data; a seed may await enrichment |
-| `ProvisionalHypothesis`, `Contribution`, and `IdeaFamily` | Falsification, contribution, and comparison context | Each remains traceable and does not certify external novelty or authorize candidate deletion |
+| `ProvisionalHypothesis`, `Contribution`, and `IdeaFamily` | Falsification, contribution, and comparison context | Hypotheses and Contributions may retain explicitly prospective uncertainty and retrieval leads; none certifies an external fact, novelty, or citation |
 | `EvolutionPlan` | Mutation/crossover execution boundary | Mutation has one parent; crossover has two parents and a donor map |
 | `CrossoverCompatibilityDecision` | Pair merge decision | Durable three-value enum with no-merge alias normalization |
 | `EvolutionPlanDeferral` | Auditable no-child outcome | Concrete rationale and revisit condition |
@@ -566,6 +568,8 @@ If T4 cannot safely reach Gate1 after a non-integrity interruption, `t4_recovery
 4. `exit`: end this invocation without deleting artifacts.
 
 Provider, route, score, mutation, crossover, card, renderer, and projection failures are normally recoverable when saved checkpoints exist. Path traversal, unsafe write, legacy overwrite, state corruption, fingerprint/selection mismatch, ID collision, and forged lineage are not candidates for blind retry.
+
+Native T4 does not stack the same provider retry inside both the client and the controller. One bounded structured request is attempted for a checkpointed role; a temporary outage then returns through the recovery Gate rather than silently waiting through repeated copies of the same large prompt. A later `resume` reuses completed Routes and Candidate checkpoints, so this limit reduces latency without reducing exploration breadth or scientific review.
 
 **Generic runtime recovery Gate.**
 

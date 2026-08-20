@@ -311,6 +311,8 @@ Route 的合法状态是：
 
 只有首个响应格式损坏或 Provider 失败时，系统才为该 Route 执行一次有界 replacement call。Candidate 数量少于上限本身是合法科研结果，不再触发 creative completion call，避免为填满预算而生成重复方向。若研究者认为另一种视角具有实质价值，Gate1 仍可明确重跑该 Route。
 
+Candidate Enrichment 同样按 Seed 独立 checkpoint。契约会把 `methodological` 等常见学科表述规范为 `design` contribution，并保留 Contribution 与 Hypothesis 上的暂定不确定性和检索线索。这些字段明确不是事实证据，不能提升 Evidence Permission、直接成为 citation，或替代 Genome provenance。模型额外给出的嵌套 provenance 只会作为“尚未映射”的 warning 保留，直到被映射到已有 Gene provenance。
+
 自适应 Route 不等于草率初始化。Standard 模式始终先保留 Literature 与 Informed Brainstorm 两个互补起点；Opportunity Map 只在其揭示了不同的科学问题时，额外启动 challenge、reverse、subgroup、gap 或 Bridge 视角。Deep 模式仍运行全部已配置 Route。Candidate 数量不是完成指标，但 Candidate 只有具备连贯机制、被挑战的假设、非重复的 1–4 个贡献与暂定假设、竞争解释以及可证伪的验证路径，才可进入 `evolved` 成熟度。随后 T4.5 要求每个保留 challenge 都必须驱动一个技术组件，并要求每条 active claim 都写出反事实、竞争解释和证伪条件。因此，单一核心 challenge 只有在通过这些区分性检查时才可以保留；若存在真正独立的困难，系统不会为了表面简洁将其压缩掉。这样既避免为了数量制造 filler，也保留让研究方向真正可决策的实质性质量检查。
 
 ### 4.5 IdeaSeed：初始契约故意很小
@@ -347,6 +349,8 @@ ideation/evolution/diagnostics/enrichment_<candidate-id>_attempt_<n>.json
 ```
 
 每个 Candidate 有一次普通尝试和一次结构修复尝试。两次仍不可用时，原始 Seed 留在 Population，追加 `enrichment_degraded` 警告；之后可通过 Focused Evolution、阅读升级或研究者选择继续深化。Enricher 失败绝不能删除 Seed 或停止 P0。
+
+原生 T4 不会在 LLM Client 和 Controller 两层对同一大结构化请求叠加重试。每个已有 checkpoint 的 role 只发起一次有界 Provider 请求；临时服务异常会进入恢复 Gate，而不是在后台重复等待相同 prompt。之后 `resume` 会复用已完成 Route 与 Candidate checkpoint，因此该限制减少延迟，不减少探索广度或科学质量审查。
 
 ### 4.7 Candidate Genome、Creative Context 与 Family
 
@@ -554,8 +558,8 @@ Final Card Compiler 只把现有 Candidate / Score 编译为研究者能够比�
 | `CandidateDossier` | 原生候选实体 | dossier/genome/lineage ID 一致；evolved candidate 需一至四条非重复 contributions 与 hypotheses |
 | `CreativeContext` | 保护概念跳跃 | 记录 leap、竞争解释、惊异预测、研究纲领、知识来源与升级需求 |
 | `CandidatePresentation` | LLM 作者的展示层 | title、innovation、basis、card、minimum validation 等；成熟 Candidate 可要求，Seed 可先缺失 |
-| `ProvisionalHypothesis` | 可证伪假设 | statement、mechanism、observable prediction、discriminating test 都是可读文本 |
-| `Contribution` | 贡献包 | statement、类型和“若为真将改变什么” |
+| `ProvisionalHypothesis` | 可证伪假设 | statement、mechanism、observable prediction、discriminating test；可保留明确标注的暂定不确定性与检索线索 |
+| `Contribution` | 贡献包 | statement、类型和“若为真将改变什么”；可保留暂定不确定性与检索线索，但不能因此成为事实或 citation |
 | `IdeaFamily` | 相近候选的比较/组织 | 不是外部新颖性裁决，也不是删除机制 |
 
 ### 6.2 Score 相关模型
