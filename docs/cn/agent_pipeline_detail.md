@@ -2081,7 +2081,7 @@ LLM 读取 `survey_plan.json`，把 taxonomy tree、outline、unclassified_paper
 
 #### `T3.6-EXPAND`
 
-Agent 调用 `expand_corpus_for_survey`。这个工具读取 `survey_plan.json`、`domain_map.json` 和 `papers_verified.jsonl`，为 `coverage_selfcheck.classes_needing_more_lit` / `empty_classes` 生成 query hints，输出 `survey_expansion.json`。
+Agent 调用 `expand_corpus_for_survey`。这个工具读取 `survey_plan.json`、`domain_map.json` 和 `papers_verified.jsonl`，把 `coverage_selfcheck.classes_needing_more_lit` / `empty_classes` 的结构化条目转换为可读、可检索的主题 query，而不是把 JSON 直接转成字符串，再输出 `survey_expansion.json`。它会检索互补来源，在进入共享语料前过滤只靠通用词匹配的标题记录；重复记录按相关性保留最优项，而不是按标题字母排序；section evidence map 只列出已有 canonical note 的记录。没有 note 的检索记录只是一条 discovery lead，绝不能被当成可引用的建议。
 
 这一步不是 T4 -> T2 回路，也不自动宣称“领域缺口”。它只是一次性组织补检计划：哪些 taxonomy class 需要更多文献、建议查什么关键词、哪些 neighbor 只能作为邻接提示。LLM 可以在工具输出后补 `llm_review`，但不能循环补检。
 

@@ -2839,7 +2839,11 @@ class ExpandSurveyCorpusTool(Tool):
                 max_results=params.max_results_per_query,
                 query_bucket="survey_supplement",
                 sources=["openalex", "crossref", "arxiv"],
-                try_all_sources=False,
+                # A Crossref hit with a generic word match is not a useful
+                # survey source.  Search the complementary providers too, so
+                # an OA record with an abstract can outrank metadata-only
+                # noise from the first responding provider.
+                try_all_sources=True,
             )
             log_entry = {
                 "query_key": query_key,
@@ -2853,9 +2857,14 @@ class ExpandSurveyCorpusTool(Tool):
                 "source_stats": (result.data or {}).get("source_stats") or {},
             }
             search_log.append(log_entry)
+            rejected_count = 0
             if result.ok:
                 for paper in (result.data or {}).get("papers") or []:
                     if not isinstance(paper, dict):
+                        continue
+                    relevance = _survey_supplement_record_relevance(paper, item)
+                    if not relevance["eligible"]:
+                        rejected_count += 1
                         continue
                     retrieved.append(
                         {
@@ -2864,6 +2873,8 @@ class ExpandSurveyCorpusTool(Tool):
                                 "query": item["query"],
                                 "purpose": item["purpose"],
                                 "section_ids": item["section_ids"],
+                                "relevance_score": relevance["score"],
+                                "relevance_reason": relevance["reason"],
                                 "evidence_boundary": (
                                     "retrieved_metadata_or_abstract_only; use for discovery, historical/frontier coverage, "
                                     "or an explicitly abstract-level description until a paper note verifies a specific claim"
@@ -2871,6 +2882,13 @@ class ExpandSurveyCorpusTool(Tool):
                             },
                         }
                     )
+            log_entry["accepted_count"] = sum(
+                1
+                for record in retrieved
+                if isinstance(record.get("survey_supplement"), dict)
+                and record["survey_supplement"].get("query") == item["query"]
+            )
+            log_entry["rejected_low_relevance_count"] = rejected_count
             completed_query_keys.add(query_key)
             # Persist after every completed provider action.  If the outer
             # runtime times out or the process is interrupted, resume retries
@@ -3095,7 +3113,7 @@ def _build_survey_supplement_query_plan(
     *,
     domain_map: dict[str, Any],
     verified: list[dict[str, Any]],
-    weak_classes: list[str],
+    weak_classes: list[Any],
     max_queries_per_class: int,
     max_total_queries: int,
 ) -> list[dict[str, Any]]:
@@ -3109,22 +3127,34 @@ def _build_survey_supplement_query_plan(
 
     taxonomy = plan.get("taxonomy") if isinstance(plan.get("taxonomy"), dict) else {}
     classes = _taxonomy_classes(plan)
-    labels = list(weak_classes)
-    if not labels:
-        labels = [
-            str(item.get("name") or item.get("class_id") or "").strip()
+    topics = [_survey_supplement_topic_context(item, classes) for item in weak_classes]
+    if not topics:
+        topics = [
+            _survey_supplement_topic_context(item, classes)
             for item in classes
             if isinstance(item, dict)
         ]
-    labels = list(dict.fromkeys(label for label in labels if label))[: max(1, max_total_queries)]
+    unique_topics: list[dict[str, str]] = []
+    seen_topics: set[str] = set()
+    for topic in topics:
+        label = str(topic.get("label") or "").strip()
+        if not label:
+            continue
+        key = label.casefold()
+        if key in seen_topics:
+            continue
+        seen_topics.add(key)
+        unique_topics.append(topic)
+    topics = unique_topics[: max(1, max_total_queries)]
     dimension = str(taxonomy.get("dimension") or plan.get("central_question") or "").strip()
     central_terms = _survey_query_terms(dimension)
     adjacent_terms = _adjacent_titles(domain_map)[:2]
     verified_terms = [str(item.get("title") or "").strip() for item in verified[:2] if isinstance(item, dict)]
     outline = plan.get("outline") if isinstance(plan.get("outline"), list) else []
     query_plan: list[dict[str, Any]] = []
-    for class_label in labels:
-        terms = _survey_query_terms(class_label)
+    for topic_context in topics:
+        class_label = str(topic_context["label"])
+        terms = _survey_query_terms(topic_context["query_basis"])
         if not terms:
             continue
         section_ids = _sections_for_supplement_topic(outline, class_label)
@@ -3135,7 +3165,10 @@ def _build_survey_supplement_query_plan(
         if max_queries_per_class >= 2:
             variants.append(("historical_development", f"{terms} historical development review"))
         if max_queries_per_class >= 3 and central_terms:
-            variants.append(("cross_stream_bridge", f"{central_terms} {terms}"))
+            # Keep the gap-specific anchor first.  The bounded query may be
+            # truncated, and placing survey-wide prose first used to erase
+            # the very topic the bridge search was meant to strengthen.
+            variants.append(("cross_stream_bridge", f"{terms} {central_terms}"))
         for purpose, query in variants:
             normalized = _bounded_survey_query(query)
             if not normalized or any(item["query"].casefold() == normalized.casefold() for item in query_plan):
@@ -3172,8 +3205,100 @@ def _survey_query_terms(value: str) -> str:
     return text[:180]
 
 
+def _survey_supplement_topic_context(item: Any, classes: list[dict[str, Any]]) -> dict[str, str]:
+    """Convert a plan coverage gap into a readable, searchable topic.
+
+    ``coverage_selfcheck.classes_needing_more_lit`` is intentionally
+    structured.  Stringifying that dictionary used to leak braces and field
+    names into the search request, while truncating the actual paper/concept
+    that needed upgrading.  Preserve the researcher-facing label for the
+    audit and build the query from its substantive fields instead.
+    """
+
+    details = item if isinstance(item, dict) else {}
+    label = str(
+        details.get("class_or_topic")
+        or details.get("name")
+        or details.get("class_id")
+        or item
+        or ""
+    ).strip()
+    class_id = label.split(maxsplit=1)[0] if label else ""
+    matching_class = next(
+        (
+            candidate
+            for candidate in classes
+            if str(candidate.get("class_id") or "").strip() == class_id
+            or str(candidate.get("name") or "").strip().casefold() == label.casefold()
+        ),
+        {},
+    )
+    gap = str(details.get("gap") or "").strip()
+    action = str(details.get("action") or "").strip()
+    class_name = str(matching_class.get("name") or "").strip() if isinstance(matching_class, dict) else ""
+    why_class = str(matching_class.get("why_class") or "").strip() if isinstance(matching_class, dict) else ""
+    # Named companions and formal terms often appear inside parentheses late
+    # in a long gap description.  Pull them forward so the bounded query does
+    # not discard the most discriminating retrieval anchor.
+    parenthetical_terms = " ".join(
+        re.findall(r"\(([^()]{2,140})\)", " ".join((gap, action)))
+    )
+    query_basis = " ".join(
+        part for part in (label, parenthetical_terms, class_name, gap, action, why_class) if part
+    )
+    return {
+        "label": label,
+        "query_basis": query_basis,
+    }
+
+
 def _bounded_survey_query(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()[:240]
+
+
+_SURVEY_SUPPLEMENT_QUERY_STOPWORDS = frozenset(
+    {
+        "about", "after", "before", "between", "class", "coverage", "development", "evidence",
+        "focus", "full", "historical", "literature", "more", "only", "paper", "papers", "recent",
+        "research", "results", "review", "source", "sources", "stream", "survey", "text", "than",
+        "that", "theory", "this", "topic", "under", "with", "would",
+    }
+)
+
+
+def _survey_supplement_record_relevance(record: dict[str, Any], query_item: dict[str, Any]) -> dict[str, Any]:
+    """Reject generic metadata matches before they pollute the shared corpus.
+
+    This is a lexical *admission* screen, not a claim-level relevance verdict.
+    It primarily protects against title-only Crossref records that overlap on
+    words such as ``claim``, ``driven``, or ``review``.  The Writer must still
+    verify a canonical note against the sentence it intends to support.
+    """
+
+    query = str(query_item.get("query") or "")
+    query_tokens = {
+        token.casefold()
+        for token in re.findall(r"[A-Za-z][A-Za-z-]{3,}", query)
+        if token.casefold() not in _SURVEY_SUPPLEMENT_QUERY_STOPWORDS
+    }
+    title = str(record.get("title") or "")
+    abstract = str(record.get("abstract") or "")
+    title_tokens = {token.casefold() for token in re.findall(r"[A-Za-z][A-Za-z-]{3,}", title)}
+    text_tokens = {token.casefold() for token in re.findall(r"[A-Za-z][A-Za-z-]{3,}", title + " " + abstract)}
+    title_matches = query_tokens & title_tokens
+    text_matches = query_tokens & text_tokens
+    rare_title_match = any(len(token) >= 10 for token in title_matches)
+    has_abstract = len(abstract.strip()) >= 80
+    eligible = len(title_matches) >= 2 or len(text_matches) >= 3 or (has_abstract and bool(title_matches)) or rare_title_match
+    score = len(title_matches) * 12 + len(text_matches) * 3 + (4 if has_abstract else 0)
+    return {
+        "eligible": eligible,
+        "score": score,
+        "reason": (
+            f"title_overlap={len(title_matches)}, text_overlap={len(text_matches)}, "
+            f"abstract={'yes' if has_abstract else 'no'}"
+        ),
+    }
 
 
 def _sections_for_supplement_topic(outline: list[Any], topic: str) -> list[str]:
@@ -3206,11 +3331,28 @@ def _deduplicate_survey_supplement_records(records: list[dict[str, Any]]) -> lis
         section_ids = list(dict.fromkeys([*(existing_supplement.get("section_ids") or []), *(incoming_supplement.get("section_ids") or [])]))
         existing_supplement["section_ids"] = section_ids
         existing_supplement["queries"] = list(dict.fromkeys([str(existing_supplement.get("query") or ""), str(incoming_supplement.get("query") or "")]))
-        existing["survey_supplement"] = existing_supplement
+        existing_score = int(existing_supplement.get("relevance_score") or 0)
+        incoming_score = int(incoming_supplement.get("relevance_score") or 0)
+        if incoming_score > existing_score:
+            replacement = dict(record)
+            replacement_supplement = dict(incoming_supplement)
+            replacement_supplement["section_ids"] = section_ids
+            replacement_supplement["queries"] = existing_supplement["queries"]
+            replacement["survey_supplement"] = replacement_supplement
+            by_key[key] = replacement
+            existing = replacement
+        else:
+            existing["survey_supplement"] = existing_supplement
         for field in ("abstract", "doi", "url", "venue", "year", "authors"):
             if not existing.get(field) and record.get(field):
                 existing[field] = record[field]
-    return sorted(by_key.values(), key=lambda item: str(item.get("title") or "").casefold())
+    return sorted(
+        by_key.values(),
+        key=lambda item: (
+            -int(((item.get("survey_supplement") or {}).get("relevance_score") or 0)),
+            str(item.get("title") or "").casefold(),
+        ),
+    )
 
 
 def _survey_supplement_section_map(
@@ -3225,10 +3367,16 @@ def _survey_supplement_section_map(
         supplement = record.get("survey_supplement") if isinstance(record.get("survey_supplement"), dict) else {}
         for section_id in supplement.get("section_ids") or []:
             paper_id = record_note_id(record)
+            note_path = str(note_paths.get(paper_id) or "")
+            # A metadata-only record is a discovery lead, not an evidence-map
+            # entry.  Omitting it keeps downstream agents from mistaking an
+            # empty path for a usable note card.
+            if not note_path:
+                continue
             sections.setdefault(str(section_id), []).append(
                 {
                     "paper_id": paper_id,
-                    "note_path": str(note_paths.get(paper_id) or ""),
+                    "note_path": note_path,
                     "title": str(record.get("title") or ""),
                     "usage": "canonical_abstract_note_for_coverage_or_upgrade_required_for_substantive_claim",
                 }
@@ -6211,7 +6359,7 @@ def _extract_section_hints(tex: str, keyword: str) -> list[str]:
     return lines[:12]
 
 
-def _classes_needing_lit(plan: dict[str, Any]) -> list[str]:
+def _classes_needing_lit(plan: dict[str, Any]) -> list[Any]:
     selfcheck = plan.get("coverage_selfcheck") if isinstance(plan.get("coverage_selfcheck"), dict) else {}
     classes = list(selfcheck.get("classes_needing_more_lit") or [])
     classes.extend(selfcheck.get("empty_classes") or [])
@@ -6220,7 +6368,17 @@ def _classes_needing_lit(plan: dict[str, Any]) -> list[str]:
             paper_ids = item.get("paper_ids") if isinstance(item, dict) else None
             if isinstance(paper_ids, list) and len(paper_ids) <= 1:
                 classes.append(str(item.get("class_id") or item.get("name") or "unknown"))
-    return list(dict.fromkeys(str(item) for item in classes if str(item).strip()))
+    normalized: list[Any] = []
+    seen: set[str] = set()
+    for item in classes:
+        if isinstance(item, dict):
+            key = json.dumps(item, ensure_ascii=False, sort_keys=True)
+        else:
+            key = str(item).strip()
+        if key and key not in seen:
+            seen.add(key)
+            normalized.append(item)
+    return normalized
 
 
 def _adjacent_titles(domain_map: dict[str, Any]) -> list[str]:

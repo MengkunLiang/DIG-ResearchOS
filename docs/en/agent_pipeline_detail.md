@@ -2079,7 +2079,7 @@ The state machine jumps based on the gate option: `complete` goes to `T3.6-EXPAN
 
 #### `T3.6-EXPAND`
 
-The Agent calls `expand_corpus_for_survey`. This tool reads `survey_plan.json`, `domain_map.json`, and `papers_verified.jsonl`, generates query hints for `coverage_selfcheck.classes_needing_more_lit` / `empty_classes`, and outputs `survey_expansion.json`.
+The Agent calls `expand_corpus_for_survey`. This tool reads `survey_plan.json`, `domain_map.json`, and `papers_verified.jsonl`, turns each structured `coverage_selfcheck.classes_needing_more_lit` / `empty_classes` entry into a readable topic query rather than stringifying its JSON, and outputs `survey_expansion.json`. It searches complementary providers, rejects title-only generic matches before they enter the shared corpus, retains the highest-relevance duplicate instead of alphabetical order, and places only records with canonical notes in the section evidence map. A retrieval record without a note remains a discovery lead, never a citation recommendation.
 
 This step is not a T4 → T2 loop; it does not automatically claim “domain gaps”. It merely organizes a one-time supplementary search plan: which taxonomy classes need more literature, suggested search keywords, and which neighbors can only serve as adjacent hints. The LLM may add an `llm_review` after the tool output but must not loop the search.
 
