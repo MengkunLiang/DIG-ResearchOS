@@ -152,6 +152,20 @@ if TYPE_CHECKING:
 # breaker. Otherwise tiny non-convergent rewrites can consume an unbounded
 # number of model calls while technically appearing to make progress.
 SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT = 8
+T45_QUALITY_REPAIR_LEDGER_REL_PATH = "_runtime/t45_quality_repair_ledger.json"
+# The repair window is tied to the selected research decision and its stable
+# upstream evidence.  Editing a Proposal is deliberately *not* a new window:
+# otherwise every low-value rewrite would reset the circuit breaker.  A real
+# T4 reframe or changed upstream literature decision naturally changes this
+# baseline and opens a fresh T4.5 window.
+T45_QUALITY_REPAIR_BASELINE_ARTIFACTS = (
+    "project.yaml",
+    "ideation/selected/selected_candidate.json",
+    "ideation/hypothesis_brief.yaml",
+    "ideation/novelty_audit.md",
+    "literature/synthesis.md",
+    "ideation/orientation_config.yaml",
+)
 
 
 T2_AUTO_PERSIST_SEARCH_TOOLS = frozenset(
@@ -2161,6 +2175,7 @@ class AgentRunner:
                                 error=error_msg,
                                 details={
                                     "failure_count": validation_fails,
+                                    "repair_attempt_count": int(ctx.extra.get("t45_quality_repair_attempt_count") or validation_fails),
                                     "validator_error": str(err or "unknown validation error"),
                                     "repair_policy": "targeted_with_progress_and_total_safety_limit",
                                     "source_artifacts": list(T36_QUALITY_SOURCE_ARTIFACTS),
@@ -2261,10 +2276,11 @@ class AgentRunner:
                                 },
                             )
                             break
-                        if validation_fails >= SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT:
+                        repair_attempts = int(ctx.extra.get("t45_quality_repair_attempt_count") or validation_fails)
+                        if repair_attempts >= SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT:
                             stop_reason = AgentResult.STOP_INTERRUPTED
                             error_msg = (
-                                f"T4.5 已完成 {validation_fails} 轮有来源变化的定向修复，但质量校验仍未收敛。"
+                                f"T4.5 已完成 {repair_attempts} 轮有来源变化的定向修复，但质量校验仍未收敛。"
                                 f"最后原因：{err}。已暂停并保留全部 source artifacts，避免继续产生低价值改写。"
                             )
                             self.progress.emit(
@@ -2277,6 +2293,7 @@ class AgentRunner:
                                 error=error_msg,
                                 details={
                                     "failure_count": validation_fails,
+                                    "repair_attempt_count": repair_attempts,
                                     "safety_limit": SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT,
                                     "validator_error": str(err or "unknown validation error"),
                                     "repairable_warning": t45_repairable_warning,
@@ -2287,7 +2304,7 @@ class AgentRunner:
                         if not t45_repairable_warning:
                             self.progress.emit(
                                 "[T4.5 Quality Gate] 第 "
-                                f"{validation_fails} 次校验未通过；已把具体原因和最小修复范围注入 Formalizer，"
+                                f"{repair_attempts} 次定向校验未通过；已把具体原因和最小修复范围注入 Formalizer，"
                                 f"修复后会重新运行全部质量校验；总安全窗为 {SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT} 轮。",
                                 important=True,
                             )
@@ -6727,6 +6744,14 @@ class AgentRunner:
         """T4.5 续跑时，已有审计和 mechanism tuples 合格则直接完成。"""
 
         if ctx.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"}:
+            repair_blocked, repair_block_reason = self._t45_quality_repair_window_blocked(ctx)
+            if repair_blocked:
+                raise RecoverableRuntimePause(
+                    "T45_REPAIR_WINDOW_PAUSED: "
+                    + repair_block_reason
+                    + "。为避免 resume 重复消耗额度，系统不会自动再次调用 Formalizer。"
+                    "请先修正该诊断关联的 source artifact，或从 T4 重新选择/重构研究方向后再 resume。"
+                )
             if ctx.task_id == "T4.5-FORMALIZE":
                 outputs = [
                     ctx.workspace_dir / "ideation" / "research_blueprint.yaml",
@@ -10471,28 +10496,108 @@ class AgentRunner:
             return T45_RESEARCH_CONTENT_SOURCE_ARTIFACTS
         return T45_QUALITY_SOURCE_ARTIFACTS
 
+    @staticmethod
+    def _t45_quality_error_signature(error: str) -> str:
+        """Normalize volatile validator details before comparing a repair loop."""
+
+        normalized = " ".join(str(error or "unknown validation error").split()).casefold()
+        normalized = re.sub(r"\b[0-9a-f]{12,}\b", "<digest>", normalized)
+        return re.sub(r"\b\d+\b", "<number>", normalized)
+
+    @classmethod
+    def _t45_quality_repair_baseline(cls, workspace_dir: Path) -> str:
+        inputs = cls._t45_quality_source_fingerprint(
+            workspace_dir,
+            source_paths=T45_QUALITY_REPAIR_BASELINE_ARTIFACTS,
+        )
+        payload = json.dumps(inputs, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _load_t45_quality_repair_ledger(workspace_dir: Path) -> dict[str, object]:
+        path = workspace_dir / T45_QUALITY_REPAIR_LEDGER_REL_PATH
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            data = {}
+        entries = data.get("entries") if isinstance(data, dict) else None
+        return {
+            "semantics": "t45_quality_repair_ledger",
+            "version": 1,
+            "entries": dict(entries) if isinstance(entries, dict) else {},
+        }
+
+    @staticmethod
+    def _write_t45_quality_repair_ledger(workspace_dir: Path, ledger: dict[str, object]) -> None:
+        path = workspace_dir / T45_QUALITY_REPAIR_LEDGER_REL_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(ledger, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    @classmethod
+    def _t45_quality_repair_entry(cls, ctx: ExecutionContext) -> tuple[dict[str, object], str, dict[str, object]]:
+        ledger = cls._load_t45_quality_repair_ledger(ctx.workspace_dir)
+        baseline = cls._t45_quality_repair_baseline(ctx.workspace_dir)
+        key = f"{ctx.task_id}:{baseline}"
+        entries = ledger["entries"]
+        assert isinstance(entries, dict)
+        entry = entries.get(key)
+        if not isinstance(entry, dict):
+            entry = {
+                "task_id": ctx.task_id,
+                "baseline": baseline,
+                "attempt_count": 0,
+            }
+            entries[key] = entry
+        return ledger, key, entry
+
+    @classmethod
+    def _t45_quality_repair_window_blocked(cls, ctx: ExecutionContext) -> tuple[bool, str]:
+        """Prevent resume from reopening a previously exhausted/no-progress loop."""
+
+        ledger, _key, entry = cls._t45_quality_repair_entry(ctx)
+        _ = ledger
+        attempts = int(entry.get("attempt_count") or 0)
+        scope = tuple(str(item) for item in entry.get("source_scope", []) if isinstance(item, str))
+        previous_sources = entry.get("last_source_fingerprint")
+        sources_unchanged = bool(scope) and isinstance(previous_sources, dict) and (
+            cls._t45_quality_source_fingerprint(ctx.workspace_dir, source_paths=scope) == previous_sources
+        )
+        if bool(entry.get("blocked_no_source_progress")) and sources_unchanged:
+            return True, "同一诊断对应的 source artifact 尚未发生变化"
+        if attempts >= SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT:
+            return True, f"已用尽 {SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT} 轮定向修复安全窗"
+        return False, ""
+
     @classmethod
     def _record_t45_quality_repair_attempt(cls, *, ctx: ExecutionContext, error: str) -> bool:
-        """Return true only for a repeated T4.5 error with no source-artifact progress.
+        """Persist a bounded T4.5 repair window across resume and restarts.
 
-        This intentionally does not count repair attempts.  A model may need
-        several source-first corrections before every cross-artifact quality
-        gate passes.  Retrying a validation without changing any editable
-        source for the same error is the one state that cannot make progress.
+        A previous implementation kept these values only in ``ctx.extra``.
+        Each ``resume`` therefore reset the eight-pass circuit breaker and
+        could turn a non-convergent package into an unbounded sequence of LLM
+        rewrites.  The ledger preserves both the source-aware no-progress
+        test and the total window for the same research decision.
         """
 
-        normalized_error = " ".join(str(error or "unknown validation error").split()).casefold()
+        signature = cls._t45_quality_error_signature(error)
         scope = cls._t45_quality_repair_source_scope(error)
         current = cls._t45_quality_source_fingerprint(ctx.workspace_dir, source_paths=scope)
-        previous_error = str(ctx.extra.get("t45_quality_last_error") or "").casefold()
-        previous = ctx.extra.get("t45_quality_last_source_fingerprint")
+        ledger, _key, entry = cls._t45_quality_repair_entry(ctx)
+        previous_signature = str(entry.get("last_error_signature") or "")
+        previous_sources = entry.get("last_source_fingerprint")
         no_source_progress = (
-            normalized_error == previous_error
-            and isinstance(previous, dict)
-            and previous == current
+            signature == previous_signature
+            and isinstance(previous_sources, dict)
+            and previous_sources == current
         )
-        ctx.extra["t45_quality_last_error"] = normalized_error
-        ctx.extra["t45_quality_last_source_fingerprint"] = current
+        entry["attempt_count"] = int(entry.get("attempt_count") or 0) + 1
+        entry["last_error_signature"] = signature
+        entry["last_source_fingerprint"] = current
+        entry["source_scope"] = list(scope)
+        entry["blocked_no_source_progress"] = no_source_progress
+        attempts = int(entry["attempt_count"])
+        ctx.extra["t45_quality_repair_attempt_count"] = attempts
+        cls._write_t45_quality_repair_ledger(ctx.workspace_dir, ledger)
         return no_source_progress
 
     @staticmethod

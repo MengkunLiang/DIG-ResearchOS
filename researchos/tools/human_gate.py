@@ -60,6 +60,44 @@ def _terminal_eof_submit_instruction(*, include_end: bool = True) -> str:
     return f"按 {gesture} 提交"
 
 
+def _clarification_reference_answers(question: str, suggestions: list[str] | None) -> list[str]:
+    """Return three useful, editable answer examples for ordinary text gates.
+
+    Agents should normally supply all three.  This small presentation fallback
+    prevents a weak or terse model response from leaving a new user with one
+    opaque answer, while preserving the Agent's real suggestions verbatim.
+    ``ask_approval`` is intentionally separate and never uses this helper.
+    """
+
+    answers: list[str] = []
+    for item in suggestions or []:
+        cleaned = _compact_text(item, 240)
+        if cleaned and cleaned not in answers:
+            answers.append(cleaned)
+    if not answers:
+        return answers
+
+    normalized_question = str(question or "").casefold()
+    if any(marker in normalized_question for marker in ("确认", "confirm", "批准")):
+        fallbacks = [
+            "确认",
+            "修改: <需要调整的字段>=<新值>",
+            "暂不确认；我需要澄清：<具体问题>",
+        ]
+    else:
+        fallbacks = [
+            "按第一个参考回答继续",
+            "修改: <希望调整的内容>",
+            "我需要澄清：<具体问题>",
+        ]
+    for item in fallbacks:
+        if item not in answers:
+            answers.append(item)
+        if len(answers) >= 3:
+            break
+    return answers[:3]
+
+
 _T2_LLM_CAPTURE_FIELDS = {
     "coverage_total",
     "active_pool_max",
@@ -881,47 +919,60 @@ class CLIHumanInterface(HumanInterface):
         return intro, sections, answer_help
 
     @staticmethod
-    def _scope_candidate_panels(section: str, *, border_style: str) -> list[Panel]:
-        """Turn `### id · name` cards into compact, vertically scannable panels."""
+    def _scope_candidate_table(section: str, *, border_style: str) -> Table:
+        """Render one scope layer as a compact decision table, not nested cards."""
 
         lines = section.splitlines()
+        table = Table(
+            expand=True,
+            show_header=True,
+            header_style=f"bold {border_style}",
+            border_style=border_style,
+            box=box.SIMPLE_HEAVY,
+            padding=(0, 1),
+        )
+        table.add_column("条目", width=24, overflow="fold")
+        table.add_column("为什么纳入", ratio=2, overflow="fold")
+        table.add_column("检索提示", ratio=2, overflow="fold")
+        table.add_column("边界 / 迁移判断", ratio=2, overflow="fold")
         if not lines:
-            return []
-        section_heading = lines[0].removeprefix("##").strip()
+            table.add_row("—", "（本组暂无候选）", "—", "—")
+            return table
         body = "\n".join(lines[1:]).strip()
         chunks = re.split(r"(?m)^###\s+", body)
         if len(chunks) <= 1:
-            return [Panel(Markdown(body or "（本组暂无候选）"), title=section_heading, border_style=border_style, expand=True)]
+            table.add_row("—", body or "（本组暂无候选）", "—", "—")
+            return table
 
-        panels: list[Panel] = []
         for chunk in chunks[1:]:
             candidate_lines = chunk.strip().splitlines()
             if not candidate_lines:
                 continue
             candidate_title = candidate_lines[0].strip()
-            detail = Table.grid(expand=True, padding=(0, 1))
-            detail.add_column(style="bold", width=16, no_wrap=True)
-            detail.add_column(ratio=1, overflow="fold")
-            detail_rows = 0
+            fields: dict[str, list[str]] = {}
             freeform_lines: list[str] = []
             for line in candidate_lines[1:]:
                 match = re.match(r"^\s*([^：:]{1,16})[：:]\s*(.+?)\s*$", line)
                 if match:
-                    detail.add_row(match.group(1).strip(), Text(match.group(2).strip(), overflow="fold"))
-                    detail_rows += 1
+                    fields.setdefault(match.group(1).strip(), []).append(match.group(2).strip())
                 elif line.strip():
                     freeform_lines.append(line.strip())
-            candidate_body: Any = detail if detail_rows else Markdown("\n".join(freeform_lines) or "（未提供说明）")
-            panels.append(
-                Panel(
-                    candidate_body,
-                    title=candidate_title,
-                    border_style=border_style,
-                    expand=True,
-                    padding=(0, 1),
-                )
+            def joined(*labels: str) -> str:
+                values = [value for label in labels for value in fields.get(label, [])]
+                return "\n".join(values)
+
+            rationale = joined("作用", "why", "为什么", "来源与映射") or "\n".join(freeform_lines) or "—"
+            queries = joined("检索", "query") or "—"
+            boundaries = joined("边界", "噪声提示", "待验证问题", "优先级", "priority") or "—"
+            table.add_row(
+                Text(candidate_title, overflow="fold"),
+                Text(rationale, overflow="fold"),
+                Text(queries, overflow="fold"),
+                Text(boundaries, overflow="fold"),
             )
-        return panels or [Panel(Markdown(body or "（本组暂无候选）"), title=section_heading, border_style=border_style, expand=True)]
+        if not table.rows:
+            table.add_row("—", "（本组暂无候选）", "—", "—")
+        return table
 
     def _render_t1_scope_confirmation(
         self, *, question: str, suggestions: list[str] | None
@@ -972,8 +1023,8 @@ class CLIHumanInterface(HumanInterface):
         }
         for kind, section in sections:
             label, style = styles[kind]
-            panels = self._scope_candidate_panels(section, border_style=style)
-            console.print(Panel(Group(*panels), title=label, border_style=style, expand=True))
+            table = self._scope_candidate_table(section, border_style=style)
+            console.print(Panel(table, title=label, border_style=style, expand=True))
 
         answer_parts: list[Any] = []
         if answer_help:
@@ -1033,16 +1084,17 @@ class CLIHumanInterface(HumanInterface):
     async def ask_clarification(
         self, *, question: str, suggestions: list[str] | None = None
     ) -> str:
-        if not self._render_t1_scope_confirmation(question=question, suggestions=suggestions):
+        reference_answers = _clarification_reference_answers(question, suggestions)
+        if not self._render_t1_scope_confirmation(question=question, suggestions=reference_answers):
             lines = [question]
-            if suggestions:
+            if reference_answers:
             # Markdown collapses ordinary newlines into one paragraph. Use a
             # real list so its marker and answer stay together and continuation
             # lines wrap beneath that answer. Suggestions sometimes arrive
             # pre-numbered from an LLM; remove that local marker to avoid a
             # confusing ``1. 1. ...`` display.
                 lines.extend(["", "## 可直接输入的参考回答", ""])
-                for idx, item in enumerate(suggestions, start=1):
+                for idx, item in enumerate(reference_answers, start=1):
                     suggestion = re.sub(
                         r"^\s*(?:\[\s*\d+\s*\]|\(?\d+\)?[.、)])\s*",
                         "",

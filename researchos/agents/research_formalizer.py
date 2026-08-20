@@ -95,7 +95,16 @@ class ResearchFormalizerAgent(Agent):
         orientation = persist_orientation_configuration(workspace)
         structured_sources_ok, structured_sources_error = validate_t45_structured_sources(workspace)
         formalization_ok, formalization_error = validate_t45_formalization_core(workspace)
+        # Formalization sees advisory quality cues while composing the package,
+        # but repair-grade quality checks belong to the independent review
+        # context.  Requiring the generator to pass those checks before the
+        # reviewer sees the package creates a duplicate repair loop without
+        # adding evidence.
         quality_diagnostics = collect_t45_quality_diagnostics(workspace)
+        if phase != "review":
+            quality_diagnostics = [
+                item for item in quality_diagnostics if str(item.get("severity") or "") != "repair"
+            ]
         return render_prompt(
             self.spec.prompt_template,
             ctx,
@@ -161,8 +170,7 @@ class ResearchFormalizerAgent(Agent):
         if self._phase(ctx) != "review":
             # The independent reviewer and its acceptance record are required
             # before a Proposal can become a T5-authoritative artifact.
-            quality_warning = format_t45_repairable_quality_warnings(collect_t45_quality_diagnostics(workspace))
-            return (False, quality_warning) if quality_warning else (True, None)
+            return True, None
         repaired, repair_error = repair_t45_proposal_manifest(workspace, workspace / "ideation" / "novelty_audit.md")
         if repair_error and not repaired:
             return False, repair_error

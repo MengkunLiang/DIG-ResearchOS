@@ -563,7 +563,7 @@ T1 的本质不是“自由聊天”，而是一个结构化初始化阶段：
 
 启动 gate 完成后，`PIAgent(init)` 才从 CLI / `ExecutionContext.extra` 读取用户主题，并调用 `inspect_user_seeds`、`list_files` 和 `read_file` 检查 workspace 中已经存在的 `user_seeds/seed_papers.jsonl`、`user_seeds/seed_ideas.md`、`user_seeds/seed_constraints.md`、`user_seeds/seed_external_resources.jsonl` 和用户 Markdown 提纲。若发现类似 `/mnt/data/reference/算法风险综述_种子提纲.md` 这类 seed outline，必须先规范化为 `user_seeds/seed_outline_profile.json`；runtime 也有 deterministic helper 兜底。规范化只派生 seed ideas、constraints 和 external resources，不会把 `representative_literature_directions` 写成 `seed_papers.jsonl`。这一步只是收集上下文，不应该再额外弹输入框；如果日志里出现“我来检查已有材料”，那只是状态说明。任何真正需要用户选择、确认或补充的地方，仍必须调用 `ask_human`，不能只在普通文本里提问然后继续执行。
 
-随后它会通过 `ask_human` 分轮访谈。每个 `ask_human.question` 必须说明三件事：当前处于 T1 第几轮、为什么需要用户回答、用户应该补哪些字段。草案确认和 Bridge Domain Plan 选择必须把 `project.yaml` 草案或候选方向清单直接写进 `question`，不能只写“请确认以上”。三层范围确认会以专用 Rich 页面先解释决策含义，再显示候选卡：核心线是 T2 必须覆盖、T3/T4 主线使用的材料，邻接线用于选择性形式化/比较，真正 Bridge 是可为空的跨问题域定向探索；重点交叉保底探索，普通交叉仅在有增益时检索。终端会把长的参考回答渲染为可换行的编号列表，因此 Agent 提供的 suggestion 应是可直接提交的完整回答，不带自编号，也不能把内部状态或“未提供预算”等缺失信息当作一个选项。如果模型仍写了依赖前文的短问题，runner 会把同一轮 Agent 正文自动并入输入问题，避免用户只看到输入框却看不到草案/候选。典型轮次是：
+随后它会通过 `ask_human` 分轮访谈。每个 `ask_human.question` 必须说明三件事：当前处于 T1 第几轮、为什么需要用户回答、用户应该补哪些字段。草案确认和 Bridge Domain Plan 选择必须把 `project.yaml` 草案或候选方向清单直接写进 `question`，不能只写“请确认以上”。三层范围确认会以专用 Rich 页面先解释决策含义，再按核心、邻接、Bridge 三层显示四列表格：核心线是 T2 必须覆盖、T3/T4 主线使用的材料，邻接线用于选择性形式化/比较，真正 Bridge 是可为空的跨问题域定向探索；重点交叉保底探索，普通交叉仅在有增益时检索。终端会把长的参考回答渲染为可换行的编号列表；普通文本决策至少显示三条可编辑的回答示例，因此 Agent 提供的 suggestion 应是可直接提交的完整回答，不带自编号，也不能把内部状态或“未提供预算”等缺失信息当作一个选项。如果模型仍写了依赖前文的短问题，runner 会把同一轮 Agent 正文自动并入输入问题，避免用户只看到输入框却看不到草案/候选。典型轮次是：
 
 | 轮次 | 为什么需要问用户 | 需要回答什么 |
 | --- | --- | --- |
@@ -2743,6 +2743,10 @@ validator 会检查：
 ### 第二阶段：研究正式化
 
 `T4.5-FORMALIZE` 使用新的 `ResearchFormalizerAgent` 上下文，只生成或修复构成同一研究方案所需的 source artifact：`research_blueprint.yaml`、`claim_registry.yaml`、`hypotheses.md`、`exp_plan.yaml` 和七部分 Proposal。正式化每轮以 `validate_t45_formalization_sources` 的**最新** `valid` 结果为准：启动时的 prompt 诊断只是快照，不能在同一轮结构化修复后继续阻止 prose 写作。`valid=false` 时只修复错误指定的结构化来源或最小同步集合；`valid=true` 后只写 hypotheses/Proposal 并回读。运行时随后确定性编译 contribution-hypothesis map、validation map、kill criteria、research dossier 与 proposal manifest；这些派生产物不能由 Formalizer 直接写入。Formalizer 不能把计划结果提升为实证结果，也不能覆盖 novelty audit。
+
+T4.5 的定向修复不会因 `resume` 而重新获得无限次数。runtime 将同一 task、已选 Candidate 和稳定上游证据绑定到 `_runtime/t45_quality_repair_ledger.json`：同一诊断且关联 source 未改变会立即暂停；累计 8 次仍未收敛也会暂停。只有真正改变上游研究决策或证据基线，例如从 T4 重构并重新选择 Candidate，才会开启新的修复窗口。这样保留必要的多文件定向修复，同时不会让反复 resume 消耗无上限额度。
+
+正式化阶段仍会看到篇幅、挑战范围等 advisory 提醒，以帮助首次生成更完整的研究包；但需要实际改写的 prose 质量判断只在独立的 `T4.5-REVIEW` 中执行。这样不会要求生成器在 reviewer 看到完整 Proposal 前重复修复同一项语言质量条件，减少无信息增量的循环，同时保留 Review 对研究论证质量的独立把关。
 
 Proposal 与 hypotheses 的不确定性必须写成研究语言，而不是运行时标签。机制与贡献用“本文提出”及其设计理由表达，假设写成可被竞争解释和反事实检验推翻的预测；资源、数据或实施条件尚未确定时，只在“风险、局限与执行计划”中一次说明相应的前置核验、缓解或备选方案。`verification_required`、`proposed_not_verified`、`待验证`、证据等级、T4.5、collision、Candidate ID 等内部词汇不得进入研究者可见正文。
 
