@@ -19,6 +19,7 @@ from typing import Any, Awaitable, Callable
 
 from rich.console import Console, Group
 from rich import box
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -810,7 +811,15 @@ class CLIHumanInterface(HumanInterface):
         self._no_color = bool(no_color)
 
     def _render_panel(self, *, title: str, lines: list[str], border_style: str) -> None:
-        """Render gate context without turning interactive input into a TUI."""
+        """Render gate context without turning interactive input into a TUI.
+
+        Agent questions often contain Markdown because a self-contained human
+        decision needs headings, lists, code examples, or a small comparison
+        table.  Printing that source as ``Text`` makes the terminal expose
+        literal ``**``, pipes, and alignment rows, which is especially hard
+        to scan in a narrow CLI.  Rich's Markdown renderer keeps the same
+        durable question text while presenting those structures natively.
+        """
 
         width = max(80, min(140, shutil.get_terminal_size(fallback=(120, 40)).columns))
         buffer = io.StringIO()
@@ -823,7 +832,9 @@ class CLIHumanInterface(HumanInterface):
             highlight=False,
             _environ={"COLUMNS": str(width), "LINES": "40"},
         )
-        console.print(Panel(Text("\n".join(line for line in lines if line)), title=title, border_style=border_style, expand=True))
+        content = "\n".join(line for line in lines if line).strip()
+        renderable = Markdown(content) if content else Text("")
+        console.print(Panel(renderable, title=title, border_style=border_style, expand=True))
         rendered = buffer.getvalue().rstrip()
         if rendered:
             print(rendered)
