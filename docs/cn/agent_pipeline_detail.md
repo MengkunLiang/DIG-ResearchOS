@@ -2741,13 +2741,13 @@ validator 会检查：
 
 `T4.5-FORMALIZE` 使用新的 `ResearchFormalizerAgent` 上下文，只生成或修复构成同一研究方案所需的 source artifact：`research_blueprint.yaml`、`claim_registry.yaml`、`hypotheses.md`、`exp_plan.yaml` 和七部分 Proposal。正式化每轮以 `validate_t45_formalization_sources` 的**最新** `valid` 结果为准：启动时的 prompt 诊断只是快照，不能在同一轮结构化修复后继续阻止 prose 写作。`valid=false` 时只修复错误指定的结构化来源或最小同步集合；`valid=true` 后只写 hypotheses/Proposal 并回读。运行时随后确定性编译 contribution-hypothesis map、validation map、kill criteria、research dossier 与 proposal manifest；这些派生产物不能由 Formalizer 直接写入。Formalizer 不能把计划结果提升为实证结果，也不能覆盖 novelty audit。
 
-每次对 blueprint、claim registry 或 experiment plan 调用 `write_structured_file` 时，系统先验证该文件自身的 schema，再立即报告**三份文件合在一起**是否通过 T4.5 共同研究契约。因此，若仍有 claim 映射、design rationale 或组件 ablation/mechanism-test 覆盖问题，界面不会把“文件已保存”伪装成“正式化已完成”。报告会同时列出所有彼此独立的当前失败项，让 Formalizer 一次修复最小来源集合，而不是每次尝试写 Proposal 才发现一个新阻塞项。
+每次对 blueprint、claim registry 或 experiment plan 调用 `write_structured_file` 时，系统先验证该文件自身的 schema，再立即报告**三份文件合在一起**是否通过 T4.5 共同研究契约。因此，若仍有 claim 映射、design rationale、challenge-to-component 链接或组件 ablation/mechanism-test 覆盖问题，界面不会把“文件已保存”伪装成“正式化已完成”。报告会同时列出所有彼此独立的当前失败项，让 Formalizer 一次修复最小来源集合，而不是每次尝试写 Proposal 才发现一个新阻塞项。
 
 同样地，`researchos validate --task T4.5 --scope outputs` 现在明确输出两类结果：`checks.outputs` 仅表示新颖性审计节点本身；`checks.t45_research_package` 才表示面向研究者的完整研究包。若 audit verdict 已通过但 `t45_research_package.ok=false`，说明仍需完成 T4.5-FORMALIZE 或 T4.5-REVIEW，T5 尚未被授权。若 audit 未通过，则会如实显示正式化尚未获授权，而不是误报成缺文件。
 
 研究者可见正文还遵循术语与缩写规范：非显然术语在第一次承担论证作用时说明其在本研究中的含义、机制角色和适用边界；非通用缩写在每个文档首次出现时展开，中文稿采用“Full English Name（简洁中文释义，ABBR）”形式，只有稳定且后续确实复用的缩写才可使用。`COMP1`、`TC1` 等内部 trace ID 只用于追溯，不能替代术语或组件的研究者可读名称与解释。术语、中文释义和稳定缩写必须在 blueprint、claim registry、hypotheses、exp plan 与 Proposal 中保持一致。
 
-T4.5 的有效性不是“只看关键词”的单层判断。schema、文件存在、selection lineage、Final Gate Verdict、claim-to-experiment 映射、组件 ablation/mechanism test、证据边界、重复文本和内部审计语言仍是**不可覆盖的确定性硬门**。只有当一个已写入的 hypotheses/Proposal 自然语言论证被词面规则误判时，runtime 才会启动一个与作者上下文隔离的 LLM Semantic Adjudicator。它只能审阅预先列举的 prose 条件（例如中心洞察、替代方案论证、实际主体、评测逻辑或自然语言 claim 完整性），不能改写文件或补充事实；要放行必须返回 1--3 条可在当前 artifact 中逐字找到的原文证据。确认结论写入 `_runtime/t45_semantic_adjudications.json`，并绑定 Proposal/blueprint/registry/exp plan（或 hypotheses/registry）的 SHA-256 指纹。任一相关来源变化即自动失效，随后重新执行全部硬门。若裁决器不可用、JSON 无效、证据不可核验或结论为 needs_repair，系统不降低要求，而是把具体缺口注入 Formalizer。
+T4.5 的有效性不是“只看关键词”的单层判断。schema、文件存在、selection lineage、Final Gate Verdict、claim-to-experiment 映射、challenge-to-component 覆盖、组件 ablation/mechanism test、证据边界、重复文本和内部审计语言仍是**不可覆盖的确定性硬门**。只有当一个已写入的 hypotheses/Proposal 自然语言论证被词面规则误判时，runtime 才会启动一个与作者上下文隔离的 LLM Semantic Adjudicator。它只能审阅预先列举的 prose 条件（例如中心洞察、替代方案论证、实际主体、评测逻辑或自然语言 claim 完整性），不能改写文件或补充事实；要放行必须返回 1--3 条可在当前 artifact 中逐字找到的原文证据。确认结论写入 `_runtime/t45_semantic_adjudications.json`，并绑定 Proposal/blueprint/registry/exp plan（或 hypotheses/registry）的 SHA-256 指纹。任一相关来源变化即自动失效，随后重新执行全部硬门。若裁决器不可用、JSON 无效、证据不可核验或结论为 needs_repair，系统不降低要求，而是把具体缺口注入 Formalizer。
 
 ### 第三阶段：orientation-aware 质量审阅与最终研究包
 
@@ -3719,7 +3719,7 @@ $.ideas[0].basis.literature_observations[0].strength [enum]: `supporting` 不在
 
 ### 11.5.1 T4.5：双层质量校验与批量语义复核
 
-T4.5 不能只靠关键词、字数或单一英文标题判断研究论证是否成立。`ResearchFormalizerAgent` 的质量 Gate 分为两层：第一层是确定性契约，负责 schema、文件存在、Final Gate Verdict、Candidate lineage、active claim ID、claim-to-experiment 映射、组件 ablation/mechanism test、证据边界、反重复和内部 audit 语言泄漏；这些条件绝不由 LLM 放行。第二层只处理自然语言歧义，例如中心洞察是否已在组件前以中文学术表达说明、是否实际说明了更简单替代方案及其不足、评价与现实影响是否已经在连贯叙述中出现、或双语 actor 名称是否被合理表达。
+T4.5 不能只靠关键词、字数或单一英文标题判断研究论证是否成立。`ResearchFormalizerAgent` 的质量 Gate 分为两层：第一层是确定性契约，负责 schema、文件存在、Final Gate Verdict、Candidate lineage、active claim ID、claim-to-experiment 映射、challenge-to-component 覆盖、组件 ablation/mechanism test、证据边界、反重复和内部 audit 语言泄漏；这些条件绝不由 LLM 放行。第二层只处理自然语言歧义，例如中心洞察是否已在组件前以中文学术表达说明、是否实际说明了更简单替代方案及其不足、评价与现实影响是否已经在连贯叙述中出现、或双语 actor 名称是否被合理表达。
 
 当确定性层发现的是第二类问题时，runtime 不再逐条产生 `finish -> repair -> finish` 循环。它会收集同一份当前 source package 中全部可语义裁决的问题，交给独立 LLM 一次性复核。LLM 必须逐项返回 `satisfied` / `needs_repair` / `inconclusive`，并且只有 `satisfied` 且提供 1--3 条可在当前 `hypotheses.md` 或 Proposal 中逐字找到的原文 quote 时，runtime 才会写入 `_runtime/t45_semantic_adjudications.json`。该 receipt 绑定 Proposal/blueprint/claim registry/experiment plan 或 hypotheses/claim registry 的 SHA-256；任一相关文件改变后自动失效。LLM 不可用、JSON 无效、quote 不存在、遗漏某项或判定需要修复时，系统仍把明确原因注入 Formalizer prompt，继续定向修复。
 

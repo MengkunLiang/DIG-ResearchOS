@@ -147,7 +147,7 @@ P0、每一代 Population、Candidate 版本、评分、Plan、Child、Deferral�
 | 最终卡片 | `ideation/final_cards/portfolio_cards.json` | Portfolio 的 LLM 卡片翻译；失败可单独降级 |
 | Gate1 兼容投影 | `ideation/_candidate_directions.json` 等 | 人机交互读模型；不是原生 Candidate 的唯一来源 |
 
-所有可复用 checkpoint 都受 `input_fingerprint` 和 `run_config_fingerprint` 约束。输入或已确认配置改变时，系统不应把旧 Population 伪装成本轮结果；已完成且仍有效的局部 artifact 也不应被删除。
+所有可复用 checkpoint 都受 `input_fingerprint` 和 `run_config_fingerprint` 约束。除项目与文献输入外，T4 指纹也覆盖 `seed_ideas.md`、`seed_constraints.md`、规范化后的 `seed_outline_profile.json` 和 `seed_external_resources.jsonl`。后两者只以有长度上限、未核验的上下文供 Opportunity Planner 判断范围与可行性，绝不升级为文献证据。输入或已确认配置改变时，系统不应把旧 Population 伪装成本轮结果；已完成且仍有效的局部 artifact 也不应被删除。
 
 ---
 
@@ -311,7 +311,7 @@ Route 的合法状态是：
 
 只有首个响应格式损坏或 Provider 失败时，系统才为该 Route 执行一次有界 replacement call。Candidate 数量少于上限本身是合法科研结果，不再触发 creative completion call，避免为填满预算而生成重复方向。若研究者认为另一种视角具有实质价值，Gate1 仍可明确重跑该 Route。
 
-自适应 Route 不等于草率初始化。Standard 模式始终先保留 Literature 与 Informed Brainstorm 两个互补起点；Opportunity Map 只在其揭示了不同的科学问题时，额外启动 challenge、reverse、subgroup、gap 或 Bridge 视角。Deep 模式仍运行全部已配置 Route。Candidate 数量不是完成指标，但 Candidate 只有具备连贯机制、被挑战的假设、非重复的 1–4 个贡献与暂定假设、竞争解释以及可证伪的验证路径，才可进入 `evolved` 成熟度。因此系统避免为了数量制造 filler，同时保留让研究方向真正可决策的实质性质量检查。
+自适应 Route 不等于草率初始化。Standard 模式始终先保留 Literature 与 Informed Brainstorm 两个互补起点；Opportunity Map 只在其揭示了不同的科学问题时，额外启动 challenge、reverse、subgroup、gap 或 Bridge 视角。Deep 模式仍运行全部已配置 Route。Candidate 数量不是完成指标，但 Candidate 只有具备连贯机制、被挑战的假设、非重复的 1–4 个贡献与暂定假设、竞争解释以及可证伪的验证路径，才可进入 `evolved` 成熟度。随后 T4.5 要求每个保留 challenge 都必须驱动一个技术组件，并要求每条 active claim 都写出反事实、竞争解释和证伪条件。因此，单一核心 challenge 只有在通过这些区分性检查时才可以保留；若存在真正独立的困难，系统不会为了表面简洁将其压缩掉。这样既避免为了数量制造 filler，也保留让研究方向真正可决策的实质性质量检查。
 
 ### 4.5 IdeaSeed：初始契约故意很小
 

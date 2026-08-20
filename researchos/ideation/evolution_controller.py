@@ -1501,7 +1501,38 @@ class IdeaEvolutionController:
         synthesis_excerpt = excerpt("literature/synthesis.md", 5000)
         seed_ideas_excerpt = excerpt("user_seeds/seed_ideas.md", 2400)
         constraints_excerpt = excerpt("user_seeds/seed_constraints.md", 2400)
+        seed_outline_excerpt = excerpt("user_seeds/seed_outline_profile.json", 3000)
+        seed_resource_records: list[dict[str, Any]] = []
+        for index, item in enumerate(_read_jsonl_dicts(self.store.path("user_seeds/seed_external_resources.jsonl")), start=1):
+            resource_id = str(item.get("id") or item.get("name") or item.get("source") or f"seed-{index}").strip()
+            content = " ".join(
+                str(value or "")
+                for value in (
+                    item.get("name"),
+                    item.get("type"),
+                    item.get("source"),
+                    item.get("description"),
+                    item.get("notes"),
+                )
+            ).strip()
+            if resource_id and content:
+                seed_resource_records.append(
+                    {
+                        "atom_id": f"seed-resource:{resource_id}",
+                        "resource_id": resource_id,
+                        "paper_id": resource_id,
+                        "source_path": "user_seeds/seed_external_resources.jsonl",
+                        "section_key": resource_id,
+                        "section_title": str(item.get("type") or "user resource lead"),
+                        "content": content[:900],
+                        "reading_level": "user_supplied",
+                        "evidence_status": "user_resource_lead_unverified",
+                        "allowed_uses": ["feasibility assessment", "baseline or dataset discovery", "resource requirement planning"],
+                        "forbidden_uses": ["mechanism evidence", "empirical performance evidence", "proof of availability, license, or executability"],
+                    }
+                )
         resource_records: list[dict[str, Any]] = []
+        resource_records.extend(seed_resource_records)
         for item in _read_jsonl_dicts(self.store.path("literature/resource_catalog.jsonl")):
             resource = item.get("resource") if isinstance(item.get("resource"), dict) else {}
             paper = item.get("paper") if isinstance(item.get("paper"), dict) else {}
@@ -1554,13 +1585,13 @@ class IdeaEvolutionController:
                     used_bridges.add(bridge_id)
         atoms = select_evidence_index_records(
             atom_records,
-            queries=[project_excerpt, synthesis_excerpt, seed_ideas_excerpt, constraints_excerpt],
+            queries=[project_excerpt, synthesis_excerpt, seed_ideas_excerpt, constraints_excerpt, seed_outline_excerpt],
             explicit_atom_ids=explicit_bridge_atom_ids,
             max_results=12,
         )
         resource_leads = select_evidence_index_records(
             resource_records,
-            queries=[project_excerpt, synthesis_excerpt, seed_ideas_excerpt, constraints_excerpt],
+            queries=[project_excerpt, synthesis_excerpt, seed_ideas_excerpt, constraints_excerpt, seed_outline_excerpt],
             max_results=4,
         )
         planner_bundle = {
@@ -1586,11 +1617,13 @@ class IdeaEvolutionController:
             "synthesis_excerpt": synthesis_excerpt,
             "user_seed_ideas_excerpt": seed_ideas_excerpt,
             "user_constraints_excerpt": constraints_excerpt,
+            "user_seed_outline_excerpt": seed_outline_excerpt,
             "evidence_atoms": atoms,
             "resource_leads": resource_leads,
             "resource_usage_boundary": (
-                "Resource leads may shape feasibility, baseline, dataset, benchmark, or acquisition planning. They are not paper evidence, "
-                "do not prove availability or license, and must be verified by the T5 resource-preparation boundary before execution."
+                "Literature-catalog and user-supplied resource leads may shape feasibility, baseline, dataset, benchmark, or acquisition planning. "
+                "They are not paper evidence, do not prove availability, license, or executability, and must be verified by the T5 "
+                "resource-preparation boundary before execution."
             ),
             "planner_bundle_path": "ideation/evidence/planner_bundle.json",
             "cross_domain_tracks": cross_domain_tracks,

@@ -318,7 +318,7 @@ def validate_idea_contract(dossier: CandidateDossier) -> IdeaContractResult:
             hard_failures.append(f"missing_{label}")
     contracts["hypothesis"] = "pass" if len(dossier.hypotheses) >= 1 else "warning"
     if contracts["hypothesis"] == "warning":
-        warnings.append("Mature candidates require at least two one-line hypotheses.")
+        warnings.append("Evolved candidates require at least one provisional hypothesis.")
     contracts["evidence"] = "pass"
     for gene_name in GENE_NAMES:
         provenance = getattr(dossier.genome, gene_name).provenance

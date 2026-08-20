@@ -51,6 +51,12 @@ T4_INPUT_FINGERPRINT_PATHS: dict[str, str] = {
     "cross_domain_catalogs": "literature/cross_domain_catalogs",
     "seed_ideas": "user_seeds/seed_ideas.md",
     "seed_constraints": "user_seeds/seed_constraints.md",
+    # T4 uses the normalized outline and user-supplied resource leads when it
+    # plans feasible directions.  They must therefore invalidate a confirmed
+    # Population just like a changed seed idea or constraint; otherwise a
+    # resume could silently reuse candidates formed without the new seed.
+    "seed_outline_profile": "user_seeds/seed_outline_profile.json",
+    "seed_external_resources": "user_seeds/seed_external_resources.jsonl",
     "survey_insights": "ideation/survey_insights.json",
 }
 

@@ -655,6 +655,15 @@ def validate_blueprint_and_claim_registry(workspace: Path) -> tuple[bool, str | 
     )
     if unknown_challenge_refs:
         return False, "Component references unknown challenge IDs: " + ", ".join(unknown_challenge_refs)
+    addressed_challenge_ids = {
+        str(ref).strip()
+        for component in components
+        for ref in _string_list(component.get("challenge_refs"))
+        if str(ref).strip()
+    }
+    unaddressed_challenges = sorted(set(challenge_ids) - addressed_challenge_ids)
+    if unaddressed_challenges:
+        return False, "Key challenges lack a linked technical component: " + ", ".join(unaddressed_challenges)
     rationales = _dict_list(_nested_value(blueprint, "proposed_approach", "design_rationales"))
     rationale_refs = {
         str(item.get("component_id") or item.get("component_ref") or "").strip()
