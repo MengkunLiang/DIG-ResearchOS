@@ -577,7 +577,7 @@ T1 的本质不是“自由聊天”，而是一个结构化初始化阶段：
 
 T1 可能显得比普通聊天久，原因是它不是一次问答，而是要把人类偏好、已有材料、外部资源和约束整理成可被 T2-T9 复用的结构化事实源。若 workspace 已经有完整 `project.yaml` 和 seed 文件，可以直接从 T2 或后续节点恢复/调试；否则 T1 必须先问清楚，避免后面大量 LLM/检索/实验资源浪费在错误方向上。
 
-在材料补充 Gate 之前，新建 T1 workspace 会先让研究者选择 **Copilot** 或 **Auto**。Copilot 保留所有普通科研 Gate 供研究者确认。交互式选择 Auto 后，T1 会再问一次启动配置，包括 T2/T3 文献覆盖档位和 T4 探索力度。三种覆盖档分别是标准研究 `25/15/10`、综述均衡 `60/30/30`、综述强覆盖 `90/40/50`，三个数字依次表示保留候选、精读和摘要级轻读。最初的 Auto 预设决定写作取向与综述策略，`quick`、`standard`、`deep` 或质量感知的 `auto` 决定 T4 力度。T1 仍会完成种子、研究边界、项目草案和检索范围确认，不会被跳过。Auto 只预授权后续常规决策，不会替用户决定研究问题或范围、恢复操作、失败的新颖性 verdict、外部副作用，或发生实质变化的研究范围。也可以在命令行预设，例如 `--workflow-mode auto --auto-preset research_utd --auto-t4-mode deep`。历史版本静默写入的默认值会被视为未确认，并在 T1 首次进入时补问一次。
+在材料补充 Gate 之前，新建 T1 workspace 会先让研究者选择 **Copilot** 或 **Auto**。Copilot 保留所有普通科研 Gate 供研究者确认。交互式选择 Auto 后，T1 会再问一次启动配置，包括 T2/T3 文献覆盖档位和 T4 探索力度。三种覆盖档分别是标准研究 `25/15/10`、综述均衡 `60/30/30`、综述强覆盖 `90/40/50`，三个数字依次表示保留候选、精读和摘要级轻读。最初的 Auto 预设决定写作取向与综述策略，`quick`、`standard`、`deep` 或质量感知的 `auto` 决定 T4 力度。可直接输入 `Auto survey_ccf deep`、`Auto survey_utd standard` 或 `Auto survey_exhaustive_utd deep`；第二步可输入 `确认`、`standard_research quick`、`survey_balanced standard` 或 `survey_exhaustive deep`。T1 仍会完成种子、研究边界、项目草案和检索范围确认，不会被跳过。Auto 只预授权后续常规决策，不会替用户决定研究问题或范围、恢复操作、失败的新颖性 verdict、外部副作用，或发生实质变化的研究范围。也可以在命令行预设，例如 `--workflow-mode auto --auto-preset research_utd --auto-t4-mode deep`。历史版本静默写入的默认值会被视为未确认，并在 T1 首次进入时补问一次。
 
 ### 单独运行 vs 完整运行
 

@@ -3495,6 +3495,10 @@ class AgentRunner:
                 "## 其他 Auto 配置\n\n"
                 "可输入 `Auto survey_ccf`、`Auto survey_utd` 或 `Auto survey_exhaustive_utd`；"
                 "也可在后面附加 `quick`、`standard` 或 `deep` 调整 T4 探索力度。\n\n"
+                "例如：\n\n"
+                "- `Auto survey_ccf deep`：以 CCF/AI 取向运行综述支线，并深入探索 T4。\n"
+                "- `Auto survey_utd standard`：以 UTD/IS 取向运行综述支线，并采用标准 T4 探索。\n"
+                "- `Auto survey_exhaustive_utd deep`：使用更广综述覆盖和深入 T4 探索。\n\n"
                 "请直接回答：`Copilot`、`Auto research_ccf`、`Auto research_utd`，或上述其他 Auto 配置。"
             )
             result = await tool.execute(
@@ -3543,7 +3547,8 @@ class AgentRunner:
             "文献覆盖可选 `standard_research`（25/15/10）、`survey_balanced`（60/30/30）或 "
             "`survey_exhaustive`（90/40/50）。三个数字依次是候选、精读、摘要轻读。\n\n"
             "T4 探索可选 `quick`、`standard` 或 `deep`；默认 `auto` 会依问题与证据质量选择。\n\n"
-            "请输入 `确认` 使用当前推荐，或例如 `survey_balanced deep`。"
+            "例如：`确认`、`standard_research quick`、`survey_balanced standard` 或 "
+            "`survey_exhaustive deep`。"
         )
         result = await tool.execute(
             question=setup_question,
