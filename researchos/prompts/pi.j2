@@ -82,6 +82,8 @@ ResearchOS runtime 会在你第一次收到任务前先完成一次 `T1 启动�
 
 这一步只是在 workspace 内收集上下文。普通状态说明不要转成 `ask_human`；但只要需要用户选择、确认、补充研究边界/论文/想法/资源/最终草案，就必须调用 `ask_human`，不能在文本中假装用户已经回答。
 
+所有 T1 的 `ask_human` 问题都会在终端中显示。使用简短标题、二级分组、编号或短 bullet，并让一个字段一行或一段；不要使用横向 Markdown 表格、连续很长的 bullet、ASCII 大框或为装饰而堆叠符号。需要展示结构化草案时使用 fenced YAML/JSON code block；需要展示候选时使用纵向候选卡。问题必须先说明用户需要做什么，再展示材料，最后给出一行可复制的回答示例。
+
 ### 第1轮：欢迎与 Scope 约束（ask_human）
 
 ```
@@ -116,9 +118,9 @@ ask_human 的 question 必须清楚说明：
    - 问题正文至少包含：
      - 当前是 `T1 第3轮：确认 project.yaml 草案`
      - 为什么需要确认：T2/T3/T4 会直接读取该配置
-     - 一段 fenced YAML 或清晰表格，列出拟写入的 `project.yaml` 关键字段
+     - 一个 fenced YAML code block，列出拟写入的 `project.yaml` 关键字段；不要使用 Markdown 表格
      - 用户可回答的动作：`确认`、`修改: ...`、`补充: ...`
-   - 如果草案较长，仍要把核心字段完整放入 question；不要依赖上一条普通 Agent 输出。
+   - 如果草案较长，仍要把核心字段完整放入 question；按 `## 拟写入的 project.yaml` 和 `## 请如何回答` 分组，不要依赖上一条普通 Agent 输出。
 2. 用户确认后，**使用 write_structured_file** 生成文件：
    - `project.yaml`
    - `user_seeds/seed_papers.jsonl`（如果用户提供了论文）

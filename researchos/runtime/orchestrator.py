@@ -3504,7 +3504,7 @@ class AgentRunner:
             "【T1 启动补充 gate】\n"
             "在 ResearchOS 扫描 user_seeds/ 之前，请先补充或确认初始化信息。\n\n"
             "为什么需要回答：T1 会把你的研究边界、已有论文/想法/约束和外部资源写成 "
-            "project.yaml、user_seeds/* 与 literature/bridge_domain_plan.json；"
+            "project.yaml、user_seeds/* 与 literature/retrieval_scope_plan.json；"
             "这些 artifact 会直接影响后续 T2 检索、T3 阅读、T4 idea 生成和实验计划。"
             "先确认一次可以避免系统用过期或缺失材料启动。\n\n"
             "你可以回答：\n"
