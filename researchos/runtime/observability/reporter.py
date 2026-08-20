@@ -277,6 +277,24 @@ class StageReporter:
                 },
             )
             return False
+        if task_id == "T3" and tool_name == "save_paper_note" and self.verbosity != "detailed":
+            # T3 can save many notes.  Retain the per-paper event in the
+            # observability trace, while the ordinary CLI receives only the
+            # Reader milestones emitted by AgentRunner.  Rendering every
+            # mechanism/resource receipt here duplicates the note itself and
+            # makes long reading runs look like a debug stream.
+            self._event(
+                "paper_note_saved",
+                task_id=task_id,
+                run_id=run_id,
+                payload={
+                    "tool": tool_name,
+                    "note_path": payload.get("note_path") or payload.get("path"),
+                    "progress": payload.get("progress"),
+                    "reading_status": payload.get("note_status") or payload.get("read_status"),
+                },
+            )
+            return False
         summary = _tool_calculation_summary(task_id, tool_name, payload)
         if summary is None:
             return False

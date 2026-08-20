@@ -92,6 +92,39 @@ def _clean_text(value: Any, *, limit: int = 600) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
 
 
+def _resource_name_from_note_line(line: str, raw_url: str, *, resource_type: str) -> str:
+    """Make a stable resource label from a Reader note line.
+
+    Notes use ordinary Markdown.  A URL can follow a field label such as
+    ``**Discovery status**:``; treating that entire label as the resource
+    name leaks presentation syntax into the reusable catalog and later T4/T5
+    context.  Preserve a meaningful human name when present and otherwise
+    fall back to the URL basename in ``normalize_resource_record``.
+    """
+
+    value = str(line or "").replace(raw_url, "")
+    value = re.sub(r"^\s*[-*+]\s*", "", value)
+    value = re.sub(r"^\*\*[^*\n]{1,100}\*\*\s*:\s*", "", value)
+    value = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", value)
+    value = re.sub(r"`([^`]*)`", r"\1", value)
+    value = _clean_text(value, limit=240).strip(" -:;，。")
+    # Boilerplate availability prose is useful as a locator but not as a
+    # resource name.  Let the normalizer use the URL basename instead.
+    boilerplate = {
+        "discovery status",
+        "资源发现状态",
+        "associated resource",
+        "相关研究资源",
+    }
+    normalized = value.casefold()
+    generic_prose = re.fullmatch(
+        r"(?:official\s+)?(?:code|repository|dataset|benchmark|model|project(?:\s+page)?)"
+        r"(?:\s+is\s+available)?(?:\s+(?:at|here|from))?",
+        normalized,
+    )
+    return "" if normalized in boilerplate or normalized.startswith("discovery status") or generic_prose else value
+
+
 def _canonical_url(value: Any) -> str:
     raw = str(value or "").strip().rstrip(".,;:)")
     if raw.startswith("url:"):
@@ -317,10 +350,11 @@ def resource_records_from_note(
     items: list[dict[str, Any]] = []
     for line_no, line in enumerate(body.splitlines(), start=1):
         for raw_url in _URL_PATTERN.findall(line):
+            resource_type = _resource_type_from_text(line, raw_url)
             items.append(
                 {
-                    "resource_type": _resource_type_from_text(line, raw_url),
-                    "name": _clean_text(line.replace(raw_url, "").lstrip("- "), limit=240),
+                    "resource_type": resource_type,
+                    "name": _resource_name_from_note_line(line, raw_url, resource_type=resource_type),
                     "url": raw_url,
                     "locator": f"{RESOURCE_SECTION_HEADING}, line {line_no}",
                     "relationship": "unknown",

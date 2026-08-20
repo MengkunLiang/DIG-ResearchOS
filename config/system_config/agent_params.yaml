@@ -138,9 +138,9 @@ agents:
         # finish_task 后至少要有多少 raw 才允许 deterministic finalize；过低说明检索没展开。
         finish_finalize_min_raw: 30
         # 保留候选数上限；超过的去 papers_backlog.jsonl，不静默丢弃。
-        active_pool_max: 50
+        active_pool_max: 25
         # semantic_screen 通过的主线候选在保留候选集中的优先保留上限。
-        screened_active_pool_cap: 40
+        screened_active_pool_cap: 25
         # 兼容旧字段：未设置 must_bridge_active_pool_cap_per_bridge 时作为 must 默认值。
         bridge_active_pool_cap_per_bridge: 15
         # 每个 priority=must_explore bridge 最多保留多少个候选进入保留候选集。
@@ -293,9 +293,9 @@ agents:
             # 研究者要求的实际摘要级阅读覆盖数。只有结构合格的 ABSTRACT-ONLY
             # 笔记计入该数；metadata-only triage 是资源线索，永不占用该配额。
             # The active pool is the full distinct-paper reading budget. With
-            # the default 50 retained candidates and 30 deep reads, the
-            # remaining 20 receive abstract-level notes.
-            lite_paper_num: 20
+            # the default 25 retained candidates and 15 deep reads, the
+            # remaining 10 receive abstract-level notes.
+            lite_paper_num: 10
             # 最低 relevance_score hint；0.0 表示不靠该 hint 丢弃候选。
             min_relevance: 0.0
             # 候选来源优先级；verified/dedup 是保留候选集。papers_backlog 是审计/人工回捞池，
@@ -329,15 +329,15 @@ agents:
         # 旧 workspace 没有 deep_read_queue 时的 fallback 覆盖比例；新流程优先用 queue。
         expected_notes_ratio: 1.0
         # T3 validator 至少需要多少篇结构合格 deep-read note。
-        deep_read_min: 24
+        deep_read_min: 12
         # T3 prompt 和 queue meta 中展示的目标精读数。
-        deep_read_target: 30
+        deep_read_target: 15
         # 精读目标硬上限；seed/bridge/citation hub 保护位也计入这个上限。
-        deep_read_max: 36
+        deep_read_max: 18
         # Reader 优先 probe 的候选池大小。
-        probe_pool: 36
+        probe_pool: 18
         # 主线 shallow/screened backlog 在 deep_read_queue.jsonl 中保留的上限。
-        mainline_screened_cap: 50
+        mainline_screened_cap: 25
         # 每个 must_explore bridge 的精读保底。
         bridge_deep_floor: 3
         # 每个 bridge 的 shallow/screened backlog 保留上限。
@@ -349,20 +349,20 @@ agents:
         behavior_profiles:
           survey:
             # 综述版需要更多深读覆盖 taxonomy 主类，但仍保留候选/backlog 分层。
-            deep_read_min: 32
-            deep_read_target: 40
-            deep_read_max: 48
-            probe_pool: 50
-            mainline_screened_cap: 80
+            deep_read_min: 24
+            deep_read_target: 30
+            deep_read_max: 36
+            probe_pool: 36
+            mainline_screened_cap: 60
             bridge_deep_floor: 3
             bridge_screened_cap: 10
             bridge_pool_cap: 18
             citation_hub_slots: 5
             abstract_sweep:
               # 综述版轻读覆盖更宽，方便 T3.6 taxonomy plan 看到边界材料。
-              # Survey profile retains 80 candidates; 40 are deep-read and
-              # the remaining 40 receive abstract-level notes.
-              lite_paper_num: 40
+              # Survey-balanced profile retains 60 candidates; 30 are
+              # deep-read and the remaining 30 receive abstract-level notes.
+              lite_paper_num: 30
               sources:
               - papers_verified
               - papers_dedup

@@ -48,6 +48,12 @@ AUTO_PRESETS: dict[str, dict[str, str]] = {
     },
 }
 
+_LITERATURE_PRESET_SUMMARIES = {
+    "standard_research": "研究论文覆盖：25 篇候选，15 篇精读，10 篇摘要轻读",
+    "survey_balanced": "综述均衡覆盖：60 篇候选，30 篇精读，30 篇摘要轻读",
+    "survey_exhaustive": "综述强覆盖：90 篇候选，40 篇精读，50 篇摘要轻读",
+}
+
 
 def configure_workflow_mode(
     workspace: Path,
@@ -55,6 +61,8 @@ def configure_workflow_mode(
     mode: str,
     preset: str | None = None,
     t4_mode: str | None = None,
+    literature_preset: str | None = None,
+    startup_setup_confirmed: bool | None = None,
     selection_source: str = "api",
 ) -> dict[str, Any]:
     normalized_mode = str(mode or "copilot").strip().casefold()
@@ -67,15 +75,26 @@ def configure_workflow_mode(
     settings = dict(AUTO_PRESETS[selected_preset])
     # A mode-only run/resume switch must not silently replace an existing
     # publication profile or its explicitly selected T4 effort.
-    if preset is None and t4_mode is None:
+    if preset is None:
         existing_settings = existing.get("settings") if isinstance(existing.get("settings"), dict) else {}
         existing_t4_mode = str(existing_settings.get("t4_mode") or "")
         if existing_t4_mode in {"standard", "quick", "deep", "auto"}:
             settings["t4_mode"] = existing_t4_mode
+        existing_literature_preset = str(existing_settings.get("literature_preset") or "")
+        if existing_literature_preset in _LITERATURE_PRESET_SUMMARIES:
+            settings["literature_preset"] = existing_literature_preset
+        if "startup_setup_confirmed" in existing_settings:
+            settings["startup_setup_confirmed"] = bool(existing_settings.get("startup_setup_confirmed"))
     if t4_mode:
         if t4_mode not in {"standard", "quick", "deep", "auto"}:
             raise ValueError("T4 mode must be standard, quick, deep, or auto")
         settings["t4_mode"] = t4_mode
+    if literature_preset:
+        if literature_preset not in _LITERATURE_PRESET_SUMMARIES:
+            raise ValueError("literature preset must be standard_research, survey_balanced, or survey_exhaustive")
+        settings["literature_preset"] = literature_preset
+    if startup_setup_confirmed is not None:
+        settings["startup_setup_confirmed"] = bool(startup_setup_confirmed)
     payload: dict[str, Any] = {
         "version": "1.0",
         "semantics": "researchos_project_workflow_mode",
@@ -122,6 +141,24 @@ def workflow_mode_needs_confirmation(workspace: Path) -> bool:
     }
 
 
+def workflow_auto_setup_needs_confirmation(workspace: Path) -> bool:
+    """Whether an interactively selected Auto profile still needs its plan.
+
+    The initial Auto/Copilot choice grants only the mode.  T2/T3 coverage and
+    T4 effort are research-facing quality/cost choices, so an interactive T1
+    run asks for them once before later Gates are auto-resolved.  Explicit CLI
+    and API configuration already supplies that authorization.
+    """
+
+    profile = load_workflow_mode(workspace)
+    if profile.get("mode") != "auto":
+        return False
+    settings = profile.get("settings") if isinstance(profile.get("settings"), dict) else {}
+    if "startup_setup_confirmed" in settings:
+        return not bool(settings.get("startup_setup_confirmed"))
+    return str(profile.get("selection_source") or "").strip() == "t1_gate"
+
+
 def parse_workflow_mode_answer(answer: str) -> tuple[str, str, str | None] | None:
     """Parse the small, explicit T1 workflow-mode menu without an LLM."""
 
@@ -153,6 +190,60 @@ def parse_workflow_mode_answer(answer: str) -> tuple[str, str, str | None] | Non
     return "auto", preset, t4_mode
 
 
+def parse_auto_execution_setup_answer(
+    answer: str,
+    *,
+    current_preset: str,
+    current_t4_mode: str,
+) -> tuple[str, str] | None:
+    """Parse the deliberately small, durable Auto setup menu.
+
+    This accepts a confirmation or the two researcher-facing knobs without
+    turning a recovery-critical Gate into free-form configuration parsing.
+    """
+
+    normalized = " ".join(str(answer or "").strip().casefold().split())
+    if normalized in {"1", "[1]", "confirm", "确认", "确认默认", "默认", "yes", "是"}:
+        return current_preset, current_t4_mode
+    if not normalized:
+        return None
+
+    if any(token in normalized for token in ("exhaustive", "强覆盖", "全面综述")):
+        literature_preset = "survey_exhaustive"
+    elif any(token in normalized for token in ("balanced", "均衡", "survey", "综述")):
+        literature_preset = "survey_balanced"
+    elif any(token in normalized for token in ("standard", "research", "研究", "轻量")):
+        literature_preset = "standard_research"
+    else:
+        literature_preset = current_preset
+
+    effort = next((item for item in ("quick", "standard", "deep") if item in normalized), None)
+    if effort is None:
+        effort = next(
+            (
+                mapped
+                for token, mapped in (("快速", "quick"), ("标准", "standard"), ("深入", "deep"), ("深度", "deep"))
+                if token in normalized
+            ),
+            current_t4_mode,
+        )
+    if effort not in {"auto", "quick", "standard", "deep"}:
+        return None
+    return literature_preset, effort
+
+
+def auto_execution_setup_summary(profile: dict[str, Any]) -> str:
+    """Render only the settings a researcher must understand at T1."""
+
+    settings = profile.get("settings") if isinstance(profile.get("settings"), dict) else {}
+    literature = str(settings.get("literature_preset") or "standard_research")
+    return (
+        f"文献覆盖：{_LITERATURE_PRESET_SUMMARIES.get(literature, literature)}；"
+        f"T4 探索：{settings.get('t4_mode') or 'auto'}；"
+        f"写作取向：{settings.get('writing_style') or 'ccf_a'}。"
+    )
+
+
 def load_workflow_mode(workspace: Path) -> dict[str, Any]:
     path = workspace / WORKFLOW_MODE_PATH
     if not path.is_file():
@@ -176,10 +267,16 @@ def load_workflow_mode(workspace: Path) -> dict[str, Any]:
     if not isinstance(settings, dict):
         return _fallback_profile("workflow settings must contain an object")
     normalized_settings = dict(AUTO_PRESETS[preset])
+    configured_literature_preset = str(settings.get("literature_preset") or normalized_settings["literature_preset"])
+    if configured_literature_preset not in _LITERATURE_PRESET_SUMMARIES:
+        return _fallback_profile("workflow literature preset is invalid")
+    normalized_settings["literature_preset"] = configured_literature_preset
     configured_t4_mode = str(settings.get("t4_mode") or normalized_settings["t4_mode"])
     if configured_t4_mode not in {"standard", "quick", "deep", "auto"}:
         return _fallback_profile("workflow T4 mode is invalid")
     normalized_settings["t4_mode"] = configured_t4_mode
+    if "startup_setup_confirmed" in settings:
+        normalized_settings["startup_setup_confirmed"] = bool(settings.get("startup_setup_confirmed"))
     normalized = dict(payload)
     normalized.update({"mode": mode, "preset": preset, "settings": normalized_settings})
     return normalized

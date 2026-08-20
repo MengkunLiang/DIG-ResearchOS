@@ -36,7 +36,7 @@ python -m researchos.cli run --workspace ./workspace/project-a
 在 T2 门控处，选择一个预设配置或输入一句话。未指定的字段将保持推荐配置。
 
 ```text
-候选 50 篇，精读 30 篇，摘要轻读 20 篇；英文稿，不搜索中文文献。
+候选 25 篇，精读 15 篇，摘要轻读 10 篇；英文稿，不搜索中文文献。
 ```
 
 确认面板会写入 `literature/literature_params.json`。英文稿件语言本身并不排除中文文献；当此事项重要时，应明确声明收录策略。普通 `resume` 回到 T2 时会显示轻量确认：选择确认继续不会新检索，只有选择修改才会回到完整参数选择。使用 `run --from <source> --start-task T2`、`resume --from <source> --from-task T2`，或显式 `resume --from-task T2` 时，系统会直接打开完整参数选择：这是一轮新的重入边界，不能静默沿用来源或旧运行的范围。修改参数不会丢弃论文和笔记，而是在保留现有语料的基础上开始一轮定向补检。

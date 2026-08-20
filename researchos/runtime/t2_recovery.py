@@ -3621,6 +3621,7 @@ async def finalize_t2_outputs(
         "dedup_count": len(enriched_papers),
         "deduplication": deduplication_summary,
         "backlog_count": len(backlog_papers),
+        "deep_read_queue_count": len(queue_records),
         "active_pool": active_pool_meta,
         "t2_finalize_config": t2_config.to_dict(),
         "pdf_acquisition": {

@@ -69,8 +69,11 @@ from .t3_notes_manifest import validate_t3_input_fingerprints
 from .bridge_catalog import iter_bridge_catalog_paths
 from .artifact_fingerprints import validate_t45_fingerprint_report
 from .workflow_mode import (
+    auto_execution_setup_summary,
     configure_workflow_mode,
+    parse_auto_execution_setup_answer,
     parse_workflow_mode_answer,
+    workflow_auto_setup_needs_confirmation,
     workflow_mode_needs_confirmation,
 )
 from .task_recovery import prepare_generic_resume_artifacts
@@ -3475,53 +3478,100 @@ class AgentRunner:
 
         if ctx.task_id != "T1" or self.agent.spec.name != "pi" or (ctx.mode or "init") != "init":
             return
-        if not workflow_mode_needs_confirmation(ctx.workspace_dir):
-            return
         tool = tool_map.get("ask_human")
-        if tool is None:
+        if tool is None and workflow_mode_needs_confirmation(ctx.workspace_dir):
             raise RecoverableRuntimePause("T1 工作模式选择需要 ask_human 工具，但当前策略没有开放它。")
-
-        question = (
-            "# 选择本项目的运行方式\n\n"
-            "这只决定哪些已预设的流程 Gate 可自动通过，不会替你决定研究问题、文献范围、"
-            "关键假设、外部实验或失败恢复。\n\n"
-            "## Copilot\n\n"
-            "所有关键 Gate 都由你确认。适合希望逐步调整检索规模、阅读、T4 候选与写作方向的项目。\n\n"
-            "## Auto · CCF/AI 研究\n\n"
-            "采用标准研究型文献规模、自动 T4 运行、CCF/AI 写作取向，默认跳过独立综述论文支线。\n\n"
-            "## Auto · UTD/IS 研究\n\n"
-            "采用标准研究型文献规模、自动 T4 运行、UTD/IS 写作取向，默认跳过独立综述论文支线。\n\n"
-            "## 其他 Auto 配置\n\n"
-            "可输入 `Auto survey_ccf`、`Auto survey_utd` 或 `Auto survey_exhaustive_utd`；"
-            "也可在后面附加 `quick`、`standard` 或 `deep` 调整 T4 探索力度。\n\n"
-            "请直接回答：`Copilot`、`Auto research_ccf`、`Auto research_utd`，或上述其他 Auto 配置。"
-        )
-        result = await tool.execute(
-            question=question,
-            suggestions=["Copilot", "Auto research_ccf", "Auto research_utd"],
-        )
-        if not result.ok:
-            raise RecoverableRuntimePause(str(result.content or result.error or "未获得工作模式选择"))
-        data = result.data if isinstance(result.data, dict) else {}
-        answer = str(data.get("answer") or "").strip()
-        parsed = parse_workflow_mode_answer(answer)
-        if parsed is None:
-            raise RecoverableRuntimePause(
-                "未识别工作模式。请在恢复后明确输入 Copilot，或 Auto research_ccf / Auto research_utd。"
+        if workflow_mode_needs_confirmation(ctx.workspace_dir):
+            question = (
+                "# 选择本项目的运行方式\n\n"
+                "这只决定哪些已预设的流程 Gate 可自动通过，不会替你决定研究问题、文献范围、"
+                "关键假设、外部实验或失败恢复。\n\n"
+                "## Copilot\n\n"
+                "所有关键 Gate 都由你确认。适合希望逐步调整检索规模、阅读、T4 候选与写作方向的项目。\n\n"
+                "## Auto · CCF/AI 研究\n\n"
+                "采用标准研究型文献规模、自动 T4 运行、CCF/AI 写作取向，默认跳过独立综述论文支线。\n\n"
+                "## Auto · UTD/IS 研究\n\n"
+                "采用标准研究型文献规模、自动 T4 运行、UTD/IS 写作取向，默认跳过独立综述论文支线。\n\n"
+                "## 其他 Auto 配置\n\n"
+                "可输入 `Auto survey_ccf`、`Auto survey_utd` 或 `Auto survey_exhaustive_utd`；"
+                "也可在后面附加 `quick`、`standard` 或 `deep` 调整 T4 探索力度。\n\n"
+                "请直接回答：`Copilot`、`Auto research_ccf`、`Auto research_utd`，或上述其他 Auto 配置。"
             )
-        mode, preset, t4_mode = parsed
+            result = await tool.execute(
+                question=question,
+                suggestions=["Copilot", "Auto research_ccf", "Auto research_utd"],
+            )
+            if not result.ok:
+                raise RecoverableRuntimePause(str(result.content or result.error or "未获得工作模式选择"))
+            data = result.data if isinstance(result.data, dict) else {}
+            answer = str(data.get("answer") or "").strip()
+            parsed = parse_workflow_mode_answer(answer)
+            if parsed is None:
+                raise RecoverableRuntimePause(
+                    "未识别工作模式。请在恢复后明确输入 Copilot，或 Auto research_ccf / Auto research_utd。"
+                )
+            mode, preset, t4_mode = parsed
+            profile = configure_workflow_mode(
+                ctx.workspace_dir,
+                mode=mode,
+                preset=preset,
+                t4_mode=t4_mode,
+                startup_setup_confirmed=(mode != "auto"),
+                selection_source="t1_gate",
+            )
+            summary = f"已确认 {profile['mode']} 模式，预设={profile['preset']}。"
+            note = Message.user(f"【T1 工作模式已确认】\n{summary}", step=0)
+            messages.append(note)
+            trace.write_message(note)
+
+        if not workflow_auto_setup_needs_confirmation(ctx.workspace_dir):
+            return
+        if tool is None:
+            raise RecoverableRuntimePause("Auto 启动配置需要 ask_human 工具，但当前策略没有开放它。")
         profile = configure_workflow_mode(
             ctx.workspace_dir,
-            mode=mode,
-            preset=preset,
-            t4_mode=t4_mode,
+            mode="auto",
             selection_source="t1_gate",
         )
-        summary = (
-            f"已确认 {profile['mode']} 模式，预设={profile['preset']}，"
-            f"T4={profile['settings']['t4_mode']}。"
+        settings = profile["settings"]
+        setup_question = (
+            "# 确认 Auto 的执行设置\n\n"
+            "Auto 会在后续使用这组预设自动通过常规 Gate；T1 仍会完成种子、研究边界、"
+            "项目草案和检索范围确认，不会跳过它们。失败恢复、研究范围变更、外部执行和新颖性失败仍必须人工处理。\n\n"
+            f"当前推荐：{auto_execution_setup_summary(profile)}\n\n"
+            "## 可调整的两项\n\n"
+            "文献覆盖可选 `standard_research`（25/15/10）、`survey_balanced`（60/30/30）或 "
+            "`survey_exhaustive`（90/40/50）。三个数字依次是候选、精读、摘要轻读。\n\n"
+            "T4 探索可选 `quick`、`standard` 或 `deep`；默认 `auto` 会依问题与证据质量选择。\n\n"
+            "请输入 `确认` 使用当前推荐，或例如 `survey_balanced deep`。"
         )
-        note = Message.user(f"【T1 工作模式已确认】\n{summary}", step=0)
+        result = await tool.execute(
+            question=setup_question,
+            suggestions=["确认", "standard_research deep", "survey_balanced standard"],
+        )
+        if not result.ok:
+            raise RecoverableRuntimePause(str(result.content or result.error or "未获得 Auto 启动配置"))
+        data = result.data if isinstance(result.data, dict) else {}
+        parsed_setup = parse_auto_execution_setup_answer(
+            str(data.get("answer") or "").strip(),
+            current_preset=str(settings.get("literature_preset") or "standard_research"),
+            current_t4_mode=str(settings.get("t4_mode") or "auto"),
+        )
+        if parsed_setup is None:
+            raise RecoverableRuntimePause(
+                "未识别 Auto 启动配置。请在恢复后输入确认，或如 survey_balanced deep。"
+            )
+        literature_preset, configured_t4_mode = parsed_setup
+        profile = configure_workflow_mode(
+            ctx.workspace_dir,
+            mode="auto",
+            preset=str(profile.get("preset") or "research_ccf"),
+            literature_preset=literature_preset,
+            t4_mode=configured_t4_mode,
+            startup_setup_confirmed=True,
+            selection_source="t1_gate",
+        )
+        note = Message.user(f"【Auto 启动配置已确认】\n{auto_execution_setup_summary(profile)}", step=0)
         messages.append(note)
         trace.write_message(note)
 
@@ -7469,10 +7519,14 @@ class AgentRunner:
         if not needs_finalize:
             return False
 
-        self.progress.emit(start_message, important=True)
+        # Finalization can make many network and filesystem steps.  Their
+        # granular state is durable in scout_progress.md and the run trace,
+        # but it should not drown out the research-facing CLI.  Normal mode
+        # shows one audited result below; --verbose retains the live details.
+        self.progress.emit(start_message, verbose_only=True)
         recovery = await finalize_t2_outputs(
             ctx.workspace_dir,
-            progress_reporter=lambda message: self.progress.emit(message, important=True),
+            progress_reporter=lambda message: self.progress.emit(message, verbose_only=True),
         )
         if not recovery.get("ok"):
             reason = recovery.get("reason") or "unknown"
@@ -7496,18 +7550,31 @@ class AgentRunner:
             )
             return False
 
-        self.progress.emit(success_message, important=True)
+        pdf_counts = recovery.get("pdf_acquisition", {}).get("counts", {})
+        available_pdfs = int(
+            pdf_counts.get("available_local")
+            or pdf_counts.get("parseable_local")
+            or pdf_counts.get("available")
+            or 0
+        ) if isinstance(pdf_counts, dict) else 0
         self.progress.emit(
-            "[Scout Agent] T2 确定性收尾完成，papers_raw 已被整理为可继续阅读的候选池",
+            "[Scout Agent] T2 收尾完成："
+            f"原始 {int(recovery.get('raw_count') or raw_count)} 篇，"
+            f"保留 {int(recovery.get('dedup_count') or 0)} 篇，"
+            f"后备 {int(recovery.get('backlog_count') or 0)} 篇；"
+            f"本地可解析 PDF {available_pdfs}/{int(recovery.get('dedup_count') or 0)}，"
+            f"精读队列 {int(recovery.get('deep_read_queue_count') or 0)} 篇。"
+            "完整检索与可得性记录已归档。",
             important=True,
         )
         t2_config = load_t2_finalize_config(ctx.workspace_dir)
         progress_rel = str(getattr(t2_config, "progress_file", "") or "literature/temp/scout_progress.md")
-        self.progress.progress_file_update(
-            label="Scout/T2 收尾进度",
-            path=progress_rel,
-            bullets=summarize_progress_markdown(ctx.workspace_dir / progress_rel, max_items=4),
-        )
+        if self.runtime_settings.ui.verbose:
+            self.progress.progress_file_update(
+                label="Scout/T2 收尾进度",
+                path=progress_rel,
+                bullets=summarize_progress_markdown(ctx.workspace_dir / progress_rel, max_items=4),
+            )
         self._record_runtime_completion(ctx, mode, recovery)
         self.log.debug(f"{mode}_succeeded", recovery=recovery)
         return True
@@ -8130,7 +8197,25 @@ class AgentRunner:
         data = result.data if isinstance(result.data, dict) else {}
         progress = str(data.get("progress") or "").strip()
         if tool_name == "save_paper_note" and progress:
-            self.progress.emit(f"[Reader Agent] {summarize_reader_note_progress(data, progress=progress)}")
+            # The complete note summary (mechanism, implication, and resource
+            # receipt) belongs in the Paper Note, catalog, and trace.  Showing
+            # it after every paper produces an unreadable terminal and exposes
+            # a transient "needs repair" state that is automatically handled
+            # in the same Reader turn.  Keep compact milestones in normal
+            # mode; detailed/verbose runs retain the full summary.
+            if self.runtime_settings.ui.verbose:
+                self.progress.emit(f"[Reader Agent] {summarize_reader_note_progress(data, progress=progress)}")
+                return
+            match = re.search(r"(\d+)\s*/\s*(\d+)", progress)
+            if match is None:
+                return
+            completed, target = (int(match.group(1)), int(match.group(2)))
+            if completed <= 0 or (completed != 1 and completed != target and completed % 5 != 0):
+                return
+            self.progress.emit(
+                f"[Reader Agent] T3 阅读进度：{completed}/{target} 篇；"
+                "笔记与资源线索已归档，继续处理。"
+            )
 
     @staticmethod
     def _looks_like_human_interaction_request(message: Message) -> bool:
