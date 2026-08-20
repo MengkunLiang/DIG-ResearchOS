@@ -69,7 +69,7 @@ Gate1 首先展示 1–3 个 Portfolio Candidates，但会保留 6–8 个 Activ
 
 自然语言会先由可选的 LLM parser 解析为 `IdeaDirective`，再由本地规则核对 Candidate ID、组件引用、fingerprint 和确认要求。用户同时提到多个完整 Candidate 时，默认理解为 parallel，不会擅自合并。跨 Candidate 的 Hypothesis、Contribution 或 Gene 选择会先进行 Compatibility Check，给出 Gene Donor Map，等待第二次确认，再生成 Human-composed Candidate、执行 Independent Scoring，并写入新的 Population snapshot。系统不会把两段文字直接拼接成假设文件，也不会覆盖来源 Candidate。
 
-选择一个完整 Candidate 后，T4 只会生成 `ideation/hypothesis_brief.yaml`、lineage、T4.5 search targets 和 Pre-Novelty brief；这些文件用于查新，不是实验执行授权。随后直接进入 T4.5。查新在独立上下文中完成，只负责 collision 标签、必需 baseline 和 claim 边界；通过后才以新的上下文生成统一的 `research_blueprint.yaml`、`claim_registry.yaml`、正式 `hypotheses.md`、`exp_plan.yaml` 和七部分 Proposal。第三个独立的 orientation-aware review/repair 上下文按 UTD、CCF-A 或 Hybrid 的权重复核同一模板。只有结构化来源、Proposal、claim–实验映射和审阅记录全部一致且通过时，T5 才会解锁。
+选择一个完整 Candidate 后，T4 只会生成 `ideation/hypothesis_brief.yaml`、lineage、T4.5 search targets 和 Pre-Novelty brief；这些文件用于查新，不是实验执行授权。随后直接进入 T4.5。查新在独立上下文中完成，只负责 collision 标签、必需 baseline 和 claim 边界；通过后才以新的上下文生成统一的 `research_blueprint.yaml`、`claim_registry.yaml`、正式 `hypotheses.md`、`exp_plan.yaml` 和覆盖七项研究功能的 Proposal。第三个独立的 orientation-aware review/repair 上下文按 UTD、CCF-A 或 Hybrid 的权重复核同一论证框架。七项功能用于保证论证覆盖，而非强制七个固定标题；相邻功能可在有利于连贯表达时自然合并。只有结构化来源、Proposal、claim–实验映射和审阅记录全部一致且通过时，T5 才会解锁。
 
 ## T5 到 T8 外部证据路径
 

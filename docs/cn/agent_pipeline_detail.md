@@ -2742,7 +2742,7 @@ validator 会检查：
 
 ### 第二阶段：研究正式化
 
-`T4.5-FORMALIZE` 使用新的 `ResearchFormalizerAgent` 上下文，只生成或修复构成同一研究方案所需的 source artifact：`research_blueprint.yaml`、`claim_registry.yaml`、`hypotheses.md`、`exp_plan.yaml` 和七部分 Proposal。正式化每轮以 `validate_t45_formalization_sources` 的**最新** `valid` 结果为准：启动时的 prompt 诊断只是快照，不能在同一轮结构化修复后继续阻止 prose 写作。`valid=false` 时只修复错误指定的结构化来源或最小同步集合；`valid=true` 后只写 hypotheses/Proposal 并回读。运行时随后确定性编译 contribution-hypothesis map、validation map、kill criteria、research dossier 与 proposal manifest；这些派生产物不能由 Formalizer 直接写入。Formalizer 不能把计划结果提升为实证结果，也不能覆盖 novelty audit。
+`T4.5-FORMALIZE` 使用新的 `ResearchFormalizerAgent` 上下文，只生成或修复构成同一研究方案所需的 source artifact：`research_blueprint.yaml`、`claim_registry.yaml`、`hypotheses.md`、`exp_plan.yaml` 和覆盖七项研究功能的 Proposal。七项功能用于保障论证完整，而非强制七个固定标题；相邻部分可在有利于连贯学术论证时自然合并。正式化每轮以 `validate_t45_formalization_sources` 的**最新** `valid` 结果为准：启动时的 prompt 诊断只是快照，不能在同一轮结构化修复后继续阻止 prose 写作。`valid=false` 时只修复错误指定的结构化来源或最小同步集合；`valid=true` 后只写 hypotheses/Proposal 并回读。运行时随后确定性编译 contribution-hypothesis map、validation map、kill criteria、research dossier 与 proposal manifest；这些派生产物不能由 Formalizer 直接写入。Formalizer 不能把计划结果提升为实证结果，也不能覆盖 novelty audit。
 
 T4.5 的定向修复不会因 `resume` 而重新获得无限次数。runtime 将同一 task、已选 Candidate 和稳定上游证据绑定到 `_runtime/t45_quality_repair_ledger.json`：同一诊断且关联 source 未改变会立即暂停；累计 8 次仍未收敛也会暂停。只有真正改变上游研究决策或证据基线，例如从 T4 重构并重新选择 Candidate，才会开启新的修复窗口。这样保留必要的多文件定向修复，同时不会让反复 resume 消耗无上限额度。
 

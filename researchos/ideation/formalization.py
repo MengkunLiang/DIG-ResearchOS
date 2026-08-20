@@ -151,6 +151,10 @@ _ORIENTATION_SPECS: dict[str, dict[str, Any]] = {
 }
 
 
+# These are seven argument functions, not a compulsory seven-heading layout.
+# The canonical headings make a first draft easy to navigate, but a strong
+# proposal may merge adjacent functions when that produces a more continuous
+# argument.  Surface-form departures are reviewed semantically below.
 PROPOSAL_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("motivation", ("research motivation and core problem", "研究动机与核心问题", "研究背景与核心问题")),
     ("gap_and_challenges", ("prior research, gap and key challenges", "现有研究、缺口与关键挑战", "文献缺口与关键挑战")),
@@ -160,6 +164,8 @@ PROPOSAL_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("contributions", ("expected contributions and implications", "预期贡献与现实含义", "预期贡献与影响")),
     ("risks", ("risks, limitations and execution plan", "风险、局限与执行计划", "风险、局限与实施计划")),
 )
+
+_MINIMUM_PROPOSAL_SUBSTANCE = 600
 
 _AUDIT_LANGUAGE = re.compile(
     r"(?i)\b(?:t4\.5|level\s*[0-3]|true_collision|mechanism_collision|pass_to_experiment|"
@@ -976,7 +982,7 @@ def validate_research_proposal_text(
     orientation: dict[str, Any],
     accepted_semantic_errors: set[str] | None = None,
 ) -> str | None:
-    """Run deterministic quality gates over the unified seven-section proposal."""
+    """Validate a Proposal's research contract without prescribing its layout."""
 
     hard_error, semantic_errors = _proposal_text_errors(
         text,
@@ -996,13 +1002,36 @@ def _proposal_text_errors(
 ) -> tuple[str | None, list[str]]:
     """Separate Proposal contract failures from ambiguous prose failures."""
 
+    if _research_text_length(text) < _MINIMUM_PROPOSAL_SUBSTANCE:
+        return (
+            "research_proposal.md is too short to establish a coherent research problem, technical design, "
+            "evaluation logic, and execution boundary",
+            [],
+        )
     sections = _proposal_sections(text)
     missing = [key for key, _aliases in PROPOSAL_SECTIONS if key not in sections]
+    semantic_errors: list[str] = []
     if missing:
-        return "research_proposal.md is missing required sections: " + ", ".join(missing), []
+        # A Proposal is assessed on whether it makes the seven research
+        # functions legible, not whether it mechanically reproduces seven
+        # literal Markdown headings.  When functions are merged or named in
+        # discipline-specific language, pass the complete prose to the
+        # independent, quote-bound semantic reviewer instead of forcing a
+        # wholesale rewrite into a template.
+        missing_labels = ", ".join(missing)
+        semantic_errors.append(
+            "Proposal uses noncanonical or merged sectioning; independent review must confirm that its connected "
+            "prose still covers these research functions: " + missing_labels
+        )
+        section_text = {key: text for key, _aliases in PROPOSAL_SECTIONS}
+    else:
+        section_text = sections
     too_short = [key for key, content in sections.items() if _research_text_length(content) < 120]
     if too_short:
-        return "Proposal sections need substantive prose, not heading-only fragments: " + ", ".join(too_short), []
+        semantic_errors.append(
+            "Proposal has concise labeled sections; independent review must confirm that the complete argument, "
+            "rather than every local heading, is substantively developed: " + ", ".join(too_short)
+        )
     repeated = _repeated_sentence_count(text)
     if repeated >= 3:
         return "research_proposal.md repeats the same sentence or near-identical sentence blocks instead of developing the argument", []
@@ -1017,24 +1046,23 @@ def _proposal_text_errors(
     if len(audit_hits) > 1:
         return "research_proposal.md is audit-dominated; move internal T4.5/collision labels to novelty_audit.md", []
 
-    semantic_errors: list[str] = []
     challenges = _dict_list(_nested_value(blueprint, "technical_problem", "key_challenges"))
     for challenge in challenges:
         challenge_id = str(challenge.get("id") or "").strip()
-        if challenge_id and challenge_id not in sections["gap_and_challenges"]:
+        if challenge_id and challenge_id not in section_text["gap_and_challenges"]:
             semantic_errors.append(f"Proposal does not explain challenge {challenge_id} in Prior Research, Gap and Key Challenges")
     component_ids = [
         str(component.get("id") or "").strip()
         for component in _dict_list(_nested_value(blueprint, "proposed_approach", "components"))
         if str(component.get("id") or "").strip()
     ]
-    central_insight_position = _central_insight_position(sections["approach"])
+    central_insight_position = _central_insight_position(section_text["approach"])
     if central_insight_position is None:
         semantic_errors.append(
             "Proposal does not state a readable central insight in Proposed Approach and Design Rationale "
             "(use Central Insight, Core Insight, 核心洞见, or 核心洞察)"
         )
-    first_component_position = _first_component_position(sections["approach"], component_ids)
+    first_component_position = _first_component_position(section_text["approach"], component_ids)
     if (
         central_insight_position is not None
         and first_component_position is not None
@@ -1045,9 +1073,9 @@ def _proposal_text_errors(
         )
     for component in _dict_list(_nested_value(blueprint, "proposed_approach", "components")):
         component_id = str(component.get("id") or "").strip()
-        if component_id and component_id not in sections["approach"]:
+        if component_id and component_id not in section_text["approach"]:
             return f"Proposal does not explain technical component {component_id}", []
-    if not _explains_simpler_alternative(sections["approach"], blueprint):
+    if not _explains_simpler_alternative(section_text["approach"], blueprint):
         semantic_errors.append(
             "Proposal does not explain the simpler alternative from research_blueprint.yaml "
             "and why it is insufficient"
@@ -1055,7 +1083,7 @@ def _proposal_text_errors(
 
     for claim in _dict_list(registry.get("claims")):
         claim_id = str(claim.get("id") or "").strip()
-        if claim_id and claim_id not in sections["claims"]:
+        if claim_id and claim_id not in section_text["claims"]:
             return f"Proposal does not carry active claim {claim_id} into Research Questions, Claims and Hypotheses", []
     evaluation_requirements = (
         ("a credible counterfactual or comparison", ("baseline", "control", "counterfactual", "comparison", "基线", "对照组", "对照条件", "反事实", "比较对象")),
@@ -1064,35 +1092,35 @@ def _proposal_text_errors(
         ("mechanism or process validation", ("mechanism", "mediation", "process tracing", "pathway", "机制", "中介检验", "过程检验", "路径检验")),
     )
     for label, aliases in evaluation_requirements:
-        if not _contains_any(sections["evaluation"], aliases):
+        if not _contains_any(section_text["evaluation"], aliases):
             semantic_errors.append(f"Research Design and Evaluation does not include {label}")
-    if not _contains_any(sections["evaluation"], ("real-world", "deployment", "现实", "部署", "组织", "用户", "平台")):
+    if not _contains_any(section_text["evaluation"], ("real-world", "deployment", "现实", "部署", "组织", "用户", "平台")):
         semantic_errors.append(
             "Research Design and Evaluation does not connect the technical study to a real-world validation or deployment consequence"
         )
-    if not _contains_any(sections["contributions"], ("technical contribution", "技术贡献")):
+    if not _contains_any(section_text["contributions"], ("technical contribution", "技术贡献")):
         semantic_errors.append("Expected Contributions and Implications lacks a concrete technical contribution")
-    if not _contains_any(sections["contributions"], ("practical", "managerial", "现实", "实践", "管理")):
+    if not _contains_any(section_text["contributions"], ("practical", "managerial", "现实", "实践", "管理")):
         semantic_errors.append("Expected Contributions and Implications names no practical actor or decision implication")
     actors = _string_list(_nested_value(blueprint, "core_problem", "affected_actors"))
-    actor_text = sections["contributions"] + "\n" + sections["evaluation"]
+    actor_text = section_text["contributions"] + "\n" + section_text["evaluation"]
     if actors and not any(_actor_is_named_in_text(actor, actor_text) for actor in actors):
         semantic_errors.append("The practical significance section does not name an affected actor from the research blueprint")
-    risk_text = sections["risks"]
+    risk_text = section_text["risks"]
     if not _contains_any(risk_text, ("fallback", "mitigation", "kill criteria", "备选", "缓解", "停止条件")):
         semantic_errors.append("Risks, Limitations and Execution Plan lists risks without mitigation, fallback, or kill criteria")
 
     profile = orientation["profile_type"]
-    if profile == "ccf_a" and not _contains_any(sections["approach"], ("algorithm", "model", "system", "optimization", "算法", "模型", "系统", "优化")):
+    if profile == "ccf_a" and not _contains_any(section_text["approach"], ("algorithm", "model", "system", "optimization", "算法", "模型", "系统", "优化")):
         semantic_errors.append("CCF-A proposal lacks a complete computational method or system artifact")
     if profile == "utd":
-        if not _contains_any(sections["approach"], ("algorithm", "model", "system", "artifact", "算法", "模型", "系统", "技术构件")):
+        if not _contains_any(section_text["approach"], ("algorithm", "model", "system", "artifact", "算法", "模型", "系统", "技术构件")):
             semantic_errors.append("UTD proposal lacks the mandatory substantive technical artifact")
-        thin_api = re.search(r"(?i)(?:call|invoke|use)\s+(?:an?\s+)?(?:existing\s+)?(?:llm|api)", sections["approach"])
-        technical_design = _contains_any(sections["approach"], ("objective", "representation", "optimization", "inference", "训练", "表示", "优化", "推断"))
+        thin_api = re.search(r"(?i)(?:call|invoke|use)\s+(?:an?\s+)?(?:existing\s+)?(?:llm|api)", section_text["approach"])
+        technical_design = _contains_any(section_text["approach"], ("objective", "representation", "optimization", "inference", "训练", "表示", "优化", "推断"))
         explicit_api_only = re.search(
             r"(?i)(?:api[- ]only|no\s+(?:new|learned)|omits?\s+.*(?:objective|optimization|inference|representation)|without\s+.*(?:objective|optimization|inference|representation))",
-            sections["approach"],
+            section_text["approach"],
         )
         if thin_api and (not technical_design or explicit_api_only):
             semantic_errors.append("UTD proposal reduces its technical artifact to calling an existing LLM/API")
@@ -1711,9 +1739,9 @@ def _proposal_sections(text: str) -> dict[str, str]:
     for index, heading in enumerate(headings):
         title = heading.group(1).strip().casefold()
         # Numbered academic headings such as ``## 1. Research Motivation``
-        # express the same seven-section contract.  Requiring byte-identical
-        # unnumbered titles caused a complete, coherent Proposal to be
-        # misreported as missing every section and triggered wholesale rewrites.
+        # express the same research function. Canonical headings make the
+        # deterministic checks more precise; merged or discipline-specific
+        # headings remain eligible for quote-bound semantic review.
         title = re.sub(r"^\d+(?:\.\d+)*[.)、．]?\s+", "", title)
         end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
         for key, aliases in PROPOSAL_SECTIONS:

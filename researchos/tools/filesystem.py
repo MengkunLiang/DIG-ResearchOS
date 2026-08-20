@@ -80,16 +80,6 @@ _T45_RESEARCHER_FACING_PROSE_ARTIFACTS = frozenset(
     }
 )
 
-_T45_PROPOSAL_SECTION_MARKERS = (
-    ("research motivation and core problem", "研究动机与核心问题", "研究背景与核心问题"),
-    ("prior research, gap and key challenges", "现有研究、缺口与关键挑战", "文献缺口与关键挑战"),
-    ("proposed approach and design rationale", "技术方案与设计理由", "研究方法与设计理由"),
-    ("research questions, claims and hypotheses", "研究问题、研究主张与假设"),
-    ("research design and evaluation", "研究设计与评测", "研究设计与评估"),
-    ("expected contributions and implications", "预期贡献与现实含义"),
-    ("risks, limitations and execution plan", "风险、局限与执行计划", "风险、局限与实施计划"),
-)
-
 # These are deterministic projections of the validated source package. A
 # Formalizer writing one directly can create a superficially complete but stale
 # handoff, or waste turns repairing a file that the runtime will replace.
@@ -445,23 +435,20 @@ class WriteFileTool(Tool):
         except OSError:
             existing = ""
         if normalized_path == "ideation/proposal/research_proposal.md":
-            lowered = content.casefold()
-            missing_sections = [
-                " / ".join(markers[:2])
-                for markers in _T45_PROPOSAL_SECTION_MARKERS
-                if not any(marker.casefold() in lowered for marker in markers)
-            ]
-            if missing_sections:
+            # The final Proposal must cover seven research functions, but it
+            # need not reproduce seven literal headings.  Reject only a
+            # clearly fragmentary replacement here; the orientation-aware
+            # validator and reviewer assess coverage and academic quality.
+            if len(content.strip()) < 1_500:
                 return ToolResult(
                     ok=False,
                     content=(
-                        "T4.5 Proposal replacement was not written because it is missing required sections: "
-                        + ", ".join(missing_sections)
-                        + ". Read the current Proposal and write one complete seven-section document; do not replace it with a fragment."
+                        "T4.5 Proposal replacement was not written because it is too short to be a complete research "
+                        "argument. Read the current Proposal and write one complete substantive document; do not replace it with a fragment."
                     ),
                     data={
                         "path": normalized_path,
-                        "validation_error": "Proposal replacement is missing required sections: " + ", ".join(missing_sections),
+                        "validation_error": "Proposal replacement is too short to be a complete research argument",
                         "repair_targets": [normalized_path],
                         "display_disposition": "validation_failed",
                     },

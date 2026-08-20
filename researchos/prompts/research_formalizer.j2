@@ -41,10 +41,7 @@ These weights guide ordering, depth and review emphasis; they do not create a di
   对已有英文标题，Proposal 的一级标题和任何显示标题必须采用
   `English Canonical Title（简洁中文释义）`。不要把英文标题、隐喻或专有构念机械翻译成新的中文规范名。
 - 术语的中文释义服务于阅读，不替代其英文规范名。保留用户材料中已有的英文规范名、framework、method、system、metric 及其稳定缩写；只有在首次出现时补充自然中文解释。
-- `hypotheses.md` 顶级标题使用 `# 研究主张与假设`。Proposal 依次使用：
-  `## 研究动机与核心问题`、`## 现有研究、缺口与关键挑战`、`## 技术方案与设计理由`、
-  `## 研究问题、研究主张与假设`、`## 研究设计与评测`、`## 预期贡献与现实含义`、
-  `## 风险、局限与执行计划`。
+- `hypotheses.md` 顶级标题使用 `# 研究主张与假设`。Proposal 必须让读者清楚找到研究动机、文献缺口、技术方案、主张、评测、贡献和执行边界；可用这些中文标题作为清晰的初稿脚手架，也可自然合并相邻部分。不要为了保留七个标题而把连续论证切碎。
 {% else %}
 - Write all researcher-facing prose and explanatory structured-field values in English.
 {% endif %}
@@ -112,9 +109,9 @@ repair_summary: []
 Every score is a number from 0 through 5. Use the exact key `theoretical_or_design_value`. `orientation` is only the profile string, not the orientation object. `repair_summary` is an array of strings. An accepted review may retain resolved issue objects, but every material issue must record a resolved, repaired, accepted-after-repair, or not-applicable status.
 {% endif %}
 
-## One shared research template
+## One shared research-argument framework
 
-The source artifacts and final Proposal must use this one structure for UTD, CCF-A and Hybrid:
+For UTD, CCF-A and Hybrid, the final Proposal must clearly cover these seven research functions. They are an argument checklist, not a compulsory seven-heading layout. Use canonical headings when they improve navigation; merge adjacent functions when that makes the argument more coherent.
 
 1. Research Motivation and Core Problem
 2. Prior Research, Gap and Key Challenges
@@ -144,9 +141,7 @@ For the smallest set of genuinely independent challenges, explain the following 
 
 `Existing assumption → why it fails here → observable consequence → required new capability`.
 
-Then connect every challenge to a design principle, component and expected effect. Do not jump directly from a gap to a module list. Explain the central technical insight before the components, and explain why simpler alternatives are inadequate. In Proposal, use a clear `### Central Insight`,
-`### Core Insight`, `### 核心洞见`, or `### 核心洞察` subsection before the first
-`COMPn` detail. State the insight in prose, then compare the named simpler alternative from the blueprint and say precisely why it cannot meet the research objective.
+Then connect every challenge to a design principle, component and expected effect. Do not jump directly from a gap to a module list. Explain the central technical insight before the components, and explain why simpler alternatives are inadequate. Make the insight easy to locate with natural wording such as `Central Insight`, `Core Insight`, `核心洞见`, or `核心洞察`, but do not add a subsection merely to satisfy a format rule. State the insight in prose, then compare the named simpler alternative from the blueprint and say precisely why it cannot meet the research objective.
 
 ### Canonical blueprint wire format
 
@@ -277,7 +272,7 @@ Only after `validate_t45_formalization_sources` returns `valid=true`, write:
 
 - `ideation/hypotheses.md`: an integrated, researcher-facing claims document.
   It must explain each claim rather than list audit decisions. Every claim must make its rationale, mechanism, expected observation, evaluation, competing explanation and falsification condition easy to locate, but these elements may be integrated into coherent paragraphs rather than rendered as a mechanical label list.
-- `ideation/proposal/research_proposal.md`: a complete formal proposal using the seven language-appropriate `##` headings above.  Develop the seven sections in connected prose; headings and bullet lists cannot substitute for argument.
+- `ideation/proposal/research_proposal.md`: a complete formal proposal that covers all seven research functions above in connected prose. Use the canonical headings where useful, but merge adjacent functions when a continuous argument is clearer; headings and bullet lists cannot substitute for argument.
   Do not add a standalone evidence-boundary disclaimer by default. If a material feasibility condition remains unresolved, place one concise, plain-language validation or fallback sentence in the final Risks, Limitations and Execution Plan section; never use internal audit labels or repeated defensive caveats.
 
 Do not write proposal manifests, dossier JSON, validation maps, kill criteria or post-novelty receipts. The runtime derives them only after source validation. Call `finish_task` after the five required source/prose artifacts are complete.

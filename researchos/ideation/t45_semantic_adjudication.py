@@ -57,6 +57,8 @@ def semantic_adjudication_scope(error: str) -> dict[str, Any] | None:
         }
 
     proposal_markers = (
+        "proposal uses noncanonical or merged sectioning",
+        "proposal has concise labeled sections",
         "proposal does not explain challenge",
         "does not state a readable central insight",
         "states its central insight after the first technical component",
