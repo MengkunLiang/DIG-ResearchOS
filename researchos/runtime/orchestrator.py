@@ -147,19 +147,15 @@ if TYPE_CHECKING:
     from ..tools.workspace_policy import WorkspaceAccessPolicy
 
 
-# Source-aware prose repair may exceed the ordinary retry window when each
-# pass makes a real artifact change, but it must still have a total circuit
-# breaker. Otherwise tiny non-convergent rewrites can consume an unbounded
-# number of model calls while technically appearing to make progress.
-SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT = 8
-T4_FINAL_CARD_SEMANTIC_REPAIR_SAFETY_LIMIT = 4
+# Source-aware prose repair persists across resume.  A repeated diagnosis with
+# unchanged relevant source artifacts pauses before another model call; a
+# meaningful source change remains eligible for a fresh targeted repair.
 T45_QUALITY_REPAIR_LEDGER_REL_PATH = "_runtime/t45_quality_repair_ledger.json"
 T36_QUALITY_REPAIR_LEDGER_REL_PATH = "_runtime/t36_quality_repair_ledger.json"
-# The repair window is tied to the selected research decision and its stable
-# upstream evidence.  Editing a Proposal is deliberately *not* a new window:
-# otherwise every low-value rewrite would reset the circuit breaker.  A real
-# T4 reframe or changed upstream literature decision naturally changes this
-# baseline and opens a fresh T4.5 window.
+# The repair ledger is tied to the selected research decision and its stable
+# upstream evidence.  Proposal edits are recorded as source progress rather
+# than silently resetting a retry counter, while a real T4 reframe or changed
+# literature basis receives an independent diagnostic history.
 T45_QUALITY_REPAIR_BASELINE_ARTIFACTS = (
     "project.yaml",
     "ideation/selected/selected_candidate.json",
@@ -168,10 +164,9 @@ T45_QUALITY_REPAIR_BASELINE_ARTIFACTS = (
     "literature/synthesis.md",
     "ideation/orientation_config.yaml",
 )
-# T3.6 source edits do not open a new repair window: otherwise a model can
-# keep rephrasing one survey section forever. A real change in the literature
-# basis, selected template, or researcher-approved scope naturally opens a
-# new window instead.
+# T3.6 records a narrow fingerprint for the artifacts relevant to each failed
+# check.  It blocks only a resumed repetition that leaves that source scope
+# unchanged; useful section, evidence, template, or scope changes can proceed.
 T36_QUALITY_REPAIR_BASELINE_ARTIFACTS = (
     "project.yaml",
     "literature/synthesis.md",
@@ -213,16 +208,6 @@ T36_QUALITY_SOURCE_ARTIFACTS = (
     "drafts/survey/sections",
     "literature/related_work.bib",
 )
-T4_FINAL_CARD_SEMANTIC_FAILURE_KINDS = frozenset(
-    {
-        "llm_response_parse_failure",
-        "llm_card_schema_mismatch",
-        "llm_card_coverage_mismatch",
-        "llm_card_immutable_field_mismatch",
-        "llm_card_profile_mismatch",
-    }
-)
-
 # A T4.5 Proposal can be several thousand words.  Retaining every historic
 # full-document write until a provider's global context limit is reached made
 # one local prose repair inflate to millions of input tokens.  This is a
@@ -2203,31 +2188,7 @@ class AgentRunner:
                                     "failure_count": validation_fails,
                                     "repair_attempt_count": int(ctx.extra.get("t36_quality_repair_attempt_count") or validation_fails),
                                     "validator_error": str(err or "unknown validation error"),
-                                    "repair_policy": "targeted_with_progress_and_total_safety_limit",
-                                    "source_artifacts": list(T36_QUALITY_SOURCE_ARTIFACTS),
-                                },
-                            )
-                            break
-                        repair_attempts = int(ctx.extra.get("t36_quality_repair_attempt_count") or validation_fails)
-                        if repair_attempts >= SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT:
-                            stop_reason = AgentResult.STOP_INTERRUPTED
-                            error_msg = (
-                                f"T3.6 已完成 {repair_attempts} 轮有来源变化的定向修复，但质量校验仍未收敛。"
-                                f"最后原因：{err}。已暂停并保留全部 source artifacts，避免继续产生低价值改写。"
-                            )
-                            self.progress.emit(
-                                "[T3.6 Quality Gate] 定向修复已达到总安全窗，已暂停并保留当前产物与最后诊断。",
-                                important=True,
-                            )
-                            self._mark_runtime_recovery(
-                                ctx,
-                                kind="t36_quality_safety_limit",
-                                error=error_msg,
-                                details={
-                                    "failure_count": validation_fails,
-                                    "repair_attempt_count": repair_attempts,
-                                    "safety_limit": SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT,
-                                    "validator_error": str(err or "unknown validation error"),
+                                    "repair_policy": "targeted_with_source_progress",
                                     "source_artifacts": list(T36_QUALITY_SOURCE_ARTIFACTS),
                                 },
                             )
@@ -2240,7 +2201,7 @@ class AgentRunner:
                         self.progress.emit(
                             "[T3.6 Quality Gate] 第 "
                             f"{validation_fails} 次校验未通过；已把具体原因和最小修复范围注入 Survey Writer，"
-                            f"修复后会重新运行全部质量校验；总安全窗为 {SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT} 轮。",
+                            "修复后会重新运行全部质量校验；若同一诊断且相关来源未变化，才会暂停防止空转。",
                             important=True,
                         )
                         feedback = Message.user(
@@ -2299,41 +2260,17 @@ class AgentRunner:
                                     "failure_count": validation_fails,
                                     "validator_error": str(err or "unknown validation error"),
                                     "repairable_warning": t45_repairable_warning,
-                                    "repair_policy": "targeted_with_progress_and_total_safety_limit",
+                                    "repair_policy": "targeted_with_source_progress",
                                     "source_artifacts": list(T45_QUALITY_SOURCE_ARTIFACTS),
                                 },
                             )
                             break
                         repair_attempts = int(ctx.extra.get("t45_quality_repair_attempt_count") or validation_fails)
-                        if repair_attempts >= SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT:
-                            stop_reason = AgentResult.STOP_INTERRUPTED
-                            error_msg = (
-                                f"T4.5 已完成 {repair_attempts} 轮有来源变化的定向修复，但质量校验仍未收敛。"
-                                f"最后原因：{err}。已暂停并保留全部 source artifacts，避免继续产生低价值改写。"
-                            )
-                            self.progress.emit(
-                                "[T4.5 Quality Gate] 定向修复已达到总安全窗，已暂停并保留当前产物与最后诊断。",
-                                important=True,
-                            )
-                            self._mark_runtime_recovery(
-                                ctx,
-                                kind="t45_quality_safety_limit",
-                                error=error_msg,
-                                details={
-                                    "failure_count": validation_fails,
-                                    "repair_attempt_count": repair_attempts,
-                                    "safety_limit": SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT,
-                                    "validator_error": str(err or "unknown validation error"),
-                                    "repairable_warning": t45_repairable_warning,
-                                    "source_artifacts": list(T45_QUALITY_SOURCE_ARTIFACTS),
-                                },
-                            )
-                            break
                         if not t45_repairable_warning:
                             self.progress.emit(
                                 "[T4.5 Quality Gate] 第 "
                                 f"{repair_attempts} 次定向校验未通过；已把具体原因和最小修复范围注入 Formalizer，"
-                                f"修复后会重新运行全部质量校验；总安全窗为 {SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT} 轮。",
+                                "修复后会重新运行全部质量校验；若同一诊断且相关来源未变化，才会暂停防止空转。",
                                 important=True,
                             )
                         feedback = Message.user(
@@ -5562,36 +5499,17 @@ class AgentRunner:
                 if isinstance(repair_checkpoint, dict)
                 else []
             )
-            prior_semantic_repairs = [
-                item
-                for item in prior_card_errors
-                if str((item.get("failure") or {}).get("kind") or "") in T4_FINAL_CARD_SEMANTIC_FAILURE_KINDS
-            ]
-            if len(prior_semantic_repairs) >= T4_FINAL_CARD_SEMANTIC_REPAIR_SAFETY_LIMIT:
-                raise RecoverableRuntimePause(
-                    "T4 Portfolio Idea Card 已在当前 Population 与取向下连续经历 "
-                    f"{len(prior_semantic_repairs)} 次内容/格式定向修复仍未形成完整卡片。"
-                    "候选、评分和谱系均已保留；系统不会因展示文案问题反复调用模型。"
-                    "请检查 `ideation/evolution/diagnostics/final_card_compilation_attempt_*.json`，"
-                    "修正其中指出的源数据或改变研究取向后再 resume。"
-                )
             card_errors: list[dict[str, object]] = []
             if not cards_ready:
                 try:
                     max_card_attempts = int(self.retry_policy.get("t4_final_card_compiler_attempts", 2))
                 except (TypeError, ValueError):
                     max_card_attempts = 2
-                # A Card compiler repair is bounded separately from Candidate
-                # Evolution. Each compile call already contains one dedicated
-                # semantic-repair call, so one fresh outer retry is sufficient
-                # before a durable pause. More retries repeated the same deck
-                # and schema without adding scientific information.
+                # A live invocation is bounded separately from Candidate
+                # Evolution.  Each compile call already contains one dedicated
+                # semantic repair; a later resume retains the diagnostic but
+                # may retry after the provider or relevant source changes.
                 max_card_attempts = max(1, min(max_card_attempts, 4))
-                remaining_semantic_repairs = max(
-                    1,
-                    T4_FINAL_CARD_SEMANTIC_REPAIR_SAFETY_LIMIT - len(prior_semantic_repairs),
-                )
-                max_card_attempts = min(max_card_attempts, remaining_semantic_repairs)
                 for attempt in range(1, max_card_attempts + 1):
                     try:
                         repair_context: dict[str, object] = {}
@@ -5645,12 +5563,6 @@ class AgentRunner:
                         for item in all_card_errors
                         if isinstance(item, dict)
                     )
-                    semantic_repairs = [
-                        item
-                        for item in all_card_errors
-                        if str((item.get("failure") or {}).get("kind") or "") in T4_FINAL_CARD_SEMANTIC_FAILURE_KINDS
-                    ]
-                    repair_window_exhausted = len(semantic_repairs) >= T4_FINAL_CARD_SEMANTIC_REPAIR_SAFETY_LIMIT
                     store.write_json(
                         "ideation/final_cards/portfolio_cards.json",
                         {
@@ -5665,15 +5577,12 @@ class AgentRunner:
                                 "scheduled": repair_scheduled,
                                 "scope": "portfolio_final_card_compiler",
                                 "next_action": (
-                                    "inspect_final_card_diagnostic_then_change_source_or_profile"
-                                    if repair_window_exhausted
-                                    else "resume_t4_to_retry_final_card_llm"
+                                    "resume_t4_to_retry_final_card_llm"
                                     if repair_scheduled
                                     else "resolve_recorded_provider_or_source_prerequisite_then_resume_t4"
                                 ),
-                                "attempts_exhausted": repair_window_exhausted or len(card_errors) >= max_card_attempts,
-                                "semantic_repair_attempt_count": len(semantic_repairs),
-                                "semantic_repair_safety_limit": T4_FINAL_CARD_SEMANTIC_REPAIR_SAFETY_LIMIT,
+                                "attempts_exhausted_in_current_run": len(card_errors) >= max_card_attempts,
+                                "prior_diagnostic_count": len(all_card_errors),
                                 "failure_kinds": [
                                     str((item.get("failure") or {}).get("kind") or "")
                                     for item in all_card_errors
@@ -5690,13 +5599,8 @@ class AgentRunner:
                     raise RecoverableRuntimePause(
                         "T4 的 Portfolio Idea Card 未能由 LLM 完整编译；候选、评分和谱系已保存，"
                         "但不会用固定模板或残缺字段替代科研解释。"
-                        + (
-                            "内容/格式修复安全窗已用尽；请先处理诊断中标出的源数据或研究取向，"
-                            "不要仅 resume 重复请求相同卡片。"
-                            if repair_window_exhausted
-                            else "已记录每次失败的具体类别和 LLM 修复路径；请 resume 继续定向卡片修复，"
-                            "或先处理诊断中标出的源数据或模型配置前置条件。"
-                        )
+                        + "已记录每次失败的具体类别和 LLM 修复路径；请 resume 继续定向卡片修复，"
+                        "或先处理诊断中标出的源数据或模型配置前置条件。"
                     )
                 store.write_json(
                     "ideation/final_cards/portfolio_cards.json",
@@ -10448,7 +10352,7 @@ class AgentRunner:
 
     @classmethod
     def _record_t36_quality_repair_attempt(cls, *, ctx: ExecutionContext, error: str) -> bool:
-        """Persist T3.6 repair progress so resume cannot reset its safety window."""
+        """Persist T3.6 repair progress so resume cannot erase no-progress state."""
 
         signature = cls._t45_quality_error_signature(error)
         scope = cls._t36_quality_repair_source_scope(ctx, error)
@@ -10521,7 +10425,6 @@ class AgentRunner:
         if not cls._uses_t36_quality_repair_loop(ctx):
             return False, ""
         _ledger, _key, entry = cls._t36_quality_repair_entry(ctx)
-        attempts = int(entry.get("attempt_count") or 0)
         scope = tuple(str(item) for item in entry.get("source_scope", []) if isinstance(item, str))
         previous_sources = entry.get("last_source_fingerprint")
         sources_unchanged = bool(scope) and isinstance(previous_sources, dict) and (
@@ -10529,12 +10432,10 @@ class AgentRunner:
         )
         if bool(entry.get("blocked_no_source_progress")) and sources_unchanged:
             return True, "同一诊断对应的 survey source artifact 尚未发生变化"
-        if attempts >= SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT:
-            return True, f"已用尽 {SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT} 轮定向修复安全窗"
         return False, ""
 
     def _pause_t36_quality_repair_before_llm(self, ctx: ExecutionContext) -> None:
-        """Keep a resumed T3.6 task from re-opening an exhausted repair loop."""
+        """Keep a resumed T3.6 task from repeating an unchanged repair loop."""
 
         blocked, reason = self._t36_quality_repair_window_blocked(ctx)
         if blocked:
@@ -10702,11 +10603,10 @@ class AgentRunner:
 
     @classmethod
     def _t45_quality_repair_window_blocked(cls, ctx: ExecutionContext) -> tuple[bool, str]:
-        """Prevent resume from reopening a previously exhausted/no-progress loop."""
+        """Prevent resume from repeating a diagnosed no-progress loop."""
 
         ledger, _key, entry = cls._t45_quality_repair_entry(ctx)
         _ = ledger
-        attempts = int(entry.get("attempt_count") or 0)
         scope = tuple(str(item) for item in entry.get("source_scope", []) if isinstance(item, str))
         previous_sources = entry.get("last_source_fingerprint")
         sources_unchanged = bool(scope) and isinstance(previous_sources, dict) and (
@@ -10714,18 +10614,16 @@ class AgentRunner:
         )
         if bool(entry.get("blocked_no_source_progress")) and sources_unchanged:
             return True, "同一诊断对应的 source artifact 尚未发生变化"
-        if attempts >= SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT:
-            return True, f"已用尽 {SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT} 轮定向修复安全窗"
         return False, ""
 
     @classmethod
     def _record_t45_quality_repair_attempt(cls, *, ctx: ExecutionContext, error: str) -> bool:
-        """Persist a bounded T4.5 repair window across resume and restarts.
+        """Persist T4.5 source-aware repair state across resume and restarts.
 
         A previous implementation kept these values only in ``ctx.extra``.
-        Each ``resume`` therefore reset the eight-pass circuit breaker and
-        could turn a non-convergent package into an unbounded sequence of LLM
-        rewrites.  The ledger preserves both the source-aware no-progress
+        Each ``resume`` therefore reset the no-progress observation and
+        could turn an unchanged package into an unbounded sequence of LLM
+        rewrites.  The ledger preserves the source-aware no-progress
         test and the total window for the same research decision.
         """
 
