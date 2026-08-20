@@ -83,6 +83,7 @@ class ScoutAgent(Agent):
                         "expand_queries",
                         "filter_by_domain",
                         "generate_search_log",
+                        "backfill_paper_abstracts",
                         "apply_semantic_screening",
                         "detect_duplicate_queries",
                         "semantic_scholar_search",
