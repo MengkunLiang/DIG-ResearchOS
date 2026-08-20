@@ -3599,7 +3599,7 @@ researchos validate --task T3.6-ASSEMBLE --workspace ./workspace/project-a
 
 集中度是同一检查中的独立部分。小语料保留最小重复保护；长综述的阈值按总引用出现次数放大。因此 `13/104`（12.5%）不会再因固定 `>10` 规则被误判为集中。真正的 `bibliography_quality` 失败仍会阻塞，例如把 `Information Systems Research`、`Management Science` 或 `MIS Quarterly` 的期刊论文写成 `@inproceedings`；abstract sweep 会优先识别显式 `journal` 元数据和常见期刊名称，生成 `@article`/`journal` 字段。
 
-T3.6 的 section、assemble 和 review 校验遵循来源进展而不是固定修复轮次：每次失败都会把 audit 中的具体检查、最小可修改的 section/plan/state/bibliography 范围和证据边界注入 Survey Writer；只要相关来源确有变化，就重新执行完整校验。只有相同诊断再次出现且相关来源未变时才暂停，避免无修改循环。对少数高误判风险的自然语言检查，系统可使用独立 Semantic Adjudicator：仅限中文稿中保留必要英文术语导致的语言统计、compact taxonomy content 的等价学术表述，以及 review 中清晰的中英维度标题。裁决器不能修改文本，必须给出当前 artifact 内 1--3 条逐字证据；回执写入 `_runtime/t36_semantic_adjudications.json` 并绑定 `survey.tex`、plan/state/template 或 review/action/audit 的 SHA-256。引用覆盖、citation alignment、BibTeX、来源/指纹、内部运行术语、图表、LaTeX 和 PDF 编译永远是确定性硬门，不能由语义裁决放行。
+T3.6 的 section、assemble 和 review 校验遵循来源进展而不是固定修复轮次：每次失败都会把 audit 中的具体检查、最小可修改的 section/plan/state/bibliography 范围和证据边界注入 Survey Writer；只要相关来源确有变化，就重新执行完整校验。该来源感知安全窗会跨 `resume` 持久化：相同诊断再次出现且相关来源未变时立即暂停；在相同文献基础、模板和已确认综述范围下累计完成 8 次定向修复仍未收敛时，会在新的模型调用前暂停。只有真正改变文献基础、模板或已确认范围才会开启新的修复窗。对少数高误判风险的自然语言检查，系统可使用独立 Semantic Adjudicator：仅限中文稿中保留必要英文术语导致的语言统计、compact taxonomy content 的等价学术表述，以及 review 中清晰的中英维度标题。裁决器不能修改文本，必须给出当前 artifact 内 1--3 条逐字证据；回执写入 `_runtime/t36_semantic_adjudications.json` 并绑定 `survey.tex`、plan/state/template 或 review/action/audit 的 SHA-256。引用覆盖、citation alignment、BibTeX、来源/指纹、内部运行术语、图表、LaTeX 和 PDF 编译永远是确定性硬门，不能由语义裁决放行。
 
 ### 11.2 T4：Evolutionary Idea Formation、Rich Gate1 与假设状态
 
@@ -3652,7 +3652,7 @@ pre-run 的 Publication Orientation 是 `utd_is`、`ccf_cs`、`hybrid` 或 `cust
 
 T4 将语义恢复与科研验收分开处理。当 planner、generator、scorer 或 evolver 返回一个可解析对象，但字段别名、嵌套结构或简短的研究者说明尚未满足 typed contract 时，系统先使用一次受限的 `SemanticRepairAgent`，依据原始响应和已提供 Evidence 重新整理。它只能映射等价字段，或补写基于现有来源的说明文字；不能添加论文、citation、dataset、metric、result、score、lineage、Gene Donor Map，也不能提高 Evidence Permission。之后确定性层仍会严格阻断空值或占位符、evidence-policy 越权、数值评分范围或覆盖错误、Child/Plan 对应错误、fingerprint 不一致和 canonical ID 被改写。修复失败会形成可 resume 的明确诊断，而不是静默替换科研内容。
 
-每张成熟的 Final Idea Card 都是对不可变 Candidate 的 LLM-authored 解释。它包含一句话 core thesis、overall readiness、五项评分解释、research question、core innovation、mechanism chain、二到四条一句话 contribution、二到四条一句话 draft hypothesis、risk、Evidence Composition、系统推荐理由以及全部相关 artifact path。它可以按 profile 加入 why it matters、representative scenario、带 Evidence Status 与条件的 implication，以及不应作出的 Claim。compiler 必须保留完全一致的 core thesis、contribution ID、hypothesis ID、mechanism 和 Evidence Status；任何改变科学内容的 translation 都会被校验拒绝。
+每张成熟的 Final Idea Card 都是对不可变 Candidate 的 LLM-authored 解释。它包含一句话 core thesis、overall readiness、五项评分解释、research question、core innovation、mechanism chain、二到四条一句话 contribution、二到四条一句话 draft hypothesis、risk、Evidence Composition、系统推荐理由以及全部相关 artifact path。它可以按 profile 加入 why it matters、representative scenario、带 Evidence Status 与条件的 implication，以及不应作出的 Claim。compiler 必须保留完全一致的 core thesis、contribution ID、hypothesis ID、mechanism 和 Evidence Status；任何改变科学内容的 translation 都会被校验拒绝。卡片的格式或覆盖问题不会使 Population 失效：同一 Population 和写作取向下，compiler 会累计最多 4 次内容/结构定向修复；若仍未形成完整卡片，系统会暂停等待源数据或取向调整，不会跨 `resume` 重复生成展示文案。
 
 #### 研究者交互、恢复与 legacy 边界
 

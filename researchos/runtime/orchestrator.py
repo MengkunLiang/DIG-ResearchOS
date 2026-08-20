@@ -152,7 +152,9 @@ if TYPE_CHECKING:
 # breaker. Otherwise tiny non-convergent rewrites can consume an unbounded
 # number of model calls while technically appearing to make progress.
 SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT = 8
+T4_FINAL_CARD_SEMANTIC_REPAIR_SAFETY_LIMIT = 4
 T45_QUALITY_REPAIR_LEDGER_REL_PATH = "_runtime/t45_quality_repair_ledger.json"
+T36_QUALITY_REPAIR_LEDGER_REL_PATH = "_runtime/t36_quality_repair_ledger.json"
 # The repair window is tied to the selected research decision and its stable
 # upstream evidence.  Editing a Proposal is deliberately *not* a new window:
 # otherwise every low-value rewrite would reset the circuit breaker.  A real
@@ -165,6 +167,20 @@ T45_QUALITY_REPAIR_BASELINE_ARTIFACTS = (
     "ideation/novelty_audit.md",
     "literature/synthesis.md",
     "ideation/orientation_config.yaml",
+)
+# T3.6 source edits do not open a new repair window: otherwise a model can
+# keep rephrasing one survey section forever. A real change in the literature
+# basis, selected template, or researcher-approved scope naturally opens a
+# new window instead.
+T36_QUALITY_REPAIR_BASELINE_ARTIFACTS = (
+    "project.yaml",
+    "literature/synthesis.md",
+    "literature/synthesis_workbench.json",
+    "literature/literature_manifest.json",
+    "drafts/survey/decision.json",
+    "drafts/survey/writing_template.json",
+    "drafts/survey/outline_decision.json",
+    "drafts/survey/corpus_decision.json",
 )
 
 
@@ -196,6 +212,15 @@ T36_QUALITY_SOURCE_ARTIFACTS = (
     "drafts/survey/survey_state.json",
     "drafts/survey/sections",
     "literature/related_work.bib",
+)
+T4_FINAL_CARD_SEMANTIC_FAILURE_KINDS = frozenset(
+    {
+        "llm_response_parse_failure",
+        "llm_card_schema_mismatch",
+        "llm_card_coverage_mismatch",
+        "llm_card_immutable_field_mismatch",
+        "llm_card_profile_mismatch",
+    }
 )
 
 # A T4.5 Proposal can be several thousand words.  Retaining every historic
@@ -1226,6 +1251,7 @@ class AgentRunner:
                 t35_prepared = await self._maybe_prepare_t35_before_llm(ctx, policy)
             t36_section_pre_finalized = False
             if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized):
+                self._pause_t36_quality_repair_before_llm(ctx)
                 t36_section_pre_finalized = await self._maybe_finalize_t36_section_before_llm(ctx)
             t36_visuals_pre_finalized = False
             if not (
@@ -2175,17 +2201,18 @@ class AgentRunner:
                                 error=error_msg,
                                 details={
                                     "failure_count": validation_fails,
-                                    "repair_attempt_count": int(ctx.extra.get("t45_quality_repair_attempt_count") or validation_fails),
+                                    "repair_attempt_count": int(ctx.extra.get("t36_quality_repair_attempt_count") or validation_fails),
                                     "validator_error": str(err or "unknown validation error"),
                                     "repair_policy": "targeted_with_progress_and_total_safety_limit",
                                     "source_artifacts": list(T36_QUALITY_SOURCE_ARTIFACTS),
                                 },
                             )
                             break
-                        if validation_fails >= SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT:
+                        repair_attempts = int(ctx.extra.get("t36_quality_repair_attempt_count") or validation_fails)
+                        if repair_attempts >= SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT:
                             stop_reason = AgentResult.STOP_INTERRUPTED
                             error_msg = (
-                                f"T3.6 已完成 {validation_fails} 轮有来源变化的定向修复，但质量校验仍未收敛。"
+                                f"T3.6 已完成 {repair_attempts} 轮有来源变化的定向修复，但质量校验仍未收敛。"
                                 f"最后原因：{err}。已暂停并保留全部 source artifacts，避免继续产生低价值改写。"
                             )
                             self.progress.emit(
@@ -2198,6 +2225,7 @@ class AgentRunner:
                                 error=error_msg,
                                 details={
                                     "failure_count": validation_fails,
+                                    "repair_attempt_count": repair_attempts,
                                     "safety_limit": SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT,
                                     "validator_error": str(err or "unknown validation error"),
                                     "source_artifacts": list(T36_QUALITY_SOURCE_ARTIFACTS),
@@ -5529,6 +5557,24 @@ class AgentRunner:
                 important=True,
             )
             final_cards = []
+            prior_card_errors = (
+                [item for item in (repair_checkpoint or {}).get("attempts", []) if isinstance(item, dict)]
+                if isinstance(repair_checkpoint, dict)
+                else []
+            )
+            prior_semantic_repairs = [
+                item
+                for item in prior_card_errors
+                if str((item.get("failure") or {}).get("kind") or "") in T4_FINAL_CARD_SEMANTIC_FAILURE_KINDS
+            ]
+            if len(prior_semantic_repairs) >= T4_FINAL_CARD_SEMANTIC_REPAIR_SAFETY_LIMIT:
+                raise RecoverableRuntimePause(
+                    "T4 Portfolio Idea Card 已在当前 Population 与取向下连续经历 "
+                    f"{len(prior_semantic_repairs)} 次内容/格式定向修复仍未形成完整卡片。"
+                    "候选、评分和谱系均已保留；系统不会因展示文案问题反复调用模型。"
+                    "请检查 `ideation/evolution/diagnostics/final_card_compilation_attempt_*.json`，"
+                    "修正其中指出的源数据或改变研究取向后再 resume。"
+                )
             card_errors: list[dict[str, object]] = []
             if not cards_ready:
                 try:
@@ -5541,13 +5587,19 @@ class AgentRunner:
                 # before a durable pause. More retries repeated the same deck
                 # and schema without adding scientific information.
                 max_card_attempts = max(1, min(max_card_attempts, 4))
+                remaining_semantic_repairs = max(
+                    1,
+                    T4_FINAL_CARD_SEMANTIC_REPAIR_SAFETY_LIMIT - len(prior_semantic_repairs),
+                )
+                max_card_attempts = min(max_card_attempts, remaining_semantic_repairs)
                 for attempt in range(1, max_card_attempts + 1):
                     try:
                         repair_context: dict[str, object] = {}
                         if profile_refresh is not None:
                             repair_context["profile_refresh"] = profile_refresh
-                        if card_errors:
-                            prior_failure = card_errors[-1].get("failure")
+                        prior_attempts = [*prior_card_errors, *card_errors]
+                        if prior_attempts:
+                            prior_failure = prior_attempts[-1].get("failure")
                             if isinstance(prior_failure, dict):
                                 repair_context["previous_failure"] = prior_failure
                         final_cards = await final_card_compiler.compile(
@@ -5571,7 +5623,8 @@ class AgentRunner:
                         diagnostic = {
                             "schema_version": "1.0.0",
                             "semantics": "t4_final_idea_card_compilation_diagnostic",
-                            "attempt": attempt,
+                            "attempt": len(prior_card_errors) + attempt,
+                            "attempt_in_current_run": attempt,
                             "max_attempts": max_card_attempts,
                             "population_id": result.population.population_id,
                             "candidate_ids": [candidate.candidate_id for candidate in portfolio_dossiers],
@@ -5586,11 +5639,18 @@ class AgentRunner:
                         if not failure.repair_scheduled:
                             break
                 if not final_cards:
+                    all_card_errors = [*prior_card_errors, *card_errors]
                     repair_scheduled = any(
                         bool((item.get("failure") or {}).get("repair_scheduled"))
-                        for item in card_errors
+                        for item in all_card_errors
                         if isinstance(item, dict)
                     )
+                    semantic_repairs = [
+                        item
+                        for item in all_card_errors
+                        if str((item.get("failure") or {}).get("kind") or "") in T4_FINAL_CARD_SEMANTIC_FAILURE_KINDS
+                    ]
+                    repair_window_exhausted = len(semantic_repairs) >= T4_FINAL_CARD_SEMANTIC_REPAIR_SAFETY_LIMIT
                     store.write_json(
                         "ideation/final_cards/portfolio_cards.json",
                         {
@@ -5600,19 +5660,23 @@ class AgentRunner:
                             "target_profile": model_dump(run_config.target_profile, mode="json"),
                             "cards": [],
                             "status": "llm_repair_required",
-                            "attempts": card_errors,
+                            "attempts": all_card_errors,
                             "repair": {
                                 "scheduled": repair_scheduled,
                                 "scope": "portfolio_final_card_compiler",
                                 "next_action": (
-                                    "resume_t4_to_retry_final_card_llm"
+                                    "inspect_final_card_diagnostic_then_change_source_or_profile"
+                                    if repair_window_exhausted
+                                    else "resume_t4_to_retry_final_card_llm"
                                     if repair_scheduled
                                     else "resolve_recorded_provider_or_source_prerequisite_then_resume_t4"
                                 ),
-                                "attempts_exhausted": len(card_errors) >= max_card_attempts,
+                                "attempts_exhausted": repair_window_exhausted or len(card_errors) >= max_card_attempts,
+                                "semantic_repair_attempt_count": len(semantic_repairs),
+                                "semantic_repair_safety_limit": T4_FINAL_CARD_SEMANTIC_REPAIR_SAFETY_LIMIT,
                                 "failure_kinds": [
                                     str((item.get("failure") or {}).get("kind") or "")
-                                    for item in card_errors
+                                    for item in all_card_errors
                                     if isinstance(item, dict)
                                 ],
                             },
@@ -5621,13 +5685,18 @@ class AgentRunner:
                     store.update_final_card_repair_checkpoint(
                         status="llm_repair_required",
                         reason="bounded_llm_final_card_compilation_failed",
-                        attempts=card_errors,
+                        attempts=all_card_errors,
                     )
                     raise RecoverableRuntimePause(
                         "T4 的 Portfolio Idea Card 未能由 LLM 完整编译；候选、评分和谱系已保存，"
                         "但不会用固定模板或残缺字段替代科研解释。"
-                        "已记录每次失败的具体类别和 LLM 修复路径；请 resume 继续定向卡片修复，"
-                        "或先处理诊断中标出的源数据或模型配置前置条件。"
+                        + (
+                            "内容/格式修复安全窗已用尽；请先处理诊断中标出的源数据或研究取向，"
+                            "不要仅 resume 重复请求相同卡片。"
+                            if repair_window_exhausted
+                            else "已记录每次失败的具体类别和 LLM 修复路径；请 resume 继续定向卡片修复，"
+                            "或先处理诊断中标出的源数据或模型配置前置条件。"
+                        )
                     )
                 store.write_json(
                     "ideation/final_cards/portfolio_cards.json",
@@ -5655,14 +5724,14 @@ class AgentRunner:
                         "resolution": {
                             "action": "llm_final_card_compilation_completed",
                             "card_count": len(final_cards),
-                            "prior_compilation_failure_count": len(card_errors),
+                            "prior_compilation_failure_count": len([*prior_card_errors, *card_errors]),
                         },
                     },
                 )
                 store.update_final_card_repair_checkpoint(
                     status="cards_compiled_projection_pending",
                     reason="llm_final_card_compilation_completed_projection_pending",
-                    attempts=card_errors,
+                    attempts=[*prior_card_errors, *card_errors],
                     projection_completed=False,
                 )
             ctx.extra["t4_heartbeat_phase_key"] = "gate1_projection"
@@ -10379,21 +10448,102 @@ class AgentRunner:
 
     @classmethod
     def _record_t36_quality_repair_attempt(cls, *, ctx: ExecutionContext, error: str) -> bool:
-        """Pause only when the same T3.6 diagnosis has no relevant source progress."""
+        """Persist T3.6 repair progress so resume cannot reset its safety window."""
 
-        normalized_error = " ".join(str(error or "unknown validation error").split()).casefold()
+        signature = cls._t45_quality_error_signature(error)
         scope = cls._t36_quality_repair_source_scope(ctx, error)
         current = cls._t36_quality_source_fingerprint(ctx.workspace_dir, source_paths=scope)
-        previous_error = str(ctx.extra.get("t36_quality_last_error") or "").casefold()
-        previous = ctx.extra.get("t36_quality_last_source_fingerprint")
+        ledger, _key, entry = cls._t36_quality_repair_entry(ctx)
+        previous_error = str(entry.get("last_error_signature") or "")
+        previous = entry.get("last_source_fingerprint")
         no_source_progress = (
-            normalized_error == previous_error
+            signature == previous_error
             and isinstance(previous, dict)
             and previous == current
         )
-        ctx.extra["t36_quality_last_error"] = normalized_error
-        ctx.extra["t36_quality_last_source_fingerprint"] = current
+        entry["attempt_count"] = int(entry.get("attempt_count") or 0) + 1
+        entry["last_error_signature"] = signature
+        entry["last_source_fingerprint"] = current
+        entry["source_scope"] = list(scope)
+        entry["blocked_no_source_progress"] = no_source_progress
+        ctx.extra["t36_quality_repair_attempt_count"] = int(entry["attempt_count"])
+        cls._write_t36_quality_repair_ledger(ctx.workspace_dir, ledger)
         return no_source_progress
+
+    @classmethod
+    def _t36_quality_repair_baseline(cls, workspace_dir: Path) -> str:
+        inputs = cls._t36_quality_source_fingerprint(
+            workspace_dir,
+            source_paths=T36_QUALITY_REPAIR_BASELINE_ARTIFACTS,
+        )
+        payload = json.dumps(inputs, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _load_t36_quality_repair_ledger(workspace_dir: Path) -> dict[str, object]:
+        path = workspace_dir / T36_QUALITY_REPAIR_LEDGER_REL_PATH
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            data = {}
+        entries = data.get("entries") if isinstance(data, dict) else None
+        return {
+            "semantics": "t36_quality_repair_ledger",
+            "version": 1,
+            "entries": dict(entries) if isinstance(entries, dict) else {},
+        }
+
+    @staticmethod
+    def _write_t36_quality_repair_ledger(workspace_dir: Path, ledger: dict[str, object]) -> None:
+        path = workspace_dir / T36_QUALITY_REPAIR_LEDGER_REL_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(ledger, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    @classmethod
+    def _t36_quality_repair_entry(cls, ctx: ExecutionContext) -> tuple[dict[str, object], str, dict[str, object]]:
+        ledger = cls._load_t36_quality_repair_ledger(ctx.workspace_dir)
+        baseline = cls._t36_quality_repair_baseline(ctx.workspace_dir)
+        key = f"{ctx.task_id}:{baseline}"
+        entries = ledger["entries"]
+        assert isinstance(entries, dict)
+        entry = entries.get(key)
+        if not isinstance(entry, dict):
+            entry = {
+                "task_id": ctx.task_id,
+                "baseline": baseline,
+                "attempt_count": 0,
+            }
+            entries[key] = entry
+        return ledger, key, entry
+
+    @classmethod
+    def _t36_quality_repair_window_blocked(cls, ctx: ExecutionContext) -> tuple[bool, str]:
+        if not cls._uses_t36_quality_repair_loop(ctx):
+            return False, ""
+        _ledger, _key, entry = cls._t36_quality_repair_entry(ctx)
+        attempts = int(entry.get("attempt_count") or 0)
+        scope = tuple(str(item) for item in entry.get("source_scope", []) if isinstance(item, str))
+        previous_sources = entry.get("last_source_fingerprint")
+        sources_unchanged = bool(scope) and isinstance(previous_sources, dict) and (
+            cls._t36_quality_source_fingerprint(ctx.workspace_dir, source_paths=scope) == previous_sources
+        )
+        if bool(entry.get("blocked_no_source_progress")) and sources_unchanged:
+            return True, "同一诊断对应的 survey source artifact 尚未发生变化"
+        if attempts >= SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT:
+            return True, f"已用尽 {SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT} 轮定向修复安全窗"
+        return False, ""
+
+    def _pause_t36_quality_repair_before_llm(self, ctx: ExecutionContext) -> None:
+        """Keep a resumed T3.6 task from re-opening an exhausted repair loop."""
+
+        blocked, reason = self._t36_quality_repair_window_blocked(ctx)
+        if blocked:
+            raise RecoverableRuntimePause(
+                "T36_REPAIR_WINDOW_PAUSED: "
+                + reason
+                + "。为避免 resume 重复消耗额度，系统不会自动再次调用 Survey Writer。"
+                "请修正该诊断关联的 source artifact，或改变文献基础、模板或已确认的综述范围后再 resume。"
+            )
 
     @staticmethod
     def _t45_quality_source_fingerprint(
