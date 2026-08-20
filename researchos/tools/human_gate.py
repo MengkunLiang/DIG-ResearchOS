@@ -839,6 +839,163 @@ class CLIHumanInterface(HumanInterface):
         if rendered:
             print(rendered)
 
+    @staticmethod
+    def _t1_scope_sections(question: str) -> tuple[str, list[tuple[str, str]], str] | None:
+        """Split the stable T1 three-layer scope question for a decision-first UI.
+
+        The question itself remains the durable record used by resume.  This
+        parser only recognizes the explicit headings that the T1 prompt
+        requires, and returns ``None`` for every other human question so an
+        unexpected model response remains visible through the generic Markdown
+        panel rather than being silently reformatted or dropped.
+        """
+
+        if "T1 文献范围与跨域探索确认" not in question:
+            return None
+        heading_pattern = re.compile(r"(?m)^##\s+(.+?)\s*$")
+        matches = list(heading_pattern.finditer(question))
+        recognized: list[tuple[re.Match[str], str]] = []
+        for match in matches:
+            heading = match.group(1).strip()
+            if "核心研究线" in heading:
+                recognized.append((match, "core"))
+            elif "邻接" in heading:
+                recognized.append((match, "adjacent"))
+            elif "Bridge" in heading or "跨领域" in heading:
+                recognized.append((match, "bridge"))
+        if len(recognized) != 3 or {kind for _, kind in recognized} != {"core", "adjacent", "bridge"}:
+            return None
+
+        intro = question[: recognized[0][0].start()].strip()
+        sections: list[tuple[str, str]] = []
+        for index, (match, kind) in enumerate(recognized):
+            end = recognized[index + 1][0].start() if index + 1 < len(recognized) else len(question)
+            sections.append((kind, question[match.start() : end].strip()))
+
+        last_kind, last_section = sections[-1]
+        answer_match = re.search(r"(?m)^\*\*请.*?(?:回答|回复).*?$", last_section)
+        answer_help = ""
+        if answer_match:
+            answer_help = last_section[answer_match.start() :].strip()
+            sections[-1] = (last_kind, last_section[: answer_match.start()].strip())
+        return intro, sections, answer_help
+
+    @staticmethod
+    def _scope_candidate_panels(section: str, *, border_style: str) -> list[Panel]:
+        """Turn `### id · name` cards into compact, vertically scannable panels."""
+
+        lines = section.splitlines()
+        if not lines:
+            return []
+        section_heading = lines[0].removeprefix("##").strip()
+        body = "\n".join(lines[1:]).strip()
+        chunks = re.split(r"(?m)^###\s+", body)
+        if len(chunks) <= 1:
+            return [Panel(Markdown(body or "（本组暂无候选）"), title=section_heading, border_style=border_style, expand=True)]
+
+        panels: list[Panel] = []
+        for chunk in chunks[1:]:
+            candidate_lines = chunk.strip().splitlines()
+            if not candidate_lines:
+                continue
+            candidate_title = candidate_lines[0].strip()
+            detail = Table.grid(expand=True, padding=(0, 1))
+            detail.add_column(style="bold", width=16, no_wrap=True)
+            detail.add_column(ratio=1, overflow="fold")
+            detail_rows = 0
+            freeform_lines: list[str] = []
+            for line in candidate_lines[1:]:
+                match = re.match(r"^\s*([^：:]{1,16})[：:]\s*(.+?)\s*$", line)
+                if match:
+                    detail.add_row(match.group(1).strip(), Text(match.group(2).strip(), overflow="fold"))
+                    detail_rows += 1
+                elif line.strip():
+                    freeform_lines.append(line.strip())
+            candidate_body: Any = detail if detail_rows else Markdown("\n".join(freeform_lines) or "（未提供说明）")
+            panels.append(
+                Panel(
+                    candidate_body,
+                    title=candidate_title,
+                    border_style=border_style,
+                    expand=True,
+                    padding=(0, 1),
+                )
+            )
+        return panels or [Panel(Markdown(body or "（本组暂无候选）"), title=section_heading, border_style=border_style, expand=True)]
+
+    def _render_t1_scope_confirmation(
+        self, *, question: str, suggestions: list[str] | None
+    ) -> bool:
+        """Render the T1 scope decision as concepts first, then candidate cards."""
+
+        parsed = self._t1_scope_sections(question)
+        if parsed is None:
+            return False
+        intro, sections, answer_help = parsed
+        width = max(80, min(140, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        buffer = io.StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=not self._no_color,
+            color_system=None if self._no_color else "truecolor",
+            no_color=self._no_color,
+            width=width,
+            highlight=False,
+            _environ={"COLUMNS": str(width), "LINES": "40"},
+        )
+
+        definitions = Table.grid(expand=True, padding=(0, 1))
+        definitions.add_column(style="bold", width=18, no_wrap=True)
+        definitions.add_column(ratio=1, overflow="fold")
+        definitions.add_row("核心研究线", "研究对象、关键机制、主要方法或评测。T2 必须覆盖，T3/T4 将它作为主线证据。")
+        definitions.add_row("邻接理论/方法线", "帮助形式化、比较或划清边界。按当前论证需要选择性检索，不会替代研究主线。")
+        definitions.add_row("真正跨领域 Bridge", "来自不同问题域的可检验借鉴。可以为空；只触发有针对性的额外检索，不会自动变成核心论文。")
+        definitions.add_row("重点 / 普通交叉", "重点交叉会保底做最小必要探索；普通交叉仅在能补足当前问题时检索。两者都不是强制采用的方法。")
+        console.print(
+            Panel(
+                Group(
+                    Markdown(intro),
+                    Text("", style="none"),
+                    Text("先理解这三类范围，再决定保留、删除或调整哪些候选。", style="bold cyan"),
+                    definitions,
+                ),
+                title="T1 文献范围与跨域探索确认",
+                border_style="bright_yellow",
+                expand=True,
+            )
+        )
+
+        styles = {
+            "core": ("一、核心研究线", "bright_cyan"),
+            "adjacent": ("二、邻接理论 / 方法线", "cyan"),
+            "bridge": ("三、真正跨领域 Bridge", "magenta"),
+        }
+        for kind, section in sections:
+            label, style = styles[kind]
+            panels = self._scope_candidate_panels(section, border_style=style)
+            console.print(Panel(Group(*panels), title=label, border_style=style, expand=True))
+
+        answer_parts: list[Any] = []
+        if answer_help:
+            answer_parts.append(Markdown(answer_help))
+        if suggestions:
+            answer_parts.append(Text("可直接提交的参考回答", style="bold"))
+            for idx, item in enumerate(suggestions, start=1):
+                suggestion = re.sub(
+                    r"^\s*(?:\[\s*\d+\s*\]|\(?\d+\)?[.、)])\s*",
+                    "",
+                    _compact_text(item, 240),
+                )
+                if suggestion:
+                    answer_parts.append(Text(f"{idx}. {suggestion}", overflow="fold"))
+        if answer_parts:
+            console.print(Panel(Group(*answer_parts), title="你只需这样回答", border_style="bright_yellow", expand=True))
+
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            print(rendered)
+        return True
+
     def _render_section(self, title: str) -> None:
         if self._no_color:
             print(f"【{title}】")
@@ -876,23 +1033,24 @@ class CLIHumanInterface(HumanInterface):
     async def ask_clarification(
         self, *, question: str, suggestions: list[str] | None = None
     ) -> str:
-        lines = [question]
-        if suggestions:
+        if not self._render_t1_scope_confirmation(question=question, suggestions=suggestions):
+            lines = [question]
+            if suggestions:
             # Markdown collapses ordinary newlines into one paragraph. Use a
             # real list so its marker and answer stay together and continuation
             # lines wrap beneath that answer. Suggestions sometimes arrive
             # pre-numbered from an LLM; remove that local marker to avoid a
             # confusing ``1. 1. ...`` display.
-            lines.extend(["", "## 可直接输入的参考回答", ""])
-            for idx, item in enumerate(suggestions, start=1):
-                suggestion = re.sub(
-                    r"^\s*(?:\[\s*\d+\s*\]|\(?\d+\)?[.、)])\s*",
-                    "",
-                    _compact_text(item, 240),
-                )
-                if suggestion:
-                    lines.extend([f"{idx}. {suggestion}", ""])
-        self._render_panel(title="需要你的输入", border_style="bright_yellow", lines=lines)
+                lines.extend(["", "## 可直接输入的参考回答", ""])
+                for idx, item in enumerate(suggestions, start=1):
+                    suggestion = re.sub(
+                        r"^\s*(?:\[\s*\d+\s*\]|\(?\d+\)?[.、)])\s*",
+                        "",
+                        _compact_text(item, 240),
+                    )
+                    if suggestion:
+                        lines.extend([f"{idx}. {suggestion}", ""])
+            self._render_panel(title="需要你的输入", border_style="bright_yellow", lines=lines)
         for attempt in range(1, self.CLARIFICATION_EMPTY_RETRIES + 1):
             print("请输入回答（输入完成后，" + _terminal_eof_submit_instruction() + "）:")
 
