@@ -833,6 +833,14 @@ class EditFileParams(BaseModel):
     new_text: str | None = Field(None, description="替换后的新文本；允许为空字符串")
     old_string: str | None = Field(None, description="old_text 的兼容别名")
     new_string: str | None = Field(None, description="new_text 的兼容别名")
+    replacements: list[dict[str, str]] | None = Field(
+        None,
+        description=(
+            "同一文件的一组原子精确替换；每项使用 old_text/new_text。"
+            "全部旧文本都唯一匹配时才一次写入，任何一项失败则文件保持不变。"
+        ),
+        max_length=20,
+    )
 
 
 class EditFileTool(Tool):
@@ -850,6 +858,7 @@ class EditFileTool(Tool):
     description = (
         "安全修改一个 workspace 文本文件。传 path 和 old_text/new_text（或 old_string/new_string）"
         "可精确替换唯一出现的一段文本；传 path 和 content 则完整替换文件，并遵守 write_file 的全部限制。"
+        "同一文件有多个独立修复时，使用 replacements=[{old_text,new_text}, ...] 一次原子完成，避免逐项重读。"
         "不要空调用；结构化 YAML/JSON 请使用 write_structured_file。"
     )
     parameters_schema = EditFileParams
@@ -882,6 +891,64 @@ class EditFileTool(Tool):
         content = kwargs.get("content")
         old_text = self._first_text(kwargs, "old_text", "old_string")
         new_text = self._first_text(kwargs, "new_text", "new_string")
+        replacements = kwargs.get("replacements")
+        if replacements is not None:
+            if content is not None or old_text is not None or new_text is not None:
+                return ToolResult(
+                    ok=False,
+                    content="edit_file 的 replacements 批量模式不能与 content 或单项 old_text/new_text 混用。",
+                    error="ambiguous_edit_request",
+                )
+            if not isinstance(replacements, list) or not replacements:
+                return ToolResult(ok=False, content="replacements 必须是非空替换列表。", error="invalid_edit_request")
+            try:
+                source = self.policy.resolve_read(path).read_text(encoding="utf-8")
+            except ToolAccessDenied as exc:
+                return ToolResult(ok=False, content=str(exc), error="access_denied")
+            except FileNotFoundError:
+                return ToolResult(ok=False, content=f"File not found: {path}", error="not_found")
+            except IsADirectoryError:
+                return ToolResult(ok=False, content=f"Path is a directory, not a file: {path}", error="is_directory")
+            except UnicodeDecodeError:
+                return ToolResult(ok=False, content=f"File is not UTF-8 text: {path}", error="not_text")
+            updated = source
+            for index, replacement in enumerate(replacements, start=1):
+                if not isinstance(replacement, dict):
+                    return ToolResult(
+                        ok=False,
+                        content=f"replacements 第 {index} 项必须是 old_text/new_text 对象；文件未修改。",
+                        error="invalid_edit_request",
+                    )
+                before = str(replacement.get("old_text") or "")
+                after = str(replacement.get("new_text") or "")
+                if not before:
+                    return ToolResult(
+                        ok=False,
+                        content=f"replacements 第 {index} 项的 old_text 不能为空；文件未修改。",
+                        error="invalid_edit_request",
+                    )
+                match_count = updated.count(before)
+                if match_count != 1:
+                    return ToolResult(
+                        ok=False,
+                        content=(
+                            f"replacements 第 {index} 项在 {path} 中匹配 {match_count} 次；"
+                            "批量编辑已原子取消，文件未修改。请读取当前文件后提供唯一片段。"
+                        ),
+                        data={"path": path, "failed_replacement_index": index, "match_count": match_count},
+                        error="edit_target_not_unique",
+                    )
+                updated = updated.replace(before, after, 1)
+            result = await self._writer.execute(path=path, content=updated)
+            result.data = {
+                **result.data,
+                "edit_mode": "atomic_exact_replacements",
+                "requested_tool": self.name,
+                "replacement_count": len(replacements),
+            }
+            if result.ok:
+                result.content = f"Applied {len(replacements)} atomic exact replacements in {path}. {result.content}"
+            return result
         if content is not None:
             if old_text is not None or new_text is not None:
                 return ToolResult(

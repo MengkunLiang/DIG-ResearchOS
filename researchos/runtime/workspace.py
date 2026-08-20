@@ -42,6 +42,7 @@ STANDARD_WORKSPACE_DIRS = [
     "literature/shallow_read_notes",
     "literature/bridge_notes",
     "literature/cross_domain_catalogs",
+    "literature/evidence_queries",
     "resources",
     "resources/repos",
     "resources/datasets",

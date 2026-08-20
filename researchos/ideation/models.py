@@ -281,19 +281,11 @@ class IdeaGene(_StrictModel):
 class OpportunityQuery(_StrictModel):
     schema_version: str = SCHEMA_VERSION
     opportunity_id: str
-    type: Literal[
-        "cross_paper_tension",
-        "hidden_assumption",
-        "mechanism_gap",
-        "failure_boundary",
-        "evaluation_blind_spot",
-        "design_rationale_conflict",
-        "unexplained_phenomenon",
-        "disconnected_mechanism",
-        "user_seed_challenge",
-        "survey_challenge",
-        "bridge_transfer_opportunity",
-    ]
+    # Descriptive telemetry, not a scientific or routing invariant.
+    # ``compatible_routes`` owns scheduling. An equivalent provider-authored
+    # category must not trigger another LLM call merely to fit a closed UI
+    # vocabulary.
+    type: str = Field(min_length=1)
     one_line_summary: str = Field(min_length=1)
     question: str = Field(min_length=1)
     why_it_matters: str = Field(min_length=1)
@@ -1128,7 +1120,7 @@ class CreativeContext(_StrictModel):
         "mixed",
     ] = "mixed"
     evidence_status: Literal["supported", "conjectural", "mixed"] = "conjectural"
-    verification_required: bool = True
+    verification_required: bool = False
     reading_or_validation_upgrades: list[str] = Field(default_factory=list)
     extended_validation_design: str = ""
 
@@ -1164,10 +1156,10 @@ class CandidateDossier(_StrictModel):
         # package is neither under-specified nor mechanically over-expanded.
         # Legacy migrations remain readable as explicitly partial records.
         if self.maturity == CandidateMaturity.EVOLVED:
-            if not 2 <= len(self.contributions) <= 4:
-                raise ValueError("an evolved candidate requires 2-4 contributions")
-            if not 2 <= len(self.hypotheses) <= 4:
-                raise ValueError("an evolved candidate requires 2-4 provisional hypotheses")
+            if not 1 <= len(self.contributions) <= 4:
+                raise ValueError("an evolved candidate requires 1-4 non-duplicative contributions")
+            if not 1 <= len(self.hypotheses) <= 4:
+                raise ValueError("an evolved candidate requires 1-4 provisional hypotheses")
         return self
 
 

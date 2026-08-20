@@ -429,7 +429,7 @@ LLM 判断包括：
 | T4 软 novelty/集中度诊断 | `ideation_tools.py` 提供 `analyze_idea_concentration` 和 `compute_idea_novelty_signal`；`idea_scorecard.yaml` 必须记录 `counterfactual_check`、`nearest_prior_work`、`novelty_signal`，Gate1 brief 必须显示集中度提示、Origin 分布和 Novelty-Utility 谱系。字段存在性用于防止跳过审阅，不按好坏 gate；材料不足时允许 `insufficient_evidence`、`not_computed`、`domain_map_unavailable` 并要求说明原因，避免硬编三分类 | 已落地 |
 | T4.5 collision + ambition | `novelty_auditor.j2` 要求同时写 Collision Axis 和 Ambition Axis；`mechanism_tools.py` 增加 `extract_design_rationale_tuple` / `compare_design_rationale_tuples`；`novelty_auditor.py` 校验 `_design_rationale_tuples/` 与 routine reframe 要求 | 已落地 |
 | T4.5 非通过 verdict 人工决策 | `novelty_auditor.j2` 要求写 `Final Gate Verdict`；状态机对 T4.5 使用 `__parse_from_output__`：只有 `pass_to_experiment` / `pass_with_required_baselines` 等明确通过枚举进入 `T5-REBOOST-GATE`，`return_to_T4_reframe` / `drop_due_to_collision` / `reject` / `collision` / `fail`、缺失 verdict 和未知 verdict 都进入 `T4.5-HUMAN-REVIEW`。该节点是 `immediate_gate`，不启动 LLM，不自动拒绝、自动回 T4 或默认放行；用户查看 `novelty_audit.md`、Gate1 brief、scorecard 后选择继续外部实验链、回 T4 或结束，决策落盘到 `ideation/novelty_human_review.json` | 已落地 |
-| T8 消费 CDR 与 Pre-T5 新产物 | T8-RESOURCE 生成 `cdr_claim_ledger.json` 和 `alignment_matrix.json`，并通过 task contract 复制 `domain_map.json`、`synthesis_workbench.json`、`idea_scorecard.yaml`、`writing_style.json` 和 `external_executor/executor_research_report.md`；这些文件在 `T8-RESOURCE`、`T8-WRITE`、`T8-SECTION-PLAN` 与 `T8-SEC-RELATED` 中是单任务强前置，避免 Related Work 静默降级；Related Work 消费 `adjacent_transfers`、`bridge_transfer_drafts`、`domain_map.theory_bridge`、`cross_domain_sources` 和 `nearest_prior_work`，alignment rows 消费 `counterfactual` / `novelty_signal`；`audit_writing_craft` 会 WARN 检查 Related Work 是否可见地使用最近工作、邻接迁移或 cross-paper tension 信号；Reviewer 增加 `CDR Contribution Verdict` | 已落地 |
+| T8 消费 CDR 与 Pre-T5 新产物 | T8-RESOURCE 确定性生成 `cdr_claim_ledger.json` 和只读 seed `alignment_matrix.json`，并通过 task contract 复制现代 T4/T4.5 产物包、`domain_map.json`、`synthesis_workbench.json`、`writing_style.json` 和 executor 报告；`idea_scorecard.yaml` 仅作旧 workspace 兼容输入。Related Work 用一次本地 evidence query 选择最相关的 note fragment 和 citation key，再结合现代 proposal/blueprint、邻接迁移、最近工作与 cross-paper tension 形成叙事；利用率审计区分检索、纳入与正文实际引用 | 已落地 |
 | T9 编译校验 | T9 生成 `compile_report.json`，记录 LaTeX 构建、hash/mtime、错误日志和 PDF artifact；不是只看 `paper.pdf` 是否存在 | 已落地 |
 
 这里的 CDR schema 和 tool 输出都是“结构化职责”和“证据脚手架”，不是 deterministic 学术模板。需要知识、判断和写作的地方仍由 LLM 完成：T3 的 design rationale 判断、T3.5 的方法家族/张力综合、T4 的前向生成、T4.5 的 novelty/ambition 解释、T8 的最终论文叙事，都不能由工具硬编码替代。
@@ -974,7 +974,7 @@ raw 数量只是完成 T2 的必要条件，不是充分条件；Scout 必须先
 
 ### T2 怎样控制候选池规模
 
-`papers_raw.jsonl` 是全量检索审计池，可以超过保留候选数上限；`papers_dedup.jsonl` 不是全量 raw 的简单去重结果，而是本轮保留候选集。默认保留候选数上限是 `config/system_config/agent_params.yaml -> agents.scout.behavior.t2_finalize.active_pool_max = 120`，超出保留候选集的候选写入 `literature/papers_backlog.jsonl`，带 `t2_pool_role=backlog`、`triaged_out=true` 和 `triaged_reason=t2_active_pool_cap_exceeded`，用于覆盖审计、人工回捞或排障，不会被静默丢弃，也不会被普通 T3 abstract sweep 自动读回。
+`papers_raw.jsonl` 是全量检索审计池，可以超过保留候选数上限；`papers_dedup.jsonl` 不是全量 raw 的简单去重结果，而是本轮保留候选集。默认保留候选数上限是 `config/system_config/agent_params.yaml -> agents.scout.behavior.t2_finalize.active_pool_max = 50`，超出保留候选集的候选写入 `literature/papers_backlog.jsonl`，带 `t2_pool_role=backlog`、`triaged_out=true` 和 `triaged_reason=t2_active_pool_cap_exceeded`，用于覆盖审计、人工回捞或排障，不会被静默丢弃，也不会被普通 T3 abstract sweep 自动读回。
 
 T2 deterministic finalize 中影响候选规模和 API 消耗的机械阈值都在 `agents.scout.behavior.t2_finalize`：包括 `dedup_title_threshold`、`metadata_backfill_max_concurrency`、`abstract_backfill_title_match_threshold`、`snowball_max_sources`、`snowball_refs_per_source`、`snowball_max_candidates`、`snowball_title_match_threshold` 和 `access_audit_top_n`。这些字段会写进 `search_log.md` 的配置来源说明，方便排障时确认本轮用的是哪组参数。
 
@@ -1092,11 +1092,11 @@ Bridge cap 是候选级硬边界：同一 confirmed bridge 的候选即使同时
 
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
-| `deep_read_min` | `35` | 最低精读线；预算/资源异常时的最低可接受结构化 deep-read note 数 |
-| `deep_read_target` | `35` | 精读目标；`require_deep_read_target=true` 时 T3 必须读满该目标才进入 T3.5 |
-| `deep_read_max` | `45` | 精读目标硬上限，保护位也在其中计数 |
-| `probe_pool` | `45` | T3 优先 probe 的候选池大小 |
-| `mainline_screened_cap` | `90` | 主线 shallow/screened backlog 保留上限 |
+| `deep_read_min` | `24` | 最低精读线；预算/资源异常时的最低可接受结构化 deep-read note 数 |
+| `deep_read_target` | `30` | 精读目标；`require_deep_read_target=true` 时 T3 必须读满该目标才进入 T3.5 |
+| `deep_read_max` | `36` | 精读目标硬上限，保护位也在其中计数 |
+| `probe_pool` | `36` | T3 优先 probe 的候选池大小 |
+| `mainline_screened_cap` | `50` | 主线 shallow/screened backlog 保留上限 |
 | `bridge_deep_floor` | `3` | 每个 must_explore bridge 通过 screen 后的精读保底 |
 | `bridge_screened_cap` | `7` | 每个 bridge 的 shallow/screened backlog 保留上限 |
 | `bridge_pool_cap` | `15` | 每个 bridge 在 queue 中默认保留的候选总上限；超额不删除，标为 deferred 并保留覆盖账本 |
@@ -1575,7 +1575,7 @@ T8/T9 会直接消费它，而不是重新从 note 手工抽引用。
 
 ### T3 的 Abstract Sweep（轻量补读）
 
-Deep read 完成后，orchestrator 自动运行 abstract sweep，补读尚未被 `deep_read_notes/` 或 `shallow_read_notes/` 覆盖的保留候选。它读取 title/abstract/metadata 而不是全文。含 abstract 的论文写入 `literature/shallow_read_notes/`，并会实际扩展 T3.5 的 coverage、taxonomy、trend、comparison、bridge discovery 和 research-question discovery；但写作时必须明确是 abstract-level 描述，不能单独确认机制、因果结果或实现细节。只有 title/year/venue/DOI 等 metadata 的候选不再逐篇伪装成 note，而是批量写入 `literature/metadata_triage.md`，作为资源补取线索。三档 `T2-PARAM-GATE` 分别把阅读覆盖分配为标准研究 `35+85=120`、综述均衡 `60+120=180` 和综述强覆盖 `80+160=240`；`papers_backlog.jsonl` 只用于替换不可读候选或后续显式补检，不会暗中扩大确认后的阅读覆盖。
+Deep read 完成后，orchestrator 自动运行 abstract sweep，补读尚未被 `deep_read_notes/` 或 `shallow_read_notes/` 覆盖的保留候选。它读取 title/abstract/metadata 而不是全文。含 abstract 的论文写入 `literature/shallow_read_notes/`，并会实际扩展 T3.5 的 coverage、taxonomy、trend、comparison、bridge discovery 和 research-question discovery；但写作时必须明确是 abstract-level 描述，不能单独确认机制、因果结果或实现细节。只有 title/year/venue/DOI 等 metadata 的候选不再逐篇伪装成 note，而是批量写入 `literature/metadata_triage.md`，作为资源补取线索。三档 `T2-PARAM-GATE` 分别把阅读覆盖分配为标准研究 `30+20=50`、综述均衡 `40+40=80` 和综述强覆盖 `55+65=120`；`papers_backlog.jsonl` 只用于替换不可读候选或后续显式补检，不会暗中扩大确认后的阅读覆盖。
 
 配置在 `config/system_config/agent_params.yaml` 的 `reader.modes.read.behavior.abstract_sweep`：
 
@@ -1586,7 +1586,7 @@ reader:
       behavior:
         abstract_sweep:
           enabled: true
-          lite_paper_num: 85      # 标准研究默认 35 篇精读 + 85 篇轻读 = 120 篇阅读覆盖；综述档位按各自候选总数分配；可显式设 all_readable
+          lite_paper_num: 20      # 标准研究默认 30 篇精读 + 20 篇轻读 = 50 篇阅读覆盖；综述档位按各自候选总数分配；可显式设 all_readable
           min_relevance: 0.0      # 默认不按 metadata hint 丢弃
           sources: [papers_verified, papers_dedup]
           exclude_already_read: true
@@ -1738,7 +1738,7 @@ T3.5 不是继续搜论文，也不是继续逐篇读，而是把：
 
 当前实现采用 3 阶段流程：
 
-**阶段 1：LLM 分析** — Reader 先用自身理解逐篇分析 deep_read_notes，生成四类 `llm_insights`（见下文 `LLMInsights` 模型），不调用任何工具。
+**阶段 1：本地索引与 LLM 分析** — Reader 先调用一次不含 `llm_insights` 的 `build_synthesis_workbench`，把全部笔记建立为保留 provenance 的统一索引。LLM 再在该上下文中综合判断，只对会改变结论的含糊点回查精确 note section。
 
 **阶段 2：工具组装** — Reader 调用 `build_synthesis_workbench(write_final=false, render_draft=false, llm_insights={...})`，把 LLM 洞察传入工具。工具读取 deep_read_notes 提取证据片段，用 LLM 提供的分类/假设/趋势/问题组装 `synthesis_workbench.json`、`synthesis_outline.md` 和 `synthesis_draft.md`。
 
@@ -1750,14 +1750,14 @@ T3.5 不是继续搜论文，也不是继续逐篇读，而是把：
 
 `ReaderAgent(synthesize)` 的执行分为三个阶段：
 
-#### 阶段 1：LLM 分析（不调用工具）
+#### 阶段 1：先建立本地索引，再做 LLM 分析
 
-Reader 加载 `literature-synthesis` guidance 后，先用自己的 LLM 能力逐篇分析 `deep_read_notes/` 和 `shallow_read_notes/` 中的笔记，必要时查看 `metadata_triage.md` 识别需要补资源或升级阅读的候选；`metadata_triage.md` 不能作为 family/trend/claim 的证据来源。随后生成四类洞察：
+Reader 加载 `literature-synthesis` guidance 后，先执行一次不含 `llm_insights` 的确定性 `build_synthesis_workbench`，将 deep、bridge 和 shallow notes 统一索引，但不形成最终学术判断。LLM 随后在统一 workbench 中分析，只对实质含糊点做 purpose-specific evidence query 并打开返回的精确 note section。`metadata_triage.md` 只能帮助识别补资源或升级阅读需求，不能作为 family、trend 或 claim 的证据。随后生成四类洞察：
 
 - **family_classifications**：每篇论文的方法家族分类（基于 method_overview、Technical Details 等实际内容，禁止基于标题宽泛关键词做表面分类）
 - **shared_assumptions**：2-4 个跨论文的共同假设（从 Limitations、Weaknesses/Gaps、Claims vs Evidence 中提取）
 - **trends**：2-3 个技术趋势（对比近期和早期论文的 method_overview 和 Key Results 变化）
-- **research_questions**：3-6 个可操作研究问题（基于 Gaps、Missing Areas coverage hints 和 LLM 分析）
+- **research_questions**：最小充分的 1–5 个可操作且不重复的研究问题（基于 Gaps、Missing Areas coverage hints 和 LLM 分析）
 
 这四类洞察封装为 `LLMInsights` Pydantic 模型（定义在 `researchos/tools/literature_synthesis.py`）：
 
@@ -2398,7 +2398,7 @@ T4 的两个阶段都必须可见：
 
 #### 历史 post-selection 字段（已由 T4.5 formalization 取代）
 
-1. **当前行为**：把已选 Candidate 编译为带 1-4 条 Draft Hypotheses 的 Pre-Novelty brief，并生成 T4.5 search targets。经过完整富化的 Candidate 通常有 2-4 条；已有完整 Final Card、独立评分与一条可证伪假设的 provisional Seed 可以进入 T4.5，其不足会作为 warning 交给审计。
+1. **当前行为**：把已选 Candidate 编译为带一至四条非重复 Draft Hypotheses 的 Pre-Novelty brief，并生成 T4.5 search targets。数量服从问题结构；已有完整 Final Card、独立评分与一条可证伪假设的 provisional Seed 可以进入 T4.5，其不足会作为 warning 交给审计。
 
 2. **历史字段清单**：旧 Workspace 可能带有以下文件；native T4 仅在 T4.5 通过后生成正式版本：
    - `ideation/hypotheses.md`：正式研究假设（`## H1`、`## H2` 锚点）
@@ -2417,7 +2417,7 @@ T4 的两个阶段都必须可见：
 
 下面的规则说明保留的 Pass1/Pass2 projection 与 migration diagnosis。native T4 校验 Evidence Permission、Candidate Contract、Genome/lineage、Round fingerprint、Population update 和 Portfolio selection；不会用历史文件数量或第二个 Gate 替代这些校验。
 
-- Pre-Novelty brief 必须有 1-4 条非模板化 Draft Hypotheses、可追溯 Core Thesis、独立评分和完整 Final Card。2-4 条是假设富化的通常目标，但不是确认后回退的隐性门槛。正式 `hypotheses.md` 只会在 T4.5 audit 通过后生成，并包含 `H1/H2/...` anchor。
+- Pre-Novelty brief 必须有一至四条非模板化 Draft Hypotheses、可追溯 Core Thesis、独立评分和完整 Final Card。系统不以偏好数量作为确认后回退的隐性门槛。正式 `hypotheses.md` 只会在 T4.5 audit 通过后生成，并包含 `H1/H2/...` anchor。
 - 正式 `exp_plan.yaml` 只在 T4.5 audit 通过后做 schema 校验，且 `hypothesis_ref` 必须指向存在的正式 anchor。
 - `idea_scorecard.yaml` 必须过 schema，记录选中和淘汰/暂缓/合并的候选 idea；每个 idea 必须包含 `mechanism`、`prediction`、`counterfactual`、`mechanism_family` 四个非空字段
 - `_pass1_forward_candidates.json` 必须存在，且至少包含 4 个原始候选；每个候选必须有稳定 ID 和 `idea_origin`
@@ -2575,7 +2575,7 @@ Archive 和可选的 `rejected_ideas.md` compatibility projection 会用人能�
 - Evidence Index 与 Evidence Permission 必须完整并绑定 fingerprint。
 - Standard mode 必须完成完整的 P0 -> P1：独立评分、合法 Evolution Plan、Contract validation、Survival Selection 与 Population update 都不能跳过。只有成功接纳的 Child 改变 Population 时才需要 union rescoring；否则保留实际取得的 Parent 独立评分并写入明确的复用回执。
 - Portfolio 展示 1-3 个 Candidate，同时配置的 Active Population 与 Archive 必须可恢复。
-- 每个经过完整富化的 Gate1 Candidate 都应有非模板化的 mechanism/prediction/counterfactual/family 和 2-4 条 Draft Hypotheses。provisional Seed 至少需要一条可证伪草案假设、完整 Final Card 与独立评分才能选择进入 T4.5；正式 hypothesis 与 experiment plan 必须等待 T4.5 audit 通过。
+- 每个经过完整富化的 Gate1 Candidate 都应有非模板化的 mechanism、prediction、counterfactual、family 和一至四条真正独立的 Draft Hypotheses。provisional Seed 至少需要一条可证伪草案假设、完整 Final Card 与独立评分才能选择进入 T4.5；正式 hypothesis 与 experiment plan 必须等待 T4.5 audit 通过。
 - 资源检查和可执行计划的预算检查在 T4.5 formalization 时执行。
 
 ### T4 的 Ideation 覆盖分析
@@ -2620,8 +2620,8 @@ T4.5 是由三个独立上下文组成的研究方案阶段，不只是新颖性
   - `read_file`
   - `write_file`
   - `list_files`
-- `search_papers`
-- `fetch_paper_metadata`
+- `query_research_evidence`
+- `targeted_literature_supplement`
 - `extract_mechanism_tuple`
 - `compare_mechanism_tuples`
 - `extract_design_rationale_tuple`
@@ -2630,7 +2630,7 @@ T4.5 是由三个独立上下文组成的研究方案阶段，不只是新颖性
 
 ### 定向检索边界
 
-T4.5 可以围绕已选 Candidate 的 `t45_search_targets.json` 调用 `search_papers` 与 `fetch_paper_metadata`，以检查相似工作、潜在 collision、机制差异和必需 baseline。这是审计级的补充检索：返回记录只作为本轮判断的 metadata/摘要线索，并在 `novelty_audit.md` 或 `collision_cases.md` 中说明其作用；不会自动下载 PDF、写入 T2/T3 主文献池、进入精读队列或提高阅读证据等级。只有显式发起补读或回流检索时，候选才可以进入正式文献覆盖流程。
+T4.5 先用 `query_research_evidence` 查询 canonical notes 与已归档 Evidence Index。只有会改变 collision verdict、claim boundary 或必需 baseline 的实质缺口，才允许执行一次有界 `targeted_literature_supplement`。核验结果会归档到共享文献契约并形成可被后续复用的摘要级 canonical note。审计必须写明哪条精确 note path 或 citation key 改变了判断；摘要材料可扩大召回，不能单独证明细粒度机制碰撞。
 
 ### 输入文件
 
@@ -2686,7 +2686,7 @@ T4.5 可以围绕已选 Candidate 的 `t45_search_targets.json` 调用 `search_p
 
 ### 第一阶段：实际执行过程
 
-`NoveltyAuditorAgent` 先读 `ideation/hypotheses.md`，用 `H1/H2/...` anchor 切分每个假设；再读 `literature/synthesis.md`、`literature/comparison_table.csv` 和 `ideation/idea_scorecard.yaml`，拿到已有方法家族、baseline、指标上下文和 mechanism 字段。对每个假设，它从假设标题、方法关键词、目标场景和预期机制中抽出 3-4 组 query（包括第 4 类 mechanism 关键词 query），然后调用 `search_papers(query=..., source="auto", max_results=30, year_from=<运行时近一年起始年>)` 搜近期工作；`search_papers` 的 schema 是单数 `source`，不是 `sources`。必要时用 `fetch_paper_metadata` 回查疑似撞车论文。
+`NoveltyAuditorAgent` 读取已选 Pre-Novelty brief，而不是尚未正式化的 `hypotheses.md`。它把 Candidate 机制、synthesis、精确 canonical note section、项目语境与模型学术推理融合起来，先调用 `query_research_evidence`。只有一个会改变裁决的邻近工作缺口才触发补检，整阶段最多两个聚焦 query、八条核验记录。结果归档后可跨阶段复用；Pilot 或模型判断可帮助形成 query 和条件边界，但外部新颖性必须由可回查的既有工作支持。
 
 每个假设还必须分别调用 `extract_mechanism_tuple` 和 `extract_design_rationale_tuple`：前者保存到 `ideation/_mechanism_tuples/`，服务 collision axis；后者保存到 `ideation/_design_rationale_tuples/`，包含 `problem_frame`、`design_rationale`、`artifact`、`contribution_type`、`evaluation_mode` 和 `boundary_conditions` 等字段，服务 ambition / contribution-distance axis。对疑似相近论文，审计员先用 LLM 阅读摘要/metadata 判断关系，再调用 `compare_mechanism_tuples` 和 `compare_design_rationale_tuples` 获取机械相似度 hint；tool hint 不能直接替代最终 novelty 判断。
 
@@ -2757,7 +2757,7 @@ T4.5 的有效性不是“只看关键词”的单层判断。schema、文件存
 
 ### mechanism tuple 工具
 
-T4.5 引入了两个机制感知工具，用于自动化的碰撞检测。此外，`NoveltyAgent._extract_mechanism_keywords()` 使用结构化模式匹配提取搜索关键词（连字符术语、缩写词、大写技术名词、通用 ML 术语），不依赖硬编码的领域关键词列表；LLM agent 自身会根据假设上下文调整 query。
+T4.5 提供机制感知的碰撞审阅工具。T6 已删除未被调用的 ML 术语关键词 heuristic，改由 LLM 根据真实假设和 Pilot 新暴露的机制形成 query，先检索 canonical 本地证据，并且只在结论会变化时归档一次有界补检供后续复用。
 
 **`extract_mechanism_tuple`** — tuple 持久化和轻量归一化工具。Agent 从假设文本中提取因果机制描述，调用此工具保存 JSON 文件；如 LLM 已有更合适的领域标签，可传 `normalized_input_signal` / `normalized_evidence_type` 覆盖 fallback hint：
 
@@ -3006,11 +3006,11 @@ T8 的核心跨章节契约是 `drafts/alignment_matrix.json`。它把每个 cid
 motivation -> contribution -> related_gap -> design_choice -> experiment -> analysis
 ```
 
-`build_alignment_matrix` 的行来自 `cdr_claim_ledger.json` 中的 `contribution_chains`，不是原始 CDR evidence slots。`contribution_chains` 是 3-4 条最终 contribution bullet 的机械 lane，用来避免把 7 个左右的 evidence/section slot 误当成论文贡献。工具只生成 seed 和审计 hint；motivation、gap、contribution wording、设计解释和分析判断必须由 LLM 阅读 artifact 后完成。`cid` 只允许作为 `alignment_matrix.json` / `paper_state.json` 的内部追踪 id；最终 TeX 正文和注释都不能出现 `C1`、`[C1]`、`C1:`、`C1 is ...`、`CID C1` 或 `% [C1]` 这类内部编号。
+`build_alignment_matrix` 的行来自 `cdr_claim_ledger.json` 中的 `contribution_chains`，不是原始 CDR evidence slots。它保留最小的真实贡献链，避免把 evidence/section slot 误当成论文贡献。工具只生成 seed 和审计 hint；motivation、gap、contribution wording、设计解释和分析判断仍由 LLM 完成。`cid` 只允许作为内部追踪 id，不能进入最终 TeX 正文或注释。
 
 ### 6.14.0 实现边界
 
-`WriterAgent` 负责 style gate、resource、outline、section_plan、section_draft、draft、self_check、revise。代码在 [researchos/agents/writer.py](../../researchos/agents/writer.py)，prompt 在 [researchos/prompts/writer.j2](../../researchos/prompts/writer.j2)，通用写作 skill 在 [researchos/agent_guidance/manuscript-writing/SKILL.md](../../researchos/agent_guidance/manuscript-writing/SKILL.md)，跨 section craft 在 [researchos/prompts/paper_craft.j2](../../researchos/prompts/paper_craft.j2)。
+`WriterAgent` 负责 style gate、resource、outline、section_plan、section_draft、draft、self_check 和 revise。代码在 [researchos/agents/writer.py](../../researchos/agents/writer.py)，阶段契约在 [researchos/prompts/writer.j2](../../researchos/prompts/writer.j2)，跨章节学术写作标准只有一个事实源 [researchos/agent_guidance/manuscript-writing/SKILL.md](../../researchos/agent_guidance/manuscript-writing/SKILL.md)。这样不会在每次章节调用时再注入一份近乎重复的 craft 模板。
 
 `ReviewerAgent` 负责两轮逐章节 review 和综合 review。代码在 [researchos/agents/reviewer.py](../../researchos/agents/reviewer.py)，prompt 在 [researchos/prompts/reviewer.j2](../../researchos/prompts/reviewer.j2)。
 
@@ -3019,7 +3019,7 @@ motivation -> contribution -> related_gap -> design_choice -> experiment -> anal
 - `build_manuscript_resource_index`：扫描 workspace 中的文献、实验、假设、图表、代码和日志资源。
 - `plan_manuscript_sections`：生成 7 个 section 的 required inputs、expected outputs 和 LLM 任务提示。
 - `plan_manuscript_evidence`：生成 claim slots 与 figure/table slots。
-- `build_manuscript_registries`：生成 CDR claim ledger、generic claim ledger 和 figure registry seed；其中 `contribution_chains` 是后续 alignment matrix 使用的 3-4 条贡献 lane。
+- `build_manuscript_registries`：生成 CDR claim ledger、generic claim ledger 和 figure registry seed；其中非重复 `contribution_chains` 供后续 alignment matrix 使用。
 - `build_alignment_matrix`：基于 contribution lanes 生成 alignment matrix seed，不做最终学术判断，也不把机械 evidence slots 当最终贡献。
 - `initialize_manuscript_state`：生成 `paper_state.json` 和每章 `section_outlines/*.md`。
 - `update_manuscript_section_state`：记录单章 written/revised 状态。
@@ -3041,7 +3041,7 @@ motivation -> contribution -> related_gap -> design_choice -> experiment -> anal
 | family/id | gate 可选 | T3.6 survey assembly | T8 manuscript assembly | support files | T9 bundle |
 | --- | --- | --- | --- | --- | --- |
 | `utd/informs` | 是 | INFORMS 原生 `\TITLE/\ARTICLEAUTHORS/\ABSTRACT` | INFORMS 原生 `\TITLE/\ARTICLEAUTHORS/\ABSTRACT` | `informs4.cls`、`informs2014.bst`、`eqndefns-*`、logo | 扫描并复制 class/style/bst/logo |
-| `ccf/neurips` | 是，默认 | NeurIPS `neurips_2026` article shell | NeurIPS `neurips_2026` article shell | `neurips_2026.sty`，同时保留 `checklist.tex` | 扫描并复制 style/checklist |
+| `ccf/neurips` | 是，需明确选择 | NeurIPS `neurips_2026` article shell | NeurIPS `neurips_2026` article shell | `neurips_2026.sty`，同时保留 `checklist.tex` | 扫描并复制 style/checklist |
 | `ccf/iclr` | 是 | ICLR 2026 style shell | ICLR 2026 style shell | `iclr2026_conference.sty`、`iclr2026_basic.tex` | 扫描并复制 style/shell |
 | `ccf/icml` | 是 | ICML 原生 `\icmltitle` / `\twocolumn[...]` | ICML 原生 `\icmltitle` / `\twocolumn[...]` | `icml2026.sty`、`icml2026.bst`、`algorithm*.sty`、`fancyhdr.sty`、`natbib.sty` | 扫描并复制 style/bst/transitive deps |
 | `ccf/kdd` | 是 | ACM/KDD `acmart` shell | ACM/KDD `acmart` shell | `acmart.cls`、`ACM-Reference-Format.bst` 等同级 support | 扫描并复制 class/bst |
@@ -3053,27 +3053,27 @@ motivation -> contribution -> related_gap -> design_choice -> experiment -> anal
 
 ### 6.14.2 T8-RESOURCE：WriterAgent（resource_index）
 
-`T8-RESOURCE` 输入包括 `project.yaml`、已接收的 `external_executor/executor_research_report.md`、只读 supporting `external_executor/` 目录、`drafts/t5_t8_handoff.json`、`drafts/experiment_evidence_pack.json`、`drafts/result_to_claim.json`、`literature/synthesis.md`、`literature/synthesis_workbench.json`、`literature/domain_map.json`、`literature/related_work.bib`、`ideation/hypotheses.md`、`ideation/idea_scorecard.yaml`，以及可选的 `exp_plan.yaml`、`novelty_audit.md`、`comparison_table.csv`、`ablations.csv`。
+`T8-RESOURCE` 输入包括 `project.yaml`、已接收的 executor 报告和 supporting 目录、T5/T8 evidence handoff、`literature/synthesis.md`、`synthesis_workbench.json`、`domain_map.json`、`related_work.bib`、`ideation/hypotheses.md`，以及现代 T4/T4.5 产物包。现代产物包括 selected candidate、research blueprint、orientation review、research dossier、research proposal、proposal manifest、validation map、contribution hypothesis map 和 kill criteria。旧 `idea_scorecard.yaml` 以及 `exp_plan.yaml`、`novelty_audit.md`、`comparison_table.csv`、`ablations.csv` 仍可作为兼容或补充输入。
 
-其中 `writing_style`、`synthesis_workbench`、`domain_map` 和 `idea_scorecard` 是单任务强前置，不再只是“强烈推荐”。`researchos run-task T8-RESOURCE --from <workspace>` 会复制这些 artifact；如果缺失，前置校验会要求先补齐 T8-STYLE-GATE 或 Pre-T5 产物。这样 Related Work 和 alignment matrix 不会因为单阶段调试而失去 venue 风格、`adjacent_transfers`、`nearest_prior_work`、`counterfactual_check` 和 `novelty_signal`。
+单任务强前置是 `writing_style`、executor report、synthesis、`synthesis_workbench`、`domain_map`、BibTeX 和 hypotheses。现代 T4/T4.5 包会在存在时被完整复制并优先索引；`idea_scorecard` 缺失不会阻塞新 workspace。这样既保留可验证的文献和实验骨架，也不会把已经由 coherent proposal 表达的信息强行降级回旧 scorecard schema。
 
 实际执行顺序固定：
 
-1. 调用 `build_manuscript_resource_index`，扫描 literature、paper notes、bib、hypotheses、idea scorecard、novelty audit、`external_executor/executor_research_report.md`、supporting external-executor artifacts、ablations、runs、configs、figures、tables 和 code artifacts，写 `drafts/manuscript_resource_index.json`。该索引会同时暴露 `citation_ref_by_note_id`、`note_id_by_bib_key` 和 `unmapped_note_ids`：T3.5 的 `[note:<id>]` 是 Markdown provenance，T8 TeX 正文必须用这里的 `\cite{bibkey}` 映射；无法映射到 BibTeX key 的 note 只能作为 provenance/补资源提示，不能原样进入 TeX 引用。
-2. 调用 `plan_manuscript_sections`，写 `drafts/section_plan.json`。当前主链规划 7 章：abstract、introduction、related_work、methodology、experiments、analysis、conclusion；Conclusion 的 required inputs 合并了原 Limitations 所需的 risks、novelty audit 和 iteration log。
+1. 调用 `build_manuscript_resource_index`，扫描 literature、paper notes、BibTeX、hypotheses、现代 T4/T4.5 包、legacy scorecard、novelty audit、executor artifacts、实验结果、配置、图表和代码，写 `drafts/manuscript_resource_index.json`。索引保存路径、类型和 citation 映射，不默认把全部 note preview 重复塞入 Prompt；T8 TeX 正文必须使用可核验的 `\cite{bibkey}`，无法映射的 note 只能作为 provenance 或补资源提示。
+2. 调用 `plan_manuscript_sections`，写 `drafts/section_plan.json`。当前主链规划 7 章：abstract、introduction、related_work、methodology、experiments、analysis、conclusion；每章把真正阻断写作的 hard inputs 与已存在的可选文件、可枚举且确有内容的目录分开。仅含 `_DIR_GUIDE.md` 的初始化目录不作为可读资源展示，避免 Writer 为无关空目录发起工具调用。Conclusion 的 hard inputs 合并了原 Limitations 所需的 risks、novelty audit 和 iteration log。
 3. 调用 `plan_manuscript_evidence`，写 `drafts/evidence_plan.json` 和 `drafts/figure_table_plan.json`。
 4. 调用 `build_manuscript_registries`，写 `drafts/cdr_claim_ledger.json`、`drafts/claim_ledger.json`、`drafts/figure_registry.json`。
-5. 调用 `build_alignment_matrix`，从 `cdr_claim_ledger.json` 的 `contribution_chains`、evidence plan、figure/table plan、synthesis、hypotheses 和 idea scorecard 生成 `drafts/alignment_matrix.json`。它会把 `idea_scorecard.yaml` 中的 `counterfactual_check`、`counterfactual_note`、`nearest_prior_work` 和 `novelty_signal` 带入每条 contribution lane，作为 Writer 论证“为什么不是简单增量”和 Related Work 差异化定位的 hint。如果没有 contribution lanes，工具才回退生成 3-4 条 `LLM_REVIEW_REQUIRED` lane；这只是恢复兜底，不是最终贡献判断。
+5. 调用 `build_alignment_matrix`，从 contribution chains、evidence plan、figure/table plan、synthesis、hypotheses 和现代或 legacy idea artifacts 生成 `drafts/alignment_matrix.json`。它是可恢复的确定性 seed，不是最终科学判断；没有上游 contribution lane 时只生成一条显式恢复 lane，不凭空制造多项贡献。
 
-Validator 会要求 resource 阶段产物包含 resource index、section/evidence/figure plans、三个 registry 和 alignment matrix，并检查关键 semantics 和最小结构。Alignment matrix 必须有 rows，后续 outline 阶段还会检查它是 3-5 条贡献 lane，而不是任意数量的 evidence slot。进入正文写作前，`WriterAgent` 会拒绝关键 alignment 字段仍停留在 `LLM_REVIEW_REQUIRED` / `TODO` / `TBD`：这些占位可以作为 T8-RESOURCE 的 seed，但不能作为已确认的跨章节贡献链。
+Validator 会要求 resource 阶段产物包含 resource index、section/evidence/figure plans、三个 registry 和非空 alignment matrix。该阶段由 runtime 确定性完成，不消耗 LLM。Seed 中允许保留明确的 `LLM_REVIEW_REQUIRED`，因为科学完善进入 outline 和正文；最终 TeX 仍会严格拒绝任何 placeholder。
 
 ### 6.14.3 T8-WRITE：WriterAgent（outline）
 
-`T8-WRITE` 读取 resource index、section plan、evidence plan、figure/table plan、CDR ledger、claim ledger、figure registry、alignment matrix、synthesis、hypotheses、results 和 bib 预览，写 `drafts/outline.md`。
+`T8-WRITE` 读取 resource index、section plan、evidence plan、figure/table plan、CDR ledger、claim ledger、figure registry、alignment matrix、synthesis、hypotheses、results 和定向 evidence query，写 `drafts/outline.md` 与 `drafts/writing_storyline.md`。
 
-这一步是 LLM 学术判断阶段。Writer 需要把 `alignment_matrix.json` 中的每条 cid 补成可写作的链路：motivation、contribution、related_gap、design_choice、experiment、analysis。工具只给 seed，例如候选 metric、citation pool、图表 label 和 CDR field；gap 是否成立、贡献如何措辞、IS/CCF-A 风格怎么讲，由 Writer 阅读上游 artifact 后决定。
+这一步是 LLM 学术判断阶段。Writer 在统一 reasoning context 中融合 alignment seed、现代 proposal/blueprint、文献证据和实验结果，形成可写作的 motivation、contribution、related gap、design choice、experiment 与 analysis 链。它不再为了满足格式而覆写 runtime-owned alignment JSON；gap 是否成立、贡献如何措辞以及 IS/CCF-A 风格怎么讲，都在 outline 和 storyline 中表达。
 
-大纲必须包含标题候选、paper thesis、contribution map、section-by-section argument、figure/table plan、claim ledger 和 alignment matrix refinement。Validator 检查 `outline.md` 不是空文件、包含 `##` 结构，覆盖 Introduction、Related Work、Method、Experiments 等核心章节，并要求 `alignment_matrix.json` 保持合法 semantics、3-5 条 rows、每行具备 cid、motivation、contribution、related_gap、design_choice、experiment 和 analysis 字段。字段可以在 T8-RESOURCE seed 中临时带 `LLM_REVIEW_REQUIRED`，但 Writer 必须在 outline / section-plan 前把关键字段补成可写作的学术判断；否则后续校验会暂停，不允许把占位符带进正文。
+大纲必须包含标题候选、paper thesis、contribution map、连续的 section argument、figure/table plan 和 claim/evidence alignment。Validator 检查大纲与 storyline 的科学语义，同时只对 alignment seed 检查 semantics、row 数和必要字段；它不再用脆弱的 JSON 改写重试代替学术判断。
 
 ### 6.14.4 T8-SECTION-PLAN：WriterAgent（section_plan）
 
@@ -3082,6 +3082,7 @@ Validator 会要求 resource 阶段产物包含 resource index、section/evidenc
 ```text
 initialize_manuscript_state(
   outline_path="drafts/outline.md",
+  storyline_path="drafts/writing_storyline.md",
   resource_index_path="drafts/manuscript_resource_index.json",
   section_plan_path="drafts/section_plan.json",
   evidence_plan_path="drafts/evidence_plan.json",
@@ -3093,13 +3094,13 @@ initialize_manuscript_state(
 )
 ```
 
-该工具写 `drafts/paper_state.json`，其中包括 `section_order`、每章目标文件、required/available/missing inputs、`shared_facts.bib_keys`、`shared_facts.result_metrics`、claim slots、planned visuals 和 `shared_facts.alignment_matrix`。同时它写每章 `drafts/section_outlines/<section>.md`，每个 outline 都包含 Purpose、Required Inputs、Responsible CIDs、Claim Slots、Figure/Table Slots 和 Writing Rules。
+该工具写 `drafts/paper_state.json`，其中包括 `section_order`、每章目标文件、required/available/missing inputs、共享事实、claim slots、planned visuals、alignment seed 与 storyline 指纹。同时它把 storyline 中与本章最相关的 problem、bottleneck、insight、method、evidence、alternative explanation 或 boundary 段落确定性带入各章 `section_outlines`。这不会增加模型调用，却避免 outline 阶段的连续论证在章节边界丢失。
 
-Orchestrator 在进入 LLM 前有确定性恢复逻辑：如果 `outline/resource/section/evidence/figure/alignment` 计划文件已存在，但 `paper_state.json` 或 section outlines 不合格，会直接调用 `initialize_manuscript_state` 修复并跳过 LLM。这保证 resume 不会在 T8-SECTION-PLAN 反复消耗模型重写机械状态。
+Orchestrator 在进入 LLM 前有确定性恢复逻辑：如果 `outline/storyline/resource/section/evidence/figure/alignment` 文件已存在，但 `paper_state.json` 或 section outlines 不合格，会直接调用 `initialize_manuscript_state` 修复并跳过 LLM。若发现旧版 section plan 把 optional material 混入 hard inputs，会先确定性重建整个 T8 resource bundle，再生成 state；Storyline 变化也会使旧 paper state 失效，防止章节继续复用过时论证。
 
 ### 6.14.5 T8-SEC-METHOD：WriterAgent（section_draft, section_id=methodology）
 
-`T8-SEC-METHOD` 只写 `drafts/sections/methodology.tex`。Writer 读取 `paper_state.json`、`section_outlines/methodology.md`、`alignment_matrix.json` 的 design_choice 列、`ideation/hypotheses.md`、`ideation/exp_plan.yaml`、`ideation/idea_scorecard.yaml`、novelty/CDR tuples、实验 configs 和可用 code artifacts。
+`T8-SEC-METHOD` 只写 `drafts/sections/methodology.tex`。Writer 的 hard inputs 是 `paper_state.json`、`section_outlines/methodology.md`、`alignment_matrix.json` 的 design_choice 列、`ideation/hypotheses.md` 与 `ideation/exp_plan.yaml`。现代 Candidate/proposal、legacy scorecard、novelty/CDR tuples、实验 configs 和 code 只在确实存在且会改变本章论证时作为可选材料读取；目录先用一次有界枚举，再打开所需的精确文件，绝不把目录传给 `read_file`。
 
 本章先定义 artifact 和 design rationale，再讲整体架构、组件、notation、算法和实现。每个设计选择都要解释 why，不用实验结果证明方法有效；贡献对应关系用自然语言闭环，内部追踪只保存在 `paper_state.json` / `alignment_matrix.json`。写完必须调用 `update_manuscript_section_state(section_id="methodology", status="written")`。
 
@@ -3111,9 +3112,9 @@ Orchestrator 在进入 LLM 前有确定性恢复逻辑：如果 `outline/resourc
 
 ### 6.14.7 T8-SEC-RELATED：WriterAgent（section_draft, section_id=related_work）
 
-`T8-SEC-RELATED` 只写 `drafts/sections/related_work.tex`。Writer 读取 `alignment_matrix.json` 的 related_gap、`literature/synthesis.md`、`literature/synthesis_workbench.json`、`literature/domain_map.json`、`ideation/idea_scorecard.yaml`、`comparison_table.csv`、paper notes 和 `related_work.bib`。在 task contract 中，`synthesis_workbench`、`domain_map`、`idea_scorecard` 和 `alignment_matrix` 都是强前置；缺失时应先回到 T3.5/T4/T8-RESOURCE 修复。
+`T8-SEC-RELATED` 只写 `drafts/sections/related_work.tex`。Writer 先针对当前定位问题调用一次本地 evidence query，取得最相关的 note fragment、来源路径和 citation key，再结合 synthesis、workbench、domain map、BibTeX、alignment seed、comparison table 与现代 T4/T4.5 产物写作。强前置是 synthesis、workbench、domain map、BibTeX 和 alignment matrix；`idea_scorecard` 只是可选 legacy hint。
 
-Related Work 按 competing design rationale 组织，不按论文流水账。每个主题 subsection 应说明该流派共同 rationale、代表工作、共同局限或 tension，然后用自然语言落到本文对应的 gap 或 design choice，不暴露内部 cid。`synthesis_workbench.adjacent_transfers` 和 `bridge_transfer_drafts` 用来识别邻接/理论桥接的可迁移机制，`domain_map.core/theory_bridge/adjacent/citation_edges` 用来提示主干与邻接结构，`idea_scorecard.cross_domain_sources`、`idea_scorecard.nearest_prior_work` 和 alignment matrix 的 `nearest_prior_work` 用来做最近工作差异化定位，`counterfactual` / `novelty_signal` 只作为 marginal 风险提示。citation key 必须存在于 `.bib`；工具只给 citation pool 和结构化 hint，prior-work positioning 由 LLM 判断。
+Related Work 按 competing design rationale 组织，不按论文流水账。每个主题 subsection 说明共同 rationale、代表工作、局限或 tension，再自然落到本文的 gap 或 design choice。邻接迁移、domain map、modern proposal/blueprint 中的 nearest-work 边界，以及 legacy scorecard 在存在时提供的 cross-domain hint 都可参与判断，但只有真正改变论断的来源才进入正文。Citation key 必须存在于 `.bib`，prior-work positioning 由 LLM 判断并由 run-scoped 利用率回执核对实际使用。
 
 `T8-DRAFT` 的 `audit_writing_craft` 会做一个非阻断的 `related_work_pre_t5_signal_consumption` 检查：如果 Related Work 完全看不到 nearest-prior-work、adjacent-transfer、cross-paper tension 或对应文本片段，就给 WARN。它不会替代 LLM 判断某篇工作是否相关，只提示“上游花资源生成的 Pre-T5 素材可能没被写作消费”。
 
@@ -3127,7 +3128,7 @@ Related Work 按 competing design rationale 组织，不按论文流水账。每
 
 `T8-SEC-INTRO` 在 Method、Experiments、Related Work 和 Analysis 之后运行，只写 `drafts/sections/introduction.tex`。Writer 读取 `alignment_matrix.json` 的 motivation/contribution、CDR ledger、synthesis、hypotheses、results，以及已写 Method/Experiments/Related Work。
 
-Introduction 采用 5-move：Problem、Gap、Approach、numbered Contributions、venue-specific closing。gap/motivation 通常不超过 3 个，contribution 3-4 条，并应和 alignment matrix 的内部 lane 形成清晰逻辑对应；这种对应关系只写在 `paper_state.json` / `alignment_matrix.json`，正文贡献 bullet 使用自然语言。`ccf_a` 风格需要量化 results headline；`is` 风格需要理论或 reference anchor。Intro 不能超过已有 evidence。
+Introduction 以连续论证展开现实问题、计算困难、方法、贡献和 venue-relevant implication。gap 与 contribution 数量跟随研究逻辑，并和 alignment matrix 的内部 lane 形成清晰对应；正文使用自然语言而不是内部 ID。只有真实结果支持时才写量化 headline，Intro 不能超过已有 evidence。
 
 ### 6.14.10 T8-SEC-CONCLUSION：WriterAgent（section_draft, section_id=conclusion）
 
@@ -3187,7 +3188,7 @@ T8 恢复依赖已有 artifact：
 
 单独调试建议从 `T8-STYLE-GATE` 或 `T8-RESOURCE` 开始；如果已有合法 `writing_style.json`，可直接跑 `T8-RESOURCE`。完整 `run/resume` 会按状态机走完 `T8-STYLE-GATE -> T8-RESOURCE -> T8-WRITE -> T8-SECTION-PLAN -> T8-SEC-* -> T8-DRAFT -> T8-SELF-CHECK -> ...`。
 
-单任务调试时，`--from <upstream-workspace>` 会按 task contract 复制所有声明输入；其中 `T8-RESOURCE` 会复制 `domain_map.json`、`synthesis_workbench.json`、`idea_scorecard.yaml`，`T8-SEC-RELATED` 也会复制这三者和 `alignment_matrix.json`。这些不是装饰性输入，而是 Related Work 和 alignment matrix 的强前置。缺失时前置校验会失败，避免写作链退化成只读 `synthesis.md` 和 `.bib` 的 prompt-only 写法。
+单任务调试时，`--from <upstream-workspace>` 按 task contract 复制声明输入，包括现代 T4/T4.5 产物包；legacy scorecard 仅在存在时复制。真正缺少 synthesis、workbench、domain map、BibTeX 或 alignment matrix 时前置校验会失败，避免写作链静默退化；缺少旧 scorecard 不会阻塞现代 workspace。
 
 旧 `researchos run-task T8-SECTIONS --workspace ...` 仍被 CLI 接受，但会映射到 `T8-SECTION-PLAN`；旧 `T8-SEC-LIMITATIONS` 会映射到 `T8-SEC-CONCLUSION`。
 
@@ -3241,7 +3242,7 @@ T9 进入 LLM 前会先做编译环境 preflight：如果本机已有 `latexmk` 
 
 **匿名化 precheck 默认关闭**（`submission.py` line 83: `enforce_anonymization_precheck` 默认 `False`）。只有当 `agent_params.yaml` 中 `submission.behavior.enforce_anonymization_precheck` 设为 `true` 时，才会在进入 LLM 前拦截检查邮箱、URL、GitHub 等匿名化问题。这便于本地调试或非匿名投稿场景直接产出投稿包。
 
-**Venue 模板支持**：T9 从 `project.yaml` 的 `target_venue` 字段（默认 `neurips2026`）读取目标会议格式，迁移主稿到对应模板。
+**Venue 模板支持**：T9 只在 `project.yaml` 明确提供 `target_venue` 时读取并核对对应格式。若未指定 venue，则保留 T8 已选的 CCF/AI 写作风格和中性本地模板，不会擅自冒充某个会议的官方格式。
 
 `latex_compile` 的缓存也按依赖 fingerprint 判定：除了 `main.tex` hash，还会记录 bundle 内非生成文件（例如 `references.bib`、figures、`.sty/.cls`、`bundle_manifest.json`） 的 dependency fingerprint。成功缓存只有在 PDF/log/hash/mtime/size 和依赖 fingerprint 全部一致时复用；同一 fingerprint 的源级失败不会重复编译，必须修改 TeX 或依赖后再试。
 
@@ -3585,7 +3586,7 @@ researchos audit-survey --workspace ./workspace/project-a
 researchos validate --task T3.6-ASSEMBLE --workspace ./workspace/project-a
 ```
 
-引用多样性是硬性覆盖契约，不是无行动价值的 warning。分母只包含同时满足以下条件的 BibTeX 条目：有本地笔记卡、证据等级明确、且与已保存的综述计划存在确定范围关联（直接 taxonomy 链接、synthesis coverage plan 条目，或足够的实质性标题词重合）。检索噪声、未知证据和无链接条目会被明确排除。T3.6 放行前必须覆盖该范围内材料的至少 50%，或在更高时满足活跃章节下限。审计会将目标、缺口、排除条目、候选 `source_file`、证据限制和逐节核查队列写入 `repair_guidance`；校验修复 prompt 也会将同一组操作事实注入 Survey Writer。候选绝不是自动引用：FULL/PARTIAL 笔记必须逐句核验，ABSTRACT-ONLY 只能用于背景、趋势、范围或证据边界。没有安全候选时，Writer 必须记录 repair plan，不能堆砌无关引用。
+引用利用审计会分别记录 information availability、范围内可追溯 inclusion 与正文 actual use。诊断池只包含有本地笔记卡、证据等级明确且与已保存综述计划存在确定关联的 BibTeX 条目，检索噪声、未知证据和无链接条目会被排除。审计报告实际覆盖和未使用候选，但不设置固定百分比，因为放入候选池不能证明语义利用，而百分比目标会诱发 citation padding。引用存在性、论断语义对齐、provenance 和证据边界仍是硬检查。逐节队列只在存在实质证据缺口或引用过度集中时使用，任何候选都必须先回查精确 note。
 
 集中度是同一检查中的独立部分。小语料保留最小重复保护；长综述的阈值按总引用出现次数放大。因此 `13/104`（12.5%）不会再因固定 `>10` 规则被误判为集中。真正的 `bibliography_quality` 失败仍会阻塞，例如把 `Information Systems Research`、`Management Science` 或 `MIS Quarterly` 的期刊论文写成 `@inproceedings`；abstract sweep 会优先识别显式 `journal` 元数据和常见期刊名称，生成 `@article`/`journal` 字段。
 
@@ -3605,7 +3606,7 @@ Generator、Scorer 和 Evolver 的权限彼此分离。Generator 只产出按 Ro
 
 五维 Core Scientific Score 在所有项目中保持一致：Research Value、Mechanism Integrity、Contribution Distinctiveness、Evidence Calibration 与 Validation Tractability。Scorer 还会将当前 `overall_readiness` 与 `scientific_upside` 分开：后者评估某个问题重构、机制、反直觉预测或研究纲领在猜想通过验证后的潜在价值。`wildcard_recommended` 方向可以与成熟方向一起保留给人类比较，但绝不会仅凭该标签成为已认证证据或可选择状态。Scorer 还会针对已确认的取向单独返回 `Profile Fit`。Portfolio 和 Parent selection 可以按配置将 Profile Fit 与 scientific upside 作为次级/保留输入，但它们都不能替代 Core Scientific Score，更不能升级弱证据。T4 Prompt 由共享 Scientific Constitution、role contract、task mode、紧凑的 Target Profile 摘要、runtime evidence context、output contract 和 failure protocol 组合而成。workspace 文本一律作为数据处理，不能成为指令。
 
-Gate1 先用 Rich 比较 1–3 个 Candidate 的 Portfolio，同时保留 6–8 个 Active Candidates 和完整 Archive 供按需查看。Lead card 与 compact alternative 使用由 LLM 根据 Workspace 生成的科研文本；renderer 只负责排版已验证字段。Seed 可以以清楚的 provisional 状态显示，避免高上行的研究纲领被隐藏。它在已有完整 LLM Final Card、独立评分、可追溯 Core Thesis 与至少一条由 LLM 写出的可证伪草案假设时，可以进入 T4.5。Seed 成熟度、证据薄弱、`revise_before_selection` 建议和单条假设 bundle 都是 T4.5 的审计 warning，不能让系统先接受确认、再重开 T4。成熟 Candidate 通常包含一句话核心、Overall Readiness 与五维解释、Problem、Core Innovation、Mechanism Chain、2–4 项 Contribution、2–4 条 Draft Hypotheses、validation snapshot、Evidence Composition、风险、推荐理由、谱系，以及说明每个文件用途的路径。`proposed_not_verified` 表示假设是清晰的待验证提案，不是已经证实的证据。缺少 Final Card 或独立评分、Core Thesis 为空、没有草案假设、Evidence Permission 无效，或科研字段由模板填充的 Candidate 会连同局限保持可见，但不能被选择进入 T4.5。
+Gate1 先用 Rich 比较 1–3 个 Candidate 的 Portfolio，同时保留 Active Population 和完整 Archive。Seed 在已有完整 LLM Final Card、独立评分、可追溯 Core Thesis 与至少一条可证伪草案假设时可以进入 T4.5。成熟 Candidate 使用最小且连贯的一至四项非重复 Contribution 与 Draft Hypotheses，不为偏好数量填充内容。缺少 readiness artifact 的 Candidate 保持可见，但不能进入 T4.5。
 
 只有进入 Portfolio 的 1–3 个 Candidate 才会额外生成 LLM 撰写的 Impact Translation，保存为 `ideation/final_cards/portfolio_cards.json`。它说明 Why It Matters、代表性场景、当前失败点、scientific/technical core、适用 implication 及其 Evidence Status/成立条件，以及不得作出的结论。Compiler 必须逐字回显 Candidate 的 core thesis、contribution IDs 与 hypothesis IDs；一旦翻译改变这些内容就会被拒绝。这样可提供易读语境，却不会把卡片写成营销文案或篡改科学 Candidate。
 

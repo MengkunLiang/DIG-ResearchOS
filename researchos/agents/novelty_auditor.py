@@ -4,7 +4,7 @@
 - 基于 Gate1 后的 Pre-Novelty Candidate、Draft Hypotheses 和 T3.5 产出的 synthesis.md
 - 对已选 Candidate 的 hypothesis bundle 进行 novelty/collision audit
 - 检查是否与已有工作重复
-- 使用search_papers搜索近期相关工作
+- 在本地证据不足且会改变裁决时执行一次有界、可归档的补检
 - 产出novelty_audit.md报告
 
 输入：
@@ -25,7 +25,6 @@ from pathlib import Path
 
 import yaml
 
-from ..time_utils import recent_year_from
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.artifact_fingerprints import write_t45_fingerprint_report
@@ -57,8 +56,8 @@ class NoveltyAuditorAgent(Agent):
                         "write_file",
                         "write_structured_file",
                         "list_files",
-                        "search_papers",
-                        "fetch_paper_metadata",
+                        "query_research_evidence",
+                        "targeted_literature_supplement",
                         "extract_mechanism_tuple",
                         "compare_mechanism_tuples",
                         "extract_design_rationale_tuple",
@@ -70,7 +69,14 @@ class NoveltyAuditorAgent(Agent):
                     "max_wall_seconds": 600,
                     "temperature": 0.3,
                     "allowed_read_prefixes": ["", "ideation/", "literature/"],
-                    "allowed_write_prefixes": ["ideation/"],
+                    "allowed_write_prefixes": [
+                        "ideation/",
+                        "literature/evidence_queries/",
+                        "literature/targeted_supplements/",
+                        "literature/shallow_read_notes/",
+                        "literature/related_work.bib",
+                        "literature/literature_manifest.json",
+                    ],
                     "prompt_template": "novelty_auditor.j2",
                 },
             )
@@ -112,7 +118,6 @@ class NoveltyAuditorAgent(Agent):
                 for item in brief.get("selection_warnings", [])
                 if str(item).strip()
             ] if isinstance(brief.get("selection_warnings"), list) else [],
-            recent_year_from=recent_year_from(1),
             temperature=self.spec.temperature,
             agent_guidance=load_agent_guidance("novelty-audit"),
         )
@@ -201,6 +206,7 @@ class NoveltyAuditorAgent(Agent):
                 )
 
         required_audit_markers = {
+            "Evidence used": r"(?im)^\s*(?:[-*]\s*)?(?:\*\*)?Evidence\s+used(?:\*\*)?\s*[:：]",
             "Collision Axis": r"(?im)^\s*(?:#+\s*)?(?:\*\*)?\s*Collision\s+Axis\b",
             "Ambition Axis": r"(?im)^\s*(?:#+\s*)?(?:\*\*)?\s*Ambition\s+Axis\b",
             "Contribution Distance": r"(?i)\bcontribution[_ -]?distance\b|贡献距离",

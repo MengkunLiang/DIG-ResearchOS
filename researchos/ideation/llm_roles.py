@@ -82,6 +82,10 @@ class T4RoleCallConfig:
     timeout: int = 120
     max_retries_per_model: int | None = None
     retry_base_delay: float | None = None
+    # Typed T4 roles need a concise final JSON object. Low reasoning preserves
+    # integrated model judgment while avoiding provider-default high thinking
+    # consuming the completion before final content is emitted.
+    reasoning_effort: str | None = "low"
     target_profile: TargetProfile | None = None
 
 
@@ -120,6 +124,7 @@ class LLMJsonRoleInvoker:
                 timeout=self.config.timeout,
                 max_retries_per_model=self.config.max_retries_per_model,
                 retry_base_delay=self.config.retry_base_delay,
+                reasoning_effort=self.config.reasoning_effort,
             )
             content = str(getattr(response.raw.choices[0].message, "content", "") or "")
         return _parse_json_object(
@@ -135,24 +140,46 @@ class LLMIdeaGenerator(IdeaGeneratorPort):
         self.invoker = invoker
 
     async def plan_opportunities(self, *, evidence_summary: dict[str, Any], run_config: T4RunConfig) -> list[OpportunityQuery]:
+        # Bound planning prose by the researcher-facing decision surface, not
+        # the number of optional exploration lenses. This is a cost/attention
+        # ceiling, not a quota: one material Opportunity is valid. Previously
+        # the Planner could spend most of a long call enumerating one question
+        # per Route even though Routes can consume the same causal tension.
+        opportunity_budget = _opportunity_budget(run_config)
         payload = {
             "prompt_version": "1.2.0",
             "evidence_summary": evidence_summary,
+            "opportunity_budget": opportunity_budget,
+            "opportunity_type_values": sorted(_OPPORTUNITY_TYPES),
+            "enabled_route_values": [route for route, quota in run_config.route_quotas.items() if quota > 0],
             "run_config": model_dump(run_config, mode="json", exclude={"target_profile"}),
         }
-        data = await self.invoker.invoke(
-            prompt_name="idea_opportunity_planner.j2",
-            system_contract=(
-                "You are IdeaGeneratorAgent in opportunity-planning mode. Return only JSON with an `opportunities` array. "
-                "Use workspace material to ground and calibrate opportunities, while using general scholarly knowledge, counterfactual reasoning, "
-                "and structural cross-domain analogy to discover non-obvious research opportunities. Do not score, rank, select, or delete ideas. "
-                "Mark parametric-knowledge or analogy-driven opportunities as verification_required and never turn synthesis inference or abstract-only "
-                "material into an established fact. "
-                "Write researcher-facing opportunity prose in clear Chinese. Follow the shared Research-Facing Chinese Naming policy: preserve canonical "
-                "English titles and named constructs rather than translating them mechanically, and use English canonical term（中文释义） at first mention."
-            ),
-            payload=payload,
-        )
+        try:
+            data = await self.invoker.invoke(
+                prompt_name="idea_opportunity_planner.j2",
+                system_contract=self._opportunity_planner_contract(),
+                payload=payload,
+            )
+        except T4RoleResponseFormatError as exc:
+            # A completed but empty/truncated/non-JSON response is a transport
+            # of the role contract, not scientific evidence that planning is
+            # impossible. Retry exactly once with the same bounded inputs and
+            # an explicit replacement instruction. Normal successful runs do
+            # not pay for this call.
+            retry_payload = {
+                **payload,
+                "format_recovery": {
+                    "previous_error": str(exc),
+                    "previous_response_excerpt": exc.response_excerpt,
+                    "instruction": "Return one fresh complete replacement JSON object. Do not discuss the failed response.",
+                },
+            }
+            data = await self.invoker.invoke(
+                prompt_name="idea_opportunity_planner.j2",
+                system_contract=self._opportunity_planner_contract()
+                + " The previous response was not a complete parseable object. This is the single bounded format-recovery attempt; return one fresh complete replacement object.",
+                payload=retry_payload,
+            )
         try:
             return _parse_opportunity_response(data)
         except (TypeError, ValueError) as exc:
@@ -167,6 +194,17 @@ class LLMIdeaGenerator(IdeaGeneratorPort):
                 validation_error=exc,
             )
             return _parse_opportunity_response(normalized)
+
+    @staticmethod
+    def _opportunity_planner_contract() -> str:
+        return (
+            "You are IdeaGeneratorAgent in opportunity-planning mode. Return only JSON with an `opportunities` array. "
+            "Use workspace material to ground and calibrate opportunities, while using general scholarly knowledge, counterfactual reasoning, "
+            "and structural cross-domain analogy to discover non-obvious research opportunities. Do not score, rank, select, or delete ideas. "
+            "Set verification_required only when a material external factual, paper-attributed, empirical, mechanism-attribution, resource, or novelty premise needs checking; ordinary inference and proposed design reasoning do not need a warning label. Never turn synthesis inference or abstract-only material into an established fact. "
+            "Write researcher-facing opportunity prose in clear Chinese. Follow the shared Research-Facing Chinese Naming policy: preserve canonical "
+            "English titles and named constructs rather than translating them mechanically, and use English canonical term（中文释义） at first mention."
+        )
 
     async def _repair_opportunity_semantics(
         self,
@@ -196,6 +234,9 @@ class LLMIdeaGenerator(IdeaGeneratorPort):
             ),
             payload={
                 "evidence_summary": evidence_summary,
+                "opportunity_budget": _opportunity_budget(run_config),
+                "opportunity_type_values": sorted(_OPPORTUNITY_TYPES),
+                "enabled_route_values": [route for route, quota in run_config.route_quotas.items() if quota > 0],
                 "run_config": model_dump(run_config, mode="json", exclude={"target_profile"}),
                 "attempted_response": attempted_response,
                 "validator_error": str(validation_error)[:1600],
@@ -210,14 +251,12 @@ class LLMIdeaGenerator(IdeaGeneratorPort):
         evidence_bundle: dict[str, Any],
         quota: int,
         repair: bool,
-        recovery: bool = False,
     ) -> list[CandidateDossier] | RouteGenerationResult | RouteGenerationPayload:
         payload = {
             "prompt_version": "1.2.0",
             "route": route,
             "quota": quota,
             "repair": repair,
-            "recovery": recovery,
             "opportunities": [model_dump(item, mode="json") for item in opportunities],
             "evidence_bundle": evidence_bundle,
         }
@@ -228,23 +267,13 @@ class LLMIdeaGenerator(IdeaGeneratorPort):
             if repair
             else ""
         )
-        recovery_instruction = (
-            " This is a creative re-divergence pass for an underfilled Route. The requested count is an exploration budget, not a requirement to manufacture filler. "
-            "Return only genuinely distinct minimal Idea Seeds; you may return fewer and explain an unsupported route when no further non-redundant idea is defensible. "
-            "Use the workspace Opportunity and Evidence Bundle as research context, plus general scholarly knowledge, counterfactual reasoning, and structural analogy to propose a falsifiable mechanism, design, and validation path. "
-            "Every non-workspace detail must be phrased as a proposal, use conjecture or inspiration provenance, set upgrade_required=true, and appear in risks or validation needs. "
-            "Never invent an external paper, source reference, dataset, metric, result, novelty conclusion, or supported mechanism. Do not reuse a reserved candidate ID."
-            if recovery
-            else ""
-        )
         data = await self.invoker.invoke(
             prompt_name="idea_generator.j2",
             system_contract=(
                 "You are IdeaGeneratorAgent. Generate candidates only for the assigned Route and return only JSON. "
                 "You do not score, rank, select, or delete candidates. Preserve evidence provenance and permissions. "
                 "Workspace material grounds and calibrates the proposal; it does not exhaust the idea space. You may use general scholarly knowledge, "
-                "counterfactual imagination, and cross-domain structural analogy in every Route. Mark non-workspace insights as conjectural, set an "
-                "upgrade requirement, and never present them as verified evidence, an existing paper, available dataset, measured result, or external novelty fact. "
+                "counterfactual imagination, and cross-domain structural analogy in every Route. Keep proposed mechanisms and designs clearly prospective. Add an upgrade requirement only for a material external factual premise, and never present model memory as verified evidence, an existing paper, available dataset, measured result, or external novelty fact. "
                 "Abstract-only evidence may inspire a candidate or upgrade requirement, never an established mechanism or final claim. "
                 "Prefer the minimal IdeaSeed contract for initial formation: problem, thesis, candidate mechanism, one contribution, one falsifiable prediction, one main risk, and route origin. "
                 "Also preserve concise scientific exploration where it adds value: conceptual leap, competing explanation, surprising prediction, and research-program potential. "
@@ -265,7 +294,6 @@ class LLMIdeaGenerator(IdeaGeneratorPort):
                 "must never substitute for Final Card LLM explanations or block a usable Seed. Retain established academic terms such as Evidence Permission, "
                 "Idea Family, Mutation Child, and Crossover Child when they improve precision."
                 + repair_instruction
-                + recovery_instruction
             ),
             payload=payload,
         )
@@ -414,10 +442,9 @@ class LLMCandidateEnricher(IdeaEnricherPort):
                 "You are CandidateEnricherAgent. Return only JSON with one `candidate` object. "
                 "You enrich an existing IdeaSeed; you do not score, rank, select, merge, archive, reject, or replace it. "
                 "Keep the Candidate ID, route, Parent IDs, problem reframing, Core Thesis, and any existing conceptual leap exactly unchanged. "
-                "Develop the proposal's mechanism chain, 2-4 non-duplicative hypotheses, contribution package, competing explanations, "
+                "Develop the proposal's mechanism chain, the smallest non-duplicative set of 1-4 hypotheses and contributions, competing explanations, "
                 "validation logic, boundaries, risks, kill criteria, and researcher-readable explanations where the Seed supports them. "
-                "Use the LLM's scholarly knowledge and cross-domain reasoning to improve conceptual depth, but mark ideas that are not grounded "
-                "in supplied workspace material as conjectural and verification-required. Never invent papers, citations, datasets, metrics, "
+                "Use the LLM's scholarly knowledge and cross-domain reasoning together with supplied material to improve conceptual depth. Flag verification only when a material external premise affects the proposal. Never invent papers, citations, datasets, metrics, "
                 "empirical results, costs, or external-novelty conclusions. Do not elevate an Evidence Permission or add a source path not already "
                 "present in the Candidate. A partial enrichment is acceptable: retain Seed maturity and state unresolved upgrades rather than fabricating detail. "
                 "Write researcher-facing explanations in clear Chinese while preserving established English titles, constructs, frameworks, methods, "
@@ -510,6 +537,11 @@ class LLMIdeaScorer(IdeaScoringPort):
             "rubric_version": "2.0.0",
             "scoring_batch_id": scoring_batch_id,
             "blind": blind,
+            "shared_scale_anchors": {
+                "1.0": "The proposal is presently too weak or incoherent on this dimension to justify further investment without a fundamental reframing.",
+                "3.0": "The proposal is substantively plausible on this dimension but has a clear, repairable limitation or unresolved alternative.",
+                "5.0": "The proposal is exceptionally strong on this dimension within the supplied population standard, with a precise candidate-specific rationale; this never certifies external novelty or empirical truth.",
+            },
             "candidates": [_blind_candidate(candidate) for candidate in candidates],
         }
         repair_instruction = ""
@@ -1014,8 +1046,8 @@ class LLMIdeaEvolver(IdeaEvolverPort):
                 "You are IdeaEvolverAgent in Human Composition mode. Return only JSON with a `candidate` object. "
                 "Create exactly one new Candidate from the confirmed Compatibility Report and Gene Donor Map. "
                 "Do not alter source Candidates, invent source evidence, elevate abstract-only evidence, score the new Candidate, "
-                "or concatenate source hypotheses. The output must have one coherent Core Thesis, a complete Idea Genome, 2-4 Contributions, "
-                "2-4 provisional hypotheses, CandidateLineage.created_by=human_composition, and a falsifiable validation path. "
+                "or concatenate source hypotheses. The output must have one coherent Core Thesis, a complete Idea Genome, 1-4 non-duplicative Contributions, "
+                "1-4 provisional hypotheses, CandidateLineage.created_by=human_composition, and a falsifiable validation path. "
                 "CandidatePresentation is optional enrichment; the separate Final Card Compiler owns required human-facing explanations."
             ),
             payload=payload,
@@ -1852,10 +1884,10 @@ def _require_evolved_candidate_scientific_core(candidate: CandidateDossier) -> N
     wholly omitted presentation cannot discard a valid Child or Seed.
     """
 
-    if not 2 <= len(candidate.hypotheses) <= 4:
-        raise ValueError(f"T4 Evolver returned candidate {candidate.candidate_id} without 2-4 provisional hypotheses")
-    if not 2 <= len(candidate.contributions) <= 4:
-        raise ValueError(f"T4 Evolver returned candidate {candidate.candidate_id} without 2-4 contributions")
+    if not 1 <= len(candidate.hypotheses) <= 4:
+        raise ValueError(f"T4 Evolver returned candidate {candidate.candidate_id} without 1-4 provisional hypotheses")
+    if not 1 <= len(candidate.contributions) <= 4:
+        raise ValueError(f"T4 Evolver returned candidate {candidate.candidate_id} without 1-4 non-duplicative contributions")
 
 
 def _admit_initial_candidate(candidate: CandidateDossier) -> CandidateDossier:
@@ -1927,6 +1959,7 @@ def _coerce_minimal_seed_candidate(
     design = _seed_text(payload, "design_or_artifact", "design") or validation
     evidence_refs = _seed_source_refs(payload.get("evidence_refs") or payload.get("source_refs"))
     knowledge_origin = _seed_knowledge_origin(payload.get("knowledge_origin"), has_workspace_refs=bool(evidence_refs))
+    verification_required = bool(payload.get("verification_required", False))
     creative_context = {
         "conceptual_leap": _seed_text(payload, "creative_leap", "conceptual_leap", "why_non_obvious"),
         "competing_explanations": _seed_list_or_text(payload.get("competing_explanations") or payload.get("alternative_explanation"))
@@ -1936,7 +1969,7 @@ def _coerce_minimal_seed_candidate(
         "research_program_potential": _seed_text(payload, "research_program_potential", "research_program", "future_program"),
         "knowledge_origin": knowledge_origin,
         "evidence_status": "mixed" if evidence_refs else "conjectural",
-        "verification_required": True,
+        "verification_required": verification_required,
         "reading_or_validation_upgrades": _seed_list_or_text(
             payload.get("reading_or_validation_upgrades") or payload.get("upgrade_needs")
         )
@@ -1949,14 +1982,12 @@ def _coerce_minimal_seed_candidate(
         reading_levels=_seed_reading_levels(payload.get("reading_levels"), evidence_refs),
         evidence_role=EvidenceRole.CONJECTURE,
         confidence="low",
-        upgrade_required=True,
+        upgrade_required=verification_required,
     )
     gene = lambda value: IdeaGene(value=value, provenance=provenance)
     warning = (
         "seed_maturity: minimal IdeaSeed admitted; enrich presentation, validation detail, and evidence mapping before final selection."
     )
-    if not evidence_refs:
-        warning += " knowledge_origin=llm_parametric_knowledge; verification_required=true."
     return {
         "candidate_id": candidate_id,
         "version": int(payload.get("version") or 1),
@@ -2160,6 +2191,21 @@ _OPPORTUNITY_TYPES = frozenset(
 )
 
 
+def _opportunity_budget(run_config: T4RunConfig) -> int:
+    """Bound planning attention without asking for one item per Route.
+
+    A small Opportunity Map should support the eventual human decision
+    surface. Optional Routes are alternative lenses over that map, not seven
+    separate obligations. The final portfolio size is therefore a better
+    upper-bound signal than the raw number of configured lenses; a single
+    material Opportunity remains valid.
+    """
+
+    enabled_routes = sum(1 for quota in run_config.route_quotas.values() if quota > 0)
+    decision_surface = max(2, int(run_config.final_top_k or 1))
+    return max(1, min(enabled_routes, decision_surface))
+
+
 def _normalize_opportunity_payload(payload: dict[str, Any], *, ordinal: int) -> dict[str, Any]:
     """Deterministically project aliases into the small Opportunity contract.
 
@@ -2208,11 +2254,18 @@ def _normalize_opportunity_payload(payload: dict[str, Any], *, ordinal: int) -> 
     origin_aliases = {
         "workspace": "workspace_evidence",
         "evidence": "workspace_evidence",
+        "literature": "workspace_evidence",
+        "literature_evidence": "workspace_evidence",
+        "paper_evidence": "workspace_evidence",
         "llm": "llm_parametric_knowledge",
         "parametric": "llm_parametric_knowledge",
+        "model_knowledge": "llm_parametric_knowledge",
         "analogy": "cross_domain_analogy",
         "cross_domain": "cross_domain_analogy",
         "cross_domain_bridge": "cross_domain_analogy",
+        "workspace_and_llm": "mixed",
+        "literature_and_llm": "mixed",
+        "evidence_and_reasoning": "mixed",
     }
     if raw_origin:
         normalized["knowledge_origin"] = origin_aliases.get(raw_origin, raw_origin)

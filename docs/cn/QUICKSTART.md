@@ -36,7 +36,7 @@ python -m researchos.cli run --workspace ./workspace/project-a
 在 T2 门控处，选择一个预设配置或输入一句话。未指定的字段将保持推荐配置。
 
 ```text
-候选 30 篇，精读 15 篇，摘要轻读 15 篇；英文稿，不搜索中文文献。
+候选 50 篇，精读 30 篇，摘要轻读 20 篇；英文稿，不搜索中文文献。
 ```
 
 确认面板会写入 `literature/literature_params.json`。英文稿件语言本身并不排除中文文献；当此事项重要时，应明确声明收录策略。普通 `resume` 回到 T2 时会显示轻量确认：选择确认继续不会新检索，只有选择修改才会回到完整参数选择。使用 `run --from <source> --start-task T2`、`resume --from <source> --from-task T2`，或显式 `resume --from-task T2` 时，系统会直接打开完整参数选择：这是一轮新的重入边界，不能静默沿用来源或旧运行的范围。修改参数不会丢弃论文和笔记，而是在保留现有语料的基础上开始一轮定向补检。
@@ -81,7 +81,7 @@ python -m researchos.cli workspace-status --workspace-root ./workspace
 
 运行中的项目需要暂停时按一次 `Ctrl+C`。ResearchOS 会停止当前命令、把 `state.yaml` 标记为 `PAUSED`，并显示可直接复制的 `resume` 命令；已落盘的论文、笔记和阶段产物会保留。终端正在等待 provider 或用户输入时，第一次 `Ctrl+C` 也会走同一保存路径。第二次 `Ctrl+C` 表示立即退出，仅在不需要等待清理完成时使用。
 
-多行 Gate 输入的提交方式取决于平台：POSIX 终端按 `Ctrl+D`；Windows Console、PowerShell 与多数 Windows Terminal 会话应按 `Ctrl+Z`，**再按 Enter**。任意平台也都可以在单独一行输入 `END`；这同样适合会截获 EOF 的 IDE 终端。上面对 `Ctrl+Z` 的警告只针对 POSIX：在那里它只是 shell 的 suspend，进程仍会停留在任务列表中，既不会正常退出，也不能作为项目已安全暂停的依据。若在 POSIX 误按，可在原终端输入 `fg` 恢复进程，再按一次 `Ctrl+C`；或先确认 `state.yaml` 和 `workspace-status`，再处理该 suspended job。
+多行 Gate 在所有平台都使用同一种提交方式。在最后单独一行输入 `END`，即可在 Windows、POSIX、IDE 终端和远程会话中提交。终端 EOF 仍作为兼容快捷方式保留，但界面不再要求用户记忆平台相关组合键。
 
 ## 命令索引
 
@@ -127,7 +127,7 @@ python -m researchos.cli run-task T9 --workspace ./workspace/project-a
 
 修复产物后使用 `validate`。使用 `trace <run-id>` 查看先前运行的有限人工渲染摘要，并检查 `_runtime/logs/researchos.log` 以获取详细的操作时间线。
 
-对于 T4，模型会基于 Workspace 上下文以及清楚标注为猜想的学术知识或结构性类比，撰写 Candidate 框架、机制、2–4 条 Draft Hypotheses、Contribution、评分解释和面向研究者的 Portfolio 文案。Standard mode 完成完整的 `P0 -> P1` Evolution Round，而不是只改写一次文本。证据用于认证 Claim，不会把模型限制为复述 Evidence Bundle。Rich 面板会展示 `研究机会探索（Opportunity Map）`、多视角 Idea 发散、Independent Scoring、Evolution Planning、Offspring & Rescoring 和 Survival & Portfolio，不显示原始 JSON 或隐藏推理。provider 调用进行中时，终端会分开显示当前活动、当前产物和后续阶段，而不会把 Opportunity Map 同时写成当前工作和“下一步”；终端会在 12 秒后显示低频 Live Runtime 面板，此后每 30 秒刷新一次。
+对于 T4，模型会把 Workspace 材料、学术知识和结构性类比放在同一推理中，撰写 Candidate 框架、机制、最小且连贯的一至四条 Draft Hypotheses 与 Contribution、评分解释和面向研究者的 Portfolio 文案。猜想性前提保持可见，只有会改变外部事实判断的缺口才触发核验。Standard mode 完成完整的 `P0 -> P1` Evolution Round，而不是只改写一次文本。
 
 ## 7. T5 Executor 技能与恢复
 

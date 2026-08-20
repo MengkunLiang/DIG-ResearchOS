@@ -927,6 +927,7 @@ class LLMClient:
         timeout: int = 120,
         max_retries_per_model: int | None = None,
         retry_base_delay: float | None = None,
+        reasoning_effort: str | None = None,
     ) -> LLMResponse:
         """执行一次模型调用。
 
@@ -992,6 +993,20 @@ class LLMClient:
                             "timeout": timeout,
                             **endpoint.to_litellm_kwargs(),
                         }
+                        if reasoning_effort:
+                            # OpenAI-compatible reasoning providers, including
+                            # current DeepSeek models, accept this top-level
+                            # control. Typed JSON roles use a low effort so the
+                            # provider reaches its final content instead of
+                            # spending a large completion on hidden reasoning;
+                            # ordinary agent calls retain provider defaults.
+                            kwargs["reasoning_effort"] = reasoning_effort
+                            # A custom OpenAI-compatible endpoint may support
+                            # this parameter even when LiteLLM's static model
+                            # catalogue cannot identify the deployment name.
+                            # Preserve normal validation for every other
+                            # parameter and authorize only this explicit one.
+                            kwargs["allowed_openai_params"] = ["reasoning_effort"]
                         if tools:
                             kwargs["tools"] = tools
                             kwargs["tool_choice"] = "auto"

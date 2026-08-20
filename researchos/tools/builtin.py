@@ -54,6 +54,8 @@ from .ideation_tools import AnalyzeIdeaConcentrationTool, ComputeIdeaNoveltySign
 from .ideation_progress import LogT4IdeationProgressTool
 from .latex_compile import LatexCompileTool
 from .literature_synthesis import BuildSynthesisWorkbenchTool
+from .literature_supplement import TargetedLiteratureSupplementTool
+from .research_evidence import QueryResearchEvidenceTool
 from .manuscript import (
     AssembleManuscriptTool,
     AuditManuscriptClaimsTool,
@@ -179,6 +181,8 @@ def register_builtin_tools(
     registry.register("save_paper_note", lambda ctx: SavePaperNoteTool(ctx.policy))
     registry.register("lookup_paper_record", lambda ctx: LookupPaperRecordTool(ctx.policy))
     registry.register("build_synthesis_workbench", lambda ctx: BuildSynthesisWorkbenchTool(ctx.policy))
+    registry.register("targeted_literature_supplement", lambda ctx: TargetedLiteratureSupplementTool(ctx.policy))
+    registry.register("query_research_evidence", lambda ctx: QueryResearchEvidenceTool(ctx.policy))
     registry.register("build_manuscript_resource_index", lambda ctx: BuildManuscriptResourceIndexTool(ctx.policy))
     registry.register("plan_manuscript_sections", lambda ctx: PlanManuscriptSectionsTool(ctx.policy))
     registry.register("plan_manuscript_evidence", lambda ctx: PlanManuscriptEvidenceTool(ctx.policy))

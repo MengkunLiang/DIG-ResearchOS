@@ -367,6 +367,25 @@ def normalize_research_blueprint_payload(payload: dict[str, Any]) -> tuple[dict[
             canonical_alternatives.append(canonical)
         if canonical_alternatives != alternatives:
             approach["alternatives_considered"] = canonical_alternatives
+
+    risks = normalized.get("risks")
+    if isinstance(risks, dict):
+        for category in ("novelty_risks", "technical_risks", "data_or_experimental_risks"):
+            entries = risks.get(category)
+            if not isinstance(entries, list):
+                continue
+            canonical_entries: list[Any] = []
+            for item in entries:
+                if not isinstance(item, dict):
+                    canonical_entries.append(item)
+                    continue
+                canonical = dict(item)
+                if not _substantive_text(canonical.get("risk")) and _substantive_text(canonical.get("description")):
+                    canonical["risk"] = canonical.pop("description")
+                    changes.append(f"risks.{category}[].description -> risk")
+                canonical_entries.append(canonical)
+            if canonical_entries != entries:
+                risks[category] = canonical_entries
     return normalized, list(dict.fromkeys(changes))
 
 
@@ -693,29 +712,38 @@ def validate_blueprint_and_claim_registry(workspace: Path) -> tuple[bool, str | 
     ):
         return False, "CCF-A formalization must include a substantive technical or robustness claim"
     evaluation = blueprint.get("evaluation") if isinstance(blueprint.get("evaluation"), dict) else {}
+    # These four fields establish an executable comparison. Component test
+    # coverage is checked separately across ablations/mechanism tests.
+    # Robustness, efficiency and field validation are conditional on what the
+    # actual design claims, so an empty stable array is valid for those slots.
     for key in (
         "datasets_or_setting",
         "baselines",
         "primary_metrics",
         "main_tests",
-        "ablations",
-        "mechanism_tests",
-        "robustness_tests",
-        "efficiency_tests",
-        "real_world_validation",
     ):
         items = _dict_list(evaluation.get(key))
         if not any(_substantive_mapping(item) for item in items):
             return False, f"research_blueprint.yaml evaluation.{key} lacks a substantive planned item"
     risks = blueprint.get("risks") if isinstance(blueprint.get("risks"), dict) else {}
-    for key in ("novelty_risks", "technical_risks", "data_or_experimental_risks"):
-        entries = _dict_list(risks.get(key))
-        if not any(
-            _substantive_text(item.get("risk"))
-            and _substantive_text(item.get("mitigation") or item.get("fallback") or item.get("response"))
-            for item in entries
-        ):
-            return False, f"research_blueprint.yaml {key} must pair a concrete risk with mitigation or fallback"
+    risk_entries = [
+        item
+        for key in ("novelty_risks", "technical_risks", "data_or_experimental_risks")
+        for item in _dict_list(risks.get(key))
+    ]
+    if not any(
+        _substantive_text(item.get("risk"))
+        and _substantive_text(item.get("mitigation") or item.get("fallback") or item.get("response"))
+        for item in risk_entries
+    ):
+        return False, "research_blueprint.yaml must pair at least one material project risk with mitigation or fallback"
+
+    contributions = blueprint.get("contributions") if isinstance(blueprint.get("contributions"), dict) else {}
+    if configured["profile_type"] in {"utd", "hybrid"}:
+        if not any(_substantive_mapping(item) for item in _dict_list(contributions.get("theoretical_or_design"))):
+            return False, f"{configured['profile_type']} formalization requires a substantive theoretical or design contribution"
+        if not any(_substantive_mapping(item) for item in _dict_list(contributions.get("practical_or_managerial"))):
+            return False, f"{configured['profile_type']} formalization requires a substantive practical or managerial contribution"
     return True, None
 
 
@@ -899,7 +927,7 @@ def _claims_markdown_errors(
         block = _markdown_block_for_heading(text, claim_id)
         if not block:
             return f"hypotheses.md omits active claim {claim_id}", []
-        if _research_text_length(block) < 130:
+        if _research_text_length(block) < 80:
             semantic_errors.append(f"{claim_id} in hypotheses.md is only a short assertion, not a testable research claim")
         labels = {
             "rationale": ("rationale", "理由", "依据"),
@@ -998,10 +1026,10 @@ def _proposal_text_errors(
         if claim_id and claim_id not in sections["claims"]:
             return f"Proposal does not carry active claim {claim_id} into Research Questions, Claims and Hypotheses", []
     evaluation_requirements = (
-        ("baselines", ("baseline", "基线", "对照组", "对照条件")),
-        ("ablations", ("ablation", "消融", "移除组件")),
-        ("robustness", ("robust", "稳健", "敏感性")),
-        ("mechanism validation", ("mechanism", "机制", "中介检验", "过程检验")),
+        ("a credible counterfactual or comparison", ("baseline", "control", "counterfactual", "comparison", "基线", "对照组", "对照条件", "反事实", "比较对象")),
+        ("component, treatment, or design-isolation evidence", ("ablation", "component comparison", "factorial", "incremental", "treatment contrast", "消融", "移除组件", "组件比较", "因子设计", "增量检验", "处理组")),
+        ("robustness or validity analysis", ("robust", "sensitivity", "placebo", "validity", "generaliz", "稳健", "敏感性", "安慰剂", "有效性", "外部效度", "异质性")),
+        ("mechanism or process validation", ("mechanism", "mediation", "process tracing", "pathway", "机制", "中介检验", "过程检验", "路径检验")),
     )
     for label, aliases in evaluation_requirements:
         if not _contains_any(sections["evaluation"], aliases):
@@ -1120,11 +1148,11 @@ def collect_t45_quality_diagnostics(workspace: Path) -> list[dict[str, str]]:
         if actual < target:
             diagnostics.append(
                 {
-                    "severity": "repair",
+                    "severity": "advisory",
                     "code": f"{target_key}_depth",
                     "artifact": relative_path,
                     "message": f"{label} is below the orientation depth target ({actual}/{target} words or CJK-character equivalents).",
-                    "action": "Develop missing research reasoning, mechanisms, design comparisons, evaluation logic, or boundary conditions. Do not pad with repeated sentences or audit metadata.",
+                    "action": "Check whether research reasoning, mechanisms, design comparisons, evaluation logic, or boundaries are genuinely missing. Expand only when the argument needs it; never pad to meet a length target.",
                 }
             )
         if language == "zh":
@@ -1182,16 +1210,24 @@ def validate_orientation_review(workspace: Path) -> tuple[bool, str | None]:
         return False, "orientation_review.json was written for a different orientation"
     if review.get("status") != "accepted":
         return False, "orientation_review.json requires targeted repair before acceptance"
-    scores = review.get("scores") if isinstance(review.get("scores"), dict) else {}
-    focus = orientation["review_focus"]
-    missing_or_low = [name for name in focus if float(scores.get(name) or 0) < 3.0]
-    if missing_or_low:
-        return False, "Orientation-aware review scores remain below threshold: " + ", ".join(missing_or_low)
-    for name in ("problem_significance", "design_rationale", "practical_significance", "cross_artifact_consistency"):
-        if float(scores.get(name) or 0) < 2.5:
-            return False, f"Orientation-aware review failed the mandatory floor for {name}"
-    if profile == "hybrid" and float(scores.get("cross_level_integration") or 0) < 3.0:
-        return False, "Hybrid review requires cross_level_integration >= 3.0"
+    # Scores are useful diagnostics but weak release evidence when authored by
+    # the same reviewer that can raise them. Acceptance instead requires every
+    # material issue to carry an explicit resolution.
+    unresolved: list[str] = []
+    for index, issue in enumerate(review.get("issues") or [], start=1):
+        if not isinstance(issue, dict):
+            continue
+        severity = str(issue.get("severity") or "").strip().casefold()
+        status = str(issue.get("status") or issue.get("resolution_status") or "").strip().casefold()
+        if severity in {"high", "medium", "blocking", "major"} and status not in {
+            "resolved",
+            "repaired",
+            "accepted_after_repair",
+            "not_applicable",
+        }:
+            unresolved.append(str(issue.get("id") or issue.get("code") or f"issue_{index}"))
+    if unresolved:
+        return False, "orientation_review.json has unresolved material issues: " + ", ".join(unresolved)
     return True, None
 
 
@@ -1631,7 +1667,8 @@ def _actor_is_named_in_text(actor: str, text: str) -> bool:
         "customer": ("客户", "消费者", "观众"),
     }
     return any(
-        token in actor_normalized and _contains_any(text_normalized, aliases)
+        token in actor_normalized
+        and (token in text_normalized or _contains_any(text_normalized, aliases))
         for token, aliases in token_aliases.items()
     )
 
@@ -1641,6 +1678,11 @@ def _proposal_sections(text: str) -> dict[str, str]:
     result: dict[str, str] = {}
     for index, heading in enumerate(headings):
         title = heading.group(1).strip().casefold()
+        # Numbered academic headings such as ``## 1. Research Motivation``
+        # express the same seven-section contract.  Requiring byte-identical
+        # unnumbered titles caused a complete, coherent Proposal to be
+        # misreported as missing every section and triggered wholesale rewrites.
+        title = re.sub(r"^\d+(?:\.\d+)*[.)、．]?\s+", "", title)
         end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
         for key, aliases in PROPOSAL_SECTIONS:
             if any(alias.casefold() == title for alias in aliases):

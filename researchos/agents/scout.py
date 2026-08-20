@@ -63,52 +63,34 @@ from ._common import (
 class ScoutAgent(Agent):
     """文献侦察员。跨源检索+去重，产出论文池。"""
 
-    def __init__(self):
+    def __init__(self, mode: str | None = None):
         super().__init__(
             build_agent_spec(
                 "scout",
+                mode=mode,
                 defaults={
                     "model_tier": "medium",
                     "tool_names": [
                         "read_file",
                         "write_file",
-                        "write_structured_file",
                         "ask_human",
                         "inspect_user_seeds",
                         "normalize_seed_outline",
-                        "append_papers_raw",
-                        "process_papers_raw",
-                        "save_papers_raw",
-                        "save_papers_dedup",
                         "multi_source_search",
                         "search_papers",
                         "fetch_paper_metadata",
                         "finish_task",
-                        "deduplicate_papers",
-                        "score_papers",
                         "expand_queries",
                         "filter_by_domain",
                         "generate_search_log",
-                        "enrich_papers",
-                        "backfill_paper_abstracts",
                         "apply_semantic_screening",
                         "detect_duplicate_queries",
-                        "analyze_dedup_rate",
-                        "build_verified_papers",
-                        "build_access_audit",
-                        "build_deep_read_queue",
-                        "fetch_outgoing_citations",
-                        "build_domain_map",
                         "semantic_scholar_search",
-                        "semantic_scholar_get_paper",
                         "arxiv_search",
                         "openalex_search",
-                        "openalex_get_work",
                         "crossref_search",
-                        "crossref_get_work",
                         "elsevier_scopus_search",
                         "informs_search",
-                        "log_scout_progress",
                     ],
                     "max_steps": 50,
                     "max_tokens_total": 150_000,
@@ -132,6 +114,12 @@ class ScoutAgent(Agent):
                 },
             )
         )
+        self._mode = mode
+        if mode in {"literature_param_gate", "literature_param_confirm_gate", "coverage_gate"}:
+            # These are state-machine-owned immediate Gates. If an integration
+            # accidentally falls through to the Agent, it must fail closed
+            # rather than expose retrieval and finalize side effects.
+            self.spec.tool_names = ["finish_task"]
 
     def system_prompt(self, ctx: ExecutionContext) -> str:
         """渲染system prompt，传入项目信息和seed papers。"""

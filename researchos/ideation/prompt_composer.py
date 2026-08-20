@@ -88,13 +88,13 @@ def compose_t4_role_prompt(
 def _shared_scientific_constitution() -> str:
     return """## Shared Scientific Constitution
 - An Idea Seed is an exploratory route output; an Evolved Candidate is a structured, scored, lineage-preserving research proposal; a Selected Research Idea is a human-confirmed Candidate; a Contribution Package, Hypothesis Bundle, and Experiment Plan are distinct downstream artifacts.
-- Preserve Evidence Permission. Full/partial reading can support only the supplied bounded section; abstract-only, metadata-only, synthesis inference, and brainstorm content can guide recall or conjecture but cannot establish a mechanism, detailed implementation, causal result, citation, cost, metric, baseline, or external novelty claim.
+- Preserve Evidence Permission internally for paper-attributed, empirical, mechanism-attribution, citation and external-novelty claims. Integrate literature, project facts and model reasoning naturally for explanation, synthesis and design; ordinary logical inference does not need a surface warning label. Full/partial reading supports only the supplied bounded section, while abstract or metadata records remain weaker leads for strong external claims.
 - A mechanism states why the proposed intervention could change an outcome. A contribution states what new explanatory, technical, methodological, theoretical, or design capability would follow if it is supported. A hypothesis is a falsifiable prediction with a discriminating test.
 - Never invent datasets, metrics, baselines, citations, empirical results, theoretical guarantees, deployment costs, market value, stakeholder effects, or venue requirements. Do not copy examples from this prompt into workspace output.
 - State boundary conditions, alternative explanations, and evidence upgrades whenever support is limited. Target Profile changes emphasis and presentation only; it never changes evidence truth, citation provenance, or Candidate lineage.
 
 ## Research-Facing Chinese Naming
-When a researcher-facing field is written in Chinese, Chinese is the explanatory language, not a requirement to translate canonical English names. Preserve established English paper and project titles, constructs, frameworks, methods, systems, metrics, experimental conditions, and named artifacts. On first mention, use `English canonical term（中文释义）`; later retain the English canonical term or its stable acronym. A display title with a supplied English canonical title must use `English Canonical Title（简洁中文释义）`. Do not mechanically translate an English metaphor into a Chinese headline: retain a title such as `From Copilot to Crutch` and add only a concise Chinese interpretation. Terms such as `Copilot`, `Crutch`, `Pilot`, `Cognitive Offloading`, `Selective Compliance`, `Fading`, `Static Sparse`, `Full-Script`, `Dynamic Fading Script Scaffolding`, `ablation`, `baseline`, and `mechanism` remain English when they name the supplied construct, condition, or method. Chinese prose should explain their role naturally without replacing the canonical name."""
+When a researcher-facing field is written in Chinese, Chinese is the explanatory language, not a requirement to translate canonical English names. Preserve established English paper and project titles, constructs, frameworks, methods, systems, metrics, experimental conditions, and named artifacts found in the supplied project materials. On first mention, use `English canonical term（中文释义）`; later retain the English canonical term or its stable acronym. A display title with a supplied English canonical title must use `English Canonical Title（简洁中文释义）`. Do not mechanically translate an English metaphor into a new Chinese canonical headline. Chinese prose should explain the supplied term's role naturally without replacing its canonical name or importing examples from another research topic."""
 
 
 def _role_name(mode: str) -> str:
@@ -280,7 +280,7 @@ def _required_model_schemas(prompt_name: str) -> str:
         ),
         "idea_candidate_enricher.j2": (
             "CandidateDossier: exact existing candidate_id, route, parent lineage, problem, and core_thesis; "
-            "attempt 2-4 hypotheses and 2-4 contributions with explicit uncertainty, but retain seed maturity when the "
+            "attempt the smallest non-duplicative set of 1-4 hypotheses and contributions with explicit uncertainty, but retain seed maturity when the "
             "proposal cannot be responsibly completed."
         ),
         "idea_interaction_reviewer.j2": (
@@ -303,7 +303,7 @@ def _required_model_schemas(prompt_name: str) -> str:
         ),
         "idea_evolver.j2": (
             "Child CandidateDossier: controller-owned candidate_id, full parent "
-            "lineage, complete genome, 2-4 contributions, 2-4 hypotheses, a falsifiable path, and preserved/extended creative_context. "
+            "lineage, complete genome, 1-4 non-duplicative contributions and hypotheses, a falsifiable path, and preserved/extended creative_context. "
             "CandidatePresentation is optional enrichment; FinalIdeaCardTranslation owns required human-facing prose."
         ),
         "idea_offspring_semantic_repair.j2": (
@@ -360,7 +360,7 @@ def _schema_semantic_rules(prompt_name: str) -> str:
             "sketch, one falsifiable prediction, and one main risk. It may omit "
             "CandidatePresentation, additional hypotheses, detailed validation, "
             "full evidence composition, implications, and final experiment design. "
-            "Mark non-workspace knowledge as conjectural and verification-required."
+            "Treat the Seed as a proposal. Preserve workspace provenance and flag only material external premises that actually require verification."
         )
     if prompt_name == "idea_candidate_enricher.j2":
         return (
@@ -379,7 +379,7 @@ def _schema_semantic_rules(prompt_name: str) -> str:
         return (
             "\n\n### Child integrity rules\n"
             "An evolved Child preserves its controller-owned identity and lineage. "
-            "It must have 2-4 contributions, 2-4 provisional hypotheses, a "
+            "It must have 1-4 non-duplicative contributions and provisional hypotheses, a "
             "falsifiable validation path, and no evidence-permission elevation. "
             "CandidatePresentation is enrichable and cannot reject a structurally complete Child; "
             "the Final Card LLM owns required human-facing explanations."

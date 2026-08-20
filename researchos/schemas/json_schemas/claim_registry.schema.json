@@ -7,7 +7,7 @@
     "orientation": {"enum": ["utd", "ccf_a", "hybrid"]},
     "claims": {
       "type": "array",
-      "minItems": 2,
+      "minItems": 1,
       "items": {
         "type": "object",
         "properties": {

@@ -6,16 +6,17 @@ route_quotas:
   # "must return a Candidate", never enables a fill/retry loop, and never
   # blocks Gate1. `minimum` and `maximum` bound exploration cost/diversity;
   # an underfilled Route may keep non-redundant Ideas or an explicit defer
-  # receipt. LLM parametric knowledge and analogy are allowed throughout when
-  # marked conjectural and verification-required.
+  # receipt. Literature, project context, scholarly model knowledge and
+  # analogy may be fused throughout; only material external premises require
+  # an explicit verification upgrade.
   - route: evidence_routed_literature
-    minimum: 3
-    maximum: 3
+    minimum: 1
+    maximum: 2
     required: true
     may_be_unsupported: false
   - route: informed_brainstorm
-    minimum: 2
-    maximum: 3
+    minimum: 1
+    maximum: 2
     required: true
     may_be_unsupported: false
   - route: mechanism_challenge
@@ -48,18 +49,10 @@ population:
   # underfilled but evidence-safe Population invalid or force filler ideas.
   max_initial_population: 14
   active_population_target: 7
-  active_population_minimum: 6
-  active_population_maximum: 8
-  portfolio_minimum: 1
-  portfolio_maximum: 3
 offspring:
-  mutation_minimum: 2
   mutation_maximum: 4
-  crossover_minimum: 0
   crossover_maximum: 2
   max_total: 6
-opportunity_minimum: 3
-opportunity_maximum: 6
 maximum_rounds: 3
 # This only retrieves possible sibling Families for later LLM/human comparison;
 # it never proves two Ideas are semantically equivalent or deletes one.
@@ -69,7 +62,7 @@ one_repair_attempt_per_route: true
 # Crossover compatibility reviews use a nested Gene Donor Map. Deterministic
 # aliases are normalized first; remaining semantic shape errors can receive
 # this many replacement-review attempts without creating a Child prematurely.
-crossover_structured_repair_attempts: 5
+crossover_structured_repair_attempts: 2
 # Candidate dossiers carry a large evidence-bound schema. Limit concurrent
 # provider calls so repairs do not saturate a single endpoint and turn a short
 # P0 formation phase into a queue of long-running requests.
@@ -78,7 +71,7 @@ route_max_concurrency: 2
 # evidence, validation, upside, and publication-orientation observations are
 # repairable diagnostics, not batch-level gates. Persist small batches so an
 # interrupted or malformed response only needs to repair that batch on resume.
-scoring_batch_size: 3
+scoring_batch_size: 4
 bridge_policy_default: allow_abstract_with_upgrade
 scoring_rubric_path: config/system_config/idea_scoring_rubric.yaml
 evidence_permissions_path: config/system_config/idea_evidence_permissions.yaml

@@ -33,7 +33,7 @@ The terminal first shows the DIG · BUAA / ResearchOS panel, then a Stage Start 
 At the T2 gate, select a profile or enter one sentence. Unspecified fields keep the recommended profile.
 
 ```text
-30 candidate papers, 15 deep reads, 15 lightweight abstract reads; English manuscript; exclude Chinese-language retrieval.
+50 candidate papers, 30 deep reads, 20 lightweight abstract reads; English manuscript; exclude Chinese-language retrieval.
 ```
 
 The confirmation panel writes `literature/literature_params.json`. English manuscript language does not by itself exclude Chinese literature; explicitly state the inclusion policy when that matters. A plain `resume` paused at T2 first reopens this confirmation: keep the saved parameters to continue, or return to the selector to change them. A parameter change preserves papers and notes and starts a targeted expansion rather than discarding the existing corpus.
@@ -78,7 +78,7 @@ Ordinary `resume` returning to T2/T3 first presents a lightweight Gate: T2 can c
 
 Press `Ctrl+C` once to pause a running project. ResearchOS stops the current command, marks `state.yaml` as `PAUSED`, and prints a copyable `resume` command; persisted papers, notes, and stage artifacts remain in place. The same path applies while the terminal is waiting for a provider or for user input. A second `Ctrl+C` requests an immediate exit and should be used only when you do not need to wait for cleanup.
 
-For a multiline Gate answer, press `Ctrl+D` on POSIX terminals to submit the entered block. On Windows Console, PowerShell, and most Windows Terminal sessions, press `Ctrl+Z` and then Enter instead. A line containing only `END` is the cross-platform alternative and also works in IDE terminals that intercept EOF. The POSIX `Ctrl+Z` warning is different: do not use it to end a project there, because it only suspends the shell job. After an accidental POSIX `Ctrl+Z`, run `fg` in that terminal and press `Ctrl+C` once, or inspect `state.yaml` and `workspace-status` before handling the suspended job.
+For a multiline Gate answer, type `END` on its own line. This is the documented submission method on Windows, POSIX, IDE terminals, and remote sessions. Terminal EOF remains a compatibility shortcut, but no platform-specific key chord is required.
 
 ## Command Index
 
@@ -124,7 +124,7 @@ python -m researchos.cli run-task T9 --workspace ./workspace/project-a
 
 Use `validate` after an artifact repair. Use `trace <run-id>` for the bounded human rendering of a prior run and inspect `_runtime/logs/researchos.log` for the detailed operational timeline.
 
-For T4, the model authors Candidate framing, mechanisms, 2–4 Draft Hypotheses, contributions, score explanations, and researcher-facing Portfolio prose from workspace context plus clearly labelled conjectural scholarly knowledge or structural analogy. Standard mode completes a full `P0 -> P1` Evolution Round, not a single rewrite. Evidence certifies claims; it does not limit the model to paraphrasing the Evidence Bundle. Rich panels show `Research Opportunity Mapping (Opportunity Map)`, multi-perspective Idea divergence, Independent Scoring, Evolution Planning, Offspring & Rescoring, and Survival & Portfolio without raw JSON or hidden reasoning. During a provider call, the terminal distinguishes the current activity, its current deliverable, and the following phase rather than repeating Opportunity Map as both the current work and “next step”; it emits a low-frequency Live Runtime panel after 12 seconds and then every 30 seconds.
+For T4, the model authors Candidate framing, mechanisms, the smallest coherent set of one to four Draft Hypotheses and contributions, score explanations, and researcher-facing Portfolio prose from workspace context plus scholarly knowledge and structural analogy. Conjectural premises remain visible and are upgraded only when a material external claim needs verification. Standard mode completes one full `P0 -> P1` Evolution Round, not a single rewrite. Evidence certifies claims; it does not limit the model to paraphrasing the Evidence Bundle.
 
 ## 7. T5 Executor Skills And Recovery
 

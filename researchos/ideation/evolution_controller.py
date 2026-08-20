@@ -20,6 +20,7 @@ from ..runtime.bridge_catalog import load_bridge_catalog_summaries
 from .config import T4EvolutionSettings
 from .errors import T4RoleResponseFormatError
 from .evidence import build_idea_evidence_index
+from ..tools.research_evidence import select_evidence_index_records
 from .interaction import (
     build_interaction_graph,
     interaction_peer_context,
@@ -152,7 +153,6 @@ class IdeaGeneratorPort(Protocol):
         evidence_bundle: dict[str, Any],
         quota: int,
         repair: bool,
-        recovery: bool = False,
     ) -> list[CandidateDossier] | RouteGenerationResult | "RouteGenerationPayload": ...
 
 
@@ -609,8 +609,12 @@ class IdeaEvolutionController:
             raise ValueError(error or "active T4 population is no longer current")
         population = self.store.read_population(state.current_population_id)
         evidence = build_idea_evidence_index(self.store.workspace_dir, store=self.store)
+        planner_context = {
+            **_compact_evidence_index_summary(evidence["summary"]),
+            "workspace_research_context": self._workspace_research_context(),
+        }
         opportunities = await self.generator.plan_opportunities(
-            evidence_summary=evidence["summary"],
+            evidence_summary=planner_context,
             run_config=run_config,
         )
         self._validate_opportunities(opportunities)
@@ -619,8 +623,7 @@ class IdeaEvolutionController:
             route=route,
             quota=quota,
             opportunities=opportunities,
-            evidence_summary=evidence["summary"],
-            required=False,
+            evidence_summary=planner_context,
         )
         round_number = self._next_available_generation()
         self.store.write_json(
@@ -835,7 +838,10 @@ class IdeaEvolutionController:
         await self._report(EvolutionPhase.EVIDENCE_ROUTING, "completed", evidence["summary"])
         await self._report(EvolutionPhase.OPPORTUNITY_MAP, "started", {"evidence_atoms": len(evidence["atoms"])})
         research_context = self._workspace_research_context()
-        planner_context = {**evidence["summary"], "workspace_research_context": research_context}
+        planner_context = {
+            **_compact_evidence_index_summary(evidence["summary"]),
+            "workspace_research_context": research_context,
+        }
         opportunities = self._load_reusable_opportunities(input_fingerprint=input_fp)
         if opportunities is None:
             try:
@@ -870,7 +876,25 @@ class IdeaEvolutionController:
             {"opportunity_count": len(opportunities), "types": [item.type for item in opportunities]},
         )
         route_specs = {item.route: item for item in self.settings.route_quotas}
-        requested_routes = [route for route, quota in run_config.route_quotas.items() if quota > 0 and route in route_specs]
+        requested_routes, deferred_routes = self._select_initial_routes(
+            run_config=run_config,
+            opportunities=opportunities,
+            route_specs=route_specs,
+        )
+        self.store.write_json(
+            "ideation/evidence/route_selection.json",
+            {
+                "schema_version": "1.0.0",
+                "semantics": "t4_opportunity_adaptive_route_selection",
+                "mode": run_config.mode,
+                "selected_routes": requested_routes,
+                "deferred_routes": deferred_routes,
+                "policy": (
+                    "Core literature and informed-brainstorm lenses remain available. Optional lenses run only when the "
+                    "Opportunity Map identifies a compatible scientific need; Deep mode explicitly authorizes all configured lenses."
+                ),
+            },
+        )
         await self._report(
             EvolutionPhase.FORMATION,
             "started",
@@ -945,7 +969,6 @@ class IdeaEvolutionController:
                         quota=min(run_config.route_quotas[route], route_specs[route].maximum),
                         opportunities=opportunities,
                         evidence_summary=planner_context,
-                        required=route_specs[route].required,
                         existing_result=(cached_routes.get(route) or (None, []))[0],
                         existing_candidates=(cached_routes.get(route) or (None, []))[1],
                     )
@@ -1009,6 +1032,10 @@ class IdeaEvolutionController:
             run_config=run_config,
             evidence_summary=planner_context,
         )
+        self._write_t4_information_utilization(
+            opportunities=opportunities,
+            dossiers=dossiers,
+        )
         self._validate_p0_dossiers(dossiers, route_results, run_config)
         for dossier in dossiers:
             self.store.write_candidate(dossier)
@@ -1054,7 +1081,6 @@ class IdeaEvolutionController:
         quota: int,
         opportunities: list[OpportunityQuery],
         evidence_summary: dict[str, Any],
-        required: bool,
         existing_result: RouteGenerationResult | None = None,
         existing_candidates: list[CandidateDossier] | None = None,
     ) -> tuple[RouteGenerationResult, list[CandidateDossier]]:
@@ -1064,43 +1090,43 @@ class IdeaEvolutionController:
         Its quota limits cost and terminal clutter; it does not require a fixed
         number of ideas. Every normal pass may use workspace grounding plus LLM
         scholarly knowledge, counterfactual reasoning, and structural analogy.
-        A bounded re-divergence pass changes perspective when a Route is thin,
-        but may still honestly return fewer Candidates rather than manufacture
-        a near-duplicate.
+        A valid call may honestly return fewer Candidates rather than
+        manufacture a near-duplicate.
         """
         retained = list(existing_candidates or [])
         retained_ids = {candidate.candidate_id for candidate in retained}
+        route_opportunities = [item for item in opportunities if route in item.compatible_routes]
+        route_evidence = self._route_specific_evidence(route=route, opportunities=route_opportunities)
         evidence_bundle = {
             "route": route,
-            "opportunity_ids": [item.opportunity_id for item in opportunities if route in item.compatible_routes],
-            "evidence_summary": evidence_summary,
+            "opportunity_ids": [item.opportunity_id for item in route_opportunities],
+            # Route-specific retrieval below is the evidence consumer.  Keep
+            # project/synthesis context but do not resend the Planner's twelve
+            # atom excerpts or Cross-domain preview to every Route.  Those
+            # records otherwise appeared twice and diluted the very atoms the
+            # Route query selected.  The dedicated Bridge Plan remains the
+            # only extra Cross-domain context for the Bridge Route.
+            "evidence_summary": _route_generation_evidence_summary(evidence_summary),
+            "route_specific_evidence": route_evidence,
             "bridge_plan": self._bridge_plan_context() if route == "cross_domain_bridge" else {"bridge_domains": []},
         }
 
-        async def invoke(*, requested: int, repair: bool, recovery: bool) -> tuple[RouteGenerationResult, list[CandidateDossier]]:
+        async def invoke(*, requested: int, repair: bool) -> tuple[RouteGenerationResult, list[CandidateDossier]]:
             bundle = {
                 **evidence_bundle,
                 "reserved_candidate_ids": sorted(retained_ids),
-                "candidate_completion": {
-                    "enabled": recovery,
-                    "requested_count": requested,
-                    "instruction": (
-                        "Re-diverge using a different causal framing, counterfactual, or structural analogy. The requested count is a budget, not a filling requirement. "
-                        "Preserve only distinct proposed, testable Candidates; any detail not traceable to the workspace must remain a conjecture with upgrade_required=true; do not cite or imply an external result."
-                        if recovery
-                        else "",
-                    ),
-                },
             }
             output = await self._invoke_route_generation(
                 route=route,
-                opportunities=opportunities,
+                # Each Route consumes only questions explicitly routed to it.
+                # Passing the full map defeated adaptive routing and repeated
+                # irrelevant questions in every Generator call.
+                opportunities=route_opportunities,
                 evidence_bundle=bundle,
                 quota=requested,
                 repair=repair,
-                recovery=recovery,
             )
-            return self._normalize_route_output(route, output, repaired_once=repair or recovery)
+            return self._normalize_route_output(route, output, repaired_once=repair)
 
         latest_result = existing_result
         used_repair = bool(existing_result and existing_result.repaired_once)
@@ -1114,14 +1140,14 @@ class IdeaEvolutionController:
                 repaired_once=used_repair,
             ), retained
         try:
-            result, candidates = await invoke(requested=requested, repair=False, recovery=False)
+            result, candidates = await invoke(requested=requested, repair=False)
         except Exception as exc:
             # A malformed role response and a transient provider exception are
             # both Route-local failures. Give this Route one bounded retry,
             # then retain its diagnostic and let every other Route continue.
             self._write_route_repair_diagnostic(route=route, attempt=1, error=exc)
             try:
-                result, candidates = await invoke(requested=requested, repair=True, recovery=False)
+                result, candidates = await invoke(requested=requested, repair=True)
             except Exception as repair_error:
                 self._write_route_repair_diagnostic(route=route, attempt=2, error=repair_error)
                 result = self._unsupported_route_result(route, repair_error)
@@ -1134,23 +1160,13 @@ class IdeaEvolutionController:
                 retained_ids.add(candidate.candidate_id)
         latest_result = result
 
-        # One bounded creative re-divergence is useful when a Route is thin,
-        # but this is explicitly not a filler loop. The model may preserve a
-        # partial result if another Candidate would only repeat its causal
-        # logic.
-        missing = max(0, quota - len(retained))
-        if missing:
-            try:
-                recovered_result, recovered = await invoke(requested=missing, repair=True, recovery=True)
-                latest_result = recovered_result
-                used_repair = True
-                for candidate in recovered:
-                    if candidate.candidate_id not in retained_ids:
-                        retained.append(candidate)
-                        retained_ids.add(candidate.candidate_id)
-            except Exception as recovery_error:
-                self._write_route_repair_diagnostic(route=route, attempt=3, error=recovery_error)
-                used_repair = True
+        # ``quota`` is an exploration ceiling. A valid Route response may
+        # return fewer distinct Candidates or explicitly report unsupported.
+        # Do not turn that outcome into an automatic second creative call:
+        # underfill alone is not a failure and the extra pass tended to create
+        # filler while doubling formation latency. A researcher can still use
+        # the explicit regenerate-Route directive when another perspective is
+        # substantively wanted.
 
         return self._route_result_with_candidates(
             route=route,
@@ -1160,6 +1176,92 @@ class IdeaEvolutionController:
             repaired_once=used_repair,
         ), retained
 
+    def _route_specific_evidence(
+        self,
+        *,
+        route: str,
+        opportunities: list[OpportunityQuery],
+    ) -> dict[str, Any]:
+        """Build one query-shaped evidence context for a T4 Route.
+
+        The planner may cite any atom in the complete Evidence Index.  Passing
+        only the global first-eight preview to every Route made those IDs
+        practically unusable and biased all generation toward whichever note
+        happened to sort first.  Preserve explicitly referenced atoms, then
+        retrieve lexically related and paper-diverse atoms for this Route.
+        This is context selection, not a novelty decision or a constraint on
+        model reasoning.
+        """
+
+        path = self.store.path("ideation/evidence/evidence_index.jsonl")
+        records: list[dict[str, Any]] = []
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            lines = []
+        for line in lines:
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(item, dict) and str(item.get("atom_id") or "").strip():
+                records.append(item)
+        queries = [
+            " ".join(
+                value
+                for value in (
+                    item.one_line_summary,
+                    item.question,
+                    item.why_it_matters,
+                    item.conceptual_leap,
+                    " ".join(item.competing_explanations),
+                )
+                if value
+            )
+            for item in opportunities
+        ]
+        explicit_ids = [atom_id for item in opportunities for atom_id in item.evidence_atom_ids]
+        selected = select_evidence_index_records(
+            records,
+            queries=queries or [route.replace("_", " ")],
+            explicit_atom_ids=explicit_ids,
+            max_results=16,
+        )
+        compact = [
+            {
+                "atom_id": str(item.get("atom_id") or ""),
+                "paper_id": str(item.get("paper_id") or ""),
+                "source_path": str(item.get("source_path") or ""),
+                "section_key": str(item.get("section_key") or ""),
+                "section_title": str(item.get("section_title") or ""),
+                "content": " ".join(str(item.get("content") or "").split())[:1400],
+                "reading_level": str(item.get("reading_level") or ""),
+                "evidence_status": str(item.get("evidence_status") or ""),
+                "allowed_uses": item.get("allowed_uses") if isinstance(item.get("allowed_uses"), list) else [],
+                "forbidden_uses": item.get("forbidden_uses") if isinstance(item.get("forbidden_uses"), list) else [],
+                "domain_role": str(item.get("domain_role") or ""),
+                "citation_key": str(item.get("citation_key") or ""),
+            }
+            for item in selected
+        ]
+        safe_route = re.sub(r"[^a-z0-9_.-]+", "_", route.casefold()).strip("_") or "route"
+        payload = {
+            "schema_version": "1.0.0",
+            "semantics": "t4_route_specific_evidence_context",
+            "route": route,
+            "opportunity_ids": [item.opportunity_id for item in opportunities],
+            "explicit_atom_ids": sorted(set(explicit_ids)),
+            "selected_atom_count": len(compact),
+            "selected_atoms": compact,
+            "reasoning_policy": (
+                "Use these records as high-value context inside unified scholarly reasoning. The model may synthesize, infer, "
+                "challenge assumptions, and create beyond their wording. Traceable support is required only for external factual, "
+                "paper-attributed, empirical, mechanism-attribution, and novelty claims; ordinary reasoning need not be mechanically labeled."
+            ),
+        }
+        self.store.write_json(f"ideation/evidence/route_bundles/{safe_route}.json", payload)
+        return payload
+
     async def _invoke_route_generation(
         self,
         *,
@@ -1168,20 +1270,16 @@ class IdeaEvolutionController:
         evidence_bundle: dict[str, Any],
         quota: int,
         repair: bool,
-        recovery: bool,
     ) -> list[CandidateDossier] | RouteGenerationResult | RouteGenerationPayload:
-        """Call newer recovery-aware roles without breaking existing skill ports."""
+        """Call the Route role through its narrow generation contract."""
 
-        kwargs: dict[str, Any] = {
-            "route": route,
-            "opportunities": opportunities,
-            "evidence_bundle": evidence_bundle,
-            "quota": quota,
-            "repair": repair,
-        }
-        if _accepts_keyword(self.generator.generate_route, "recovery"):
-            kwargs["recovery"] = recovery
-        return await self.generator.generate_route(**kwargs)
+        return await self.generator.generate_route(
+            route=route,
+            opportunities=opportunities,
+            evidence_bundle=evidence_bundle,
+            quota=quota,
+            repair=repair,
+        )
 
     @staticmethod
     def _route_result_with_candidates(
@@ -1385,6 +1483,8 @@ class IdeaEvolutionController:
             atom_records.append(
                 {
                     "atom_id": str(item.get("atom_id") or ""),
+                    "paper_id": str(item.get("paper_id") or ""),
+                    "citation_key": str(item.get("citation_key") or ""),
                     "source_path": str(item.get("source_path") or ""),
                     "section_key": str(item.get("section_key") or ""),
                     "section_title": str(item.get("section_title") or ""),
@@ -1397,42 +1497,102 @@ class IdeaEvolutionController:
                     "bridge_ids": item.get("bridge_ids") if isinstance(item.get("bridge_ids"), list) else [],
                 }
             )
-        # Do not let a large core note collection crowd all Cross-domain
-        # material out of the planner/generator context.  One bounded record
-        # per bridge preserves distinct transfer opportunities without turning
-        # bridge metadata into a deterministic idea template.
-        # ``paper_catalog.json`` writes highest-confidence/relevance records
-        # first. Preserve that order semantically even though the durable index
-        # is atom-ID sorted for stable artifact diffs.
+        project_excerpt = excerpt("project.yaml", 3000)
+        synthesis_excerpt = excerpt("literature/synthesis.md", 5000)
+        seed_ideas_excerpt = excerpt("user_seeds/seed_ideas.md", 2400)
+        constraints_excerpt = excerpt("user_seeds/seed_constraints.md", 2400)
+        resource_records: list[dict[str, Any]] = []
+        for item in _read_jsonl_dicts(self.store.path("literature/resource_catalog.jsonl")):
+            resource = item.get("resource") if isinstance(item.get("resource"), dict) else {}
+            paper = item.get("paper") if isinstance(item.get("paper"), dict) else {}
+            resource_id = str(item.get("resource_id") or resource.get("url") or "").strip()
+            content = " ".join(
+                str(value or "")
+                for value in (
+                    resource.get("name"),
+                    resource.get("resource_type"),
+                    resource.get("url"),
+                    resource.get("relationship_to_paper"),
+                    resource.get("license_hint"),
+                    paper.get("title"),
+                )
+            ).strip()
+            if resource_id and content:
+                resource_records.append(
+                    {
+                        "atom_id": resource_id,
+                        "resource_id": resource_id,
+                        "paper_id": str(paper.get("paper_id") or resource_id),
+                        "source_path": "literature/resource_catalog.jsonl",
+                        "section_key": resource_id,
+                        "section_title": str(resource.get("resource_type") or "resource lead"),
+                        "content": content[:900],
+                        "reading_level": "metadata_only",
+                        "evidence_status": "resource_lead_unverified",
+                        "allowed_uses": ["feasibility assessment", "baseline or dataset discovery", "resource requirement planning"],
+                        "forbidden_uses": ["mechanism evidence", "empirical performance evidence", "proof of executability or license"],
+                    }
+                )
+
+        # Do not let atom-ID ordering choose Planner context. Select across
+        # papers using the actual project/synthesis question, while preserving
+        # one representative atom for every confirmed Bridge. This is still
+        # retrieval only; the Planner decides whether a record matters.
         def bridge_priority(item: dict[str, Any]) -> tuple[int, int, str]:
             levels = {"abstract_only": 0, "metadata_only": 1, "partial_text": 0, "full_text": 0}
             match = re.search(r"catalog_(\d+)$", str(item.get("section_key") or ""))
             return (levels.get(str(item.get("reading_level") or ""), 2), int(match.group(1)) if match else 9999, str(item.get("atom_id") or ""))
 
-        bridge_atoms: list[dict[str, Any]] = []
+        explicit_bridge_atom_ids: list[str] = []
         used_bridges: set[str] = set()
-        core_atoms: list[dict[str, Any]] = []
         for item in sorted(atom_records, key=lambda item: bridge_priority(item) if item.get("domain_role") == "bridge" else (0, 0, "")):
             bridge_ids = [str(value) for value in item.get("bridge_ids", []) if str(value).strip()]
             if item.get("domain_role") == "bridge" and bridge_ids:
                 bridge_id = bridge_ids[0]
-                if bridge_id not in used_bridges and len(bridge_atoms) < 3:
-                    bridge_atoms.append(item)
+                if bridge_id not in used_bridges:
+                    explicit_bridge_atom_ids.append(str(item.get("atom_id") or ""))
                     used_bridges.add(bridge_id)
-                continue
-            core_atoms.append(item)
-        atoms = (core_atoms[: max(0, 8 - len(bridge_atoms))] + bridge_atoms)[:8]
+        atoms = select_evidence_index_records(
+            atom_records,
+            queries=[project_excerpt, synthesis_excerpt, seed_ideas_excerpt, constraints_excerpt],
+            explicit_atom_ids=explicit_bridge_atom_ids,
+            max_results=12,
+        )
+        resource_leads = select_evidence_index_records(
+            resource_records,
+            queries=[project_excerpt, synthesis_excerpt, seed_ideas_excerpt, constraints_excerpt],
+            max_results=4,
+        )
+        planner_bundle = {
+            "schema_version": "1.0.0",
+            "semantics": "t4_planner_relevance_selected_context",
+            "selected_atom_ids": [str(item.get("atom_id") or "") for item in atoms],
+            "selected_source_paths": sorted({str(item.get("source_path") or "") for item in atoms}),
+            "selected_resource_ids": [str(item.get("resource_id") or item.get("atom_id") or "") for item in resource_leads],
+            "explicit_bridge_atom_ids": explicit_bridge_atom_ids,
+            "selection_policy": "project_synthesis_seed_relevance_with_cross_paper_diversity_and_confirmed_bridge_preservation",
+            "actual_use_boundary": (
+                "This receipt proves inclusion in Planner context, not use. Actual use is visible only when an Opportunity or Candidate records the atom ID/source."
+            ),
+        }
+        self.store.write_json("ideation/evidence/planner_bundle.json", planner_bundle)
         cross_domain_tracks = load_bridge_catalog_summaries(
             self.store.workspace_dir,
             records_per_bridge=1,
             abstract_excerpt_chars=360,
         )[:8]
         return {
-            "project_yaml_excerpt": excerpt("project.yaml", 3000),
-            "synthesis_excerpt": excerpt("literature/synthesis.md", 5000),
-            "user_seed_ideas_excerpt": excerpt("user_seeds/seed_ideas.md", 2400),
-            "user_constraints_excerpt": excerpt("user_seeds/seed_constraints.md", 2400),
+            "project_yaml_excerpt": project_excerpt,
+            "synthesis_excerpt": synthesis_excerpt,
+            "user_seed_ideas_excerpt": seed_ideas_excerpt,
+            "user_constraints_excerpt": constraints_excerpt,
             "evidence_atoms": atoms,
+            "resource_leads": resource_leads,
+            "resource_usage_boundary": (
+                "Resource leads may shape feasibility, baseline, dataset, benchmark, or acquisition planning. They are not paper evidence, "
+                "do not prove availability or license, and must be verified by the T5 resource-preparation boundary before execution."
+            ),
+            "planner_bundle_path": "ideation/evidence/planner_bundle.json",
             "cross_domain_tracks": cross_domain_tracks,
             "cross_domain_usage_boundary": (
                 "The Cross-domain tracks are supplementary metadata/abstract context, not deep-reading evidence. "
@@ -3319,19 +3479,162 @@ class IdeaEvolutionController:
 
         if self.enricher is None:
             return dossiers
-        enriched: list[CandidateDossier] = []
-        for candidate in dossiers:
+        semaphore = asyncio.Semaphore(self.settings.route_max_concurrency)
+
+        async def enrich(candidate: CandidateDossier) -> CandidateDossier:
             if candidate.maturity != CandidateMaturity.SEED:
-                enriched.append(candidate)
-                continue
-            enriched.append(
-                await self._enrich_one_seed_candidate(
+                return candidate
+            async with semaphore:
+                return await self._enrich_one_seed_candidate(
                     candidate,
                     run_config=run_config,
                     evidence_summary=evidence_summary,
                 )
-            )
-        return enriched
+
+        # Candidate enrichments are independent. Preserve input order while
+        # avoiding serial provider latency; the same conservative concurrency
+        # ceiling used for Route generation prevents endpoint saturation.
+        return list(await asyncio.gather(*(enrich(candidate) for candidate in dossiers)))
+
+    def _select_initial_routes(
+        self,
+        *,
+        run_config: T4RunConfig,
+        opportunities: list[OpportunityQuery],
+        route_specs: dict[str, Any],
+    ) -> tuple[list[str], list[dict[str, str]]]:
+        """Select useful exploration lenses without turning every lens into a call."""
+
+        configured = [
+            route
+            for route, quota in run_config.route_quotas.items()
+            if quota > 0 and route in route_specs
+        ]
+        if run_config.mode == "deep":
+            return configured, []
+        compatible = {
+            route
+            for opportunity in opportunities
+            for route in opportunity.compatible_routes
+            if route in route_specs
+        }
+        selected_set = {
+            route
+            for route in ("evidence_routed_literature", "informed_brainstorm")
+            if route in configured
+        }
+        selected_set.update(route for route in compatible if route in configured)
+        bridge_plan = self._bridge_plan_context()
+        if bridge_plan.get("bridge_domains") and "cross_domain_bridge" in configured:
+            selected_set.add("cross_domain_bridge")
+        # A degraded fallback Opportunity intentionally lists all Routes. It
+        # retains the previous broad recovery behavior when the planner itself
+        # was unavailable, rather than guessing which lens would have helped.
+        selected = [route for route in configured if route in selected_set]
+        if not selected and configured:
+            selected = configured[:1]
+        deferred = [
+            {
+                "route": route,
+                "reason": "no distinct compatible Opportunity in the current map",
+            }
+            for route in configured
+            if route not in selected_set
+        ]
+        return selected, deferred
+
+    def _write_t4_information_utilization(
+        self,
+        *,
+        opportunities: list[OpportunityQuery],
+        dossiers: list[CandidateDossier],
+    ) -> None:
+        """Distinguish available, included, and explicitly used T4 evidence."""
+
+        atom_by_id: dict[str, dict[str, Any]] = {}
+        for item in _read_jsonl_dicts(self.store.path("ideation/evidence/evidence_index.jsonl")):
+            atom_id = str(item.get("atom_id") or "")
+            if atom_id:
+                atom_by_id[atom_id] = item
+        planner = _read_json_object(self.store.path("ideation/evidence/planner_bundle.json"))
+        planner_ids = {
+            str(value)
+            for value in planner.get("selected_atom_ids", [])
+            if str(value)
+        } if isinstance(planner.get("selected_atom_ids"), list) else set()
+        planner_resource_ids = {
+            str(value)
+            for value in planner.get("selected_resource_ids", [])
+            if str(value)
+        } if isinstance(planner.get("selected_resource_ids"), list) else set()
+        route_ids: set[str] = set()
+        route_bundle_paths: list[str] = []
+        route_root = self.store.path("ideation/evidence/route_bundles")
+        if route_root.is_dir():
+            for path in sorted(route_root.glob("*.json")):
+                payload = _read_json_object(path)
+                route_ids.update(
+                    str(item.get("atom_id") or "")
+                    for item in payload.get("selected_atoms", [])
+                    if isinstance(item, dict) and str(item.get("atom_id") or "")
+                )
+                route_bundle_paths.append(path.relative_to(self.store.workspace_dir).as_posix())
+        opportunity_ids = {
+            atom_id
+            for opportunity in opportunities
+            for atom_id in opportunity.evidence_atom_ids
+            if atom_id
+        }
+        candidate_source_paths: set[str] = set()
+        candidate_citation_keys: set[str] = set()
+        for dossier in dossiers:
+            for source_ref in _recursive_source_refs(model_dump(dossier, mode="json")):
+                path = str(source_ref.get("source_path") or "")
+                key = str(source_ref.get("citation_key") or "")
+                if path:
+                    candidate_source_paths.add(path)
+                if key:
+                    candidate_citation_keys.add(key)
+        candidate_atom_ids = {
+            atom_id
+            for atom_id, item in atom_by_id.items()
+            if str(item.get("source_path") or "") in candidate_source_paths
+        }
+        included_ids = planner_ids | route_ids
+        explicitly_used_ids = opportunity_ids | candidate_atom_ids
+        self.store.write_json(
+            "ideation/evidence/information_utilization.json",
+            {
+                "schema_version": "1.0.0",
+                "semantics": "t4_information_availability_inclusion_and_explicit_use_audit",
+                "availability": {
+                    "evidence_atom_count": len(atom_by_id),
+                    "source_path_count": len({str(item.get("source_path") or "") for item in atom_by_id.values()}),
+                },
+                "inclusion": {
+                    "planner_atom_ids": sorted(planner_ids),
+                    "planner_resource_ids": sorted(planner_resource_ids),
+                    "route_atom_ids": sorted(route_ids),
+                    "route_bundle_paths": route_bundle_paths,
+                },
+                "explicit_utilization": {
+                    "opportunity_atom_ids": sorted(opportunity_ids),
+                    "candidate_atom_ids_inferred_from_source_paths": sorted(candidate_atom_ids),
+                    "candidate_source_paths": sorted(candidate_source_paths),
+                    "candidate_citation_keys": sorted(candidate_citation_keys),
+                    "resource_catalog_referenced_by_candidate": "literature/resource_catalog.jsonl" in candidate_source_paths,
+                },
+                "diagnostics": {
+                    "included_atom_count": len(included_ids),
+                    "explicitly_used_atom_count": len(explicitly_used_ids),
+                    "included_but_not_explicitly_referenced_atom_ids": sorted(included_ids - explicitly_used_ids),
+                },
+                "interpretation_boundary": (
+                    "Inclusion does not prove use. Explicit utilization records only traceable evidence use in Opportunity/Candidate artifacts; "
+                    "it cannot observe ordinary synthesis, analogy, or model reasoning that correctly requires no source label."
+                ),
+            },
+        )
 
     async def _enrich_one_seed_candidate(
         self,
@@ -3486,7 +3789,7 @@ class IdeaEvolutionController:
 
         version = max(original.version + 1, proposal.version)
         maturity = proposal.maturity
-        if maturity == CandidateMaturity.EVOLVED and not (2 <= len(proposal.contributions) <= 4 and 2 <= len(proposal.hypotheses) <= 4):
+        if maturity == CandidateMaturity.EVOLVED and not (1 <= len(proposal.contributions) <= 4 and 1 <= len(proposal.hypotheses) <= 4):
             maturity = CandidateMaturity.SEED
         genome = proposal.genome.model_copy(
             update={
@@ -3502,7 +3805,7 @@ class IdeaEvolutionController:
         warnings = list(proposal.warnings)
         if maturity != CandidateMaturity.EVOLVED:
             warnings.append(
-                "enrichment_partial: Candidate remains an IdeaSeed because the attempted enrichment did not yet supply 2-4 coherent hypotheses and contributions."
+                "enrichment_partial: Candidate remains an IdeaSeed because the attempted enrichment did not yet supply a coherent, non-empty hypothesis and contribution set."
             )
         return proposal.model_copy(
             update={
@@ -3539,7 +3842,7 @@ class IdeaEvolutionController:
             raise ValueError("P0 contains duplicate candidate IDs")
         if not dossiers:
             raise ValueError(
-                "T4 P0 has no usable Candidate after all Route generation and candidate-completion attempts"
+                "T4 P0 has no usable Candidate after all Route generation attempts"
             )
 
     @staticmethod
@@ -3583,6 +3886,86 @@ class IdeaEvolutionController:
             raise ValueError("Evolution deferral must reference the controller-approved Plan")
         if deferral.status == "incompatible" and plan.child_type != "crossover":
             raise ValueError("Only a Crossover Plan may be marked incompatible")
+
+
+def _compact_evidence_index_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    """Keep decision-relevant index statistics out of the full audit payload.
+
+    ``counts_by_section`` and every upgrade atom ID remain durable in the
+    Evidence Index Summary, but repeating those large inventories beside the
+    selected atom excerpts gave the Planner no additional scientific content.
+    Routes and later reading upgrades consume the exact index or query tools.
+    """
+
+    keys = (
+        "schema_version",
+        "semantics",
+        "atom_count",
+        "unique_paper_count",
+        "note_card_count",
+        "note_paper_count",
+        "catalog_record_count",
+        "catalog_unique_paper_count",
+        "reading_upgrade_paper_count",
+        "counts_by_reading_level",
+        "counts_by_domain_role",
+        "permission_policy",
+    )
+    return {key: summary[key] for key in keys if key in summary}
+
+
+def _route_generation_evidence_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    """Remove Planner-only previews before a query-shaped Route call."""
+
+    compact = _compact_evidence_index_summary(summary)
+    research_context = summary.get("workspace_research_context")
+    if isinstance(research_context, dict):
+        compact_context = {
+            key: value
+            for key, value in research_context.items()
+            if key not in {"evidence_atoms", "cross_domain_tracks", "planner_bundle_path"}
+        }
+        compact["workspace_research_context"] = compact_context
+    return compact
+
+
+def _read_json_object(path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _read_jsonl_dicts(path) -> list[dict[str, Any]]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    records: list[dict[str, Any]] = []
+    for line in lines:
+        try:
+            item = json.loads(line)
+        except (ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(item, dict):
+            records.append(item)
+    return records
+
+
+def _recursive_source_refs(value: Any) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        raw_refs = value.get("source_refs")
+        if isinstance(raw_refs, list):
+            refs.extend(item for item in raw_refs if isinstance(item, dict))
+        for key, item in value.items():
+            if key != "source_refs":
+                refs.extend(_recursive_source_refs(item))
+    elif isinstance(value, list):
+        for item in value:
+            refs.extend(_recursive_source_refs(item))
+    return refs
 
 
 class _LooseArtifact:

@@ -1,5 +1,5 @@
 {% set mode = mode | default("full") %}
-{% set external_modes = ["reboost", "handoff", "executor_gate", "external_wait", "dry_run", "result_ingest", "integrity_audit", "post_novelty", "result_to_claim"] %}
+{% set external_modes = ["reboost", "handoff", "executor_gate", "resource_prepare_wait", "external_wait", "dry_run", "result_ingest", "integrity_audit", "post_novelty", "result_to_claim"] %}
 {% if mode in external_modes %}
 # External Experiment Bridge Agent — {{ mode | upper }}
 
@@ -22,15 +22,12 @@
 {% if mode == "reboost" %}
 T5 reboost 是确定性 Runtime 步骤：从已通过的 T4.5 结构化来源编译交接，不让 LLM 重新撰写或猜测 `handoff_pack`。正常完整 pipeline 与 `run-task T5` 会直接调用编译器，不进入此模型回合。此段仅为旧的受管理调用保留兼容说明：只能调用不带 `handoff_pack` 参数的 `compile_research_reboost_handoff()`，随后读取其 receipt；不得用 LLM 组装 JSON、补写 T4.5 证据、基线、实验约束或 Proposal。编译器会独立验证并原子发布 `external_executor/handoff_pack.json`、validation receipt、paper-card index、expected schema、allowed paths 和 AGENTS/CLAUDE。验证失败时只保留 `blocked` 诊断，不能调用 `finish_task`。T5-REBOOST 不创建或填充 `external_executor/expr/`，不执行实验、不实现方法、不选择执行器、不写 result pack。
 
-## Research Reboost Skill Contract
-
-```
-{{ research_reboost_skill }}
-```
 {% elif mode == "handoff" %}
 调用 `build_experiment_handoff_pack`，生成 `external_executor/handoff_pack.json`、`external_executor/expected_outputs_schema.json`、`external_executor/allowed_paths.txt` 和 AGENTS/CLAUDE。只编译外部执行协议，不运行真实实验，不生成 executor-specific prompt 文件。
 {% elif mode == "executor_gate" %}
 这是 immediate gate 模式。若被直接运行，只能调用 `select_external_executor` 写入 `external_executor/report/executor_selection.json` 并 patch handoff/AGENTS/CLAUDE 文件；不要运行实验。
+{% elif mode == "resource_prepare_wait" %}
+这是确定性资源准备等待节点。只检查外部执行器是否完成 Phase B 资源报告；不得生成实验结果、T8 handoff 或伪造完成状态。
 {% elif mode == "external_wait" %}
 调用 `wait_for_external_executor_result` 检查外部执行器是否已写回 result pack。缺结果时不要伪造，应暂停等待用户运行外部执行器后 resume。
 {% elif mode == "dry_run" %}

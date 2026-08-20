@@ -104,7 +104,7 @@ class ReviewerAgent(Agent):
             alignment_matrix_preview=alignment_matrix[:5000],
             previous_review_preview=previous_review[:3000],
             round=round_num,
-            target_venue=project.get("target_venue", "neurips"),
+            target_venue=project.get("target_venue") or "unknown",
             temperature=self.spec.temperature,
         )
 

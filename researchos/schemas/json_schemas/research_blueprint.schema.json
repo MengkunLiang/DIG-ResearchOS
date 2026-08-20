@@ -36,11 +36,11 @@
         "failure_mechanisms": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 20}},
         "key_challenges": {
           "type": "array",
-          "minItems": 2,
+          "minItems": 1,
           "items": {
             "type": "object",
             "properties": {
-              "id": {"type": "string", "pattern": "^C[1-4]$"},
+              "id": {"type": "string", "pattern": "^C[1-9][0-9]*$"},
               "existing_assumption": {"type": "string", "minLength": 15},
               "why_it_fails": {"type": "string", "minLength": 20},
               "observable_consequence": {"type": "string", "minLength": 20},
@@ -61,7 +61,7 @@
         "central_insight": {"type": "string", "minLength": 40},
         "components": {
           "type": "array",
-          "minItems": 2,
+          "minItems": 1,
           "items": {
             "type": "object",
             "properties": {
@@ -77,7 +77,7 @@
         },
         "design_rationales": {
           "type": "array",
-          "minItems": 2,
+          "minItems": 1,
           "items": {
             "type": "object",
             "properties": {
@@ -108,7 +108,7 @@
     "research_claims": {
       "type": "object",
       "properties": {
-        "active_claim_ids": {"type": "array", "minItems": 2, "items": {"type": "string"}},
+        "active_claim_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}},
         "cross_level_links": {"type": "array", "items": {"type": "object"}}
       },
       "required": ["active_claim_ids"],
@@ -121,11 +121,11 @@
         "baselines": {"type": "array", "minItems": 1, "items": {"type": "object"}},
         "primary_metrics": {"type": "array", "minItems": 1, "items": {"type": "object"}},
         "main_tests": {"type": "array", "minItems": 1, "items": {"type": "object"}},
-        "ablations": {"type": "array", "minItems": 1, "items": {"type": "object"}},
-        "mechanism_tests": {"type": "array", "minItems": 1, "items": {"type": "object"}},
-        "robustness_tests": {"type": "array", "minItems": 1, "items": {"type": "object"}},
-        "efficiency_tests": {"type": "array", "minItems": 1, "items": {"type": "object"}},
-        "real_world_validation": {"type": "array", "minItems": 1, "items": {"type": "object"}}
+        "ablations": {"type": "array", "items": {"type": "object"}},
+        "mechanism_tests": {"type": "array", "items": {"type": "object"}},
+        "robustness_tests": {"type": "array", "items": {"type": "object"}},
+        "efficiency_tests": {"type": "array", "items": {"type": "object"}},
+        "real_world_validation": {"type": "array", "items": {"type": "object"}}
       },
       "required": ["datasets_or_setting", "baselines", "primary_metrics", "main_tests", "ablations", "mechanism_tests", "robustness_tests", "efficiency_tests", "real_world_validation"],
       "additionalProperties": true
@@ -134,8 +134,8 @@
       "type": "object",
       "properties": {
         "technical": {"type": "array", "minItems": 1, "items": {"type": "object"}},
-        "theoretical_or_design": {"type": "array", "minItems": 1, "items": {"type": "object"}},
-        "practical_or_managerial": {"type": "array", "minItems": 1, "items": {"type": "object"}}
+        "theoretical_or_design": {"type": "array", "items": {"type": "object"}},
+        "practical_or_managerial": {"type": "array", "items": {"type": "object"}}
       },
       "required": ["technical", "theoretical_or_design", "practical_or_managerial"],
       "additionalProperties": true
@@ -143,9 +143,9 @@
     "risks": {
       "type": "object",
       "properties": {
-        "novelty_risks": {"type": "array", "minItems": 1, "items": {"type": "object"}},
-        "technical_risks": {"type": "array", "minItems": 1, "items": {"type": "object"}},
-        "data_or_experimental_risks": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+        "novelty_risks": {"type": "array", "items": {"type": "object"}},
+        "technical_risks": {"type": "array", "items": {"type": "object"}},
+        "data_or_experimental_risks": {"type": "array", "items": {"type": "object"}},
         "fallback_designs": {"type": "array", "minItems": 1, "items": {"type": "object"}},
         "kill_criteria": {"type": "array", "minItems": 1, "items": {"type": "object"}}
       },

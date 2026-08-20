@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,13 +23,27 @@ T45_INPUT_FINGERPRINT_PATHS = {
     "synthesis_workbench": "literature/synthesis_workbench.json",
     "comparison_table": "literature/comparison_table.csv",
     "bridge_domain_plan": "literature/bridge_domain_plan.json",
+    "agent_params_config": "config/system_config/agent_params.yaml",
+}
+
+# Before v2 the novelty audit fingerprinted the entire mutable literature
+# library.  A later, unrelated supplement therefore made a completed audit
+# stale even when the audit had never retrieved or used that paper.  Keep the
+# old map only to validate existing receipts; new receipts bind the stable T4
+# decision context plus the exact evidence files named by the audit.
+T45_LEGACY_INPUT_FINGERPRINT_PATHS = {
+    **T45_INPUT_FINGERPRINT_PATHS,
     "literature_manifest": "literature/literature_manifest.json",
     "cross_domain_catalogs": "literature/cross_domain_catalogs",
-    "agent_params_config": "config/system_config/agent_params.yaml",
 }
 
 T45_FINGERPRINT_REPORT_REL_PATH = "ideation/novelty_audit_fingerprints.json"
 T45_FINGERPRINT_SEMANTICS = "t45_novelty_audit_input_fingerprints"
+T45_FINGERPRINT_VERSION = "2.0"
+_LITERATURE_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9_.-])(literature/(?:deep_read_notes|bridge_notes|shallow_read_notes|"
+    r"cross_domain_catalogs|evidence_queries|targeted_supplements)/[^\s`)'\"<>]+)"
+)
 
 
 def _is_operational_directory_guide(path: Path) -> bool:
@@ -179,19 +194,103 @@ def validate_fingerprint_report(
 
 
 def write_t45_fingerprint_report(workspace_dir: Path) -> dict[str, Any]:
+    evidence_paths = _t45_explicit_evidence_dependencies(workspace_dir)
     return write_fingerprint_report(
         workspace_dir,
         output_rel_path=T45_FINGERPRINT_REPORT_REL_PATH,
         semantics=T45_FINGERPRINT_SEMANTICS,
         input_paths=T45_INPUT_FINGERPRINT_PATHS,
+        extra={
+            "version": T45_FINGERPRINT_VERSION,
+            "dependency_policy": "stable_inputs_plus_explicitly_used_evidence",
+            "evidence_dependencies": {
+                path: file_fingerprint(workspace_dir, path) for path in evidence_paths
+            },
+        },
     )
 
 
 def validate_t45_fingerprint_report(workspace_dir: Path) -> tuple[bool, str | None]:
-    return validate_fingerprint_report(
+    report_path = workspace_dir / T45_FINGERPRINT_REPORT_REL_PATH
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return False, f"{T45_FINGERPRINT_REPORT_REL_PATH} 解析失败: {exc}"
+    if not isinstance(report, dict) or report.get("semantics") != T45_FINGERPRINT_SEMANTICS:
+        return False, f"{T45_FINGERPRINT_REPORT_REL_PATH} semantics 不正确"
+
+    input_paths = (
+        T45_INPUT_FINGERPRINT_PATHS
+        if str(report.get("version") or "").startswith("2")
+        else T45_LEGACY_INPUT_FINGERPRINT_PATHS
+    )
+    ok, error = validate_input_fingerprints(
         workspace_dir,
-        report_rel_path=T45_FINGERPRINT_REPORT_REL_PATH,
-        expected_semantics=T45_FINGERPRINT_SEMANTICS,
-        input_paths=T45_INPUT_FINGERPRINT_PATHS,
+        report.get("input_fingerprints"),
+        input_paths,
         label_for_error="T4.5 novelty audit",
     )
+    if not ok:
+        return ok, error
+    if not str(report.get("version") or "").startswith("2"):
+        return True, None
+
+    dependencies = report.get("evidence_dependencies")
+    if not isinstance(dependencies, dict):
+        return False, "T4.5 novelty audit 缺少 evidence_dependencies"
+    for rel_path, previous in dependencies.items():
+        if not isinstance(rel_path, str) or not isinstance(previous, dict):
+            return False, "T4.5 novelty audit evidence_dependencies 格式不正确"
+        current = file_fingerprint(workspace_dir, rel_path)
+        if bool(previous.get("exists")) != bool(current.get("exists")):
+            return False, f"T4.5 novelty audit 使用的证据已变化: {rel_path}"
+        if current.get("exists") and str(previous.get("sha256") or "") != str(current.get("sha256") or ""):
+            return False, f"T4.5 novelty audit 使用的证据已变化: {rel_path}"
+    return True, None
+
+
+def _t45_explicit_evidence_dependencies(workspace_dir: Path) -> list[str]:
+    """Return evidence the audit explicitly names, plus its own tool receipts.
+
+    The report itself is the authority for actual use.  T4.5 query/supplement
+    receipts remain dependencies because they define the search scope and
+    stopping boundary, but receipts produced later by Formalizer or Writer do
+    not retroactively invalidate the novelty decision.
+    """
+
+    workspace = Path(workspace_dir)
+    audit_path = workspace / "ideation" / "novelty_audit.md"
+    try:
+        audit_text = audit_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        audit_text = ""
+    paths = {
+        match.group(1).rstrip(".,;:，。；：")
+        for match in _LITERATURE_PATH_RE.finditer(audit_text)
+    }
+
+    for root_rel in ("literature/evidence_queries", "literature/targeted_supplements"):
+        root = workspace / root_rel
+        if not root.is_dir():
+            continue
+        pattern = "*.json" if root_rel.endswith("evidence_queries") else "supplement.json"
+        for path in root.rglob(pattern):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict) or str(payload.get("caller_task_id") or "") != "T4.5":
+                continue
+            paths.add(path.relative_to(workspace).as_posix())
+
+    # Never allow prose to smuggle an absolute or escaping dependency into a
+    # recovery receipt.  The regex already restricts the roots; resolve once
+    # more so validation remains safe if the pattern is changed later.
+    safe: list[str] = []
+    workspace_resolved = workspace.resolve()
+    for rel_path in sorted(paths):
+        candidate = (workspace / rel_path).resolve()
+        if candidate == workspace_resolved or workspace_resolved not in candidate.parents:
+            continue
+        safe.append(rel_path)
+    return safe

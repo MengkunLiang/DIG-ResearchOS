@@ -24,6 +24,7 @@ class WorkspaceAccessPolicy:
     # section.  Keep that constraint on the policy object so deterministic
     # tools enforce the same boundary as filesystem tools.
     task_id: str | None = None
+    run_id: str | None = None
     allowed_survey_section_ids: frozenset[str] | None = None
 
     def __post_init__(self) -> None:

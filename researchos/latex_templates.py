@@ -122,7 +122,9 @@ def resolve_latex_template(repo_root: Path, family: str, template_id: str, writi
             candidates.append(base / "utd" / "informs" / "informs_fallback.tex")
         candidates.append(base / "utd" / "informs_basic.tex")
     elif family == "ccf":
-        entry = ccf_template_entry(template_id or "neurips")
+        # Missing venue identity must not impersonate NeurIPS.  The generic
+        # fallback below provides a neutral English shell instead.
+        entry = ccf_template_entry(template_id)
         if entry is not None:
             candidates.append(base / "ccf-latex-templates" / entry.directory / entry.entry_file)
     if not candidates:

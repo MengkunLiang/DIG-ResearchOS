@@ -18,6 +18,7 @@ from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.bridge_catalog import load_bridge_catalog_summaries
 from ..runtime.prompts import render_prompt
+from ..runtime.workflow_mode import load_workflow_mode
 from ..tools.latex_compile import _compile_dependency_fingerprint
 from ..literature_identity import is_paper_note_file, is_placeholder_text
 from ..tools.citation_alignment import citation_support_text_by_key
@@ -82,7 +83,9 @@ class SurveyWriterAgent(Agent):
                         "write_file",
                         "list_files",
                         "grep_search",
+                        "query_research_evidence",
                         "expand_corpus_for_survey",
+                        "targeted_literature_supplement",
                         "build_survey_state",
                         "build_survey_figures",
                         "update_survey_section_state",
@@ -108,13 +111,64 @@ class SurveyWriterAgent(Agent):
                         "ideation/",
                         "_runtime/resume/",
                     ],
-                    "allowed_write_prefixes": ["drafts/survey/", "ideation/"],
+                    "allowed_write_prefixes": [
+                        "drafts/survey/",
+                        "ideation/",
+                        "literature/targeted_supplements/",
+                        "literature/shallow_read_notes/",
+                        "literature/related_work.bib",
+                        "literature/literature_manifest.json",
+                        "literature/evidence_queries/",
+                    ],
                     "prompt_template": "survey_writer.j2",
                 },
             )
         )
         self._mode = mode
-        if mode == "survey_visuals":
+        gate_modes = {"survey_gate", "template_gate", "outline_gate", "corpus_gate", "post_survey_gate"}
+        if mode in gate_modes:
+            self.spec.tool_names = ["ask_human", "read_file", "write_file", "finish_task"]
+        elif mode == "survey_plan":
+            self.spec.tool_names = [
+                "read_file",
+                "write_file",
+                "list_files",
+                "grep_search",
+                "query_research_evidence",
+                "targeted_literature_supplement",
+                "finish_task",
+            ]
+        elif mode == "survey_state":
+            self.spec.tool_names = ["build_survey_state", "finish_task"]
+        elif mode == "survey_assemble":
+            self.spec.tool_names = [
+                "read_file",
+                "write_file",
+                "query_research_evidence",
+                "targeted_literature_supplement",
+                "update_survey_section_state",
+                "assemble_survey",
+                "audit_survey_coverage",
+                "finish_task",
+            ]
+        elif mode == "survey_review":
+            self.spec.tool_names = [
+                "read_file",
+                "write_file",
+                "list_files",
+                "grep_search",
+                "query_research_evidence",
+                "targeted_literature_supplement",
+                "update_survey_section_state",
+                "assemble_survey",
+                "audit_survey_coverage",
+                "bind_survey_review",
+                "latex_compile",
+                "finish_task",
+            ]
+        elif mode == "survey_feed":
+            self.spec.tool_names = ["export_survey_for_ideation", "finish_task"]
+        elif mode == "survey_visuals":
             # This phase is deliberately non-generative with respect to visual
             # content.  A survey taxonomy map is the only permitted graphic;
             # generic file writes or LaTeX calls could otherwise fabricate
@@ -155,7 +209,9 @@ class SurveyWriterAgent(Agent):
                 "read_file",
                 "list_files",
                 "grep_search",
+                "query_research_evidence",
                 "write_file",
+                "targeted_literature_supplement",
                 "update_survey_section_state",
                 "finish_task",
             ]
@@ -177,7 +233,19 @@ class SurveyWriterAgent(Agent):
         # payload reserved for LLM writing phases.  Keeping the prompt narrow
         # also prevents a compile retry from spending context on unrelated
         # synthesis material.
-        artifact_only = phase in {"survey_visuals", "survey_compile"}
+        # Only taxonomy planning benefits from a bounded broad preview. A
+        # section gets its local outline and retrieves exact notes. Every
+        # other phase either handles a Gate or operates on named artifacts via
+        # tools; injecting the same synthesis, plan, state and bibliography
+        # again made deterministic expand/assemble/feed calls among the
+        # largest prompts in the system.
+        artifact_only = phase not in {"survey_plan", "survey_section"}
+        # A section outline already names the authoritative evidence and
+        # state files for that section. Repeating broad, truncated copies of
+        # synthesis/workbench/domain/plan/state in every section prompt both
+        # charges twice and lets generic context crowd out the exact note
+        # sections selected by the Writer.
+        section_phase = phase == "survey_section"
         section_outline = (
             read_text_file(ws / "drafts" / "survey" / "section_outlines" / f"{section_id}.md", default="")
             if section_id
@@ -202,7 +270,7 @@ class SurveyWriterAgent(Agent):
         related_work_bib_path = ws / "literature" / "related_work.bib"
         related_work_keys = [] if artifact_only else _extract_bib_keys(related_work_bib_path)
         citation_pool_preview = [] if artifact_only else _citation_pool_preview(ws, related_work_keys)
-        bridge_catalogs = [] if artifact_only else load_bridge_catalog_summaries(
+        bridge_catalogs = [] if artifact_only or section_phase else load_bridge_catalog_summaries(
             ws,
             records_per_bridge=2,
             abstract_excerpt_chars=420,
@@ -214,38 +282,39 @@ class SurveyWriterAgent(Agent):
             phase=phase,
             section_id=section_id,
             section_title=SURVEY_SECTION_TITLES.get(section_id, section_id.replace("_", " ").title()),
-            synthesis_preview="" if artifact_only else read_text_file(ws / "literature" / "synthesis.md", default="")[:6000],
-            synthesis_workbench_preview="" if artifact_only else read_text_file(ws / "literature" / "synthesis_workbench.json", default="")[:6000],
-            domain_map_preview="" if artifact_only else read_text_file(ws / "literature" / "domain_map.json", default="")[:5000],
-            comparison_table_preview="" if artifact_only else read_text_file(ws / "literature" / "comparison_table.csv", default="")[:4000],
+            synthesis_preview="" if artifact_only or section_phase else read_text_file(ws / "literature" / "synthesis.md", default="")[:6000],
+            synthesis_workbench_preview="" if artifact_only or section_phase else read_text_file(ws / "literature" / "synthesis_workbench.json", default="")[:6000],
+            domain_map_preview="" if artifact_only or section_phase else read_text_file(ws / "literature" / "domain_map.json", default="")[:5000],
+            comparison_table_preview="" if artifact_only or section_phase else read_text_file(ws / "literature" / "comparison_table.csv", default="")[:4000],
             bridge_catalog_preview=bridge_catalogs,
             bridge_catalog_count=0 if artifact_only else len(bridge_catalogs),
-            survey_plan_preview=read_text_file(ws / "drafts" / "survey" / "survey_plan.json", default="")[:7000] if not artifact_only else "",
-            writing_template_preview="" if artifact_only else read_text_file(ws / "drafts" / "survey" / "writing_template.json", default="")[:2000],
-            survey_state_preview="" if artifact_only else read_text_file(ws / "drafts" / "survey" / "survey_state.json", default="")[:7000],
-            corpus_decision_preview="" if artifact_only else read_text_file(ws / "drafts" / "survey" / "corpus_decision.json", default="")[:2000],
-            survey_audit_preview="" if artifact_only else read_text_file(ws / "drafts" / "survey" / "survey_audit.md", default="")[:3000],
-            survey_visual_manifest_preview=_survey_visual_manifest_prompt_preview(ws)[:4000] if not artifact_only else "",
+            survey_plan_preview=read_text_file(ws / "drafts" / "survey" / "survey_plan.json", default="")[:7000] if not artifact_only and not section_phase else "",
+            writing_template_preview="" if artifact_only or section_phase else read_text_file(ws / "drafts" / "survey" / "writing_template.json", default="")[:2000],
+            survey_state_preview="" if artifact_only or section_phase else read_text_file(ws / "drafts" / "survey" / "survey_state.json", default="")[:7000],
+            corpus_decision_preview="" if artifact_only or section_phase else read_text_file(ws / "drafts" / "survey" / "corpus_decision.json", default="")[:2000],
+            survey_audit_preview="" if artifact_only or section_phase else read_text_file(ws / "drafts" / "survey" / "survey_audit.md", default="")[:3000],
+            survey_visual_manifest_preview=_survey_visual_manifest_prompt_preview(ws)[:4000] if not artifact_only and not section_phase else "",
             section_outline_preview="" if artifact_only else section_outline[:5000],
-            related_work_preview="" if artifact_only else read_text_file(related_work_bib_path, default="")[:3000],
+            related_work_preview="" if artifact_only or section_phase else read_text_file(related_work_bib_path, default="")[:3000],
             related_work_keys=[] if artifact_only else related_work_keys,
             related_work_key_count=0 if artifact_only else len(related_work_keys),
-            citation_pool_preview=[] if artifact_only else citation_pool_preview,
-            seed_outline_profile_preview="" if artifact_only else seed_outline_profile[:7000],
-            has_seed_outline_profile=False if artifact_only else bool(seed_outline_profile.strip()),
-            seed_ideas_preview="" if artifact_only else seed_ideas[:3000],
-            has_seed_ideas=False if artifact_only else bool(seed_ideas.strip()),
+            citation_pool_preview=[] if artifact_only or section_phase else citation_pool_preview,
+            seed_outline_profile_preview="" if artifact_only or section_phase else seed_outline_profile[:7000],
+            has_seed_outline_profile=False if artifact_only or section_phase else bool(seed_outline_profile.strip()),
+            seed_ideas_preview="" if artifact_only or section_phase else seed_ideas[:3000],
+            has_seed_ideas=False if artifact_only or section_phase else bool(seed_ideas.strip()),
             seed_constraints_preview="" if artifact_only else seed_constraints[:2000],
             has_seed_constraints=False if artifact_only else bool(seed_constraints.strip()),
-            seed_papers_preview=[] if artifact_only else seed_papers[:10],
-            seed_paper_count=0 if artifact_only else len(seed_papers),
-            external_resources_preview=[] if artifact_only else external_resources[:12],
-            external_resource_count=0 if artifact_only else len(external_resources),
-            has_external_resources=False if artifact_only else bool(external_resources),
+            seed_papers_preview=[] if artifact_only or section_phase else seed_papers[:10],
+            seed_paper_count=0 if artifact_only or section_phase else len(seed_papers),
+            external_resources_preview=[] if artifact_only or section_phase else external_resources[:12],
+            external_resource_count=0 if artifact_only or section_phase else len(external_resources),
+            has_external_resources=False if artifact_only or section_phase else bool(external_resources),
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         phase = self._phase(ctx)
+        ws = ctx.workspace_dir
         if phase == "survey_gate":
             message = (
                 "请执行 T3.6 Gate-1：询问用户是否撰写综述论文。"
@@ -255,7 +324,7 @@ class SurveyWriterAgent(Agent):
         elif phase == "template_gate":
             message = (
                 "请执行 T3.6 Template Gate：询问用户选择综述写作语言与 LaTeX 模板。"
-                "选项包括 basic_zh、basic_en、ccf(默认 neurips)、utd(默认 informs) 或 other。"
+                "选项包括 basic_zh、basic_en、明确的 CCF 会议模板、utd(默认 informs) 或 other。"
                 "结果写入 drafts/survey/writing_template.json；没有真实人工输入时暂停等待 resume。"
             )
         elif phase == "survey_plan":
@@ -271,10 +340,17 @@ class SurveyWriterAgent(Agent):
                 "但不要把检索线索写成正文证据。写 drafts/survey/survey_plan.json；不要写正文。"
             )
         elif phase == "outline_gate":
-            message = (
-                "请执行 T3.6 Gate-2：把 survey_plan.json 中的 taxonomy 和 outline 展示给用户，"
-                "询问 approve/adjust。若用户要求调整，就地修订 survey_plan.json 并记录 outline_decision.json。"
-            )
+            if load_workflow_mode(ws).get("mode") == "auto":
+                message = (
+                    "请执行 T3.6 Gate-2 的 auto 预授权路径：检查 survey_plan.json 的 taxonomy、证据绑定和 outline。"
+                    "若结构通过你自己的质量检查，直接写 outline_decision.json，decision=approve，source=preauthorized_auto_profile，"
+                    "不要调用 ask_human；若存在空 taxonomy 类、无来源主类或明显偏离 project scope，则调用 ask_human，不能自动放行。"
+                )
+            else:
+                message = (
+                    "请执行 T3.6 Gate-2：把 survey_plan.json 中的 taxonomy 和 outline 展示给用户，"
+                    "询问 approve/adjust。若用户要求调整，就地修订 survey_plan.json 并记录 outline_decision.json。"
+                )
         elif phase == "corpus_gate":
             message = (
                 "请执行 T3.6 Gate-3：询问用户选择 conservative 或 complete 素材范围，"
@@ -312,6 +388,10 @@ class SurveyWriterAgent(Agent):
                 "不能写其它 section，不能生成整篇 wrapper。所有工具路径都相对 workspace 根目录；"
                 "文献只能用 literature/...，不要写成 drafts/survey/literature/...。"
                 "读取其它 section 前先 list_files 或查看 survey_state 确认文件存在；不要 read_file 尚未生成的 later section。"
+                "先用现有 synthesis、workbench、note 与 bibliography 写作；若在本节发现一个具体、可检索且会影响 taxonomy/发展脉络/代表性覆盖的证据缺口，"
+                "可自行调用一次 targeted_literature_supplement。stage 使用当前 section_id，target_record_count 不超过 8，并写明缺口原因。"
+                "调用后读取新增 shallow_read_notes 再继续本节；新增材料仍是 ABSTRACT_ONLY，不能支撑机制、结果、因果或 novelty 强论断。"
+                "如果现有证据足够则不要调用，也不要为增加引用数量而检索。"
                 "写完后调用 update_survey_section_state。"
             )
             if section_id == "abstract":
@@ -327,13 +407,13 @@ class SurveyWriterAgent(Agent):
                 "section/bib/plan/state 输入。未修改相关输入前严禁再次 assemble 或 audit。若失败原因无法从 "
                 "当前可读证据安全修复，写 drafts/survey/survey_assemble_repair_plan.md，说明失败检查、受影响文件、"
                 "所需证据和下一步，然后 finish_task；不要反复重写无关 section 或循环调用 assemble。"
-                "citation_diversity 是硬性放行条件：必须读取 survey_audit.json 的 "
-                "repair_guidance.citation_diversity.coverage_contract、unrepresented_candidates 与 section_review_queue，"
-                "逐一审阅 queue 中每个 section。候选只是一份待核查清单，不是可直接粘贴的引用：先读取其 source_file，"
+                "citation_diversity 会区分可用证据、范围内候选和正文实际使用，并检查是否过度集中；它不设置固定覆盖百分比。"
+                "读取 repair_guidance.citation_diversity，只在当前论断确有证据缺口或某个来源被机械重复时处理。"
+                "unrepresented_candidates 与 section_review_queue 只是待核查清单，不是可直接粘贴的引用：先读取其 source_file，"
                 "确认主题、对象、方法、证据等级和目标句完全匹配后才可加入或替换 citation。FULL/PARTIAL note 只能在核验后支持"
                 "具体论断；ABSTRACT-ONLY note 只能用于背景、趋势、范围或证据边界。不得用无关论文、abstract-only 线索支撑"
-                "强论断、citation padding 或新编造的事实来达到覆盖数。若逐节核查后仍无法安全满足 target，写 "
-                "survey_assemble_repair_plan.md，逐条记录拒用的候选、原因、需要补检的主题和受影响 section，然后 finish_task 进入恢复决策。"
+                "强论断、citation padding 或新编造的事实。若审计指出的集中使用无法安全调整，写 "
+                "survey_assemble_repair_plan.md，记录原因、需要补检的主题和受影响 section，然后 finish_task 进入恢复决策。"
                 "同时读取 repair_guidance.quality_warnings；每个 warning 都有具体 action，能安全处理的必须在本轮一并修复。"
             )
             recovery = ctx.extra.get("t36_assemble_recovery")
@@ -774,7 +854,7 @@ def _validate_survey_template_selection(data: dict) -> str | None:
     if not template_id:
         return "writing_template.json 必须包含 template_id"
     if family == "ccf" and template_id == "auto":
-        return "writing_template.json CCF 模板需明确 template_id，默认应为 neurips"
+        return "writing_template.json CCF 模板需明确具体会议；会议未定时请使用 basic_en"
     if family == "utd" and template_id == "auto":
         return "writing_template.json UTD 模板需明确 template_id，默认应为 informs"
     return None
@@ -798,7 +878,14 @@ def _human_interaction_exists(ws: Path, interaction_id: str) -> bool:
     return False
 
 
-def _citation_pool_preview(ws: Path, related_work_keys: list[str], *, max_items: int = 80) -> str:
+def _citation_pool_preview(ws: Path, related_work_keys: list[str], *, max_items: int = 24) -> str:
+    """Return a ranked orientation sample, never a substitute for retrieval.
+
+    The full bibliography and note corpus stay available through exact reads
+    and ``query_research_evidence``. Injecting up to eighty entries into PLAN
+    repeated more than twenty thousand characters and biased attention toward
+    a static list rather than the taxonomy question being planned.
+    """
     bib_entries = _parse_bib_preview(ws / "literature" / "related_work.bib")
     quality_by_id = _notes_quality_by_id(ws / "literature" / "notes_manifest.json")
     plan, _ = _load_json(ws / "drafts" / "survey" / "survey_plan.json")

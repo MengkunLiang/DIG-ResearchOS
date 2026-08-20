@@ -24,15 +24,15 @@ from .literature_quality import (
 
 @dataclass(frozen=True)
 class T2FinalizeConfig:
-    active_pool_max: int = 120
+    active_pool_max: int = 50
     bridge_active_pool_cap_per_bridge: int = 15
     must_bridge_active_pool_cap_per_bridge: int = 15
     should_bridge_active_pool_cap_per_bridge: int = 5
-    screened_active_pool_cap: int = 60
+    screened_active_pool_cap: int = 40
     snowball_active_pool_cap: int = 12
     finish_finalize_min_raw: int = 30
     dedup_title_threshold: float = 0.95
-    access_audit_top_n: int = 50
+    access_audit_top_n: int = 40
     # Every retained, metadata-verified candidate gets one deterministic open
     # PDF acquisition attempt.  This is an availability operation only; it
     # never upgrades reading evidence.
@@ -41,7 +41,7 @@ class T2FinalizeConfig:
     pdf_acquisition_retry_terminal_failures: bool = False
     pdf_acquisition_skip_known_books: bool = True
     pdf_acquisition_max_auto_read_pages: int = 100
-    pre_active_light_backfill_max: int = 220
+    pre_active_light_backfill_max: int = 100
     metadata_backfill_max_concurrency: int = 6
     abstract_backfill_title_match_threshold: float = 0.88
     abstract_backfill_max_concurrency: int = 6
@@ -61,11 +61,11 @@ class T2FinalizeConfig:
 
 @dataclass(frozen=True)
 class DeepReadQueueConfig:
-    deep_read_min: int = 35
-    deep_read_target: int = 35
-    deep_read_max: int = 45
-    probe_pool: int = 45
-    mainline_screened_cap: int = 90
+    deep_read_min: int = 24
+    deep_read_target: int = 30
+    deep_read_max: int = 36
+    probe_pool: int = 36
+    mainline_screened_cap: int = 50
     bridge_deep_floor: int = 3
     bridge_screened_cap: int = 7
     bridge_pool_cap: int = 15
@@ -142,8 +142,6 @@ def detect_manuscript_profile(workspace_dir: Path | str | None = None) -> str:
             metadata = project.get("metadata") if isinstance(project.get("metadata"), dict) else {}
             for key in ("manuscript_type", "project_type", "article_type", "paper_type"):
                 candidates.append(str(metadata.get(key) or project.get(key) or ""))
-            candidates.append(str(project.get("research_direction") or ""))
-            candidates.extend(str(item) for item in project.get("keywords") or [] if item is not None)
 
     outline_profile_path = workspace / "user_seeds" / "seed_outline_profile.json"
     if outline_profile_path.exists():
@@ -159,10 +157,24 @@ def detect_manuscript_profile(workspace_dir: Path | str | None = None) -> str:
             intent = profile.get("writing_intent")
             if isinstance(intent, dict):
                 candidates.append(str(intent.get("primary_output") or ""))
-            candidates.append(str(profile.get("title") or ""))
 
-    joined = " ".join(candidates).casefold()
-    if any(token in joined for token in ("survey", "综述", "review", "taxonomy-driven")):
+    normalized = [" ".join(value.casefold().replace("_", " ").replace("-", " ").split()) for value in candidates]
+    survey_values = {
+        "survey",
+        "survey paper",
+        "review",
+        "review article",
+        "literature review",
+        "systematic review",
+        "systematic literature review",
+        "scoping review",
+        "taxonomy driven survey",
+        "taxonomy driven professional survey",
+        "综述",
+        "综述论文",
+        "文献综述",
+    }
+    if any(value in survey_values for value in normalized):
         return "survey"
     return "research_article"
 

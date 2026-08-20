@@ -49,6 +49,26 @@ EXTERNAL_EXECUTOR_T8_INPUTS: dict[str, str] = {
     "external_executor_dir": "external_executor",
 }
 
+# T8 must consume the accepted T4/T4.5 research package, not depend on the
+# legacy scorecard projection.  Every entry remains optional at the narrow
+# per-node prerequisite layer because older workspaces may carry only the
+# scorecard, while current workspaces are already protected by hypotheses,
+# literature, and the validated T5-to-T8 handoff.  Declaring these paths is
+# still important: single-task copying and prompt input selection can then
+# preserve and use whichever authoritative artifacts actually exist.
+MODERN_IDEATION_MANUSCRIPT_INPUTS: dict[str, str] = {
+    "selected_candidate": "ideation/selected/selected_candidate.json",
+    "research_blueprint": "ideation/research_blueprint.yaml",
+    "claim_registry": "ideation/claim_registry.yaml",
+    "orientation_review": "ideation/orientation_review.json",
+    "research_dossier": "ideation/research_dossier.json",
+    "research_proposal": "ideation/proposal/research_proposal.md",
+    "proposal_manifest": "ideation/proposal/proposal_manifest.json",
+    "validation_map": "ideation/validation_map.yaml",
+    "contribution_hypothesis_map": "ideation/contribution_hypothesis_map.yaml",
+    "kill_criteria": "ideation/kill_criteria.yaml",
+}
+
 # ``run --from`` / ``resume --from`` must transfer more than the immediate
 # state-machine node's files for a literature-dependent public stage.  A
 # public re-entry such as ``--from-task T3.6`` resolves to the first survey
@@ -1246,6 +1266,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "paper_claim_audit": "drafts/paper_claim_audit.md",
             "related_work_bib": "literature/related_work.bib",
             "hypotheses": "ideation/hypotheses.md",
+            **MODERN_IDEATION_MANUSCRIPT_INPUTS,
             "idea_scorecard": "ideation/idea_scorecard.yaml",
             "novelty_audit": "ideation/novelty_audit.md",
             "ablations": "experiments/ablations.csv",
@@ -1281,7 +1302,6 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "writing_style",
             "related_work_bib",
             "hypotheses",
-            "idea_scorecard",
             "executor_research_report",
         ],
         "schemas": {},
@@ -1319,6 +1339,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "domain_map": "literature/domain_map.json",
             "related_work_bib": "literature/related_work.bib",
             "hypotheses": "ideation/hypotheses.md",
+            **MODERN_IDEATION_MANUSCRIPT_INPUTS,
             "exp_plan": "ideation/exp_plan.yaml",
             "novelty_audit": "ideation/novelty_audit.md",
             "idea_scorecard": "ideation/idea_scorecard.yaml",
@@ -1349,7 +1370,6 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "domain_map",
             "related_work_bib",
             "hypotheses",
-            "idea_scorecard",
         ],
         "schemas": {},
     },
@@ -1366,6 +1386,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "domain_map": "literature/domain_map.json",
             "related_work_bib": "literature/related_work.bib",
             "hypotheses": "ideation/hypotheses.md",
+            **MODERN_IDEATION_MANUSCRIPT_INPUTS,
             "idea_scorecard": "ideation/idea_scorecard.yaml",
             "manuscript_resource_index": "drafts/manuscript_resource_index.json",
             "section_plan": "drafts/section_plan.json",
@@ -1390,7 +1411,6 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "domain_map",
             "related_work_bib",
             "hypotheses",
-            "idea_scorecard",
             "manuscript_resource_index",
             "section_plan",
             "evidence_plan",
@@ -1415,8 +1435,10 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "domain_map": "literature/domain_map.json",
             "related_work_bib": "literature/related_work.bib",
             "hypotheses": "ideation/hypotheses.md",
+            **MODERN_IDEATION_MANUSCRIPT_INPUTS,
             "idea_scorecard": "ideation/idea_scorecard.yaml",
             "outline": "drafts/outline.md",
+            "writing_storyline": "drafts/writing_storyline.md",
             "manuscript_resource_index": "drafts/manuscript_resource_index.json",
             "section_plan": "drafts/section_plan.json",
             "evidence_plan": "drafts/evidence_plan.json",
@@ -1441,8 +1463,8 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "domain_map",
             "related_work_bib",
             "hypotheses",
-            "idea_scorecard",
             "outline",
+            "writing_storyline",
             "manuscript_resource_index",
             "section_plan",
             "evidence_plan",
@@ -1460,6 +1482,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "paper_state": "drafts/paper_state.json",
             "section_outline": "drafts/section_outlines/methodology.md",
             "hypotheses": "ideation/hypotheses.md",
+            **MODERN_IDEATION_MANUSCRIPT_INPUTS,
             "exp_plan": "ideation/exp_plan.yaml",
             "idea_scorecard": "ideation/idea_scorecard.yaml",
             "novelty_audit": "ideation/novelty_audit.md",
@@ -1485,7 +1508,6 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "section_outline",
             "hypotheses",
             "exp_plan",
-            "idea_scorecard",
             "alignment_matrix",
         ],
         "schemas": {},
@@ -1535,6 +1557,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "domain_map": "literature/domain_map.json",
             "related_work_bib": "literature/related_work.bib",
             "comparison_table": "literature/comparison_table.csv",
+            **MODERN_IDEATION_MANUSCRIPT_INPUTS,
             "idea_scorecard": "ideation/idea_scorecard.yaml",
             "manuscript_resource_index": "drafts/manuscript_resource_index.json",
             "evidence_plan": "drafts/evidence_plan.json",
@@ -1553,7 +1576,6 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "synthesis_workbench",
             "domain_map",
             "related_work_bib",
-            "idea_scorecard",
             "alignment_matrix",
         ],
         "schemas": {},

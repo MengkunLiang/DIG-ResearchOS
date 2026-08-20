@@ -114,11 +114,11 @@ The actual required inputs are deliberately small:
 | Mode | New-workspace default rounds | Flow | Intended use |
 | --- | ---: | --- | --- |
 | `quick` | 0 | P0, independent scoring, Family/Interaction Graph, Portfolio, Gate1 | Inspect the initial candidate space without child generation. |
-| `standard` | 2 | P0 -> P1 -> P2 | Default exploration: formation followed by two rounds of mechanism, counterfactual, and validation refinement. |
-| `deep` | 3 | P0 -> P1 -> P2 -> P3 | Larger researcher-approved exploration budget. |
-| `auto` | 2 by default, explicitly configurable 0-3 | Uses the confirmed round budget | Currently a configurable budget mode, not an autonomous research-policy agent. |
+| `standard` | 1 | P0 -> P1 | Default exploration: formation followed by one integrated mechanism, counterfactual, and validation refinement round. |
+| `deep` | 2 | P0 -> P1 -> P2 | Larger researcher-approved exploration budget. |
+| `auto` | 1 by default, explicitly configurable 0-3 | Uses the confirmed round budget | Project Auto mode may preauthorize this budget; the model still stops rather than manufacturing low-value children. |
 
-Historic workspaces can retain confirmed `standard=1` or `deep=2` configurations and remain resumable. A round count is an exploration-cost upper bound, never a requirement to manufacture a child in every round.
+Historic workspaces retain their already confirmed round budgets and remain resumable. A round count is an exploration-cost upper bound, never a requirement to manufacture a child in every round.
 
 ### 2.4 Publication orientation
 
@@ -256,15 +256,17 @@ Current route ranges are exploration-cost guidance, not output obligations:
 
 | Route | Default range | Scientific role |
 | --- | ---: | --- |
-| `evidence_routed_literature` | 3 | Mechanisms, tensions, counterexamples, and gaps in mainline material |
-| `informed_brainstorm` | 2-3 | Project-grounded, explicitly conjectural leaps using LLM scholarly knowledge |
+| `evidence_routed_literature` | 1-2 | Mechanisms, tensions, counterexamples, and gaps in mainline material |
+| `informed_brainstorm` | 1-2 | Project-grounded, explicitly conjectural leaps using LLM scholarly knowledge |
 | `mechanism_challenge` | 0-1 | Challenge default mechanism assumptions |
 | `reverse_operation` | 0-1 | Reverse objective, causal direction, or operation logic |
 | `subgroup_failure` | 0-1 | Reframe around heterogeneity, failed groups, or boundaries |
 | `gap_exploration` | 0-1 | Explore a structural explanatory or measurement gap |
 | `cross_domain_bridge` | 0-2 | Propose a verification-required structural transfer |
 
-Each route has an independent checkpoint at `ideation/evolution/routes/round_0/<route>.json` and may be `supported`, `partial`, or `unsupported`. One bounded repair/re-divergence attempt is available. A route that remains underfilled records why; it does not loop until it produces duplicate filler or block other routes.
+Each route has an independent checkpoint at `ideation/evolution/routes/round_0/<route>.json` and may be `supported`, `partial`, or `unsupported`. One bounded replacement call is available only when the first response is malformed or the provider fails. Returning fewer Candidates than the ceiling is a valid scientific outcome and does not trigger another creative call. A researcher can explicitly regenerate a Route when another perspective is materially useful.
+
+Adaptive routing does not mean shallow initialization. In Standard mode, Literature and Informed Brainstorm always establish two complementary starting lenses; the Opportunity Map then adds only those challenge, reversal, subgroup, gap, or Bridge lenses that expose a distinct scientific question. Deep mode runs every configured lens. Candidate count is never a completion target, but a Candidate can advance as `evolved` only with a coherent mechanism, a challenged assumption, non-duplicative 1--4 contributions and provisional hypotheses, a competing explanation, and a falsifiable validation path. Thus the controller avoids filler while preserving the substantive checks that make a direction decision-ready.
 
 ### 4.5 Minimal IdeaSeed contract
 
@@ -282,7 +284,7 @@ A complete `CandidateDossier` is also accepted when available. A minimal seed is
 
 ### 4.6 Candidate Enricher
 
-`LLMCandidateEnricher` gives each admitted seed an independent opportunity to deepen its scientific expression: mechanism chain, competing explanations, 2-4 hypotheses, 2-4 contributions, validation logic, boundaries, risks, kill criteria, and researcher-readable Chinese presentation.
+`LLMCandidateEnricher` gives each admitted seed one opportunity to deepen its scientific expression: mechanism chain, competing explanations, one to four genuinely distinct hypotheses and contributions, validation logic, boundaries, risks, kill criteria, and researcher-readable presentation. It does not add fields merely to reach a preferred count.
 
 It may not change the candidate ID, route, parent lineage, problem reframing, core thesis, existing conceptual leap, SourceRef, or Evidence Permission. It cannot score, select, reject, merge, or replace the seed.
 
@@ -434,7 +436,7 @@ Final cards translate existing structured research content for a researcher; the
 | --- | --- | --- |
 | `IdeaSeed` | Minimal exploratory idea | Problem, thesis, mechanism, prediction, risk, and route; no final-card obligation |
 | `IdeaGenome` | Stable scientific genes | Candidate ID, route, parents, and core scientific fields |
-| `CandidateDossier` | Native research entity | Dossier/Genome/Lineage IDs agree; evolved candidates need 2-4 contributions and hypotheses |
+| `CandidateDossier` | Native research entity | Dossier/Genome/Lineage IDs agree; evolved candidates need one to four non-duplicative contributions and hypotheses |
 | `CreativeContext` | Preserves exploratory reasoning | Leap, alternatives, surprising prediction, program potential, origin, and upgrades |
 | `CandidatePresentation` | LLM-authored presentation layer | Mature display data; a seed may await enrichment |
 | `ProvisionalHypothesis`, `Contribution`, and `IdeaFamily` | Falsification, contribution, and comparison context | Each remains traceable and does not certify external novelty or authorize candidate deletion |
@@ -544,7 +546,8 @@ Hard failures preserve the failing object, the error, and all unaffected checkpo
 | Condition | Correct behavior |
 | --- | --- |
 | Opportunity Planner failure | Provisional fallback plus diagnostic; routes continue |
-| One route fails/underfills | One repair, then partial/unsupported receipt; other routes continue |
+| One route response fails | One bounded replacement call, then a partial/unsupported receipt; other routes continue |
+| One route returns fewer distinct Candidates than its ceiling | Keep them without an automatic completion call; explicit Route regeneration remains available |
 | Seed enrichment fails | Original seed survives with `enrichment_degraded` |
 | Score batch fails | Repair, isolate, then retain an unscored candidate |
 | Mutation fails/no improvement | Archive/defer that plan; preserve parent |
@@ -664,7 +667,7 @@ A seed can be visible and evolve further, but should not reach T4.5 merely becau
 
 Pass2 adds grounding, risk, and selection guidance; it may not hide a candidate. In particular, when `constraint_status=not_supported_by_current_evidence`, the candidate may remain Gate1-visible for evidence/mechanism enrichment or further evolution, but its `screening_recommendation` must be `revise_before_selection` or another non-direct-selection status. It must never be `proceed`. This prevents an evidence-needing direction from being presented as ready for final selection without deleting a potentially creative idea.
 
-Gate1 is a persistent research conversation, not a one-line command. A researcher can enter `inspect D1`, ask why a score was assigned, compare `D1` with `D3`, then return to a planned action without regenerating T4. Enter adds a line to the current turn. On POSIX, `Ctrl+D` submits the text already entered; on Windows, use `Ctrl+Z` followed by Enter. A standalone `END` provides the same cross-platform submission in terminals that capture EOF. A bare `D1` is deliberately ambiguous and asks whether the researcher means inspect, proceed, or optimize. Inspection and comparison are local read-only actions. A proceed, optimization, composition, or re-exploration request is first restated as an operation plan and needs a second confirmation.
+Gate1 is a persistent research conversation, not a one-line command. A researcher can enter `inspect D1`, ask why a score was assigned, compare `D1` with `D3`, then return to a planned action without regenerating T4. Enter adds a line to the current turn. A standalone `END` submits on every platform; POSIX terminals also accept `Ctrl+D`, while Windows consoles accept `Ctrl+Z` followed by Enter. A bare `D1` is deliberately ambiguous and asks whether the researcher means inspect, proceed, or optimize. Inspection and comparison are local read-only actions. A proceed, optimization, composition, or re-exploration request is first restated as an operation plan and needs a second confirmation.
 
 The path depends on that confirmed action. Selecting one ready Candidate follows `T4 -> T4-GATE1 -> T4.5` and writes a pre-novelty selection receipt. It does not rerun T4. Evolution, focus, route regeneration, or an approved composition follows `T4 -> T4-GATE1 -> T4` and creates a new preserved version before returning to Gate1. A read-only action stays at Gate1. EOF with no submitted text pauses the workspace with its Gate intact. EOF while an operation plan awaits confirmation preserves that draft and never executes it. `resume` reopens the same durable Gate and does not repeat a completed T4 model run.
 
@@ -710,7 +713,7 @@ config/system_config/t4_target_profiles.yaml
 config/system_config/gates.yaml
 ```
 
-Current defaults should be understood as cost/coverage targets: P0 maximum 14, active target 7 with a 6-8 desired range, portfolio 1-3, mutation 2-4, crossover 0-2, at most six offspring, opportunity range 3-6, route concurrency two, and scoring batches of three. `family_similarity_threshold=0.45` only recalls candidates for comparison; `complexity_growth_ratio_limit=1.8` is a diagnostic. Default bridge policy `allow_abstract_with_upgrade` permits catalog/abstract material as creative context, not mechanism certification.
+Current defaults are cost ceilings rather than content quotas: P0 has a maximum of 14, the later active-population target is seven, mutation and crossover have maxima of four and two, and a round has at most six offspring. Route concurrency is two and scoring batches contain at most four dossiers. The two core routes each have a maximum of two seeds; optional routes activate only when the Opportunity Map supports them. The planner chooses the smallest useful Opportunity set and may return fewer candidates without filler. `family_similarity_threshold=0.45` only recalls candidates for comparison; `complexity_growth_ratio_limit=1.8` is a diagnostic.
 
 ## 12. Debugging, Artifact Inspection, and Regression Verification
 

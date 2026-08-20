@@ -11,6 +11,8 @@ Use this guidance during T8 writing and revision.
 
 Write the paper as a staged research argument, not as one long generation. Tools organize resources, inventories, section plans, assembly, and mechanical audits. The Writer LLM is responsible for the scientific story, claims, section prose, and venue-aware positioning.
 
+For UTD, Management Science, and Information Systems Research style work, make the main argument follow `real-world information problem → computational problem → technical solution`. Establish the phenomenon and its decision consequence first. Explain why the information structure or existing modeling choice naturally creates a computational difficulty. Only then introduce the technical design as a reasoned response. Carry design rationale, management relevance, and decision value through Method and Analysis instead of adding them as an isolated final paragraph.
+
 ## Publication Prose and Citation Preferences
 
 Treat these as editorial standards for writing and review. When they conflict with factual accuracy, verified evidence, or a target-venue template, preserve the fact and express it naturally.
@@ -19,6 +21,7 @@ Treat these as editorial standards for writing and review. When they conflict wi
 - In ordinary body prose, do not rely on dashes, colons, or label sentences such as
   `Problem:`, `Gap:`, `Insight:`, or `Implication:`. Definitions, equations, tables, contribution lists, and a venue template may require limited punctuation of that kind, but the argument itself should use complete sentences that state causality, contrast, qualification, or consequence.
 - Do not construct an argument as a sequence of parallel short sentences. Let each paragraph develop one claim through a readable order such as definition, mechanism, evidence, boundary, and implication. Move to a new term, paper, result, or practical consequence only after explaining why the preceding discussion leads there.
+- Avoid semicolons and fragmented parallel clauses in ordinary prose. Prefer a complete causal, contrastive, or qualifying sentence. Define every term, construct, mechanism, and symbol at first use and keep the same wording and notation throughout the paper.
 - Keep the section hierarchy compact. Do not create a subsection or `\paragraph{}` for every artifact, claim, or paper. Use a heading only when the argument changes function in a way that helps the reader navigate the paper.
 - Explain a technical or theoretical term when it first matters to the argument. When useful, use a real or conditional `such as` scenario to make an abstract mechanism legible. An illustrative example must not be presented as data, a result, or a fact that has not been verified.
 - Every citation must be real, available in the bibliography, and semantically matched to the precise claim it supports. Verify the paper's subject, method, setting, and evidence level in its note card, citation pool, or source record before citing it.
@@ -26,6 +29,12 @@ Treat these as editorial standards for writing and review. When they conflict wi
   Venue quality never permits a background citation to support a mechanism, causal effect, empirical result, business implication, or contribution that it does not actually establish.
 - Treat citation selection as a source-reading decision, not a formatting operation.
   Do not infer support from a title, author reputation, venue, abstract snippet, or model memory. If the available source record cannot verify the intended wording, remove the citation and dependent strong claim, or use an explicitly bounded motivation statement. Broaden coverage through verified work that represents a distinct development stage, research tradition, comparison dimension, or evidence boundary, never through an unrelated citation bundle.
+- Before writing Introduction or Related Work, inspect the section evidence supplement. If the existing library still misses a precise research stream, historical stage, or nearest-work comparison, run one bounded `targeted_literature_supplement`. Use its abstract notes for discovery and bounded context only, and upgrade the source before making a mechanism, result, causal, or novelty claim.
+- Integrate verified literature, project evidence, and scholarly model reasoning into one natural argument. Model reasoning may improve explanation, connect evidence, derive design implications, motivate a hypothesis, and make the prose coherent without a visible provenance label. It cannot fabricate a citation or silently supply a bibliographic identity, empirical fact, numerical result, attributed prior-work finding, established causal claim, research consensus, resource availability claim, or external novelty verdict.
+- Match contribution verbs to the accepted contribution character. Use `introduce` or a priority claim only when the novelty audit supports it, `improve` or `extend` for an improvement, and `adapt` or `transfer` for exaptation. Do not present a routine change as a core contribution.
+- Keep tense stable. Describe the method and enduring definitions in the present tense, completed experimental procedures in the past tense, and general facts in the present tense. Prefer active voice when it makes responsibility clearer.
+- Avoid stock AI prose such as `delve into`, `it is worth noting`, `plays a crucial role`, `in the realm of`, `shed light on`, `pave the way`, and generic rapid-development openings. The deterministic craft audit may flag these phrases, but the Writer should avoid them before audit rather than relying on repair.
+- Keep repeated numerical results at the source precision across sections. A change in rounding, denominator, population, or evidence status requires an explicit reason and the corresponding source artifact.
 
 ## Required Stages
 
@@ -53,7 +62,7 @@ Do not turn section-by-section drafting into several short placeholders. Except 
 
 - Methodology should cover artifact overview, component roles, inputs/outputs, algorithm or notation, design choices, and rejected alternatives.
 - Experiments should cover RQs, data/splits, baselines, metrics, seeds/compute, main results, ablations, error analysis, and result provenance.
-- Related Work should use 2-4 taxonomy or competing-rationale subsections, not a paper-by-paper laundry list.
+- Related Work should use the smallest coherent set of taxonomy or competing-rationale subsections, not a paper-by-paper laundry list.
 - Analysis should explain support for design rationales, alternative explanations, failure cases, sensitivity, and boundaries.
 - Introduction and Conclusion should form a complete problem-method-evidence-contribution chain.
 

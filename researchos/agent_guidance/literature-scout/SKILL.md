@@ -12,7 +12,7 @@ Use this guidance before calling search or paper-processing tools.
 - Infer the research domain from `project.yaml`, seed papers, seed ideas, constraints, and user-provided resources.
 - Build a `domain_profile` with inclusion concepts, exclusion concepts, ambiguous terms, target venue/category hints, dataset or benchmark names, and related subfields.
 - Design diverse queries from multiple angles: core mechanism, task/application, evaluation setting, baseline family, adjacent field, and recent terminology.
-- Run the default broad sources plus `informs_search` for the core queries. INFORMS is a useful low-cost supplement for OR/MS, management science, supply chain, queueing, and optimization coverage; empty results are acceptable and should not block T2.
+- Choose the source portfolio from the project-derived domain profile. Use broad scholarly indexes for every project, add `informs_search` for OR/MS, management science, information systems, operations, supply chain, queueing, or optimization questions, and favor computer-science sources for CS-heavy topics. An empty specialized source is acceptable and must not block T2.
 - Decide whether a candidate is genuinely relevant. Tools may rank, deduplicate, verify metadata, and persist records, but they cannot make final domain judgments.
 
 ## Tool Boundary

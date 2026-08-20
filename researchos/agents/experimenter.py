@@ -80,10 +80,10 @@ from ..tools.external_experiment import (
     LEGACY_EXECUTOR_SELECTION_PATH,
     RUN_MANIFEST_PATH,
     SKILL_SUITE,
-    research_reboost_skill_prompt_excerpt,
     validate_context_reboost_handoff,
 )
 from ..orchestration.t5_t8_bridge import validate_modern_t5_handoff, validate_t8_ingest_artifacts
+from ..ideation.formalization import validate_orientation_review, validate_t45_formalization_core
 from ._common import (
     generate_findings_summary,
     generate_manifest,
@@ -132,6 +132,13 @@ def run_integrity_gate(ctx: ExecutionContext) -> tuple[bool, str | None]:
     ):
         if not (ws / rel_path).is_file():
             issues.append(f"缺少 {rel_path}（T4.5 正式化质量 gate 尚未完成）")
+    if not issues:
+        formal_ok, formal_error = validate_t45_formalization_core(ws)
+        if not formal_ok:
+            issues.append(f"T4.5 正式化来源无效: {formal_error}")
+        review_ok, review_error = validate_orientation_review(ws)
+        if not review_ok:
+            issues.append(f"T4.5 orientation review 无效: {review_error}")
 
     # 2. 检查 novelty_audit.md（T4.5 通过标志）
     audit_path = ws / "ideation" / "novelty_audit.md"
@@ -279,15 +286,17 @@ def check_failure_modes(results: dict, log_content: str) -> list[dict]:
     issues = []
     experiments = results.get("experiments", [])
 
-    # FM1: Implementation Bugs - 检查 loss 是否发散
+    # FM1: Implementation Bugs. Loss sign and scale are objective-specific:
+    # negative log-likelihood variants can be negative and summed losses can
+    # legitimately exceed 100. Only an explicit non-finite value, failed run
+    # status, or divergence signal is deterministic evidence of this failure.
     for exp in experiments:
-        metrics = exp.get("metrics", {})
-        loss = metrics.get("loss") or metrics.get("final_loss")
-        if loss is not None and (loss > 100 or loss < 0 or loss != loss):  # nan check
+        status = str(exp.get("status") or "").strip().casefold()
+        if status in {"diverged", "numerical_failure", "nan", "inf"}:
             issues.append({
                 "id": "FM1",
                 "mode": "Implementation Bugs",
-                "description": f"实验 {exp.get('experiment_id', 'unknown')} 的 loss 异常: {loss}",
+                "description": f"实验 {exp.get('experiment_id', 'unknown')} 显式报告数值失败状态: {status}",
                 "severity": "HIGH",
             })
 
@@ -353,41 +362,25 @@ def check_failure_modes(results: dict, log_content: str) -> list[dict]:
                                 "description": f"实验 {exp.get('experiment_id')} 的方法名不一致: {method} vs {config_method}",
                                 "severity": "LOW",
                             })
-                    except Exception:
-                        pass
-
-    # FM6: Frame-Lock - 检查是否有多视角分析
-    # 检查 iteration_log 是否包含多视角分析
-    if "多视角" not in log_content and "perspective" not in log_content.lower():
-        if "ablation" in log_content.lower() or len(experiments) >= 3:
-            issues.append({
-                "id": "FM6",
-                "mode": "Frame-Lock",
-                "description": "实验日志缺少多视角分析",
-                "severity": "LOW",
-            })
-
-    # FM7: Citation Hallucinations - 验证引用存在
-    # 这个主要在文档输出阶段检查，这里做占位
-    # 如果需要检查，可以在 findings 或 summary 中查找未定义的引用
-    for exp in experiments:
-        notes = exp.get("notes", "")
-        if notes:
-            # 简单检查：是否有疑似幻觉引用模式
-            import re
-            citations = re.findall(r'\[.*?\d{4}.*?\]', notes)
-            if len(citations) > 0:
-                # 检查这些引用是否在相关工作中有对应
-                # 这里只做简单警告
-                for cite in citations[:2]:  # 只检查前2个
-                    if cite not in log_content:  # 如果在主日志中未出现
+                    except Exception as exc:
                         issues.append({
-                            "id": "FM7",
-                            "mode": "Citation Hallucinations",
-                            "description": f"发现疑似引用 {cite}，需验证是否存在于文献中",
-                            "severity": "LOW",
+                            "id": "FM5",
+                            "mode": "Methodology Fabrication",
+                            "description": (
+                                f"实验 {exp.get('experiment_id', 'unknown')} 的实现配置不可读取；"
+                                f"无法核验方法名一致性 ({type(exc).__name__})"
+                            ),
+                            "severity": "MEDIUM",
                         })
-                        break
+
+    # FM6 cannot be inferred from whether a log literally contains
+    # "perspective" or "多视角". The model/reviewer assesses alternative
+    # explanations, sensitivity, subgroup behavior and failure cases against
+    # the actual design artifacts in T8. A keyword absence is not evidence.
+
+    # FM7 is owned by the manuscript bibliography and claim-citation audits.
+    # A year-shaped bracket in experiment notes, or its absence from a run
+    # log, cannot establish that a citation is hallucinated.
 
     return issues
 
@@ -1158,18 +1151,19 @@ class ExperimenterAgent(Agent):
         mode = ctx.mode or "full"
         project = load_project(ctx)
         ws = ctx.workspace_dir
+        external_mode = mode in EXTERNAL_EXPERIMENT_MODES
 
         # 读取实验计划
         exp_plan_path = ws / "ideation" / "exp_plan.yaml"
         exp_plan = {}
-        if exp_plan_path.exists():
+        if not external_mode and exp_plan_path.exists():
             try:
                 exp_plan = yaml.safe_load(exp_plan_path.read_text(encoding="utf-8"))
             except Exception:
                 exp_plan = {}
 
         # 读取假设
-        hypotheses = read_text_file(ws / "ideation" / "hypotheses.md", default="")
+        hypotheses = "" if external_mode else read_text_file(ws / "ideation" / "hypotheses.md", default="")
 
         # 读取 pilot 结果（full 模式可能需要）
         pilot_results = {}
@@ -1239,7 +1233,6 @@ class ExperimenterAgent(Agent):
             novelty_report_preview=novelty_report,
             novelty_audit_preview=novelty_audit,
             must_add_baselines_preview=must_add_baselines,
-            research_reboost_skill=research_reboost_skill_prompt_excerpt() if mode == "reboost" else "",
             direct_full_mode=direct_full_mode,
             skipped_optional_tasks=list(ctx.extra.get("skipped_optional_tasks", [])),
             budget_hint=budget_hint,

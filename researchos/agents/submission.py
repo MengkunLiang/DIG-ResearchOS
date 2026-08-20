@@ -154,7 +154,7 @@ class SubmissionAgent(Agent):
     def system_prompt(self, ctx: ExecutionContext) -> str:
         """渲染system prompt。"""
         project = load_project(ctx)
-        target_venue = project.get("target_venue", "neurips2026")
+        target_venue = project.get("target_venue") or "unknown"
         # 编译重试上限用于指导 T9 在“诊断-修复-重试”循环里及时收敛。
         max_compile_attempts = int(self._params.get("max_compile_attempts", 4))
 
@@ -170,13 +170,18 @@ class SubmissionAgent(Agent):
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         """生成投稿任务消息。"""
         project = load_project(ctx)
-        target_venue = project.get("target_venue", "neurips")
+        target_venue = project.get("target_venue") or "unknown"
+        venue_instruction = (
+            f"核对并迁移到 {target_venue} 的当前投稿格式"
+            if target_venue != "unknown"
+            else "保留 T8 已确认的 CCF/AI 写作风格与本地模板，不冒充任何未指定 venue 的官方格式"
+        )
 
         return prepend_resume_prefix(
             ctx,
             (
             f"请执行 T9 Submission Agent。\n\n"
-            f"将 drafts/paper.tex 迁移到 {target_venue} 会议格式，"
+            f"{venue_instruction}，"
             "执行匿名化检查，验证LaTeX编译，生成投稿包。"
             ),
         )

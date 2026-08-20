@@ -35,6 +35,75 @@ from .guidance import load_agent_guidance
 from ._common import load_project, prepend_resume_prefix, read_text_file
 
 
+def _compact_resource_index_prompt(raw: str) -> str:
+    """Render navigation facts without copying all note-card prose into prompts."""
+
+    try:
+        data = json.loads(raw or "{}")
+    except Exception:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    artifacts = data.get("artifacts") if isinstance(data.get("artifacts"), list) else []
+    cards = data.get("paper_note_cards") if isinstance(data.get("paper_note_cards"), list) else []
+    compact = {
+        "semantics": "compact_navigation_summary_read_exact_artifacts_or_query_note_sections",
+        "artifact_count": len(artifacts),
+        "artifact_paths": [
+            str(item.get("path"))
+            for item in artifacts
+            if isinstance(item, dict) and item.get("path")
+        ],
+        "literature_manifest_counts": data.get("literature_manifest_counts", {}),
+        "bib_key_count": len(data.get("bib_keys", [])) if isinstance(data.get("bib_keys"), list) else 0,
+        "note_card_count": len(cards),
+        "note_selection": "use query_research_evidence; no arbitrary global top-card list is injected",
+        "result_metrics": data.get("result_metrics", []),
+        "ablation_columns": data.get("ablation_columns", []),
+    }
+    return json.dumps(compact, ensure_ascii=False, indent=2)
+
+
+def _compact_paper_state_prompt(raw: str, section_id: str | None) -> str:
+    """Expose section decisions and shared facts without the full state ledger."""
+
+    try:
+        data = json.loads(raw or "{}")
+    except Exception:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    sections = data.get("sections") if isinstance(data.get("sections"), dict) else {}
+    shared = data.get("shared_facts") if isinstance(data.get("shared_facts"), dict) else {}
+    compact = {
+        "semantics": "section_scoped_paper_state_summary_read_sources_for_claim_wording",
+        "target_venue": data.get("target_venue"),
+        "current_section": section_id,
+        "section": sections.get(section_id or "", {}),
+        "result_metrics": shared.get("result_metrics", []),
+        "claim_slots": [
+            slot
+            for slot in shared.get("claim_slots", [])
+            if isinstance(slot, dict) and str(slot.get("section") or "") == str(section_id or "")
+        ],
+        "planned_visuals": [
+            item
+            for item in shared.get("planned_visuals", [])
+            if isinstance(item, dict) and str(item.get("intended_section") or "") == str(section_id or "")
+        ],
+        "alignment_matrix": shared.get("alignment_matrix", []),
+        "available_bibliography_keys": (
+            shared.get("bib_keys", []) if isinstance(shared.get("bib_keys"), list) else []
+        ),
+        "paper_note_card_count": shared.get("paper_note_card_count", 0),
+        "paper_note_index_path": shared.get(
+            "paper_note_index_path", "drafts/manuscript_resource_index.json"
+        ),
+        "storyline_path": shared.get("storyline_path", "drafts/writing_storyline.md"),
+    }
+    return json.dumps(compact, ensure_ascii=False, indent=2)
+
+
 class WriterAgent(Agent):
     """论文写作Agent，支持大纲生成、初稿、自查和修订。"""
 
@@ -51,6 +120,7 @@ class WriterAgent(Agent):
                         "write_file",
                         "list_files",
                         "grep_search",
+                        "query_research_evidence",
                         "build_manuscript_resource_index",
                         "plan_manuscript_sections",
                         "plan_manuscript_evidence",
@@ -58,6 +128,7 @@ class WriterAgent(Agent):
                         "build_alignment_matrix",
                         "initialize_manuscript_state",
                         "build_section_evidence_supplement",
+                        "targeted_literature_supplement",
                         "update_manuscript_section_state",
                         "assemble_manuscript",
                         "audit_manuscript_claims",
@@ -96,12 +167,74 @@ class WriterAgent(Agent):
                         "evaluation/",
                         "pilot/",
                     ],
-                    "allowed_write_prefixes": ["drafts/"],
+                    "allowed_write_prefixes": [
+                        "drafts/",
+                        "literature/targeted_supplements/",
+                        "literature/shallow_read_notes/",
+                        "literature/related_work.bib",
+                        "literature/literature_manifest.json",
+                        "literature/evidence_queries/",
+                    ],
                     "prompt_template": "writer.j2",
                 },
             )
         )
         self._mode = mode
+        # Each T8 task is already phase-scoped by the state machine. Exposing
+        # all twenty-one Writer tools to every phase made deterministic setup,
+        # section writing, audits, and assembly look like one open-ended Agent
+        # problem. Besides inflating every request's tool schema, it allowed a
+        # model to rebuild state or assemble the paper from inside a section
+        # call. Keep only the capabilities that can advance the current phase.
+        phase_tools: dict[str, list[str]] = {
+            "style_gate": ["ask_human", "read_file", "write_file", "finish_task"],
+            "resource_index": [
+                "build_manuscript_resource_index",
+                "plan_manuscript_sections",
+                "plan_manuscript_evidence",
+                "build_manuscript_registries",
+                "build_alignment_matrix",
+                "finish_task",
+            ],
+            "outline": ["read_file", "write_file", "query_research_evidence", "finish_task"],
+            "section_plan": ["initialize_manuscript_state", "finish_task"],
+            "section_drafts": ["finish_task"],
+            "section_draft": [
+                "read_file",
+                "list_files",
+                "write_file",
+                "query_research_evidence",
+                "build_section_evidence_supplement",
+                "targeted_literature_supplement",
+                "update_manuscript_section_state",
+                "finish_task",
+            ],
+            "draft": [
+                "read_file",
+                "write_file",
+                "assemble_manuscript",
+                "audit_manuscript_claims",
+                "audit_writing_craft",
+                "audit_paper_claims",
+                "finish_task",
+            ],
+            "self_check": ["read_file", "write_file", "finish_task"],
+            "revise": [
+                "read_file",
+                "write_file",
+                "build_manuscript_revision_patches",
+                "update_manuscript_section_state",
+                "assemble_manuscript",
+                "audit_manuscript_claims",
+                "audit_writing_craft",
+                "audit_paper_claims",
+                "finish_task",
+            ],
+            "paper_claim_audit": ["audit_paper_claims", "finish_task"],
+            "final": ["read_file", "write_file", "finish_task"],
+        }
+        if mode in phase_tools:
+            self.spec.tool_names = phase_tools[mode]
 
     def _phase(self, ctx: ExecutionContext) -> str:
         if ctx.mode:
@@ -170,7 +303,7 @@ class WriterAgent(Agent):
         writing_style_text = read_text_file(ws / "drafts" / "writing_style.json", default="")
         writing_style = _parse_writing_style(writing_style_text)
         writing_storyline = read_text_file(ws / "drafts" / "writing_storyline.md", default="")
-        target_venue = project.get("target_venue", "neurips")
+        target_venue = project.get("target_venue") or "unknown"
         writing_profile = resolve_venue_writing_profile(target_venue, writing_style)
 
         # 根据phase选择不同的prompt策略
@@ -199,42 +332,51 @@ class WriterAgent(Agent):
         )
         user_corrections = read_text_file(ws / "drafts" / "user_corrections.md", default="")
 
+        # A section worker will read its authoritative paper state, ledgers and
+        # evidence files after inspecting the local outline. Repeating large
+        # truncated copies in the system prompt diluted section-specific
+        # evidence and then charged for the same bytes again in tool results.
+        section_phase = phase == "section_draft"
         return render_prompt(
             self.spec.prompt_template,
             ctx,
             project=project,
             executor_research_report=executor_research_report,
-            synthesis_preview=synthesis[:6000],
-            related_work_preview=related_work[:4000],
-            hypotheses_preview=hypotheses[:3000],
-            novelty_report_preview=novelty_report[:2000],
-            novelty_audit_preview=novelty_audit[:2000],
-            ablations_preview=ablations[:2000],
-            resource_index_preview=resource_index[:5000],
-            section_plan_preview=section_plan[:5000],
-            evidence_plan_preview=evidence_plan[:5000],
-            figure_table_plan_preview=figure_table_plan[:5000],
-            cdr_claim_ledger_preview=cdr_claim_ledger[:5000],
-            claim_ledger_preview=claim_ledger[:4000],
-            figure_registry_preview=figure_registry[:4000],
-            manuscript_audit_preview=manuscript_audit[:3000],
-            craft_audit_preview=craft_audit[:3000],
-            paper_claim_audit_preview=paper_claim_audit[:3000],
-            executor_research_report_preview=executor_research_report[:6000],
-            experiment_evidence_pack_preview=experiment_evidence_pack[:4000],
-            result_to_claim_preview=result_to_claim[:4000],
-            t5_t8_handoff_preview=t5_t8_handoff[:3000],
-            paper_state_preview=paper_state[:5000],
-            alignment_matrix_preview=alignment_matrix[:5000],
+            synthesis_preview="" if section_phase else synthesis[:6000],
+            related_work_preview="" if section_phase else related_work[:4000],
+            hypotheses_preview="" if section_phase else hypotheses[:3000],
+            novelty_report_preview="" if section_phase else novelty_report[:2000],
+            novelty_audit_preview="" if section_phase else novelty_audit[:2000],
+            ablations_preview="" if section_phase else ablations[:2000],
+            resource_index_preview="" if section_phase else _compact_resource_index_prompt(resource_index),
+            section_plan_preview="" if section_phase else section_plan[:5000],
+            evidence_plan_preview="" if section_phase else evidence_plan[:5000],
+            figure_table_plan_preview="" if section_phase else figure_table_plan[:5000],
+            cdr_claim_ledger_preview="" if section_phase else cdr_claim_ledger[:5000],
+            claim_ledger_preview="" if section_phase else claim_ledger[:4000],
+            figure_registry_preview="" if section_phase else figure_registry[:4000],
+            manuscript_audit_preview="" if section_phase else manuscript_audit[:3000],
+            craft_audit_preview="" if section_phase else craft_audit[:3000],
+            paper_claim_audit_preview="" if section_phase else paper_claim_audit[:3000],
+            executor_research_report_preview="" if section_phase else executor_research_report[:6000],
+            experiment_evidence_pack_preview="" if section_phase else experiment_evidence_pack[:4000],
+            result_to_claim_preview="" if section_phase else result_to_claim[:4000],
+            t5_t8_handoff_preview="" if section_phase else t5_t8_handoff[:3000],
+            paper_state_preview=(
+                _compact_paper_state_prompt(paper_state, section_id)
+                if section_phase
+                else paper_state[:5000]
+            ),
+            alignment_matrix_preview="" if section_phase else alignment_matrix[:5000],
             writing_style=writing_style,
             writing_profile=writing_profile,
-            writing_storyline_preview=writing_storyline[:5000],
+            writing_storyline_preview="" if section_phase else writing_storyline[:5000],
             suggested_style=_suggest_venue_style(target_venue),
             suggested_template=_suggest_template_selection(target_venue),
             suggested_profile=resolve_venue_writing_profile(target_venue),
             section_id=section_id,
             section_title=SECTION_TITLES.get(section_id or "", (section_id or "").replace("_", " ").title()),
-            section_outline_preview=section_outline[:5000],
+            section_outline_preview=section_outline[:12000],
             section_draft_preview=section_draft[:3000],
             previous_section_tail=previous_section_tail[:1200],
             outline_preview=outline[:3000],
@@ -244,7 +386,14 @@ class WriterAgent(Agent):
             phase=phase,
             round_num=round_num,
             target_venue=target_venue,
-            agent_guidance=load_agent_guidance("manuscript-writing"),
+            # The writing Skill governs scholarly composition and revision.
+            # Resource builders, Gates, assembly and deterministic audits do
+            # not benefit from receiving its full prose contract again.
+            agent_guidance=(
+                load_agent_guidance("manuscript-writing")
+                if phase in {"outline", "section_draft", "self_check", "revise", "final"}
+                else ""
+            ),
             temperature=self.spec.temperature,
         )
 
@@ -298,13 +447,21 @@ class WriterAgent(Agent):
                 ctx,
                 (
                 "请执行 T8 Writer Phase 1: 生成论文大纲。\n\n"
-                "基于 drafts/manuscript_resource_index.json、drafts/section_plan.json、"
+                "基于 prompt 中的 compact resource summary、drafts/section_plan.json、"
                 "drafts/alignment_matrix.json、external_executor/executor_research_report.md "
-                "和文献综述，生成 drafts/outline.md。"
+                "和文献综述，生成 drafts/outline.md。不要读取完整 manuscript_resource_index.json；"
+                "其中全量 note-card 文本只供确定性章节恢复使用。若现有预览不足，请用当前论文真正的"
+                "机制或 positioning 问题调用 query_research_evidence，并只读取返回的精确 note sections。"
+                "当前 prompt 已提供 synthesis、hypotheses、experiment boundary 和各计划的必要预览；"
+                "第一步直接调用一次 query_research_evidence，不要先用 read_file 重读这些整份文件。"
                 "大纲应包含：标题候选、Abstract要点、Introduction结构、"
                 "Related Work分类、Method结构、Experiments结构、Conclusion要点。"
                 "同时生成 drafts/writing_storyline.md，将问题、rationale/根本原因、核心洞见、"
                 "设计选择、贡献—证据映射、替代解释、边界与 venue-specific reviewer questions 写成可审计链条。"
+                "两个文件都应是紧凑的决策文档，不要复述完整 synthesis、artifact 清单或论文笔记。"
+                "writing_storyline.md 必须逐字使用 prompt 中 Required storyline headings 的每一项作为 `##` 标题。"
+                "证据查询返回后，尽量在同一响应中并行调用两个 write_file 写出这两个文件，然后 finish_task。"
+                "不要覆盖 drafts/alignment_matrix.json；将需要模型判断的补全建议写入 outline 即可。"
                 ),
             )
         elif phase == "section_draft":
@@ -313,11 +470,20 @@ class WriterAgent(Agent):
             return prepend_resume_prefix(
                 ctx,
                 (
-                f"请执行 T8 Writer Phase 2: 单章节写作 `{section_id}` ({section_title})。\n\n"
-                f"只写 drafts/sections/{section_id}.tex 这一章。读取 drafts/paper_state.json、"
-                f"drafts/section_outlines/{section_id}.md 和本章必需证据文件。\n"
-                "如果本章证据或引用不足，先调用 build_section_evidence_supplement(section_id=\""
-                f"{section_id}\") 生成章节级补证据材料，再按材料读取对应 paper note section；"
+                    f"请执行 T8 Writer Phase 2: 单章节写作 `{section_id}` ({section_title})。\n\n"
+                    f"只写 drafts/sections/{section_id}.tex 这一章。当前 prompt 已提供 section-scoped "
+                    "paper_state summary 和完整局部大纲，不要先全文重读 paper_state 或局部大纲。\n"
+                    "先用本章真正要回答的问题调用一次 query_research_evidence(stage=\"t8-section\", "
+                    "purpose=\"citation\", max_results<=10)，只读取返回的精确 paper note section。"
+                    "query 结果已包含 citation_key 与足够长的 exact saved fragment；不要再整篇读取返回的"
+                    "paper notes、synthesis、comparison table 或 BibTeX。只有某个会改变正文的具体措辞仍无法"
+                    "从 fragment 核验时，才额外读取最少的一个原文件。"
+                "若查询与现有 section outline 仍不足以支持一个会改变正文的外部论断，或大纲缺少可执行的 note 路径，"
+                "才调用 build_section_evidence_supplement(section_id=\""
+                f"{section_id}\") 做一次确定性恢复；不要例行串联两个工具。"
+                "若恢复后仍显示一个明确且可检索的来源缺口，可自行调用一次 "
+                "targeted_literature_supplement，传入具体 queries、reason、本章 section_id 和不超过 6 篇的目标。"
+                "新检索结果只是摘要级来源，必须按其 evidence boundary 使用，不能为了凑引用支撑强论断。"
                 "不要写其它章节，不要生成 drafts/paper.tex，不要包含整篇 LaTeX wrapper。"
                 "写完后调用 update_manuscript_section_state 记录该章节 status=written，然后 finish_task。"
                 ),
@@ -431,6 +597,13 @@ class WriterAgent(Agent):
             return True, None
 
         if phase == "section_plan":
+            # Section outlines inherit their hard/optional input boundary from
+            # the T8 resource bundle.  Validating only paper_state let an old
+            # plan survive a resume after its schema changed, so Writer kept
+            # seeing optional directories as required inputs.
+            ok, err = _validate_resource_index_artifacts(ws)
+            if not ok:
+                return False, err
             ok, err = _validate_paper_state(ws)
             if not ok:
                 return False, err
@@ -666,10 +839,23 @@ def _validate_resource_index_artifacts(ws: Path) -> tuple[bool, str | None]:
     sections = plan.get("sections")
     if not isinstance(sections, list):
         return False, "section_plan.json 缺少 sections 列表"
+    if str(plan.get("version") or "") != "1.1":
+        return False, "section_plan.json 版本过期；需重建以区分硬前置、可选文件和可用目录"
     section_ids = {str(item.get("id")) for item in sections if isinstance(item, dict)}
     for required in ("introduction", "related_work", "methodology", "experiments"):
         if required not in section_ids:
             return False, f"section_plan.json 缺少章节计划: {required}"
+    for item in sections:
+        if not isinstance(item, dict):
+            continue
+        for field in (
+            "required_inputs",
+            "available_optional_inputs",
+            "optional_directory_inputs",
+            "missing_optional_input_count",
+        ):
+            if field not in item:
+                return False, f"section_plan.json 缺少 {item.get('id') or 'unknown'} 的字段: {field}"
     claim_slots = evidence.get("claim_slots")
     if not isinstance(claim_slots, list):
         return False, "evidence_plan.json 缺少 claim_slots 列表"
@@ -760,6 +946,30 @@ def _validate_paper_state_input_fingerprints(ws: Path, state: dict) -> tuple[boo
     fingerprints = state.get("input_fingerprints")
     if not isinstance(fingerprints, dict) or not fingerprints:
         return False, "paper_state.json 缺少 input_fingerprints，必须重新初始化 manuscript state"
+    required_labels = {
+        "outline",
+        "storyline",
+        "resource_index",
+        "section_plan",
+        "evidence_plan",
+        "figure_table_plan",
+        "alignment_matrix",
+    }
+    missing_labels = sorted(required_labels - set(fingerprints))
+    if missing_labels:
+        return False, (
+            "paper_state.json 缺少核心输入指纹，必须确定性重新初始化 manuscript state: "
+            + ", ".join(missing_labels)
+        )
+    mutable_labels = {
+        str(value)
+        for value in state.get("mutable_input_labels", [])
+        if str(value)
+    } if isinstance(state.get("mutable_input_labels"), list) else set()
+    # Backward-compatible interpretation for manuscript states created before
+    # the explicit marker was added. T8 has always allowed bounded literature
+    # expansion while sections are being written.
+    mutable_labels.add("related_work_bib")
     for label, item in fingerprints.items():
         if not isinstance(item, dict):
             return False, f"paper_state.json input_fingerprints.{label} 必须是对象"
@@ -780,7 +990,7 @@ def _validate_paper_state_input_fingerprints(ws: Path, state: dict) -> tuple[boo
         expected_hash = str(item.get("sha256") or "").strip()
         if not expected_hash:
             return False, f"paper_state input_fingerprints.{label} 缺少 sha256"
-        if path.is_file() and _sha256_file(path) != expected_hash:
+        if path.is_file() and _sha256_file(path) != expected_hash and label not in mutable_labels:
             return False, f"paper_state 对应的 {label} 已过期，必须重新初始化 manuscript state"
     return True, None
 
@@ -815,15 +1025,17 @@ def _validate_single_section(ws: Path, section_id: str) -> tuple[bool, str | Non
     if section_id == "abstract" and re.search(r"\\(?:section|subsection)\*?\{", text, flags=re.IGNORECASE):
         return False, "Abstract 章节文件应只包含摘要正文，不应包含 \\section 或 \\subsection 标题"
     cited = _extract_latex_cites(text)
-    minimum = MANUSCRIPT_SECTION_MIN_CITATIONS.get(section_id, 0)
+    bib_keys = _extract_bib_keys_from_workspace(ws)
+    configured_minimum = MANUSCRIPT_SECTION_MIN_CITATIONS.get(section_id, 0)
+    minimum = min(configured_minimum, len(bib_keys))
     if minimum and len(cited) < minimum:
         return False, (
-            f"章节草稿 {section_id} 引用过少: unique citations={len(cited)} < {minimum}；"
+            f"章节草稿 {section_id} 完全或明显忽略可用文献: unique citations={len(cited)} < {minimum} "
+            f"(可追溯 bibliography keys={len(bib_keys)})；"
             f"请先调用 build_section_evidence_supplement(section_id=\"{section_id}\") "
             "按 paper note section 补证据，找不到直接证据则弱化或删除 claim"
         )
     if cited:
-        bib_keys = _extract_bib_keys_from_workspace(ws)
         if bib_keys:
             missing = sorted(cited - bib_keys)
             if missing:
@@ -927,6 +1139,13 @@ def _validate_revision_artifacts(ws: Path, round_num: int) -> tuple[bool, str | 
 
 
 def _validate_alignment_matrix(ws: Path) -> tuple[bool, str | None]:
+    """Validate the deterministic seed contract without demanding invented prose.
+
+    Scientific completion belongs in the outline and final manuscript. Requiring
+    every seed placeholder to be overwritten made the outline model mutate a
+    runtime-owned JSON artifact through repeated brittle edits.
+    """
+
     matrix, err = _load_json_file(ws / "drafts" / "alignment_matrix.json")
     if err:
         return False, err
@@ -935,8 +1154,8 @@ def _validate_alignment_matrix(ws: Path) -> tuple[bool, str | None]:
     rows = matrix.get("rows")
     if not isinstance(rows, list) or not rows:
         return False, "alignment_matrix.json 缺少 rows"
-    if len(rows) < 3 or len(rows) > 5:
-        return False, "alignment_matrix.json 应包含 3-5 条 contribution alignment rows"
+    if len(rows) > 5:
+        return False, "alignment_matrix.json 最多包含 5 条有区分度的 contribution alignment rows；请合并重复贡献"
     required_fields = [
         "cid",
         "motivation",
@@ -949,36 +1168,21 @@ def _validate_alignment_matrix(ws: Path) -> tuple[bool, str | None]:
         "experiment",
         "analysis",
     ]
-    placeholder_tokens = {"LLM_REVIEW_REQUIRED", "TODO", "TBD"}
     for index, row in enumerate(rows, start=1):
         if not isinstance(row, dict):
             return False, f"alignment_matrix row #{index} 必须是对象"
         for field in required_fields:
             value = row.get(field)
-            if value in (None, "", [], {}):
-                return False, f"alignment_matrix row {row.get('cid') or index} 缺少 {field}"
-            if field in {
-                "motivation",
-                "contribution",
-                "counterfactual",
-                "novelty_signal",
-                "design_choice",
-                "analysis",
-            }:
-                text = str(value).strip()
-                if text in placeholder_tokens or text.startswith("LLM_REVIEW_REQUIRED"):
-                    return False, f"alignment_matrix row {row.get('cid') or index} 的 {field} 仍是 LLM_REVIEW_REQUIRED/TODO"
+            if field not in row:
+                return False, f"alignment_matrix row {row.get('cid') or index} 缺少字段 {field}"
         related_gap = row.get("related_gap")
         if isinstance(related_gap, dict):
-            tension = str(related_gap.get("tension") or "").strip()
-            if tension in placeholder_tokens or tension.startswith("LLM_REVIEW_REQUIRED"):
-                return False, f"alignment_matrix row {row.get('cid') or index} 的 related_gap.tension 仍是 LLM_REVIEW_REQUIRED/TODO"
             nearest = related_gap.get("nearest_prior_work") or row.get("nearest_prior_work")
         else:
             nearest = row.get("nearest_prior_work")
-        if not isinstance(nearest, dict):
+        if nearest not in (None, "", {}) and not isinstance(nearest, dict):
             return False, f"alignment_matrix row {row.get('cid') or index} nearest_prior_work 必须是对象"
-        distance = str(nearest.get("distance") or "").strip()
+        distance = str(nearest.get("distance") or "").strip() if isinstance(nearest, dict) else ""
         if distance and distance not in {"very_close", "moderate", "distant", "none_found"}:
             return False, f"alignment_matrix row {row.get('cid') or index} nearest_prior_work.distance 无效: {distance}"
     return True, None
@@ -1172,7 +1376,7 @@ def _validate_template_selection(style: dict) -> str | None:
     if not template_id:
         return "writing_style.json 必须包含 template_id"
     if family == "ccf" and template_id == "auto":
-        return "writing_style.json CCF 模板需明确 template_id，默认应为 neurips"
+        return "writing_style.json CCF 模板需明确具体会议；会议未定时请使用 basic_en"
     if family == "utd" and template_id == "auto":
         return "writing_style.json UTD 模板需明确 template_id，默认应为 informs"
     return None

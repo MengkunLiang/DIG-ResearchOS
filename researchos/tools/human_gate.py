@@ -45,10 +45,18 @@ def _terminal_eof_submit_gesture() -> str:
 
 
 def _terminal_eof_submit_instruction(*, include_end: bool = True) -> str:
-    """Build one consistent, platform-aware multiline submission instruction."""
+    """Return the submission instruction shown by every multiline Gate.
+
+    ``END`` behaves consistently in Windows consoles, POSIX shells, IDE
+    terminals, redirected stdin and remote sessions.  Also advertise the
+    correct platform-specific EOF shortcut so experienced terminal users can
+    keep their existing habit without showing Windows users ``Ctrl+D``.
+    """
 
     gesture = _terminal_eof_submit_gesture()
-    return f"按 {gesture} 提交" + ("（或单独一行 `END`）" if include_end else "")
+    if include_end:
+        return f"单独一行输入 `END` 提交，也可按 {gesture}"
+    return f"按 {gesture} 提交"
 
 
 _T2_LLM_CAPTURE_FIELDS = {
@@ -148,10 +156,9 @@ def _read_cli_multiline(
     T4 is a research dialogue: a directive often needs a constraint, an
     evidence concern, and a requested action in one turn.  Requiring the
     researcher to encode that in a single shell line is both fragile and
-    unnecessarily unlike the rest of the human interface.  ``Ctrl+D`` ends
-    the block on POSIX terminals; Windows uses ``Ctrl+Z`` followed by Enter.
-    A standalone ``END`` is a discoverable cross-platform fallback for
-    terminals where EOF is intercepted by an IDE.
+    unnecessarily unlike the rest of the human interface. A standalone
+    ``END`` ends the block on every supported platform. EOF is also accepted
+    through the platform-specific shortcut shown by the caller.
 
     ``EOFError`` is intentionally consumed when at least one line was typed:
     it is the normal submit gesture.  With no content it is re-raised so the
@@ -565,8 +572,8 @@ def _format_t36_assemble_recovery_field(key: str, value: Any) -> str | None:
     """Render a Survey assembly recovery decision without dumping audit JSON.
 
     The content is entirely deterministic diagnostic information. It explains
-    the hard traceable-coverage target without manufacturing a prose repair or
-    implying that a candidate note can be cited without semantic verification.
+    traceable evidence utilization and citation concentration without implying
+    that an unused candidate note must be cited.
     """
 
     if key == "error_summary":
@@ -582,17 +589,14 @@ def _format_t36_assemble_recovery_field(key: str, value: Any) -> str | None:
     if not isinstance(diversity, dict):
         return "审计没有提供可自动定位的来源文件；继续时只应处理审计明确指出的问题。"
 
-    lines = ["引用覆盖未达到硬性放行要求；这不代表现有引用失实，但必须扩大到可追溯的本地证据范围。"]
+    lines = ["引用审计发现需要人工判断的问题；优先检查重复论断或来源过度集中，不要为了覆盖率添加文献。"]
     contract = diversity.get("coverage_contract") if isinstance(diversity.get("coverage_contract"), dict) else {}
     if contract:
         lines.append(
-            "覆盖目标：与综述范围相关的可追溯条目 {eligible} 篇，至少使用 {required} 篇（{ratio:.0%}）；当前 {current} 篇，"
-            "还需安全补充 {missing} 篇。".format(
+            "信息利用：与综述范围相关的可追溯条目 {eligible} 篇，正文实际使用 {current} 篇（{actual:.0%}）。".format(
                 eligible=int(contract.get("eligible_traceable_keys") or 0),
-                required=int(contract.get("required_unique_citations") or 0),
-                ratio=float(contract.get("minimum_coverage_ratio") or 0),
                 current=int(contract.get("cited_traceable_keys") or 0),
-                missing=int(contract.get("missing_unique_citations") or 0),
+                actual=float(contract.get("actual_traceable_coverage_ratio") or 0),
             )
         )
         lines.append(
@@ -613,7 +617,7 @@ def _format_t36_assemble_recovery_field(key: str, value: Any) -> str | None:
         lines.append("；".join(facts) + "。")
     section_queue = diversity.get("section_review_queue")
     if isinstance(section_queue, list) and section_queue:
-        lines.append("需逐节核查：")
+        lines.append("可按需核查的逐节候选：")
         for item in section_queue[:8]:
             if not isinstance(item, dict):
                 continue
@@ -651,7 +655,7 @@ def _format_t36_assemble_recovery_field(key: str, value: Any) -> str | None:
                 suffix.append(f"涉及 {sections}")
             lines.append(f"- {source}" + ("：" + "；".join(suffix) if suffix else ""))
     else:
-        lines.append("未发现单篇来源异常集中使用；仍须完成上述全局覆盖目标。")
+        lines.append("未发现单篇来源异常集中使用；未引用候选继续作为诊断信息，不构成补齐任务。")
     warnings = value.get("quality_warnings")
     if isinstance(warnings, list) and warnings:
         lines.append("可一并处理的非阻断 warning：")
@@ -868,11 +872,7 @@ class CLIHumanInterface(HumanInterface):
                 lines.append(f"  [{idx}] {_compact_text(item, 180)}")
         self._render_panel(title="需要你的输入", border_style="bright_yellow", lines=lines)
         for attempt in range(1, self.CLARIFICATION_EMPTY_RETRIES + 1):
-            print(
-                "请输入回答（输入完成后，在最后输入单独一行 END，或"
-                + _terminal_eof_submit_instruction(include_end=False)
-                + "）:"
-            )
+            print("请输入回答（输入完成后，" + _terminal_eof_submit_instruction() + "）:")
 
             lines: list[str] = []
             try:
@@ -898,6 +898,25 @@ class CLIHumanInterface(HumanInterface):
     async def present_gate(
         self, *, gate_id: str, presentation: dict, options: list[dict]
     ) -> dict:
+        if gate_id == "agent_ask_human_gate":
+            question = str(presentation.get("question") or "").strip()
+            suggestions_raw = presentation.get("suggestions")
+            suggestions = (
+                [str(item) for item in suggestions_raw if str(item).strip()]
+                if isinstance(suggestions_raw, list)
+                else None
+            )
+            if not question:
+                raise HumanInputUnavailable("已保存的人工确认问题为空，无法安全恢复。")
+            answer = await self.ask_clarification(question=question, suggestions=suggestions)
+            return {
+                "option_id": "answer",
+                "captured": {
+                    "answer": answer,
+                    "interaction_id": presentation.get("interaction_id"),
+                    "question_fingerprint": presentation.get("question_fingerprint"),
+                },
+            }
         title = presentation.get("_title")
         description = presentation.get("_description")
         self._render_panel(

@@ -336,7 +336,8 @@ class BuildSynthesisWorkbenchTool(Tool):
             "bridge_note_count": len(bridge_notes),
             "abstract_note_count": len(shallow_read_notes),
             "cross_domain_bridge_count": len(bridge_catalogs),
-            "citation_coverage_target": citation_coverage_plan.get("recommended_min_unique_refs"),
+            "citation_coverage_target": None,
+            "citation_selection_policy": citation_coverage_plan.get("selection_policy"),
             "citable_ref_count": citation_coverage_plan.get("coverage_ref_count"),
             "family_count": len(families),
             "outputs": {
@@ -354,7 +355,7 @@ class BuildSynthesisWorkbenchTool(Tool):
                 f"{len(deep_notes)} deep-reading notes, {len(bridge_notes)} Bridge paper notes, "
                 f"{len(shallow_read_notes)} shallow-reading notes, and {len(bridge_catalogs)} Cross-domain catalog tracks into {data['outputs']['workbench']}, "
                 f"{data['outputs']['outline']}, {data['outputs']['draft']}. "
-                f"Main-claim citation target: {data['citation_coverage_target']} deep-reading refs. "
+                f"Citable FULL/PARTIAL inventory: {data['citable_ref_count']} refs; no fixed coverage target. "
                 "Final synthesis remains the Reader LLM's responsibility."
             ),
             data=data,
@@ -496,7 +497,11 @@ def _build_citation_quality_summary(notes: list[dict[str, Any]]) -> dict[str, An
         "by_band": by_band,
         "core_or_supporting_ids": [str(item.get("paper_id") or "") for item in top_core[:30] if item.get("paper_id")],
         "low_or_do_not_cite": low_or_do_not_cite[:30],
-        "usage_rule": "Use deep-reading score>=0.55 core_evidence/supporting_context for main claims; shallow-reading notes remain useful for transparent coverage, taxonomy, trend, and comparison context.",
+        "usage_rule": (
+            "Treat citation-quality score as review priority, not permission. Decide use from semantic support, reading level, "
+            "and the current claim; citation_allowed=false/do_not_cite remain hard exclusions. Shallow notes remain useful "
+            "for transparent coverage, taxonomy, trend, and comparison context but cannot establish a mechanism or result."
+        ),
     }
 
 
@@ -512,6 +517,7 @@ def _build_citation_coverage_plan(notes: list[dict[str, Any]]) -> dict[str, Any]
             score = 0.0
         use = str(note.get("citation_use") or "unknown")
         evidence_level = str(note.get("evidence_level") or "FULL_TEXT")
+        citation_allowed = note.get("citation_allowed") is not False
         item = {
             "note_id": note.get("note_id"),
             "paper_id": note.get("paper_id"),
@@ -523,14 +529,14 @@ def _build_citation_coverage_plan(notes: list[dict[str, Any]]) -> dict[str, Any]
             "citation_use": use,
             "citation_quality_score": round(score, 3),
         }
-        if evidence_level != "ABSTRACT_ONLY" and use != "do_not_cite" and score >= 0.25:
-            if score >= 0.55 and use in {"core_evidence", "supporting_context"}:
+        if evidence_level != "ABSTRACT_ONLY" and use != "do_not_cite" and citation_allowed:
+            if use in {"core_evidence", "supporting_context"}:
                 item["recommended_use"] = "main_claim_or_section_evidence"
                 core_refs.append(item)
             else:
                 item["recommended_use"] = "background_boundary_or_trend_context"
             coverage_refs.append(item)
-        elif use != "do_not_cite" and score >= 0.25:
+        elif use != "do_not_cite" and citation_allowed:
             item["recommended_use"] = "abstract_level_coverage_taxonomy_trend_or_comparison_context"
             weak_refs.append(item)
         else:
@@ -539,13 +545,16 @@ def _build_citation_coverage_plan(notes: list[dict[str, Any]]) -> dict[str, Any]
     coverage_refs.sort(key=lambda item: float(item.get("citation_quality_score") or 0.0), reverse=True)
     core_refs.sort(key=lambda item: float(item.get("citation_quality_score") or 0.0), reverse=True)
     weak_refs.sort(key=lambda item: float(item.get("citation_quality_score") or 0.0), reverse=True)
-    target = _recommended_synthesis_ref_count(len(coverage_refs))
     return {
         "semantics": "coverage_plan_for_reader_synthesis_not_final_bibliography",
         "main_claim_ref_count": len(core_refs),
         "coverage_ref_count": len(coverage_refs),
         "weak_or_context_ref_count": len(weak_refs),
-        "recommended_min_unique_refs": target,
+        # Compatibility key retained for older readers. A numeric minimum was
+        # removed because it turned a large available library into citation
+        # padding instead of measuring whether evidence changed the synthesis.
+        "recommended_min_unique_refs": 0,
+        "selection_policy": "select the smallest semantically useful set across actual method, rationale, tension, boundary, and development lanes",
         "coverage_rule": (
             "Final synthesis.md should cite a broad set of real FULL/PARTIAL note refs for claim-bearing sections, "
             "not only a short representative-paper list. Abstract-level notes may supplement corpus coverage, taxonomy, "
@@ -556,12 +565,6 @@ def _build_citation_coverage_plan(notes: list[dict[str, Any]]) -> dict[str, Any]
         "coverage_refs": coverage_refs[:120],
         "weak_or_context_refs": weak_refs[:50],
     }
-
-
-def _recommended_synthesis_ref_count(citable_ref_count: int) -> int:
-    if citable_ref_count <= 0:
-        return 0
-    return min(citable_ref_count, max(5, min(24, int((citable_ref_count * 0.35) + 0.999))))
 
 
 def _section(text: str, heading: str) -> str:
@@ -1450,11 +1453,10 @@ def _render_outline(workbench: dict[str, Any], missing_areas: str) -> str:
             lines.append(f"- [review hint] {item['mechanism'][:100]} ({item['paper_count']} papers)")
     coverage_plan = workbench.get("citation_coverage_plan") or {}
     if coverage_plan:
-        lines.extend(["", "## Citation Coverage Plan"])
+        lines.extend(["", "## Citation Selection Inventory"])
         lines.append(
-            "- Final `synthesis.md` should cover at least "
-            f"{coverage_plan.get('recommended_min_unique_refs', 0)} unique deep-note refs "
-            f"from {coverage_plan.get('coverage_ref_count', coverage_plan.get('main_claim_ref_count', 0))} citable FULL/PARTIAL refs."
+            f"- {coverage_plan.get('coverage_ref_count', coverage_plan.get('main_claim_ref_count', 0))} "
+            "citable FULL/PARTIAL refs are available. Select the smallest set that actually changes a method, rationale, tension, boundary, or development claim; no fixed percentage is required."
         )
         lines.append("- Do not keep citation use limited to representative-paper lists; cite evidence in claim sentences.")
         for item in (coverage_plan.get("coverage_refs") or coverage_plan.get("main_claim_refs") or [])[:12]:
@@ -1541,12 +1543,11 @@ def _render_draft_guidance(workbench: dict[str, Any], missing_areas: str = "") -
         lines.append(f"- {item.get('id', 'Q?')}: {item.get('question', '')} | related papers: {refs}")
 
     coverage_plan = workbench.get("citation_coverage_plan") or {}
-    lines.extend(["", "## Citation Coverage Plan For Final Synthesis", ""])
+    lines.extend(["", "## Citation Selection Inventory For Final Synthesis", ""])
     if coverage_plan:
         lines.append(
-            "- Use a broad evidence base: cite at least "
-            f"{coverage_plan.get('recommended_min_unique_refs', 0)} unique deep-note refs "
-            f"across the six required synthesis sections."
+            "- Choose evidence across the actual method, design-rationale, tension, boundary, and development lanes. "
+            "Do not convert the available library into a fixed citation percentage or pad the six sections."
         )
         lines.append("- Representative papers are not enough; each claim-bearing subsection needs local evidence refs with appropriate claim strength.")
         for item in (coverage_plan.get("coverage_refs") or coverage_plan.get("main_claim_refs") or [])[:20]:

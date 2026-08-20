@@ -8,6 +8,7 @@ T3.5 (synthesize模式): 综合所有笔记，产出synthesis.md
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 import re
@@ -124,6 +125,8 @@ class ReaderAgent(Agent):
                         "extract_pdf_text",
                         "save_paper_note",
                         "build_synthesis_workbench",
+                        "query_research_evidence",
+                        "targeted_literature_supplement",
                         "finish_task",
                     ],
                     "max_steps": 100,
@@ -346,8 +349,9 @@ class ReaderAgent(Agent):
             "Cross-domain catalog 是独立的交叉信息层，可用于历史发展、相邻概念、比较维度、结构类比和待验证研究问题，"
             "即使尚无 bridge 专属深读笔记也必须保留其价值；但它不是机制/结果的直接证据。"
             "摘要阅读笔记用于扩展 taxonomy、趋势、比较与问题发现，全文/部分全文和已升级的跨领域笔记用于核心机制与方法论断。"
-            "先用你的LLM能力分析方法家族、共同假设、趋势和问题，再调用 build_synthesis_workbench "
-            "生成结构化证据、outline和写作指导。工具产物不是最终结论；你必须审阅后亲自写出"
+            "先调用 build_synthesis_workbench（不传 llm_insights）建立全库结构索引，不要逐文件无差别通读；"
+            "再在统一索引中用你的 LLM 能力分析方法家族、共同假设、趋势和问题，只对关键含糊点定向回查 note section，"
+            "并通过第二次 build_synthesis_workbench 的 llm_insights 写回判断。工具产物不是最终结论；你必须审阅后亲自写出"
             "literature/synthesis.md，包含6个必需章节：方法家族分类、共同假设、"
             "贡献空间地图、技术趋势与跨论文矛盾、邻接领域可迁移机制、可操作研究问题。"
             "第5节标题必须以“邻接领域可迁移机制”开头；可以在冒号后添加理论桥接等副标题。"
@@ -593,7 +597,6 @@ class ReaderAgent(Agent):
         domain_map_exists = (ctx.workspace_dir / "literature" / "domain_map.json").exists()
         if workbench_path.exists():
             try:
-                import json
                 workbench = json.loads(workbench_path.read_text(encoding="utf-8"))
             except Exception as exc:
                 return False, f"synthesis_workbench.json 解析失败: {exc}"
@@ -609,13 +612,41 @@ class ReaderAgent(Agent):
         note_count = len(_iter_paper_note_paths(literature_dir))
         bib_key_map = _bib_key_note_ref_map(literature_dir)
         known_refs = _known_evidence_refs_in_content(content, note_ids, bib_key_map)
+        if workbench_path.exists() and isinstance(workbench, dict):
+            included_refs = {
+                normalize_text_key(str(value))
+                for value in workbench.get("paper_ids", [])
+                if str(value).strip()
+            }
+            workbench["information_utilization"] = {
+                "semantics": "synthesis_information_availability_inclusion_and_explicit_use_audit",
+                "availability": {
+                    "strong_note_count": note_count,
+                    "structured_workbench_paper_count": len(included_refs),
+                },
+                "inclusion": {
+                    "structured_workbench_paper_refs": sorted(included_refs),
+                },
+                "explicit_utilization": {
+                    "synthesis_referenced_normalized_refs": sorted(known_refs),
+                    "referenced_count": len(known_refs),
+                },
+                "diagnostics": {
+                    "included_but_not_explicitly_referenced_refs": sorted(included_refs - known_refs),
+                },
+                "boundary": (
+                    "A reference is explicitly used only when synthesis.md contains a mapped note anchor or citation key. "
+                    "The audit cannot observe uncited logical synthesis or model knowledge and does not turn unused availability into a citation quota."
+                ),
+            }
+            workbench_path.write_text(json.dumps(workbench, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         target_refs = _synthesis_reference_target(literature_dir, note_count)
         if note_ids and len(known_refs) < target_refs:
             return False, (
                 f"synthesis.md中真实已读论文引用过少({len(known_refs)}个)，"
-                f"至少需要覆盖 {target_refs} 篇不同已读论文；"
-                "应在每个 claim-bearing 章节中使用更多 paper note anchor（如 [note:paper_id]）"
-                "或 related_work.bib 中可映射到真实 note 的 \\cite{key}，不要只在代表论文列表中集中引用"
+                f"缺席保护要求至少有 {target_refs} 篇不同已读论文进入实质论证；"
+                "请核对方法、设计理由、张力、边界或发展脉络中被实际使用的 paper note anchor / \\cite{key}。"
+                "这不是覆盖率目标，不要加入与当前论断无关的论文"
             )
         section_issues = _synthesis_section_reference_issues(content, note_ids, bib_key_map)
         if note_ids and section_issues:
@@ -714,30 +745,10 @@ def _iter_paper_note_paths(literature_dir: Path) -> list[Path]:
 
 
 def _synthesis_reference_target(literature_dir: Path, note_count: int) -> int:
+    """Return an absence guard, not a percentage utilization target."""
     if note_count <= 0:
         return 0
-    target = min(note_count, max(5, min(24, math.ceil(note_count * 0.35))))
-    workbench_path = literature_dir / "synthesis_workbench.json"
-    if workbench_path.exists():
-        try:
-            import json
-            workbench = json.loads(workbench_path.read_text(encoding="utf-8"))
-        except Exception:
-            workbench = {}
-        plan = workbench.get("citation_coverage_plan") if isinstance(workbench, dict) else {}
-        if isinstance(plan, dict):
-            try:
-                planned = int(plan.get("recommended_min_unique_refs") or 0)
-            except (TypeError, ValueError):
-                planned = 0
-            try:
-                coverage_count = int(plan.get("coverage_ref_count") or plan.get("main_claim_ref_count") or 0)
-            except (TypeError, ValueError):
-                coverage_count = 0
-            if planned > 0:
-                cap = coverage_count if coverage_count > 0 else note_count
-                target = min(cap, max(1, planned))
-    return target
+    return min(note_count, 5)
 
 
 def _paper_note_reference_ids(literature_dir: Path) -> set[str]:
@@ -792,7 +803,7 @@ def _synthesis_section_reference_issues(
         if not section_text:
             continue
         refs = _known_evidence_refs_in_content(section_text, note_ids, bib_key_map)
-        minimum = 1 if label in {"邻接迁移", "研究问题"} else 2
+        minimum = 1
         if len(refs) < minimum:
             issues.append(f"{label}章节仅识别到 {len(refs)} 个真实已读引用，至少需要 {minimum} 个")
     return issues

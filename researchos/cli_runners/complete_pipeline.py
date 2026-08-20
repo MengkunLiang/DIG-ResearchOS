@@ -27,6 +27,7 @@ from ..runtime.orchestrator import AgentRunner
 from ..runtime.progress import CliProgressEmitter
 from ..runtime.run_logger import RunLogger
 from ..runtime.workspace import initialize_workspace, load_workspace_project_id, resolve_workspace_project_id
+from ..runtime.workflow_mode import automatic_gate_result
 from ..schemas.state import StateYaml
 from ..schemas.validator import register_builtin_task_checkers, validate_prerequisites, validate_task_artifacts
 from ..skills.agent import SkillAgent
@@ -918,24 +919,50 @@ class CompletePipelineRunner:
             mode="human_decision",
             is_resume=state.status in {"PAUSED", "WAITING_HUMAN"},
         )
-        self.progress.stage_human_action_required(
-            task_id=state.current_task,
-            gate_id=gate_id,
-            reason=str(state.pending_gate.presentation.get("_description") or "需要人工确认关键研究决策。"),
+        # Resolve a pre-authorized Auto profile before emitting any
+        # human-action signal.  The previous ordering briefly reported a
+        # blocked human Gate even though no human input was required.
+        gate_result = automatic_gate_result(
+            self.workspace,
+            gate_id,
+            presentation=state.pending_gate.presentation,
         )
+        if gate_result is None:
+            self.progress.stage_human_action_required(
+                task_id=state.current_task,
+                gate_id=gate_id,
+                reason=str(
+                    state.pending_gate.presentation.get("_description")
+                    or "需要人工确认关键研究决策。"
+                ),
+            )
         self.run_logger.event(
             "HUMAN_GATE",
             task=state.current_task,
             gate_id=gate_id,
             option_count=len(state.pending_gate.options or []),
         )
-        self.progress.gate_needed(gate_id=gate_id, task=state.current_task)
-        try:
-            gate_result = await self.human.present_gate(
+        if gate_result is None:
+            self.progress.gate_needed(gate_id=gate_id, task=state.current_task)
+        if gate_result is not None:
+            self.run_logger.event(
+                "HUMAN_GATE",
+                task=state.current_task,
                 gate_id=gate_id,
-                presentation=state.pending_gate.presentation,
-                options=state.pending_gate.options,
+                input_transport="preauthorized_auto_profile",
+                preset=(gate_result.get("automation") or {}).get("preset"),
             )
+            self.progress.emit(
+                f"[Auto] 已按项目预设处理 {gate_id}：{gate_result.get('option_id')}。",
+                important=True,
+            )
+        try:
+            if gate_result is None:
+                gate_result = await self.human.present_gate(
+                    gate_id=gate_id,
+                    presentation=state.pending_gate.presentation,
+                    options=state.pending_gate.options,
+                )
         except HumanInputUnavailable as exc:
             # EOF/no-input is an intentional handoff boundary.  Persist a
             # real PAUSED state rather than leaving WAITING_HUMAN while the

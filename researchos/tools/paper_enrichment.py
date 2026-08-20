@@ -870,13 +870,13 @@ def build_deep_read_queue(
     papers: list[dict[str, Any]],
     workspace_dir: Path,
     *,
-    deep_read_min: int = 35,
-    deep_read_target: int = 35,
-    deep_read_max: int = 45,
-    probe_pool: int = 45,
+    deep_read_min: int = 24,
+    deep_read_target: int = 30,
+    deep_read_max: int = 36,
+    probe_pool: int = 36,
     cross_domain_slots: int | None = None,
     citation_hub_slots: int | None = None,
-    mainline_screened_cap: int = 90,
+    mainline_screened_cap: int = 50,
     bridge_deep_floor: int = 3,
     bridge_screened_cap: int = 7,
     bridge_pool_cap: int = 15,
@@ -1209,7 +1209,10 @@ def build_deep_read_queue(
         for record in ranked_records
         if record.get("is_citation_hub")
         and not record.get("seed_priority")
-        and id(record) not in {id(item) for item in [*bridge_must_records, *protected_records]}
+        and id(record) not in {
+            id(item)
+            for item in [*bridge_must_records, *probe_reservations, *protected_records]
+        }
     ]
     citation_hub_records.sort(
         key=lambda item: (

@@ -567,19 +567,6 @@ def _research_reboost_skill_dir() -> Path:
     return _repo_root() / "skills" / "research-reboost"
 
 
-def research_reboost_skill_prompt_excerpt(*, max_chars: int = 24000) -> str:
-    """Return the current T5 reboost skill contract for injection into the LLM prompt."""
-
-    skill_dir = _research_reboost_skill_dir()
-    parts: list[str] = []
-    for rel in ("SKILL.md", "references/reboost-protocol.md"):
-        path = skill_dir / rel
-        if path.is_file():
-            parts.append(f"## {rel}\n\n{path.read_text(encoding='utf-8', errors='replace')}")
-    text = "\n\n".join(parts)
-    return text[:max_chars]
-
-
 def _load_skill_python_module(module_name: str, path: Path) -> Any:
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:

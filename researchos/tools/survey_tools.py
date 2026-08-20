@@ -36,7 +36,6 @@ from ..runtime.literature_contract import (
 )
 from ..literature_citations import citation_entry_for_id, citation_map_key_lookup, refresh_literature_citation_maps
 from ..runtime.pdf_acquisition import acquire_retained_pdfs, attach_pdf_acquisition
-from ..runtime.agent_params import get_agent_mode_params
 from ..literature_identity import record_note_id
 from ..literature_resources import format_resource_discovery_notice, refresh_resource_catalog
 from .base import Tool, ToolResult
@@ -370,8 +369,7 @@ SURVEY_SECTION_MIN_CITATIONS = {
     "future": 2,
 }
 
-_SURVEY_CITATION_DIVERSITY_RATIO = 0.50
-_SURVEY_CITATION_COVERAGE_CONTRACT_VERSION = "traceable_bibliography_coverage.v1"
+_SURVEY_CITATION_COVERAGE_CONTRACT_VERSION = "information_utilization_audit.v2"
 _SURVEY_CITATION_CONCENTRATION_LIMIT = 0.16
 _SURVEY_CITATION_REPEAT_LIMIT = 10
 
@@ -5491,36 +5489,6 @@ def _citation_evidence_rank(level: str) -> int:
     }.get(str(level or "").upper(), 0)
 
 
-def _survey_citation_coverage_settings() -> dict[str, Any]:
-    """Load the user-visible hard citation coverage policy.
-
-    The denominator is deliberately limited to bibliography entries that have
-    a local note card, a known evidence level, and a deterministic survey-plan
-    link. The configuration may make the contract stricter, but it may not
-    lower the 50% minimum: lowering it would recreate the small-core citation
-    collapse this policy prevents.
-    """
-
-    configured: dict[str, Any] = {}
-    try:
-        params = get_agent_mode_params("survey_writer", "survey_assemble")
-        raw = params.get("survey_citation_coverage") if isinstance(params, dict) else {}
-        configured = raw if isinstance(raw, dict) else {}
-    except (FileNotFoundError, KeyError, TypeError, ValueError):
-        # Audits must stay deterministic and usable when a deployment has not
-        # yet adopted the checked-in configuration field.
-        configured = {}
-    try:
-        requested_ratio = float(configured.get("minimum_traceable_ratio", _SURVEY_CITATION_DIVERSITY_RATIO))
-    except (TypeError, ValueError):
-        requested_ratio = _SURVEY_CITATION_DIVERSITY_RATIO
-    ratio = min(1.0, max(_SURVEY_CITATION_DIVERSITY_RATIO, requested_ratio))
-    return {
-        "minimum_traceable_ratio": ratio,
-        "configuration_path": "config/system_config/agent_params.yaml:agents.survey_writer.behavior.survey_citation_coverage",
-    }
-
-
 def _survey_citation_coverage_contract(
     *,
     cited: set[str],
@@ -5529,30 +5497,32 @@ def _survey_citation_coverage_contract(
     state: dict[str, Any],
     scope_diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build the hard global citation-coverage contract for a survey audit."""
+    """Audit evidence availability, traceable inclusion, and actual citation use.
 
-    settings = _survey_citation_coverage_settings()
-    ratio = float(settings["minimum_traceable_ratio"])
+    A fixed percentage cannot establish semantic utilization. It encouraged
+    padding whenever a large verified library was available, even if many
+    papers added no value to the current taxonomy or claim. The audit therefore
+    records the denominator and unrepresented candidates without turning them
+    into a release quota. Claim alignment, provenance, and citation existence
+    remain hard checks elsewhere in the same audit.
+    """
+
     eligible_keys = set(inventory)
     traceability_qualified_keys = {
         str(key)
         for key in (scope_diagnostics or {}).get("traceability_qualified_key_list") or []
         if str(key).strip()
     }
-    required = max(
-        _survey_min_unique_citations(state),
-        math.ceil(len(eligible_keys) * ratio),
-    ) if eligible_keys else 0
-    required = min(required, len(eligible_keys))
     cited_eligible = cited & eligible_keys
+    actual_ratio = (len(cited_eligible) / len(eligible_keys)) if eligible_keys else 0.0
     evidence_counts: dict[str, int] = {}
     for item in inventory.values():
         level = str(item.get("evidence_level") or "UNKNOWN")
         evidence_counts[level] = evidence_counts.get(level, 0) + 1
     return {
         "version": _SURVEY_CITATION_COVERAGE_CONTRACT_VERSION,
-        "minimum_coverage_ratio": ratio,
-        "configuration_path": settings["configuration_path"],
+        "minimum_coverage_ratio": 0.0,
+        "configuration_path": "none_fixed_percentage_removed",
         "available_bib_keys": len(bib_keys),
         "traceability_qualified_bib_keys": int((scope_diagnostics or {}).get("traceability_qualified_keys") or len(eligible_keys)),
         "eligible_traceable_keys": len(eligible_keys),
@@ -5560,15 +5530,18 @@ def _survey_citation_coverage_contract(
         "untraceable_or_unknown_bib_keys": sorted(bib_keys - traceability_qualified_keys),
         "scope_excluded_traceable_entries": list((scope_diagnostics or {}).get("scope_excluded_entries") or []),
         "scope_relevance_policy": str((scope_diagnostics or {}).get("policy") or ""),
-        "required_unique_citations": required,
+        "required_unique_citations": 0,
+        "diagnostic_unique_reference_target": min(len(eligible_keys), _survey_min_unique_citations(state)),
         "cited_traceable_keys": len(cited_eligible),
-        "missing_unique_citations": max(0, required - len(cited_eligible)),
+        "actual_traceable_coverage_ratio": round(actual_ratio, 6),
+        "missing_unique_citations": 0,
+        "unrepresented_traceable_keys": sorted(eligible_keys - cited_eligible),
         "cited_keys_without_traceable_note": sorted(cited - eligible_keys),
         "policy": (
-            f"At least {ratio:.0%} of scoped, traceable, evidence-qualified bibliography entries must be represented. "
-            "FULL/PARTIAL notes may support claims after note verification; ABSTRACT-ONLY entries may only support "
-            "background, trend, scope, or evidence-boundary statements. Unlinked or UNKNOWN entries are excluded "
-            "rather than forcing unverifiable citations."
+            "Availability and traceable inclusion are reported separately from actual citation use; no fixed percentage "
+            "is a release target. FULL/PARTIAL notes may support claims after note verification; ABSTRACT-ONLY entries "
+            "may only support background, trend, scope, or evidence-boundary statements. Unlinked or UNKNOWN entries "
+            "are excluded from the diagnostic pool."
         ),
     }
 
@@ -5722,15 +5695,9 @@ def _survey_citation_diversity_issues(
     coverage_contract: dict[str, Any],
 ) -> list[str]:
     issues: list[str] = []
-    required = int(coverage_contract.get("required_unique_citations") or 0)
-    cited_traceable = int(coverage_contract.get("cited_traceable_keys") or 0)
-    eligible = int(coverage_contract.get("eligible_traceable_keys") or 0)
-    if required and cited_traceable < required:
-        issues.append(
-            f"survey uses {cited_traceable}/{eligible} scoped traceable unique citation keys; "
-            f"required={required} ({float(coverage_contract.get('minimum_coverage_ratio') or 0):.0%} coverage), "
-            f"missing={int(coverage_contract.get('missing_unique_citations') or 0)}"
-        )
+    # Coverage is diagnostic. A paper belongs in the prose only when it adds
+    # claim-level value; the hard audit below is limited to genuinely extreme
+    # citation concentration and never asks the Writer to add an unrelated key.
     diagnostic = _survey_citation_diversity_diagnostic(tex)
     total = int(diagnostic["citation_use_count"])
     if not total:
@@ -6136,7 +6103,7 @@ def _audit_markdown(audit: dict[str, Any]) -> str:
     if isinstance(diversity, dict):
         contract = diversity.get("coverage_contract") if isinstance(diversity.get("coverage_contract"), dict) else {}
         if contract:
-            lines.extend(["", "## Traceable Citation Coverage Contract"])
+            lines.extend(["", "## Traceable Information Utilization Audit"])
             evidence_counts = contract.get("eligible_evidence_counts") if isinstance(contract.get("eligible_evidence_counts"), dict) else {}
             evidence_text = ", ".join(
                 f"{level}={count}" for level, count in sorted(evidence_counts.items())
@@ -6145,11 +6112,10 @@ def _audit_markdown(audit: dict[str, Any]) -> str:
                 [
                     f"- traceability-qualified entries before scope filter: {contract.get('traceability_qualified_bib_keys', 0)}",
                     f"- scoped traceable eligible bibliography entries: {contract.get('eligible_traceable_keys', 0)} ({evidence_text})",
-                    f"- excluded from this denominator as out of scope: {len(contract.get('scope_excluded_traceable_entries') or [])}",
-                    f"- hard target: {contract.get('required_unique_citations', 0)} distinct entries "
-                    f"({float(contract.get('minimum_coverage_ratio') or 0):.0%})",
-                    f"- currently represented: {contract.get('cited_traceable_keys', 0)}; remaining: {contract.get('missing_unique_citations', 0)}",
-                    f"- configuration: `{contract.get('configuration_path', 'built-in policy')}`",
+                    f"- excluded from this scoped diagnostic as out of scope: {len(contract.get('scope_excluded_traceable_entries') or [])}",
+                    f"- actually cited traceable entries: {contract.get('cited_traceable_keys', 0)} "
+                    f"({float(contract.get('actual_traceable_coverage_ratio') or 0):.0%}); no fixed percentage is a release target",
+                    f"- diagnostic breadth reference: {contract.get('diagnostic_unique_reference_target', 0)}; use only when semantically valuable",
                     "- safety rule: FULL/PARTIAL notes require exact note-level claim verification; ABSTRACT-ONLY notes may only support background, trend, scope, or evidence-boundary prose.",
                 ]
             )
@@ -6159,8 +6125,8 @@ def _audit_markdown(audit: dict[str, Any]) -> str:
 
             excluded = contract.get("scope_excluded_traceable_entries")
             if isinstance(excluded, list) and excluded:
-                lines.extend(["", "## Excluded From Citation Coverage Denominator"])
-                lines.append("These entries are locally traceable but lack a deterministic link to the saved survey plan, so the writer must not use them merely to meet coverage.")
+                lines.extend(["", "## Out-of-Scope Traceable Entries"])
+                lines.append("These entries are locally traceable but lack a deterministic link to the saved survey plan; do not use them merely to increase apparent coverage.")
                 for item in excluded:
                     if isinstance(item, dict):
                         lines.append(
@@ -6188,9 +6154,9 @@ def _audit_markdown(audit: dict[str, Any]) -> str:
 
         section_queue = diversity.get("section_review_queue")
         if isinstance(section_queue, list) and section_queue:
-            lines.extend(["", "## Mandatory Per-Section Citation Review"])
+            lines.extend(["", "## Optional Per-Section Evidence Review Queue"])
             lines.append(
-                "Review every listed section before retrying the audit. The queue prioritizes candidates; it does not override semantic fit or evidence boundaries."
+                "Use this queue only when a section has a material evidence gap or citation concentration problem. It does not override semantic fit or evidence boundaries."
             )
             for item in section_queue:
                 if not isinstance(item, dict):

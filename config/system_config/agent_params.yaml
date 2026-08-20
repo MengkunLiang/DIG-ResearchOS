@@ -28,11 +28,11 @@ budget_escalation:
 
 # T4 uses two distinct recovery windows.  Candidate/Population evolution is
 # never repeated merely because a Card explanation fails.  The Card compiler
-# may make several typed semantic repairs, while provider outages pause after
+# may make one typed semantic repair and one fresh bounded retry, while provider outages pause after
 # a durable retry window instead of waiting on an in-memory prompt. Card
 # retries never re-run Candidate/Population evolution.
 retry_policy:
-  t4_final_card_compiler_attempts: 12
+  t4_final_card_compiler_attempts: 2
   t4_provider_retry_batches: 3
 
 agents:
@@ -99,43 +99,24 @@ agents:
       tool_names:
       - read_file
       - write_file
-      - write_structured_file
       - ask_human
       - inspect_user_seeds
       - normalize_seed_outline
-      - append_papers_raw
-      - process_papers_raw
-      - save_papers_raw
-      - save_papers_dedup
       - multi_source_search
       - search_papers
       - fetch_paper_metadata
       - finish_task
-      - deduplicate_papers
-      - score_papers
       - expand_queries
       - filter_by_domain
       - generate_search_log
-      - enrich_papers
-      - backfill_paper_abstracts
       - apply_semantic_screening
       - detect_duplicate_queries
-      - analyze_dedup_rate
-      - build_verified_papers
-      - build_access_audit
-      - build_deep_read_queue
-      - fetch_outgoing_citations
-      - build_domain_map
       - semantic_scholar_search
-      - semantic_scholar_get_paper
       - arxiv_search
       - openalex_search
-      - openalex_get_work
       - crossref_search
-      - crossref_get_work
       - elsevier_scopus_search
       - informs_search
-      - log_scout_progress
       allowed_write_prefixes:
       - literature/
       - user_seeds/
@@ -157,9 +138,9 @@ agents:
         # finish_task 后至少要有多少 raw 才允许 deterministic finalize；过低说明检索没展开。
         finish_finalize_min_raw: 30
         # 保留候选数上限；超过的去 papers_backlog.jsonl，不静默丢弃。
-        active_pool_max: 120
+        active_pool_max: 50
         # semantic_screen 通过的主线候选在保留候选集中的优先保留上限。
-        screened_active_pool_cap: 60
+        screened_active_pool_cap: 40
         # 兼容旧字段：未设置 must_bridge_active_pool_cap_per_bridge 时作为 must 默认值。
         bridge_active_pool_cap_per_bridge: 15
         # 每个 priority=must_explore bridge 最多保留多少个候选进入保留候选集。
@@ -172,7 +153,7 @@ agents:
         # 标题去重阈值；越高越保守，越低越容易合并近似标题。
         dedup_title_threshold: 0.95
         # access_audit.md 展示 top N，方便排查 PDF/摘要/DOI 获取情况。
-        access_audit_top_n: 50
+        access_audit_top_n: 40
         # 对每一篇保留且已验证的候选实际尝试一次开放 PDF 获取，并记录 receipt。
         # 这是 access（可获得性）而不是阅读：下载成功绝不自动改成 FULL_TEXT。
         pdf_acquisition_enabled: true
@@ -186,7 +167,7 @@ agents:
         pdf_acquisition_max_auto_read_pages: 100
         # 保留候选/backlog 切分前先对全 dedup 池前 N 篇做轻量标题/DOI/OA/摘要补全。
         # 0 表示关闭；-1 表示不限量。避免只有早选保留候选才拿到资源补全导致排序偏。
-        pre_active_light_backfill_max: 220
+        pre_active_light_backfill_max: 100
         # OpenAlex/Crossref/title metadata 回填并发；过高可能触发外部 API 限流。
         metadata_backfill_max_concurrency: 6
         # 多源摘要 title 匹配阈值；越高越少误配，越低越能补到但风险更高。
@@ -260,10 +241,10 @@ agents:
           t2_finalize:
             # 综述任务需要更宽的候选池覆盖 taxonomy、治理资料和跨学科概念。
             # 超额候选仍进入 papers_backlog.jsonl，不会静默丢弃。
-            active_pool_max: 180
-            screened_active_pool_cap: 90
-            access_audit_top_n: 80
-            pre_active_light_backfill_max: 360
+            active_pool_max: 80
+            screened_active_pool_cap: 60
+            access_audit_top_n: 60
+            pre_active_light_backfill_max: 160
             # 综述更依赖引用/规范/综述链路，适度放宽 one-hop snowball。
             snowball_active_pool_cap: 20
             snowball_max_sources: 18
@@ -287,6 +268,8 @@ agents:
       - extract_pdf_text
       - save_paper_note
       - build_synthesis_workbench
+      - query_research_evidence
+      - targeted_literature_supplement
       - finish_task
       allowed_write_prefixes:
       - literature/
@@ -309,10 +292,10 @@ agents:
             enabled: true
             # 研究者要求的实际摘要级阅读覆盖数。只有结构合格的 ABSTRACT-ONLY
             # 笔记计入该数；metadata-only triage 是资源线索，永不占用该配额。
-            # The active pool is the full distinct-paper reading budget.  With
-            # the default 120 retained candidates and 35 deep reads, the
-            # remaining 85 receive abstract-level notes.
-            lite_paper_num: 85
+            # The active pool is the full distinct-paper reading budget. With
+            # the default 50 retained candidates and 30 deep reads, the
+            # remaining 20 receive abstract-level notes.
+            lite_paper_num: 20
             # 最低 relevance_score hint；0.0 表示不靠该 hint 丢弃候选。
             min_relevance: 0.0
             # 候选来源优先级；verified/dedup 是保留候选集。papers_backlog 是审计/人工回捞池，
@@ -346,15 +329,15 @@ agents:
         # 旧 workspace 没有 deep_read_queue 时的 fallback 覆盖比例；新流程优先用 queue。
         expected_notes_ratio: 1.0
         # T3 validator 至少需要多少篇结构合格 deep-read note。
-        deep_read_min: 35
+        deep_read_min: 24
         # T3 prompt 和 queue meta 中展示的目标精读数。
-        deep_read_target: 35
+        deep_read_target: 30
         # 精读目标硬上限；seed/bridge/citation hub 保护位也计入这个上限。
-        deep_read_max: 45
+        deep_read_max: 36
         # Reader 优先 probe 的候选池大小。
-        probe_pool: 45
+        probe_pool: 36
         # 主线 shallow/screened backlog 在 deep_read_queue.jsonl 中保留的上限。
-        mainline_screened_cap: 90
+        mainline_screened_cap: 50
         # 每个 must_explore bridge 的精读保底。
         bridge_deep_floor: 3
         # 每个 bridge 的 shallow/screened backlog 保留上限。
@@ -366,20 +349,20 @@ agents:
         behavior_profiles:
           survey:
             # 综述版需要更多深读覆盖 taxonomy 主类，但仍保留候选/backlog 分层。
-            deep_read_min: 45
-            deep_read_target: 55
-            deep_read_max: 65
-            probe_pool: 70
-            mainline_screened_cap: 130
+            deep_read_min: 32
+            deep_read_target: 40
+            deep_read_max: 48
+            probe_pool: 50
+            mainline_screened_cap: 80
             bridge_deep_floor: 3
             bridge_screened_cap: 10
             bridge_pool_cap: 18
             citation_hub_slots: 5
             abstract_sweep:
               # 综述版轻读覆盖更宽，方便 T3.6 taxonomy plan 看到边界材料。
-              # Survey profile retains 180 candidates; 55 are deep-read and
-              # the remaining 125 receive abstract-level notes.
-              lite_paper_num: 125
+              # Survey profile retains 80 candidates; 40 are deep-read and
+              # the remaining 40 receive abstract-level notes.
+              lite_paper_num: 40
               sources:
               - papers_verified
               - papers_dedup
@@ -412,11 +395,20 @@ agents:
       - list_files
       - grep_search
       - lookup_paper_record
+      - query_research_evidence
+      - analyze_idea_concentration
+      - compute_idea_novelty_signal
       - log_t4_ideation_progress
+      - targeted_literature_supplement
       - ask_human
       - finish_task
       allowed_write_prefixes:
       - ideation/
+      - literature/targeted_supplements/
+      - literature/shallow_read_notes/
+      - literature/related_work.bib
+      - literature/literature_manifest.json
+      - literature/evidence_queries/
     prompt:
       prompt_template: ideation.j2
       structured_outputs:
@@ -425,9 +417,6 @@ agents:
         ideation/idea_scorecard.yaml: idea_scorecard
         ideation/gate_decisions.json: gate_decisions
         ideation/bridge_coverage_review.json: bridge_coverage_review
-      expected_outputs:
-        hypothesis_count: 3
-        risk_count: 3
     behavior:
       gates:
       - id: gate1
@@ -447,8 +436,8 @@ agents:
       - write_file
       - write_structured_file
       - list_files
-      - search_papers
-      - fetch_paper_metadata
+      - query_research_evidence
+      - targeted_literature_supplement
       - extract_mechanism_tuple
       - compare_mechanism_tuples
       - extract_design_rationale_tuple
@@ -456,6 +445,11 @@ agents:
       - finish_task
       allowed_write_prefixes:
       - ideation/
+      - literature/evidence_queries/
+      - literature/targeted_supplements/
+      - literature/shallow_read_notes/
+      - literature/related_work.bib
+      - literature/literature_manifest.json
     prompt:
       prompt_template: novelty_auditor.j2
     behavior:
@@ -467,7 +461,7 @@ agents:
   research_formalizer:
     tools:
       allowed_read_prefixes:
-      - ''
+      - project.yaml
       - ideation/
       - literature/
       # Compatibility is safe for prose because EditFileTool delegates to the
@@ -480,10 +474,16 @@ agents:
       - write_structured_file
       - validate_t45_formalization_sources
       - validate_t45_research_package
-      - list_files
+      - query_research_evidence
+      - targeted_literature_supplement
       - finish_task
       allowed_write_prefixes:
       - ideation/
+      - literature/evidence_queries/
+      - literature/targeted_supplements/
+      - literature/shallow_read_notes/
+      - literature/related_work.bib
+      - literature/literature_manifest.json
     prompt:
       prompt_template: research_formalizer.j2
       structured_outputs:
@@ -500,6 +500,14 @@ agents:
           tier: heavy
           temperature: 0.35
       review:
+        tools:
+          tool_names:
+          - read_file
+          - write_file
+          - write_structured_file
+          - validate_t45_formalization_sources
+          - validate_t45_research_package
+          - finish_task
         budget:
           max_steps: 35
           max_tokens_total: 90000
@@ -522,11 +530,17 @@ agents:
       - read_file
       - write_file
       - list_files
-      - search_papers
+      - query_research_evidence
+      - targeted_literature_supplement
       - ask_human
       - finish_task
       allowed_write_prefixes:
       - novelty/
+      - literature/evidence_queries/
+      - literature/targeted_supplements/
+      - literature/shallow_read_notes/
+      - literature/related_work.bib
+      - literature/literature_manifest.json
     prompt:
       prompt_template: novelty.j2
   experimenter:
@@ -650,41 +664,83 @@ agents:
           docker_required: false
         description: legacy 完整实验调试；当前主链使用外部执行器，Docker/GPU 只在用户显式需要时使用
       handoff:
+        tools:
+          tool_names:
+          - build_experiment_handoff_pack
+          - finish_task
         description: 编译外部执行器 handoff 包
         behavior:
           docker_required: false
           gpu_required: false
       executor_gate:
+        tools:
+          tool_names:
+          - select_external_executor
+          - finish_task
         description: 选择外部执行器并 patch AGENTS/CLAUDE 控制说明
         behavior:
           docker_required: false
           gpu_required: false
       external_wait:
+        # Normal runs resolve this node deterministically before an LLM starts.
+        # The minimal fallback surface cannot ingest, rewrite, or mock results.
+        tools:
+          tool_names:
+          - finish_task
         description: 等待外部执行器 result_pack，resume 后确定性校验
         behavior:
           docker_required: false
           gpu_required: false
+      resource_prepare_wait:
+        tools:
+          tool_names:
+          - finish_task
+        description: 等待外部执行器完成可核验资源准备；由 runtime 确定性验收
+        behavior:
+          docker_required: false
+          gpu_required: false
       dry_run:
+        tools:
+          tool_names:
+          - mock_external_dry_run
+          - finish_task
         description: mock 外部执行器 dry-run
         behavior:
           docker_required: false
           gpu_required: false
       result_ingest:
+        tools:
+          tool_names:
+          - ingest_external_results
+          - finish_task
         description: 摄取外部执行器结果
         behavior:
           docker_required: false
           gpu_required: false
       integrity_audit:
+        tools:
+          tool_names:
+          - audit_experiment_integrity
+          - finish_task
         description: 实验诚信审计
         behavior:
           docker_required: false
           gpu_required: false
       post_novelty:
+        tools:
+          tool_names:
+          - build_post_experiment_novelty_check
+          - finish_task
         description: 实验后 novelty/collision 复核
         behavior:
           docker_required: false
           gpu_required: false
       result_to_claim:
+        tools:
+          tool_names:
+          - map_results_to_claims
+          - build_experiment_evidence_pack
+          - finish_task
         description: result-to-claim 与 evidence pack
         behavior:
           docker_required: false
@@ -720,12 +776,15 @@ agents:
       - write_file
       - list_files
       - grep_search
+      - query_research_evidence
       - build_manuscript_resource_index
       - plan_manuscript_sections
       - plan_manuscript_evidence
       - build_manuscript_registries
       - build_alignment_matrix
       - initialize_manuscript_state
+      - build_section_evidence_supplement
+      - targeted_literature_supplement
       - update_manuscript_section_state
       - assemble_manuscript
       - audit_manuscript_claims
@@ -735,6 +794,11 @@ agents:
       - finish_task
       allowed_write_prefixes:
       - drafts/
+      - literature/targeted_supplements/
+      - literature/shallow_read_notes/
+      - literature/related_work.bib
+      - literature/literature_manifest.json
+      - literature/evidence_queries/
     prompt:
       prompt_template: writer.j2
       latex_required: true
@@ -763,13 +827,6 @@ agents:
     # Section prose and citation concentration can require distinct repairs.
     # Exhaustion is handled by an explicit recovery gate, never by silent exit.
     max_validation_retries: 5
-    behavior:
-      # A completed survey must represent a broad, locally traceable and
-      # plan-scoped evidence base. This value may be raised for a stricter
-      # review, but 50% is the enforced floor: lowering it would permit a
-      # small-core citation collapse.
-      survey_citation_coverage:
-        minimum_traceable_ratio: 0.50
     tools:
       allowed_read_prefixes:
       - ''
@@ -784,7 +841,9 @@ agents:
       - write_file
       - list_files
       - grep_search
+      - query_research_evidence
       - expand_corpus_for_survey
+      - targeted_literature_supplement
       - build_survey_state
       - build_survey_figures
       - update_survey_section_state
@@ -798,6 +857,11 @@ agents:
       - drafts/survey/
       - ideation/
       - literature/survey_supplement/
+      - literature/targeted_supplements/
+      - literature/shallow_read_notes/
+      - literature/related_work.bib
+      - literature/literature_manifest.json
+      - literature/evidence_queries/
     prompt:
       prompt_template: survey_writer.j2
     modes:

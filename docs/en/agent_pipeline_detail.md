@@ -429,7 +429,7 @@ The T2/T3/T3.5/T4/T4.5/T8 items emphasized in `/mnt/data/reference/updataPreT5.m
 | T4 soft novelty/concentration diagnostics | `ideation_tools.py` provides `analyze_idea_concentration` and `compute_idea_novelty_signal`; `idea_scorecard.yaml` must record `counterfactual_check`, `nearest_prior_work`, `novelty_signal`; Gate1 brief must display concentration hints, Origin distribution, and Novelty-Utility spectrum. Field presence is used to prevent skipping review, not gated on merit; when evidence is insufficient, `insufficient_evidence`, `not_computed`, `domain_map_unavailable` are allowed with an explanation, avoiding forced three-class classification | Implemented |
 | T4.5 collision + ambition | `novelty_auditor.j2` requires writing both Collision Axis and Ambition Axis; `mechanism_tools.py` adds `extract_design_rationale_tuple` / `compare_design_rationale_tuples`; `novelty_auditor.py` validates `_design_rationale_tuples/` and routine reframe requirements | Implemented |
 | T4.5 non-pass verdict human decision | `novelty_auditor.j2` requires writing `Final Gate Verdict`; the state machine for T4.5 uses `__parse_from_output__`: only explicit pass enumerations like `pass_to_experiment` / `pass_with_required_baselines` enter `T5-REBOOST-GATE`; `return_to_T4_reframe` / `drop_due_to_collision` / `reject` / `collision` / `fail`, missing verdict, and unknown verdicts all enter `T4.5-HUMAN-REVIEW`. This node is an `immediate_gate`, does not start an LLM, does not auto-reject, auto-return to T4, or default to pass; the user reviews `novelty_audit.md`, Gate1 brief, and scorecard, then chooses to continue the external experiment chain, return to T4, or end, and the decision is persisted to `ideation/novelty_human_review.json` | Implemented |
-| T8 consuming CDR and new Pre-T5 artifacts | T8-RESOURCE generates `cdr_claim_ledger.json` and `alignment_matrix.json`, and copies `domain_map.json`, `synthesis_workbench.json`, `idea_scorecard.yaml`, `writing_style.json`, and `external_executor/executor_research_report.md` via task contract; these files are strong prerequisites for single tasks in `T8-RESOURCE`, `T8-WRITE`, `T8-SECTION-PLAN`, and `T8-SEC-RELATED`, preventing silent degradation of Related Work; Related Work consumes `adjacent_transfers`, `bridge_transfer_drafts`, `domain_map.theory_bridge`, `cross_domain_sources`, and `nearest_prior_work`, alignment rows consume `counterfactual` / `novelty_signal`; `audit_writing_craft` will WARN to check whether Related Work visibly uses recent work, adjacent transfers, or cross-paper tension signals; Reviewer adds `CDR Contribution Verdict` | Implemented |
+| T8 consuming CDR and new Pre-T5 artifacts | T8-RESOURCE deterministically creates the CDR ledger and a read-only alignment seed, while the task contract carries the modern T4/T4.5 package, literature maps, writing style, and executor report. `idea_scorecard.yaml` is legacy-compatible rather than mandatory. Related Work first performs one local evidence query, then fuses the returned note fragments and citation keys with the proposal, nearest-work boundary, adjacent transfers, and cross-paper tensions; the utilization audit distinguishes retrieval, inclusion, and actual citation | Implemented |
 | T9 compilation validation | T9 generates `compile_report.json`, recording LaTeX build, hash/mtime, error logs, and PDF artifact; not just checking if `paper.pdf` exists | Implemented |
 
 Here, the CDR schema and tool outputs are "structured responsibilities" and "evidence scaffolding", not deterministic academic templates. Areas requiring knowledge, judgment, and writing remain to be completed by the LLM: T3 design rationale judgment, T3.5 method family/tension synthesis, T4 forward generation, T4.5 novelty/ambition interpretation, T8 final paper narrative—none of these can be replaced by hard-coded tools.
@@ -972,7 +972,7 @@ Rules:
 
 ### How T2 Controls Candidate Pool Size
 
-`papers_raw.jsonl` is the full retrieval audit pool, which may exceed the retained candidate cap; `papers_dedup.jsonl` is not simply a deduplicated version of the full raw pool, but the retained candidate set for the current round. The default retained candidate cap is `config/system_config/agent_params.yaml -> agents.scout.behavior.t2_finalize.active_pool_max = 120`; candidates exceeding the retained set are written to `literature/papers_backlog.jsonl`, with `t2_pool_role=backlog`, `triaged_out=true`, and `triaged_reason=t2_active_pool_cap_exceeded`. They are kept for coverage auditing, manual retrieval, or troubleshooting; they are not silently discarded, nor are they automatically read back by an ordinary T3 abstract sweep.
+`papers_raw.jsonl` is the full retrieval audit pool, which may exceed the retained candidate cap; `papers_dedup.jsonl` is not simply a deduplicated version of the full raw pool, but the retained candidate set for the current round. The default retained candidate cap is `config/system_config/agent_params.yaml -> agents.scout.behavior.t2_finalize.active_pool_max = 50`; candidates exceeding the retained set are written to `literature/papers_backlog.jsonl`, with `t2_pool_role=backlog`, `triaged_out=true`, and `triaged_reason=t2_active_pool_cap_exceeded`. They are kept for coverage auditing, manual retrieval, or troubleshooting; they are not silently discarded, nor are they automatically read back by an ordinary T3 abstract sweep.
 
 Mechanical thresholds in T2 deterministic finalize that affect candidate scale and API consumption are all under `agents.scout.behavior.t2_finalize`, including `dedup_title_threshold`, `metadata_backfill_max_concurrency`, `abstract_backfill_title_match_threshold`, `snowball_max_sources`, `snowball_refs_per_source`, `snowball_max_candidates`, `snowball_title_match_threshold`, and `access_audit_top_n`. These fields are written into `search_log.md` with configuration source notes to facilitate confirming which parameter set was used during troubleshooting.
 
@@ -1090,11 +1090,11 @@ Current core parameters preferentially come from workspace-local `literature/lit
 
 | Parameter | Default | Purpose |
 | --- | --- | --- |
-| `deep_read_min` | `35` | Minimum deep-read floor; the lowest acceptable number of structured deep-read notes when budget/resource is abnormal |
-| `deep_read_target` | `35` | Deep-read target; when `require_deep_read_target=true`, T3 must read up to this target before entering T3.5 |
-| `deep_read_max` | `45` | Hard upper limit for deep-read target; protection slots are counted within it |
-| `probe_pool` | `45` | Candidate pool size that T3 probes first |
-| `mainline_screened_cap` | `90` | Mainline shallow/screened backlog retention limit |
+| `deep_read_min` | `24` | Minimum deep-read floor; the lowest acceptable number of structured deep-read notes when budget/resource is abnormal |
+| `deep_read_target` | `30` | Deep-read target; when `require_deep_read_target=true`, T3 must read up to this target before entering T3.5 |
+| `deep_read_max` | `36` | Hard upper limit for deep-read target; protection slots are counted within it |
+| `probe_pool` | `36` | Candidate pool size that T3 probes first |
+| `mainline_screened_cap` | `50` | Mainline shallow/screened backlog retention limit |
 | `bridge_deep_floor` | `3` | Deep-read guarantee for each must_explore bridge after screening |
 | `bridge_screened_cap` | `7` | Shallow/screened backlog retention limit per bridge |
 | `bridge_pool_cap` | `15` | Default total candidate retention limit per bridge in the queue; excess is not deleted but marked as deferred and kept in the coverage ledger |
@@ -1573,7 +1573,7 @@ For `[FULL-TEXT]` notes:
 
 ### T3 Abstract Sweep (Lightweight Supplementary Reading)
 
-After deep reading completes, the orchestrator automatically runs an abstract sweep for retained candidates not yet covered by `deep_read_notes/` or `shallow_read_notes/`. It reads title/abstract/metadata rather than full text. Papers with abstracts are written to `literature/shallow_read_notes/`; they actively broaden T3.5 synthesis through coverage, taxonomy, trends, comparison, bridge discovery, and research-question discovery. They must remain explicitly abstract-level and cannot alone validate a mechanism, causal result, or detailed implementation claim. Candidates with only title/year/venue/DOI metadata are not written as per-paper notes, but batched into `literature/metadata_triage.md` as acquisition leads. The three `T2-PARAM-GATE` presets allocate their reading coverage as standard research `35+85=120`, review-balanced `60+120=180`, and review-intensive `80+160=240`; `papers_backlog.jsonl` only replaces unreadable candidates or supports an explicitly requested later expansion, rather than silently increasing confirmed reading coverage.
+After deep reading completes, the orchestrator automatically runs an abstract sweep for retained candidates not yet covered by `deep_read_notes/` or `shallow_read_notes/`. It reads title/abstract/metadata rather than full text. Papers with abstracts are written to `literature/shallow_read_notes/`; they actively broaden T3.5 synthesis through coverage, taxonomy, trends, comparison, bridge discovery, and research-question discovery. They must remain explicitly abstract-level and cannot alone validate a mechanism, causal result, or detailed implementation claim. Candidates with only title/year/venue/DOI metadata are not written as per-paper notes, but batched into `literature/metadata_triage.md` as acquisition leads. The three `T2-PARAM-GATE` presets allocate their reading coverage as standard research `30+20=50`, review-balanced `40+40=80`, and review-intensive `55+65=120`; `papers_backlog.jsonl` only replaces unreadable candidates or supports an explicitly requested later expansion, rather than silently increasing confirmed reading coverage.
 
 Configuration in `config/system_config/agent_params.yaml` under `reader.modes.read.behavior.abstract_sweep`:
 
@@ -1584,7 +1584,7 @@ reader:
       behavior:
         abstract_sweep:
           enabled: true
-          lite_paper_num: 85      # Standard research defaults to 35 deep reads + 85 light reads = 120-paper coverage; review profiles allocate their own totals; `all_readable` is explicit.
+          lite_paper_num: 20      # Standard research defaults to 30 deep reads + 20 light reads = 50-paper coverage; review profiles allocate their own totals; `all_readable` is explicit.
           min_relevance: 0.0      # Do not discard papers solely because of metadata hints by default.
           sources: [papers_verified, papers_dedup]
           exclude_already_read: true
@@ -1736,7 +1736,7 @@ The core principle is **LLM‑first**: the Reader LLM is responsible for intelli
 
 The current implementation uses a three‑stage workflow:
 
-**Stage 1: LLM analysis** — The Reader first analyses the deep_read_notes file by file using its own understanding, producing four kinds of `llm_insights` (see the `LLMInsights` model below) without calling any tools.
+**Stage 1: local indexing and LLM analysis** — The Reader first calls `build_synthesis_workbench` without `llm_insights` to build one provenance-preserving index of all notes. The LLM then reasons over that unified index and opens only the note sections needed to resolve material ambiguity.
 
 **Stage 2: Tool assembly** — The Reader calls `build_synthesis_workbench(write_final=false, render_draft=false, llm_insights={...})`, passing the LLM insights into the tool. The tool reads deep_read_notes to extract evidence fragments and uses the LLM‑supplied classifications/assumptions/trends/questions to assemble `synthesis_workbench.json`, `synthesis_outline.md`, and `synthesis_draft.md`.
 
@@ -1748,14 +1748,14 @@ Tool artifacts must not be used for deterministic completion, nor may they subst
 
 `ReaderAgent(synthesize)` executes in three stages:
 
-#### Stage 1: LLM analysis (no tool calls)
+#### Stage 1: local index, then LLM analysis
 
-After loading the `literature-synthesis` guidance, the Reader uses its own LLM capability to analyse the notes in `deep_read_notes/` and `shallow_read_notes/` file by file, consulting `metadata_triage.md` when necessary to identify candidates that need resource supplementation or reading upgrade; `metadata_triage.md` must not be used as a source of evidence for families/trends/claims. The LLM then generates four kinds of insights:
+After loading the `literature-synthesis` guidance, the Reader makes one deterministic `build_synthesis_workbench` call without `llm_insights`. This indexes all deep, bridge, and shallow notes without making a final scholarly judgment. The LLM analyses the resulting workbench in a unified context, uses purpose-specific evidence queries for material ambiguities, and opens only the returned note sections. `metadata_triage.md` may guide acquisition or reading upgrades but cannot support families, trends, or claims. The LLM then generates four kinds of insights:
 
 - **family_classifications**: method‑family classification for each paper (based on actual content such as method_overview and Technical Details; surface‑level classification using broad title keywords is forbidden)
 - **shared_assumptions**: 2–4 cross‑paper shared assumptions (extracted from Limitations, Weaknesses/Gaps, Claims vs Evidence)
 - **trends**: 2–3 technical trends (comparing changes in method_overview and Key Results between recent and early papers)
-- **research_questions**: 3–6 actionable research questions (based on Gaps, Missing Areas coverage hints, and LLM analysis)
+- **research_questions**: the smallest useful set of 1–5 actionable, non-redundant research questions (based on Gaps, Missing Areas coverage hints, and LLM analysis)
 
 These four insight types are encapsulated in the `LLMInsights` Pydantic model (defined in `researchos/tools/literature_synthesis.py`):
 
@@ -2396,7 +2396,7 @@ Results are written to `ideation/_premortem.md`. If there is a High risk with no
 
 #### Historical post-selection fields (superseded by T4.5 formalization)
 
-1. **Native behavior**: compile the selected Candidate into a Pre-Novelty brief with 2–4 Draft Hypotheses and T4.5 search targets.
+1. **Native behavior**: compile the selected Candidate into a Pre-Novelty brief with one to four non-duplicative Draft Hypotheses and T4.5 search targets.
 
 2. **Legacy field list**: historical workspaces may contain the following files, but native T4 creates formal versions only after T4.5:
    - `ideation/hypotheses.md`: formal research hypotheses (`## H1`, `## H2` anchors)
@@ -2415,7 +2415,7 @@ Results are written to `ideation/_premortem.md`. If there is a High risk with no
 
 The checks below explain retained Pass1/Pass2 projection files and migration diagnosis. Native T4 validates Evidence Permission, Candidate Contract, Genome/lineage, Round fingerprint, Population update, and Portfolio selection; it does not use the historical file count or a second Gate as a substitute for those checks.
 
-- A Pre-Novelty brief must have 2–4 non-template Draft Hypotheses and valid evidence permissions. Formal `hypotheses.md` must contain `H1/H2/...` anchors only after a passing T4.5 audit.
+- A Pre-Novelty brief must have one to four non-template Draft Hypotheses, a traceable Core Thesis, an independent score, and a complete Final Card. The system does not send a coherent one-hypothesis Candidate back merely to fill a preferred count. Formal `hypotheses.md` must contain `H1/H2/...` anchors only after a passing T4.5 audit.
 - Formal `exp_plan.yaml` must pass schema and reference an existing formal hypothesis anchor only after a passing T4.5 audit.
 - `idea_scorecard.yaml` must pass schema, recording selected and eliminated/deferred/merged candidate ideas; each idea must contain non‑empty `mechanism`, `prediction`, `counterfactual`, `mechanism_family` fields
 - `_pass1_forward_candidates.json` must exist and contain at least 4 raw candidates; each must have a stable ID and `idea_origin`
@@ -2573,7 +2573,7 @@ See the "Validator Check Items" section above. Core requirements:
 - Evidence Index and Evidence Permission must be complete and fingerprint-bound.
 - Standard mode must complete the full P0 -> P1 transition with independent scoring, a valid Evolution Plan, Contract validation, Survival Selection, and Population update. Union rescoring is required only when an admitted Child changes the Population; otherwise the actual independent Parent reports are retained with an explicit reuse receipt.
 - The Portfolio presents 1–3 Candidates while the configured Active Population and Archive remain recoverable.
-- Each Gate1 Candidate has a non-template mechanism/prediction/counterfactual/family and a 2–4 Draft Hypothesis bundle; a formal hypothesis and experiment plan require a passing T4.5 audit.
+- Each Gate1 Candidate has a non-template mechanism, prediction, counterfactual, family, and one to four Draft Hypotheses; a formal hypothesis and experiment plan require a passing T4.5 audit.
 - Resource checks and executable-plan budget checks run when T4.5 formalizes the plan.
 
 ### T4 Ideation Coverage Analysis
@@ -2618,8 +2618,8 @@ T4.5 is a three-context research-plan stage, not a novelty check alone. Phase 1 
   - `read_file`
   - `write_file`
   - `list_files`
-- `search_papers`
-- `fetch_paper_metadata`
+- `query_research_evidence`
+- `targeted_literature_supplement`
 - `extract_mechanism_tuple`
 - `compare_mechanism_tuples`
 - `extract_design_rationale_tuple`
@@ -2628,7 +2628,7 @@ T4.5 is a three-context research-plan stage, not a novelty check alone. Phase 1 
 
 ### Targeted Search Boundary
 
-T4.5 may call `search_papers` and `fetch_paper_metadata` against the selected Candidate's `t45_search_targets.json` to check similar work, possible collisions, mechanism differences, and required baselines. This is audit-level supplementary retrieval: returned records are metadata/abstract leads for the current judgment and their role is stated in `novelty_audit.md` or `collision_cases.md`; they do not automatically download PDFs, enter the T2/T3 main literature pool or deep-reading queue, or raise the reading evidence level. A Candidate enters formal literature coverage only through an explicit supplementary-reading or retrieval-return decision.
+T4.5 first calls `query_research_evidence` against canonical notes and the archived Evidence Index. Only a material gap that could change a collision verdict, claim boundary, or required baseline can trigger one bounded `targeted_literature_supplement`. Verified results enter the shared literature contract as abstract-level canonical notes for downstream reuse. The audit names the exact note path or citation key that changed each decision; abstract-only material widens recall but cannot by itself prove a fine-grained mechanism collision.
 
 ### Input Files
 
@@ -2684,7 +2684,7 @@ Then categorizes by similarity:
 
 ### Phase 1: Actual execution process
 
-`NoveltyAuditorAgent` first reads `ideation/hypotheses.md`, splits each hypothesis using the `H1/H2/...` anchor; then reads `literature/synthesis.md`, `literature/comparison_table.csv`, and `ideation/idea_scorecard.yaml` to obtain existing method families, baselines, metric context, and mechanism fields. For each hypothesis, it extracts 3-4 query groups (including the 4th type of mechanism keyword query) from the hypothesis title, method keywords, target scenario, and expected mechanism, then calls `search_papers(query=..., source="auto", max_results=30, year_from=<runtime~1 year ago>)` to search for recent work; `search_papers` schema uses singular `source`, not `sources`. If necessary, use `fetch_paper_metadata` to double-check potentially overlapping papers.
+`NoveltyAuditorAgent` reads the selected Pre-Novelty brief rather than a prematurely formalized `hypotheses.md`. It fuses the Candidate mechanism, synthesis, exact canonical note sections, project context, and scholarly reasoning. It first calls `query_research_evidence`; only a material unresolved neighbor can trigger one supplement of at most two focused queries and eight verified records. Search results are archived and reusable across stages. Pilot or model intuition may refine a query or conditional boundary, but only retrievable prior work can establish an external novelty verdict.
 
 Each hypothesis must also separately call `extract_mechanism_tuple` and `extract_design_rationale_tuple`: the former saves to `ideation/_mechanism_tuples/` and serves the collision axis; the latter saves to `ideation/_design_rationale_tuples/` and contains fields such as `problem_frame`, `design_rationale`, `artifact`, `contribution_type`, `evaluation_mode`, and `boundary_conditions`, serving the ambition / contribution-distance axis. For papers suspected to be similar, the auditor first uses an LLM to read the abstract/metadata to determine the relationship, then calls `compare_mechanism_tuples` and `compare_design_rationale_tuples` to obtain mechanical similarity hints; tool hints cannot directly replace the final novelty judgment.
 
@@ -2753,7 +2753,7 @@ Only at this final boundary does the CLI show the Rich **Research-plan Audit and
 
 ### Mechanism tuple tools
 
-T4.5 introduces two mechanism‑aware tools for automated collision detection. In addition, `NoveltyAgent._extract_mechanism_keywords()` uses structured pattern matching to extract search keywords (hyphenated terms, abbreviations, uppercase technical nouns, general ML terms), without relying on a hard‑coded domain keyword list; the LLM agent adjusts queries based on the hypothesis context.
+T4.5 introduces mechanism-aware tools for collision review. T6 no longer runs the unused ML-term keyword heuristic: it lets the LLM formulate a query from the actual hypothesis and Pilot-exposed mechanism, searches the canonical local evidence first, and archives at most one material supplement for downstream reuse.
 
 **`extract_mechanism_tuple`** — tuple persistence and lightweight normalization tool. The agent extracts causal mechanism descriptions from the hypothesis text and calls this tool to save a JSON file; if the LLM already has more suitable domain labels, it can pass `normalized_input_signal` / `normalized_evidence_type` to override fallback hints:
 
@@ -3002,11 +3002,11 @@ The core cross-section contract of T8 is `drafts/alignment_matrix.json`. It link
 motivation -> contribution -> related_gap -> design_choice -> experiment -> analysis
 ```
 
-The rows of `build_alignment_matrix` come from `contribution_chains` in `cdr_claim_ledger.json`, not from the original CDR evidence slots. `contribution_chains` are mechanical lanes for 3-4 final contribution bullets, used to avoid mistakenly treating around 7 evidence/section slots as paper contributions. The tool only generates seeds and audit hints; motivation, gap, contribution wording, design explanation, and analysis judgment must be completed by the LLM after reading the artifacts. `cid` is only allowed as an internal tracking id in `alignment_matrix.json` / `paper_state.json`; the final TeX body and comments must not contain internal identifiers such as `C1`, `[C1]`, `C1:`, `C1 is ...`, `CID C1`, or `% [C1]`.
+The rows of `build_alignment_matrix` come from `contribution_chains` in `cdr_claim_ledger.json`, not from the original CDR evidence slots. They preserve the smallest real set of contribution chains and prevent evidence or section slots from being misreported as contributions. The tool only generates seeds and audit hints; motivation, gap, contribution wording, design explanation, and analysis judgment remain LLM work. `cid` is only an internal tracking id and must not leak into final TeX prose or comments.
 
 ### 6.14.0 Implementation boundaries
 
-`WriterAgent` is responsible for style gate, resource, outline, section_plan, section_draft, draft, self_check, revise. Code is at [researchos/agents/writer.py](../../researchos/agents/writer.py), prompt at [researchos/prompts/writer.j2](../../researchos/prompts/writer.j2), general writing skill at [researchos/agent_guidance/manuscript-writing/SKILL.md](../../researchos/agent_guidance/manuscript-writing/SKILL.md), cross-section craft at [researchos/prompts/paper_craft.j2](../../researchos/prompts/paper_craft.j2).
+`WriterAgent` is responsible for style gate, resource, outline, section_plan, section_draft, draft, self_check, and revise. Code is at [researchos/agents/writer.py](../../researchos/agents/writer.py), the phase contract is at [researchos/prompts/writer.j2](../../researchos/prompts/writer.j2), and the shared cross-section academic-writing standard has one source of truth at [researchos/agent_guidance/manuscript-writing/SKILL.md](../../researchos/agent_guidance/manuscript-writing/SKILL.md). Keeping the editorial contract in the Skill avoids injecting a second near-identical craft template into every section call.
 
 `ReviewerAgent` is responsible for two rounds of section-by-section review and comprehensive review. Code at [researchos/agents/reviewer.py](../../researchos/agents/reviewer.py), prompt at [researchos/prompts/reviewer.j2](../../researchos/prompts/reviewer.j2).
 
@@ -3015,7 +3015,7 @@ The main manuscript tools are in [researchos/tools/manuscript.py](../../research
 - `build_manuscript_resource_index`: Scans workspace for literature, experiments, hypotheses, figures, code, and log resources.
 - `plan_manuscript_sections`: Generates required inputs, expected outputs, and LLM task prompts for 7 sections.
 - `plan_manuscript_evidence`: Generates claim slots and figure/table slots.
-- `build_manuscript_registries`: Generates CDR claim ledger, generic claim ledger, and figure registry seed; among them, `contribution_chains` are the 3-4 contribution lanes used by the subsequent alignment matrix.
+- `build_manuscript_registries`: Generates CDR claim ledger, generic claim ledger, and figure registry seed; its non-duplicative `contribution_chains` feed the subsequent alignment matrix.
 - `build_alignment_matrix`: Generates alignment matrix seed based on contribution lanes, does not make final academic judgments, nor does it treat mechanical evidence slots as final contributions.
 - `initialize_manuscript_state`: Generates `paper_state.json` and `section_outlines/*.md` for each chapter.
 - `update_manuscript_section_state`: Records the written/revised state of individual sections.
@@ -3037,7 +3037,7 @@ The local template support matrix is as follows:
 | family/id | Gate Selectable | T3.6 Survey Assembly | T8 Manuscript Assembly | Support Files | T9 Bundle |
 | --- | --- | --- | --- | --- | --- |
 | `utd/informs` | Yes | INFORMS native `\TITLE/\ARTICLEAUTHORS/\ABSTRACT` | INFORMS native `\TITLE/\ARTICLEAUTHORS/\ABSTRACT` | `informs4.cls`, `informs2014.bst`, `eqndefns-*`, logo | Scan and copy class/style/bst/logo |
-| `ccf/neurips` | Yes, default | NeurIPS `neurips_2026` article shell | NeurIPS `neurips_2026` article shell | `neurips_2026.sty`, also keep `checklist.tex` | Scan and copy style/checklist |
+| `ccf/neurips` | Yes, explicit selection | NeurIPS `neurips_2026` article shell | NeurIPS `neurips_2026` article shell | `neurips_2026.sty`, also keep `checklist.tex` | Scan and copy style/checklist |
 | `ccf/iclr` | Yes | ICLR 2026 style shell | ICLR 2026 style shell | `iclr2026_conference.sty`, `iclr2026_basic.tex` | Scan and copy style/shell |
 | `ccf/icml` | Yes | ICML native `\icmltitle` / `\twocolumn[...]` | ICML native `\icmltitle` / `\twocolumn[...]` | `icml2026.sty`, `icml2026.bst`, `algorithm*.sty`, `fancyhdr.sty`, `natbib.sty` | Scan and copy style/bst/transitive deps |
 | `ccf/kdd` | Yes | ACM/KDD `acmart` shell | ACM/KDD `acmart` shell | `acmart.cls`, `ACM-Reference-Format.bst` and same-level support | Scan and copy class/bst |
@@ -3049,27 +3049,27 @@ The current implementation semantics of `venue_style=both` is: resource index, C
 
 ### 6.14.2 T8-RESOURCE: WriterAgent (`resource_index`)
 
-`T8-RESOURCE` inputs include `project.yaml`, the accepted `external_executor/executor_research_report.md`, the read-only supporting `external_executor/` directory, `drafts/t5_t8_handoff.json`, `drafts/experiment_evidence_pack.json`, `drafts/result_to_claim.json`, `literature/synthesis.md`, `literature/synthesis_workbench.json`, `literature/domain_map.json`, `literature/related_work.bib`, `ideation/hypotheses.md`, `ideation/idea_scorecard.yaml`, and optional `exp_plan.yaml`, `novelty_audit.md`, `comparison_table.csv`, `ablations.csv`.
+`T8-RESOURCE` consumes the project and writing style, accepted executor evidence, synthesis/workbench/domain map/BibTeX, hypotheses, and the modern T4/T4.5 package. That package includes the selected Candidate, research blueprint, orientation review, research dossier, research proposal, proposal manifest, validation map, contribution hypothesis map, and kill criteria. The old scorecard plus experiment plan, novelty audit, comparison table, and ablations remain optional compatibility or supporting inputs.
 
-Among them, `writing_style`, `synthesis_workbench`, `domain_map`, and `idea_scorecard` are strong prerequisites for a single task, no longer just "strongly recommended". `researchos run-task T8-RESOURCE --from <workspace>` copies these artifacts; if missing, the prerequisite check requires completing T8-STYLE-GATE or Pre-T5 artifacts first. This ensures that Related Work and alignment matrix do not lose venue style, `adjacent_transfers`, `nearest_prior_work`, `counterfactual_check`, and `novelty_signal` due to single-stage debugging.
+The strong single-task prerequisites are writing style, executor report, synthesis, synthesis workbench, domain map, BibTeX, and hypotheses. Modern T4/T4.5 artifacts are copied and indexed whenever present; a missing legacy scorecard does not block a modern workspace. This preserves the verified literature and experiment backbone without reducing an already coherent proposal back into an obsolete scorecard schema.
 
 The actual execution order is fixed:
 
-1. Call `build_manuscript_resource_index`, scan literature, paper notes, bib, hypotheses, idea scorecard, novelty audit, `external_executor/executor_research_report.md`, supporting external-executor artifacts, ablations, runs, configs, figures, tables, and code artifacts, write `drafts/manuscript_resource_index.json`. This index simultaneously exposes `citation_ref_by_note_id`, `note_id_by_bib_key`, and `unmapped_note_ids`: the `[note:<id>]` from T3.5 is Markdown provenance; the T8 TeX body must use `\cite{bibkey}` mapping from here; notes that cannot be mapped to a BibTeX key can only serve as provenance/supplementary resource hints, and cannot enter the TeX citation as-is.
-2. Call `plan_manuscript_sections`, write `drafts/section_plan.json`. The current main chain plans 7 chapters: abstract, introduction, related_work, methodology, experiments, analysis, conclusion; the required inputs for Conclusion merge the risks, novelty audit, and iteration log originally needed for Limitations.
+1. Call `build_manuscript_resource_index` over literature, notes, BibTeX, hypotheses, modern T4/T4.5 artifacts, optional legacy scorecard, executor evidence, experiments, configurations, figures, tables, and code. The index stores paths, types, and citation mappings without injecting every note preview into the prompt. TeX citations must use verified BibTeX keys; unmapped notes remain provenance or retrieval hints.
+2. Call `plan_manuscript_sections`, write `drafts/section_plan.json`. The current main chain plans 7 chapters: abstract, introduction, related_work, methodology, experiments, analysis, conclusion. Each section separates genuinely blocking hard inputs from available optional files and contentful inspectable directories. A bootstrap folder containing only `_DIR_GUIDE.md` is not presented as a readable resource, so Writer does not spend calls enumerating empty folders. Conclusion's hard inputs merge the risks, novelty audit, and iteration log originally needed for Limitations.
 3. Call `plan_manuscript_evidence`, write `drafts/evidence_plan.json` and `drafts/figure_table_plan.json`.
 4. Call `build_manuscript_registries`, write `drafts/cdr_claim_ledger.json`, `drafts/claim_ledger.json`, `drafts/figure_registry.json`.
-5. Call `build_alignment_matrix`, generate `drafts/alignment_matrix.json` from the `contribution_chains` of `cdr_claim_ledger.json`, evidence plan, figure/table plan, synthesis, hypotheses, and idea scorecard. It brings `counterfactual_check`, `counterfactual_note`, `nearest_prior_work`, and `novelty_signal` from `idea_scorecard.yaml` into each contribution lane, serving as hints for the Writer to argue "why this is not just an incremental contribution" and for differential positioning in Related Work. If there are no contribution lanes, the tool falls back to generating 3-4 `LLM_REVIEW_REQUIRED` lanes; this is only a recovery fallback, not a final contribution judgment.
+5. Call `build_alignment_matrix` from contribution chains, plans, synthesis, hypotheses, and modern or legacy idea artifacts. The result is a recoverable deterministic seed rather than final scientific judgment. If no upstream contribution lane exists, the tool creates one explicit recovery lane instead of inventing several contributions.
 
-The validator will require that the resource stage outputs include resource index, section/evidence/figure plans, three registries, and the alignment matrix, and check key semantics and minimal structure. The alignment matrix must have rows; the subsequent outline stage will also check that it is 3-5 contribution lanes, not an arbitrary number of evidence slots. Before entering the main text writing, the `WriterAgent` will reject key alignment fields that still remain as `LLM_REVIEW_REQUIRED` / `TODO` / `TBD`: these placeholders can serve as seeds for T8-RESOURCE, but cannot be used as confirmed cross-chapter contribution chains.
+The validator requires the resource index, plans, three registries, and a non-empty alignment seed. Runtime performs this fixed indexing sequence deterministically with no LLM call. Explicit `LLM_REVIEW_REQUIRED` seed values may remain because scientific completion belongs in the outline and manuscript; final TeX still rejects every placeholder.
 
 ### 6.14.3 T8-WRITE: WriterAgent (`outline`)
 
-`T8-WRITE` reads resource index, section plan, evidence plan, figure/table plan, CDR ledger, claim ledger, figure registry, alignment matrix, synthesis, hypotheses, results, and bib preview, and writes `drafts/outline.md`.
+`T8-WRITE` reads the resource index, plans, ledgers, alignment seed, synthesis, hypotheses, results, and one targeted evidence bundle, then writes both `drafts/outline.md` and `drafts/writing_storyline.md`.
 
-This step is the LLM academic judgment phase. The Writer needs to complete each cid in `alignment_matrix.json` into a writable chain: motivation, contribution, related_gap, design_choice, experiment, analysis. The tool only provides seeds, such as candidate metrics, citation pool, figure/table labels, and CDR fields; whether the gap is valid, how to phrase contributions, and how to tell the IS/CCF-A style are decided by the Writer after reading upstream artifacts.
+This is the LLM academic-judgment phase. In one reasoning context, the Writer fuses the alignment seed, modern proposal/blueprint, literature evidence, and experimental results into a writable motivation, contribution, related-gap, design-choice, experiment, and analysis chain. It does not overwrite runtime-owned alignment JSON merely to satisfy a format validator; scientific completion is expressed in the outline and storyline.
 
-The outline must include candidate titles, paper thesis, contribution map, section-by-section argument, figure/table plan, claim ledger, and alignment matrix refinement. The validator checks that `outline.md` is not an empty file, contains `##` structure, covers core sections such as Introduction, Related Work, Method, Experiments, and requires that `alignment_matrix.json` maintains valid semantics, 3-5 rows, each row has cid, motivation, contribution, related_gap, design_choice, experiment, and analysis fields. Fields can temporarily carry `LLM_REVIEW_REQUIRED` in the T8-RESOURCE seed, but the Writer must fill key fields with writable academic judgments before the outline/section-plan; otherwise subsequent validation will pause and not allow placeholders into the main text.
+The outline must include candidate titles, paper thesis, contribution map, a continuous section argument, figure/table plan, and claim/evidence alignment. The validator checks the scientific semantics of the outline and storyline while checking only seed semantics, row count, and required fields in the alignment JSON. It no longer substitutes brittle JSON-edit retries for academic judgment.
 
 ### 6.14.4 T8-SECTION-PLAN: WriterAgent (`section_plan`)
 
@@ -3078,6 +3078,7 @@ The outline must include candidate titles, paper thesis, contribution map, secti
 ```text
 initialize_manuscript_state(
   outline_path="drafts/outline.md",
+  storyline_path="drafts/writing_storyline.md",
   resource_index_path="drafts/manuscript_resource_index.json",
   section_plan_path="drafts/section_plan.json",
   evidence_plan_path="drafts/evidence_plan.json",
@@ -3089,13 +3090,13 @@ initialize_manuscript_state(
 )
 ```
 
-This tool writes `drafts/paper_state.json`, which includes `section_order`, target file for each chapter, required/available/missing inputs, `shared_facts.bib_keys`, `shared_facts.result_metrics`, claim slots, planned visuals, and `shared_facts.alignment_matrix`. At the same time, it writes each chapter's `drafts/section_outlines/<section>.md`, each outline includes Purpose, Required Inputs, Responsible CIDs, Claim Slots, Figure/Table Slots, and Writing Rules.
+This tool writes `drafts/paper_state.json` with section state, shared facts, claim slots, visuals, the alignment seed, and a storyline fingerprint. It deterministically carries the relevant problem, bottleneck, insight, method, evidence, alternative-explanation, or boundary passages from the storyline into each section outline. This preserves cross-section reasoning without another LLM call.
 
-The orchestrator has deterministic recovery logic before entering LLM: if the `outline/resource/section/evidence/figure/alignment` plan files already exist, but `paper_state.json` or section outlines are invalid, it will directly call `initialize_manuscript_state` to fix and skip the LLM. This ensures that resume does not repeatedly consume model resources rewriting mechanical state in T8-SECTION-PLAN.
+Before entering an LLM, the orchestrator deterministically rebuilds invalid section state from the existing `outline/storyline/resource/section/evidence/figure/alignment` files. If it finds an older section plan that merged optional material into hard inputs, it first rebuilds the deterministic T8 resource bundle and only then recreates state. A changed storyline invalidates stale state, while resume does not spend model calls rewriting mechanical state.
 
 ### 6.14.5 T8-SEC-METHOD: WriterAgent (`section_draft`, `section_id=methodology`)
 
-`T8-SEC-METHOD` only writes `drafts/sections/methodology.tex`. Writer reads `paper_state.json`, `section_outlines/methodology.md`, `alignment_matrix.json`'s design_choice column, `ideation/hypotheses.md`, `ideation/exp_plan.yaml`, `ideation/idea_scorecard.yaml`, novelty/CDR tuples, experiment configs, and available code artifacts.
+`T8-SEC-METHOD` only writes `drafts/sections/methodology.tex`. Its hard inputs are `paper_state.json`, `section_outlines/methodology.md`, the design_choice column in `alignment_matrix.json`, `ideation/hypotheses.md`, and `ideation/exp_plan.yaml`. Modern Candidate/proposal material, the legacy scorecard, novelty/CDR tuples, experiment configs, and code are optional and are read only when present and able to change the argument. A directory is enumerated once before an exact needed file is read; it is never passed to `read_file`.
 
 This chapter first defines artifacts and design rationale, then explains the overall architecture, components, notation, algorithm, and implementation. Each design choice must explain why, without using experimental results to prove the method's effectiveness; contribution correspondence is closed with natural language, internal tracking is only saved in `paper_state.json` / `alignment_matrix.json`. After writing, must call `update_manuscript_section_state(section_id="methodology", status="written")`.
 
@@ -3107,9 +3108,9 @@ This chapter should preface RQs and use natural language to explain which contri
 
 ### 6.14.7 T8-SEC-RELATED: WriterAgent (`section_draft`, `section_id=related_work`)
 
-`T8-SEC-RELATED` only writes `drafts/sections/related_work.tex`. The Writer reads the related_gap from `alignment_matrix.json`, `literature/synthesis.md`, `literature/synthesis_workbench.json`, `literature/domain_map.json`, `ideation/idea_scorecard.yaml`, `comparison_table.csv`, paper notes, and `related_work.bib`. In the task contract, `synthesis_workbench`, `domain_map`, `idea_scorecard`, and `alignment_matrix` are strong prerequisites; if missing, fix them first by returning to T3.5/T4/T8-RESOURCE.
+`T8-SEC-RELATED` writes only `drafts/sections/related_work.tex`. The Writer first issues one local evidence query for the current positioning problem, receiving the most relevant note fragments, source paths, and citation keys. It then combines these with synthesis, workbench, domain map, BibTeX, alignment seed, comparison table, and modern T4/T4.5 artifacts. Synthesis, workbench, domain map, BibTeX, and alignment matrix are strong prerequisites; the scorecard is an optional legacy hint.
 
-Related Work is organized by competing design rationale, not as a paper-by-paper inventory. Each topical subsection should describe the common rationale of that school, representative works, common limitations or tensions, and then naturally lead to the corresponding gap or design choice in this paper, without exposing internal cids. `synthesis_workbench.adjacent_transfers` and `bridge_transfer_drafts` are used to identify transferable mechanisms from adjacent/theory bridging areas; `domain_map.core/theory_bridge/adjacent/citation_edges` are used to hint at the backbone and adjacent structure; `idea_scorecard.cross_domain_sources`, `idea_scorecard.nearest_prior_work`, and the `nearest_prior_work` from the alignment matrix are used for differential positioning against the closest prior work; `counterfactual` / `novelty_signal` are only used as marginal risk hints. The citation key must exist in `.bib`; the tool only provides a citation pool and structural hints; prior-work positioning is judged by the LLM.
+Related Work is organized by competing design rationales rather than as a paper inventory. Adjacent transfers, the domain map, nearest-work boundaries in the modern proposal/blueprint, and legacy cross-domain hints when available all inform the judgment, but only sources that change a concrete claim enter the manuscript. Citation keys must exist in the BibTeX file; prior-work positioning remains an LLM judgment and a run-scoped receipt checks which retrieved sources were actually cited.
 
 `T8-DRAFT`'s `audit_writing_craft` performs a non-blocking `related_work_pre_t5_signal_consumption` check: if the Related Work completely lacks nearest-prior-work, adjacent-transfer, cross-paper tension, or corresponding text snippets, it gives a WARN. It does not replace the LLM's judgment on whether a given work is relevant; it only indicates that "the Pre-T5 materials that upstream spent resources generating may not have been consumed by the writing."
 
@@ -3123,7 +3124,7 @@ This chapter explains how the experiments and ablations support, weaken, or only
 
 `T8-SEC-INTRO` runs after Method, Experiments, Related Work, and Analysis, and only writes `drafts/sections/introduction.tex`. The Writer reads the motivation/contribution from `alignment_matrix.json`, the CDR ledger, synthesis, hypotheses, results, and the already-written Method/Experiments/Related Work.
 
-The Introduction follows a 5-move structure: Problem, Gap, Approach, numbered Contributions, and venue-specific closing. The gap/motivation typically does not exceed 3 items, with 3-4 contributions, and they should have a clear logical correspondence with the internal lanes of the alignment matrix; this correspondence is only recorded in `paper_state.json` / `alignment_matrix.json`, while the contribution bullets in the body use natural language. The `ccf_a` style requires a quantified results headline; the `is` style requires a theoretical or reference anchor. The Intro cannot exceed the existing evidence.
+The Introduction develops the real-world problem, computational difficulty, approach, contributions, and venue-relevant implications as one connected argument. The number of gaps and contributions follows the research logic and corresponds to the internal alignment lanes; the body uses natural language rather than internal IDs. A result headline is used only when supported by actual results, and the Introduction cannot exceed the available evidence.
 
 ### 6.14.10 T8-SEC-CONCLUSION: WriterAgent (section_draft, section_id=conclusion)
 
@@ -3183,7 +3184,7 @@ T8 recovery depends on existing artifacts:
 
 For standalone debugging, it is recommended to start from `T8-STYLE-GATE` or `T8-RESOURCE`; if a valid `writing_style.json` already exists, `T8-RESOURCE` can be run directly. A full `run/resume` will traverse the state machine through `T8-STYLE-GATE -> T8-RESOURCE -> T8-WRITE -> T8-SECTION-PLAN -> T8-SEC-* -> T8-DRAFT -> T8-SELF-CHECK -> ...`.
 
-When debugging a single task, `--from <upstream-workspace>` copies all declared inputs according to the task contract; `T8-RESOURCE` copies `domain_map.json`, `synthesis_workbench.json`, `idea_scorecard.yaml`; `T8-SEC-RELATED` also copies these three and `alignment_matrix.json`. These are not decorative inputs but strong prerequisites for Related Work and the alignment matrix. If missing, the prerequisite check will fail, preventing the writing chain from degrading into a prompt-only approach that merely reads `synthesis.md` and `.bib`.
+For single-task debugging, `--from <upstream-workspace>` copies all declared inputs, including the modern T4/T4.5 package; the legacy scorecard is copied only when present. Missing synthesis, workbench, domain map, BibTeX, or alignment matrix still fails prerequisite validation to prevent silent degradation, while the absence of an old scorecard does not block a modern workspace.
 
 The legacy `researchos run-task T8-SECTIONS --workspace ...` is still accepted by the CLI but will be mapped to `T8-SECTION-PLAN`; legacy `T8-SEC-LIMITATIONS` will be mapped to `T8-SEC-CONCLUSION`.
 
@@ -3237,7 +3238,7 @@ Exception: At runtime, the system attempts `t9_submission_prefinalize` before th
 
 **Anonymization precheck is disabled by default** (`submission.py` line 83: `enforce_anonymization_precheck` defaults to `False`). Only when `submission.behavior.enforce_anonymization_precheck` in `agent_params.yaml` is set to `true` will it intercept and check for anonymization issues such as email, URL, GitHub, etc. before entering the LLM. This facilitates local debugging or non-anonymous submission scenarios where a submission package can be produced directly.
 
-**Venue template support**: T9 reads the target venue format from the `target_venue` field in `project.yaml` (default `neurips2026`) and migrates the main manuscript to the corresponding template.
+**Venue template support**: T9 reads the target venue from `project.yaml` when one is explicitly supplied. If it is absent, the workflow preserves the T8-selected CCF/AI writing profile and neutral local template instead of pretending that a particular conference format was chosen.
 
 The `latex_compile` cache is also determined by dependency fingerprint: in addition to the `main.tex` hash, it records the dependency fingerprint of non-generated files within the bundle (e.g., `references.bib`, figures, `.sty/.cls`, `bundle_manifest.json`). A successful cache is reused only when PDF/log/hash/mtime/size and the dependency fingerprint are all consistent; source-level failures with the same fingerprint are not recompiled—the TeX or dependencies must be modified before retrying.
 
@@ -3577,7 +3578,7 @@ researchos audit-survey --workspace ./workspace/project-a
 researchos validate --task T3.6-ASSEMBLE --workspace ./workspace/project-a
 ```
 
-Citation diversity is a hard coverage contract, not an inert warning. Its denominator contains only BibTeX entries with a local note card, a known evidence level, and a deterministic scope link to the saved survey plan (a direct taxonomy link, a synthesis coverage-plan entry, or sufficient substantive title overlap). Retrieval noise and unknown/unlinked entries are explicitly excluded. At least 50% of this scoped pool, or the active-section floor when higher, must be represented before T3.6 can release. The audit writes the target, missing count, excluded entries, candidate `source_file` paths, evidence restrictions, and a per-section review queue into `repair_guidance`; the validation-repair prompt injects the same operational facts into the Survey Writer. A candidate is never an automatic citation: FULL/PARTIAL notes require exact claim verification, while ABSTRACT-ONLY notes are limited to background, trend, scope, or evidence-boundary prose. If no safe candidate remains, the writer records a repair plan rather than adding unrelated citations.
+Citation utilization is audited as availability, in-scope traceable inclusion, and actual use. The diagnostic pool contains only BibTeX entries with a local note card, a known evidence level, and a deterministic scope link to the saved survey plan. Retrieval noise and unknown or unlinked entries are explicitly excluded. The audit reports actual coverage and unrepresented candidates but does not impose a fixed percentage, because inclusion cannot prove semantic use and a percentage target encourages padding. Citation existence, claim alignment, provenance, and evidence boundaries remain hard checks. The per-section queue is consulted only for a material evidence gap or excessive citation concentration; every candidate still requires exact note verification.
 
 Concentration is a separate part of the same check. Small corpora retain minimum repetition protection; the threshold for long surveys is scaled by the total number of citation occurrences. Therefore, `13/104` (12.5%) will not be mistakenly judged as concentrated due to a fixed `>10` rule. A real `bibliography_quality` failure still blocks, for example, writing journal papers from `Information Systems Research`, `Management Science`, or `MIS Quarterly` as `@inproceedings`; the abstract sweep preferentially recognizes explicit `journal` metadata and common journal names, generating `@article`/`journal` fields.
 
@@ -3597,7 +3598,7 @@ Generator, Scorer, and Evolver have separate authority. Generator produces route
 
 The five-dimension Core Scientific Score remains shared across projects: Research Value, Mechanism Integrity, Contribution Distinctiveness, Evidence Calibration, and Validation Tractability. Scorer additionally separates present `overall_readiness` from `scientific_upside`: the latter judges the potential value of a problem reframing, mechanism, surprising prediction, or research programme if its conjectures survive validation. A `wildcard_recommended` direction may remain human-visible beside mature directions; it is never evidence-certified or selection-ready by that label. Scorer also returns a separate `Profile Fit` assessment for the confirmed orientation. Portfolio and Parent selection may use Profile Fit and scientific upside as configured secondary/preservation inputs, but neither replaces the Core Scientific Score or upgrades weak evidence. T4 prompts are composed from a shared Scientific Constitution, role contract, task mode, compact Target Profile summary, runtime evidence context, output contract, and failure protocol. Workspace text is treated as data, not as instructions.
 
-Gate1 starts with a Rich comparison of the 1–3 Candidate Portfolio while keeping 6–8 Active Candidates and the complete Archive available for inspection. The lead card and compact alternatives use LLM-authored, workspace-derived scientific text; the renderer only lays out validated fields. A Seed can be shown as visibly provisional so that a high-upside research programme is not hidden. It may enter T4.5 when the Gate has a complete LLM Final Card, an independent score, a traceable core thesis, and one or more LLM-authored falsifiable draft hypotheses. Seed maturity, weak evidence, a `revise_before_selection` recommendation, and a single-hypothesis bundle are warnings for T4.5 to audit, not reasons to accept confirmation and then reopen T4. Mature Candidates normally contain a one-line thesis, Overall Readiness and five explanations, Problem, Core Innovation, Mechanism Chain, 2–4 Contributions, 2–4 Draft Hypotheses, validation snapshot, Evidence Composition, risks, recommendation rationale, lineage, and paths that explain what each file contains. `proposed_not_verified` means a hypothesis is a clear proposal rather than verified evidence. A missing Final Card or independent score, an empty thesis, zero hypotheses, invalid Evidence Permission, or template-filled scientific fields remains visible with its limitation but cannot be selected into T4.5.
+Gate1 starts with a Rich comparison of the 1–3 Candidate Portfolio while keeping the Active Population and complete Archive available for inspection. A Seed may enter T4.5 when it has a complete LLM Final Card, an independent score, a traceable core thesis, and at least one LLM-authored falsifiable draft hypothesis. Mature Candidates use the smallest coherent set of one to four non-duplicative Contributions and Draft Hypotheses rather than filling a preferred count. Missing readiness artifacts remain visible with their limitation but cannot be selected into T4.5.
 
 Only the 1–3 Portfolio Candidates receive a separate LLM-authored Impact Translation in `ideation/final_cards/portfolio_cards.json`. It answers Why It Matters, a representative scenario, the current failure, scientific/technical core, applicable implications with Evidence Status and conditions, and claims that must not be made. The compiler must echo the exact Candidate core thesis, contribution IDs, and hypothesis IDs; a translation that changes them is rejected. This provides readable context without turning the card into marketing copy or changing the scientific Candidate.
 

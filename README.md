@@ -218,7 +218,7 @@ English wording such as `candidate pool 30, deep read 15, abstract read 15, Engl
 
 T3 processes strong-evidence papers individually because page coverage and section evidence are paper-specific. Its post-read abstract sweep packs independent abstracts into provider-context-sized calls and writes one separate `ABSTRACT-ONLY` note per paper. A requested "abstract read N" is a real note-count target: metadata-only triage never counts, readable backlog records refill a shortfall, and an unresolved shortfall pauses T3 rather than entering T3.5. Shallow papers with a local PDF are listed in `literature/reading_upgrade_queue.jsonl` for a real full-text or scoped partial-text upgrade; downloading a PDF never promotes evidence. Books, monographs, and sources over 100 pages default to question-driven chapter/page reading with recorded coverage.
 
-To pause a live command, press `Ctrl+C` once. ResearchOS persists the workspace as `PAUSED` and prints the matching `resume` command. For a multiline Gate answer, `Ctrl+D` submits on POSIX; on Windows use `Ctrl+Z` then Enter, or type `END` on its own line on any platform. The `Ctrl+Z` job-suspension warning applies to POSIX shells only: there it suspends the process, so use `fg` and then `Ctrl+C` to recover from an accidental suspend.
+To pause a live command, press `Ctrl+C` once. ResearchOS persists the workspace as `PAUSED` and prints the matching `resume` command. For every multiline Gate answer, type `END` on its own line to submit on Windows, POSIX, IDE terminals, and remote sessions. Terminal EOF remains a compatibility shortcut, but the interface does not require a platform-specific key chord.
 
 ## Everyday Use: Choose A Command By Goal
 

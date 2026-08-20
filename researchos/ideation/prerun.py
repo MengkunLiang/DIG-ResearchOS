@@ -232,13 +232,12 @@ def default_run_config(
     """Build a validated run config from settings and a parsed user directive."""
 
     directive = directive or T4PreRunDirective(action="start")
-    # Standard is the first mode that gives a promising Seed enough room to
-    # become a genuinely differentiated Candidate: P0 formation, then P1 and
-    # P2 evolution.  These are exploration-cost defaults rather than quotas;
-    # an unsupported route or deferred Child still leaves its valid Parents
-    # visible.  Deep keeps one additional round for researchers who explicitly
-    # choose the larger provider budget.
-    mode_rounds = {"quick": 0, "standard": 2, "deep": 3, "auto": 2}
+    # One evidence-informed evolution round is the normal quality/cost tradeoff.
+    # A second round remains available in Deep mode when the researcher has
+    # explicitly authorized more exploration.  Repeating critique, mutation,
+    # rescoring and survival by default produced substantial calls without a
+    # reliable signal that P2 improved the decision surface over a strong P1.
+    mode_rounds = {"quick": 0, "standard": 1, "deep": 2, "auto": 1}
     rounds = directive.requested_rounds if directive.mode == "auto" and directive.requested_rounds is not None else mode_rounds[directive.mode]
     return T4RunConfig(
         mode=directive.mode,

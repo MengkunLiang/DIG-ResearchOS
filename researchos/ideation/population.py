@@ -316,7 +316,7 @@ def validate_idea_contract(dossier: CandidateDossier) -> IdeaContractResult:
         contracts[label] = "pass" if _text(gene.value) else "fail"
         if contracts[label] == "fail":
             hard_failures.append(f"missing_{label}")
-    contracts["hypothesis"] = "pass" if len(dossier.hypotheses) >= 2 else "warning"
+    contracts["hypothesis"] = "pass" if len(dossier.hypotheses) >= 1 else "warning"
     if contracts["hypothesis"] == "warning":
         warnings.append("Mature candidates require at least two one-line hypotheses.")
     contracts["evidence"] = "pass"

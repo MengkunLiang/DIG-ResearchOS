@@ -150,6 +150,7 @@ class MultiSourceSearchTool(Tool):
             )
 
         all_papers = []
+        source_batches: list[list[dict[str, Any]]] = []
         source_stats = {}
 
         # 按优先级尝试各个数据源
@@ -180,6 +181,8 @@ class MultiSourceSearchTool(Tool):
                 papers = [paper for paper in papers if _is_usable_search_record(paper)]
                 source_stats[source] = len(papers)
                 all_papers.extend(papers)
+                if papers:
+                    source_batches.append(papers)
 
                 # 默认尝试所有源。这样同一篇论文若在 OpenAlex/Crossref/arXiv/
                 # Europe PMC 等多个源出现，后续去重合并能保留 DOI、摘要、
@@ -203,6 +206,19 @@ class MultiSourceSearchTool(Tool):
                 else:
                     source_stats[source] = f"failed: {str(e)[:50]}"
                 continue
+
+        # When all providers are requested, interleave their ranked result
+        # lists before deduplication.  Plain concatenation lets the first
+        # successful provider occupy the entire final max_results window and
+        # silently discards later providers' abstracts, OA hints and venue
+        # coverage whenever an earlier provider returns a full page.
+        if params.try_all_sources and len(source_batches) > 1:
+            all_papers = [
+                batch[index]
+                for index in range(max(len(batch) for batch in source_batches))
+                for batch in source_batches
+                if index < len(batch)
+            ]
 
         # 去重（基于DOI和标题）
         unique_papers = self._deduplicate_papers(all_papers)

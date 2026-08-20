@@ -113,11 +113,11 @@ P0、每一代 Population、Candidate 版本、评分、Plan、Child、Deferral�
 | 模式 | 新建默认轮数 | 当前流程 | 适用场景 |
 | --- | ---: | --- | --- |
 | `quick` | 0 | P0 形成、独立评分、Family/Interaction Graph、Portfolio、Gate1 | 快速查看候选空间，不生成 Child |
-| `standard` | 2 | P0 → P1 → P2 | 默认完整探索：先形成，再连续两轮机制、反事实和验证深化 |
-| `deep` | 3 | P0 → P1 → P2 → P3 | 研究者明确愿意付出更大探索成本时使用 |
-| `auto` | 默认 2，可显式设 0–3 | 使用已确认的轮数预算 | 当前是“可配置预算模式”，不是系统静默替人决定何时停止 |
+| `standard` | 1 | P0 → P1 | 默认完整探索：形成后进行一轮整合机制、反事实和验证的深化 |
+| `deep` | 2 | P0 → P1 → P2 | 研究者明确愿意付出更大探索成本时使用 |
+| `auto` | 默认 1，可显式设 0–3 | 使用项目预先确认的轮数预算 | 模型仍可在没有实质改进时停止，不需要凑 Child |
 
-旧 workspace 可能保留 `standard=1` 或 `deep=2` 的已确认配置；它们可以继续 resume。模式的轮数是探索成本上限，不是“必须生成这么多 Child”的配额。
+旧 workspace 会保留其已经确认的轮数预算并可继续 resume。模式的轮数是探索成本上限，不是“必须生成这么多 Child”的配额。
 
 ### 2.4 Publication Orientation 的边界
 
@@ -289,8 +289,8 @@ ideation/evolution/diagnostics/opportunity_planner_recovery.json
 
 | Route | 默认范围 | 科学作用 |
 | --- | ---: | --- |
-| `evidence_routed_literature` | 3 | 从主线材料的机制、张力、反例和空白出发 |
-| `informed_brainstorm` | 2–3 | 使用项目上下文和 LLM 学术知识提出显式 conjectural 的跳跃性方向 |
+| `evidence_routed_literature` | 1–2 | 从主线材料的机制、张力、反例和空白出发 |
+| `informed_brainstorm` | 1–2 | 使用项目上下文和 LLM 学术知识提出显式 conjectural 的跳跃性方向 |
 | `mechanism_challenge` | 0–1 | 挑战默认机制或寻找更能解释现象的替代链 |
 | `reverse_operation` | 0–1 | 反转目标、因果方向或操作逻辑 |
 | `subgroup_failure` | 0–1 | 从异质性、失败群体或边界条件重构问题 |
@@ -309,7 +309,9 @@ Route 的合法状态是：
 - `partial`：有可用方向，但少于目标；
 - `unsupported`：无法负责任地形成不同且可表达的方向，并留下具体理由。
 
-系统会为一个薄弱 Route 执行一次有界 semantic repair / creative re-divergence。仍不足时写 receipt，而不是循环重试到产生语义重复的 filler。其它 Route 并行继续，Gate1 可以让研究者明确重跑某一条 Route。
+只有首个响应格式损坏或 Provider 失败时，系统才为该 Route 执行一次有界 replacement call。Candidate 数量少于上限本身是合法科研结果，不再触发 creative completion call，避免为填满预算而生成重复方向。若研究者认为另一种视角具有实质价值，Gate1 仍可明确重跑该 Route。
+
+自适应 Route 不等于草率初始化。Standard 模式始终先保留 Literature 与 Informed Brainstorm 两个互补起点；Opportunity Map 只在其揭示了不同的科学问题时，额外启动 challenge、reverse、subgroup、gap 或 Bridge 视角。Deep 模式仍运行全部已配置 Route。Candidate 数量不是完成指标，但 Candidate 只有具备连贯机制、被挑战的假设、非重复的 1–4 个贡献与暂定假设、竞争解释以及可证伪的验证路径，才可进入 `evolved` 成熟度。因此系统避免为了数量制造 filler，同时保留让研究方向真正可决策的实质性质量检查。
 
 ### 4.5 IdeaSeed：初始契约故意很小
 
@@ -330,8 +332,8 @@ Route 的合法状态是：
 每个 Seed 可单独调用 `LLMCandidateEnricher`。它的任务是把一个已经被保留的概念扩展为更完整、可比较的研究方案，包括：
 
 - 更清楚的机制链和竞争解释；
-- 2–4 条非重复的 provisional hypotheses；
-- 2–4 项 contribution；
+- 一至四条真正独立的 provisional hypotheses；
+- 一至四项非重复 contribution；
 - 验证逻辑、边界、风险与 kill criterion；
 - 研究者可读的 CandidatePresentation。
 
@@ -372,7 +374,7 @@ validation_logic, boundary_conditions, risks
 
 每个 Gene 都是 `IdeaGene(value, provenance)`。`provenance` 保存 `source_routes`、可回查的 `source_refs`、`reading_levels`、`evidence_role`、`confidence` 与 `upgrade_required`。因此当前 schema **没有**一个独立名为 `evidence_map` 的第 12 个 Gene。证据映射由逐 Gene provenance 和 Dossier 级的 `evidence_composition` 共同承担。摘要级、元数据级、综合推断或模型知识可以形成机会、猜想和阅读升级任务，但不能作为机制锚点或直接支持；若 Gene 依赖这类材料，必须保持相应证据角色并标记升级要求。
 
-`CandidateDossier` 还把 Genome 中的贡献和假设规范化为可被下游读取的 `contributions` 与 `hypotheses`。成熟 Candidate 必须有 2 至 4 条贡献和 2 至 4 条暂定假设；每条假设都包含机制、可观测预测和区分性检验。`CreativeContext` 则保存不会因为表单压缩而丢掉的 LLM 科研表达，例如 `conceptual_leap`、`competing_explanations`、`surprising_prediction`、`research_program_potential`、知识来源、证据状态与 reading/validation upgrade。它们描述的是 proposal，不是认证结论。
+`CandidateDossier` 还把 Genome 中的贡献和假设规范化为可被下游读取的 `contributions` 与 `hypotheses`。成熟 Candidate 需要一至四条非重复贡献和一至四条暂定假设；数量跟随问题结构，每条假设都包含机制、可观测预测和区分性检验。`CreativeContext` 则保存不会因为表单压缩而丢掉的 LLM 科研表达，例如 `conceptual_leap`、`competing_explanations`、`surprising_prediction`、`research_program_potential`、知识来源、证据状态与 reading/validation upgrade。它们描述的是 proposal，不是认证结论。
 
 Family 是候选组织和比较工具。代码只从 `problem`、`mechanism`、`contribution_package`、`hypothesis_bundle` 和 `validation_logic` 的透明词面重叠召回值得审查的候选对。它服务于 diversity 与交互分析，不是科学评分，更不是“这两个 Idea 等价”或删除其中一个的结论。机制关系、依赖关系、是否应并行保留及是否应组合，仍由 LLM reviewer 和研究者解释。
 
@@ -549,7 +551,7 @@ Final Card Compiler 只把现有 Candidate / Score 编译为研究者能够比�
 | --- | --- | --- |
 | `IdeaSeed` | 最小、可探索的初始想法 | 可不具备最终卡片；必须有问题、thesis、机制、预测与风险 |
 | `IdeaGenome` | 稳定的科学基因 | Candidate ID、Route、Parents、11 个 Gene 的结构载体 |
-| `CandidateDossier` | 原生候选实体 | dossier/genome/lineage ID 一致；evolved candidate 需 2–4 contributions 与 2–4 hypotheses |
+| `CandidateDossier` | 原生候选实体 | dossier/genome/lineage ID 一致；evolved candidate 需一至四条非重复 contributions 与 hypotheses |
 | `CreativeContext` | 保护概念跳跃 | 记录 leap、竞争解释、惊异预测、研究纲领、知识来源与升级需求 |
 | `CandidatePresentation` | LLM 作者的展示层 | title、innovation、basis、card、minimum validation 等；成熟 Candidate 可要求，Seed 可先缺失 |
 | `ProvisionalHypothesis` | 可证伪假设 | statement、mechanism、observable prediction、discriminating test 都是可读文本 |
@@ -899,7 +901,7 @@ Pass2 只补充接地、风险与选择建议，不能隐藏 Candidate。尤其�
 
 选择后产生的是 pre-novelty material，如 `ideation/selected/selected_candidate.json`、`hypothesis_brief.yaml`、`hypothesis_lineage.json`、`t45_search_targets.json` 和 `pre_novelty_brief.md`。它们是 T4.5 检索与 collision audit 的输入，绝不是“已通过外部 novelty 审计”的宣告。
 
-Gate1 是持续的研究对话，不是一行命令后就结束的菜单。研究者可以先输入“查看 D1”，继续追问评分原因或比较 D1 与 D3，再回到尚未确认的研究操作，而不会重新生成 T4。Enter 只是在当前轮加入新行。POSIX 终端用 Ctrl+D 提交已经输入的文本；Windows 中应按 Ctrl+Z **再按 Enter**。若终端或 IDE 截获 EOF，则可单独输入 `END` 作为跨平台提交方式。只输入 `D1` 被视为有歧义，系统必须追问是查看、推进还是优化。查看和比较是本地只读操作。推进、优化、组合或再探索会先被复述为操作计划，随后进入二次确认。
+Gate1 是持续的研究对话，不是一行命令后就结束的菜单。研究者可以先输入“查看 D1”，继续追问评分原因或比较 D1 与 D3，再回到尚未确认的研究操作，而不会重新生成 T4。Enter 只是在当前轮加入新行。所有平台都可单独输入 `END` 提交；POSIX 终端也可用 Ctrl+D，Windows 控制台也可用 Ctrl+Z 后按 Enter。只输入 `D1` 被视为有歧义，系统必须追问是查看、推进还是优化。查看和比较是本地只读操作。推进、优化、组合或再探索会先被复述为操作计划，随后进入二次确认。
 
 确认后的状态路径取决于操作本身。选择一个已准备好的 Candidate 走 `T4 -> T4-GATE1 -> T4.5`，并写入 pre-novelty 选择回执，不会重新运行 T4。演化、聚焦优化、重跑 Route 或已批准的组合走 `T4 -> T4-GATE1 -> T4`，先创建独立的新版本，再返回 Gate1。只读操作仍停留在 Gate1。没有提交任何文本就发送 EOF 时，系统会保存 Gate 并暂停（POSIX 为 Ctrl+D；Windows 为 Ctrl+Z 后 Enter）。已有待确认操作计划时发送 EOF，只会保留草稿，绝不会执行。`resume` 会重新打开这个持久 Gate，不会重复已完成的 T4 模型调用。
 
@@ -956,11 +958,11 @@ config/system_config/gates.yaml
 
 当前默认值的含义应理解为：
 
-- 初始 Population 最大 14，active target 7，允许范围 6–8，Portfolio 1–3；这些是目标，不是数量 hard gate；
-- Mutation 默认 2–4，Crossover 0–2，总 offspring 最多 6；没有适合的 Child 时可为 0；
-- Opportunity 默认 3–6；
+- 初始 Population 最多 14，后续 active target 为 7；它是生存选择的成本目标，不是最小数量 hard gate；
+- Mutation 和 Crossover 上限分别为 4 和 2，总 offspring 最多 6；没有适合的 Child 时可为 0；
+- Opportunity 由 Planner 按当前材料选择最小充分集合，不设内容数量配额，也不生成 filler；
 - 最大自动轮数 3；
-- Route 并发默认 2，独立评分 batch 默认 3；
+- Route 并发默认 2，独立评分 batch 默认 4；
 - `family_similarity_threshold=0.45` 仅用于召回可比较 Family，不证明学术等价；
 - `complexity_growth_ratio_limit=1.8` 用于复杂度诊断；
 - bridge policy 默认 `allow_abstract_with_upgrade`，即 catalog / abstract 可作为跨域创意和升级线索，不能变成机制认证。

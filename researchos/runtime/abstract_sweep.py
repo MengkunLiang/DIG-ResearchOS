@@ -48,8 +48,8 @@ from .progress import format_cli_message
 
 _DEFAULT_CONFIG = {
     "enabled": False,
-    # Default 120-paper retained pool minus the default 35 deep reads.
-    "lite_paper_num": 85,
+    # Default 50-paper retained pool minus the default 30 deep reads.
+    "lite_paper_num": 20,
     "min_relevance": 0.0,
     "sources": ["papers_verified", "papers_dedup"],
     "exclude_already_read": True,

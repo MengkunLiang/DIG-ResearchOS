@@ -139,6 +139,13 @@ if TYPE_CHECKING:
     from ..tools.workspace_policy import WorkspaceAccessPolicy
 
 
+# Source-aware prose repair may exceed the ordinary retry window when each
+# pass makes a real artifact change, but it must still have a total circuit
+# breaker. Otherwise tiny non-convergent rewrites can consume an unbounded
+# number of model calls while technically appearing to make progress.
+SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT = 8
+
+
 T2_AUTO_PERSIST_SEARCH_TOOLS = frozenset(
     {
         "multi_source_search",
@@ -353,6 +360,19 @@ class AgentRunner:
             scoped_writes = [
                 section_rel,
                 "drafts/survey/survey_state.json",
+                # A section writer may autonomously close one precise
+                # evidence gap.  These are the deterministic supplement
+                # tool's only global outputs; other survey sections remain
+                # outside the task capability boundary.
+                "literature/targeted_supplements/",
+                "literature/shallow_read_notes/",
+                "literature/related_work.bib",
+                "literature/literature_manifest.json",
+                # Keep a durable, compact receipt of what this section
+                # actually retrieved.  Without this scoped exception the
+                # query succeeds in memory but silently loses its audit and
+                # downstream-reuse record under the section capability wall.
+                "literature/evidence_queries/",
             ]
             allowed_write_prefixes = [
                 path
@@ -366,6 +386,7 @@ class AgentRunner:
             allowed_read_prefixes=eff.allowed_read_prefixes,
             allowed_write_prefixes=allowed_write_prefixes,
             task_id=ctx.task_id,
+            run_id=ctx.run_id,
             allowed_survey_section_ids=allowed_survey_section_ids,
         )
 
@@ -1087,6 +1108,18 @@ class AgentRunner:
                     note = Message.user(recovery_note, step=0)
                     messages.append(note)
                     trace.write_message(note)
+                resumed_human = ctx.extra.get("resumed_human_interaction")
+                if isinstance(resumed_human, dict) and str(resumed_human.get("answer") or "").strip():
+                    note = Message.user(
+                        "【已恢复的人工回答】\n"
+                        "上次运行在等待下列问题时被中断。问题与回答均已从持久化状态恢复；"
+                        "请直接据此继续当前任务，不要再次询问同一个问题。\n\n"
+                        f"问题：{resumed_human.get('question') or ''}\n\n"
+                        f"回答：{resumed_human.get('answer') or ''}",
+                        step=0,
+                    )
+                    messages.append(note)
+                    trace.write_message(note)
         except asyncio.CancelledError:
             return self._finish_agent_startup_interruption(
                 ctx=ctx,
@@ -1122,6 +1155,10 @@ class AgentRunner:
         validation_extensions_used = 0
         llm_timeout_cooldowns_used = 0
         tool_failure_cache: dict[tuple[str, str], Message] = {}
+        # Only T4.5 uses this narrowly scoped circuit breaker.  It detects a
+        # model regenerating the same invalid structured shape, while still
+        # allowing ordinary schema repair when the diagnostic changes.
+        t45_schema_failure_state: dict[tuple[str, str, str], tuple[str, int]] = {}
 
         try:
             await self._maybe_run_t1_startup_gate(ctx, tool_map, messages, trace)
@@ -1343,6 +1380,23 @@ class AgentRunner:
                     ctx,
                     policy,
                 )
+            t8_section_pre_finalized = False
+            if not (
+                deterministic_pre_finalized
+                or t2_pre_finalized
+                or t3_pre_finalized
+                or t36_section_pre_finalized
+                or t36_visuals_pre_finalized
+                or t36_compile_pre_finalized
+                or t4_pre_finalized
+                or t4_gate1_pre_finalized
+                or t45_pre_finalized
+                or external_wait_pre_finalized
+                or paper_claim_audit_pre_finalized
+                or t8_resource_pre_finalized
+                or t8_section_plan_pre_finalized
+            ):
+                t8_section_pre_finalized = await self._maybe_finalize_t8_section_before_llm(ctx)
             t8_manuscript_pre_finalized = False
             if not (
                 deterministic_pre_finalized
@@ -1359,6 +1413,7 @@ class AgentRunner:
                 or paper_claim_audit_pre_finalized
                 or t8_resource_pre_finalized
                 or t8_section_plan_pre_finalized
+                or t8_section_pre_finalized
             ):
                 t8_manuscript_pre_finalized = await self._maybe_finalize_t8_manuscript_before_llm(ctx)
             deterministic_pre_finalized = deterministic_pre_finalized or (
@@ -1374,6 +1429,7 @@ class AgentRunner:
                     or paper_claim_audit_pre_finalized
                     or t8_resource_pre_finalized
                     or t8_section_plan_pre_finalized
+                    or t8_section_pre_finalized
                     or t8_manuscript_pre_finalized
                 )
             if deterministic_pre_finalized:
@@ -1470,6 +1526,14 @@ class AgentRunner:
                             timeout=llm_request_timeout,
                             max_retries_per_model=llm_retry_attempts,
                             retry_base_delay=llm_retry_delay,
+                            reasoning_effort=(
+                                "low"
+                                if (
+                                    (ctx.task_id == "T8-WRITE" and ctx.mode in {None, "outline"})
+                                    or ctx.task_id.startswith("T8-SEC-")
+                                )
+                                else None
+                            ),
                         )
                     except LLMProviderError as exc:
                         # Keep complete provider diagnostics in the durable run
@@ -1869,6 +1933,48 @@ class AgentRunner:
                             post_tool_runtime_notes.append(checkpoint)
                     if tool_call.name == "finish_task" and not tool_msg.metadata.get("is_error"):
                         finish_requested = True
+                    if (
+                        ctx.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"}
+                        and tool_call.name == "write_structured_file"
+                    ):
+                        failure_kind = str(tool_error or "")
+                        structured_error = failure_kind in {"schema_validation_failed", "parameter_validation"}
+                        path = str(tool_data.get("path") or tool_call.arguments.get("path") or "").strip()
+                        schema = str(tool_data.get("schema_name") or tool_call.arguments.get("schema_name") or "").strip()
+                        key = (path, schema, failure_kind)
+                        if structured_error and path and schema:
+                            diagnostics = tool_data.get("schema_errors")
+                            signature = json.dumps(
+                                diagnostics if failure_kind == "schema_validation_failed" else failure_kind,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                default=str,
+                            )
+                            previous_signature, previous_count = t45_schema_failure_state.get(key, ("", 0))
+                            repeated_count = previous_count + 1 if signature == previous_signature else 1
+                            t45_schema_failure_state[key] = (signature, repeated_count)
+                            if repeated_count >= 2:
+                                failure_label = (
+                                    "Schema 错误"
+                                    if failure_kind == "schema_validation_failed"
+                                    else "工具参数 JSON 解析错误"
+                                )
+                                pause_requested = True
+                                pause_tool_name = tool_call.name
+                                pause_tool_data = {
+                                    "path": path,
+                                    "schema_name": schema,
+                                    "schema_errors": diagnostics,
+                                    "repeated_identical_failure_count": repeated_count,
+                                }
+                                pause_reason = (
+                                    f"{path} 连续两次产生相同的 {failure_label}，runtime 已暂停以避免继续重复生成和消耗额度。"
+                                    "已保存此前工具结果；resume 后应依据列出的精确字段结构修复同一文件。"
+                                )
+                        elif path and schema:
+                            for failure_key in list(t45_schema_failure_state):
+                                if failure_key[:2] == (path, schema):
+                                    t45_schema_failure_state.pop(failure_key, None)
                     if self._is_recoverable_tool_pause(tool_call.name, tool_msg):
                         pause_requested = True
                         pause_reason = tool_msg.content or "需要用户输入，但当前输入不可用。"
@@ -1886,6 +1992,8 @@ class AgentRunner:
                     stop_reason = AgentResult.STOP_INTERRUPTED
                     error_msg = pause_reason
                     recovery_kind = "human_input" if pause_tool_name == "ask_human" else "environment"
+                    if pause_tool_name == "write_structured_file":
+                        recovery_kind = "structured_schema"
                     recovery_details: dict[str, object] = {"tool_name": pause_tool_name or "unknown"}
                     if pause_tool_name == "expand_corpus_for_survey":
                         recovery_kind = "survey_retrieval"
@@ -2045,7 +2153,29 @@ class AgentRunner:
                                 details={
                                     "failure_count": validation_fails,
                                     "validator_error": str(err or "unknown validation error"),
-                                    "repair_policy": "targeted_no_fixed_retry_limit",
+                                    "repair_policy": "targeted_with_progress_and_total_safety_limit",
+                                    "source_artifacts": list(T36_QUALITY_SOURCE_ARTIFACTS),
+                                },
+                            )
+                            break
+                        if validation_fails >= SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT:
+                            stop_reason = AgentResult.STOP_INTERRUPTED
+                            error_msg = (
+                                f"T3.6 已完成 {validation_fails} 轮有来源变化的定向修复，但质量校验仍未收敛。"
+                                f"最后原因：{err}。已暂停并保留全部 source artifacts，避免继续产生低价值改写。"
+                            )
+                            self.progress.emit(
+                                "[T3.6 Quality Gate] 定向修复已达到总安全窗，已暂停并保留当前产物与最后诊断。",
+                                important=True,
+                            )
+                            self._mark_runtime_recovery(
+                                ctx,
+                                kind="t36_quality_safety_limit",
+                                error=error_msg,
+                                details={
+                                    "failure_count": validation_fails,
+                                    "safety_limit": SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT,
+                                    "validator_error": str(err or "unknown validation error"),
                                     "source_artifacts": list(T36_QUALITY_SOURCE_ARTIFACTS),
                                 },
                             )
@@ -2058,7 +2188,7 @@ class AgentRunner:
                         self.progress.emit(
                             "[T3.6 Quality Gate] 第 "
                             f"{validation_fails} 次校验未通过；已把具体原因和最小修复范围注入 Survey Writer，"
-                            "修复后会重新运行全部质量校验（不设固定修复轮次上限）。",
+                            f"修复后会重新运行全部质量校验；总安全窗为 {SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT} 轮。",
                             important=True,
                         )
                         feedback = Message.user(
@@ -2117,7 +2247,30 @@ class AgentRunner:
                                     "failure_count": validation_fails,
                                     "validator_error": str(err or "unknown validation error"),
                                     "repairable_warning": t45_repairable_warning,
-                                    "repair_policy": "targeted_no_fixed_retry_limit",
+                                    "repair_policy": "targeted_with_progress_and_total_safety_limit",
+                                    "source_artifacts": list(T45_QUALITY_SOURCE_ARTIFACTS),
+                                },
+                            )
+                            break
+                        if validation_fails >= SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT:
+                            stop_reason = AgentResult.STOP_INTERRUPTED
+                            error_msg = (
+                                f"T4.5 已完成 {validation_fails} 轮有来源变化的定向修复，但质量校验仍未收敛。"
+                                f"最后原因：{err}。已暂停并保留全部 source artifacts，避免继续产生低价值改写。"
+                            )
+                            self.progress.emit(
+                                "[T4.5 Quality Gate] 定向修复已达到总安全窗，已暂停并保留当前产物与最后诊断。",
+                                important=True,
+                            )
+                            self._mark_runtime_recovery(
+                                ctx,
+                                kind="t45_quality_safety_limit",
+                                error=error_msg,
+                                details={
+                                    "failure_count": validation_fails,
+                                    "safety_limit": SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT,
+                                    "validator_error": str(err or "unknown validation error"),
+                                    "repairable_warning": t45_repairable_warning,
                                     "source_artifacts": list(T45_QUALITY_SOURCE_ARTIFACTS),
                                 },
                             )
@@ -2126,7 +2279,7 @@ class AgentRunner:
                             self.progress.emit(
                                 "[T4.5 Quality Gate] 第 "
                                 f"{validation_fails} 次校验未通过；已把具体原因和最小修复范围注入 Formalizer，"
-                                "修复后会重新运行全部质量校验（不设固定修复轮次上限）。",
+                                f"修复后会重新运行全部质量校验；总安全窗为 {SOURCE_AWARE_QUALITY_REPAIR_SAFETY_LIMIT} 轮。",
                                 important=True,
                             )
                         feedback = Message.user(
@@ -5240,13 +5393,15 @@ class AgentRunner:
             card_errors: list[dict[str, object]] = []
             if not cards_ready:
                 try:
-                    max_card_attempts = int(self.retry_policy.get("t4_final_card_compiler_attempts", 12))
+                    max_card_attempts = int(self.retry_policy.get("t4_final_card_compiler_attempts", 2))
                 except (TypeError, ValueError):
-                    max_card_attempts = 12
+                    max_card_attempts = 2
                 # A Card compiler repair is bounded separately from Candidate
-                # Evolution. The default gives complex card decks twelve typed
-                # replacement attempts. This quota never re-runs evolution.
-                max_card_attempts = max(1, min(max_card_attempts, 12))
+                # Evolution. Each compile call already contains one dedicated
+                # semantic-repair call, so one fresh outer retry is sufficient
+                # before a durable pause. More retries repeated the same deck
+                # and schema without adding scientific information.
+                max_card_attempts = max(1, min(max_card_attempts, 4))
                 for attempt in range(1, max_card_attempts + 1):
                     try:
                         repair_context: dict[str, object] = {}
@@ -5786,6 +5941,12 @@ class AgentRunner:
                     timeout=self._llm_request_timeout_seconds(),
                     max_retries_per_model=self._llm_retry_overrides()[0],
                     retry_base_delay=self._llm_retry_overrides()[1],
+                    # T4 roles return strict structured artifacts. Current
+                    # reasoning providers default to high hidden thinking,
+                    # which can consume a long completion and still leave the
+                    # final content field empty. Low effort keeps substantive
+                    # reasoning while prioritizing the required final object.
+                    reasoning_effort="low",
                 )
             except LLMProviderError as exc:
                 if not self._is_recoverable_provider_error(exc):
@@ -6443,6 +6604,59 @@ class AgentRunner:
     async def _maybe_finalize_t45_before_llm(self, ctx: ExecutionContext) -> bool:
         """T4.5 续跑时，已有审计和 mechanism tuples 合格则直接完成。"""
 
+        if ctx.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"}:
+            if ctx.task_id == "T4.5-FORMALIZE":
+                outputs = [
+                    ctx.workspace_dir / "ideation" / "research_blueprint.yaml",
+                    ctx.workspace_dir / "ideation" / "claim_registry.yaml",
+                    ctx.workspace_dir / "ideation" / "exp_plan.yaml",
+                    ctx.workspace_dir / "ideation" / "hypotheses.md",
+                    ctx.workspace_dir / "ideation" / "proposal" / "research_proposal.md",
+                ]
+                inputs = [
+                    ctx.workspace_dir / "project.yaml",
+                    ctx.workspace_dir / "ideation" / "selected" / "selected_candidate.json",
+                    ctx.workspace_dir / "ideation" / "hypothesis_brief.yaml",
+                    ctx.workspace_dir / "ideation" / "novelty_audit.md",
+                    ctx.workspace_dir / "ideation" / "t4_run_config.json",
+                    ctx.workspace_dir / "literature" / "synthesis.md",
+                ]
+            else:
+                outputs = [ctx.workspace_dir / "ideation" / "orientation_review.json"]
+                inputs = [
+                    ctx.workspace_dir / "ideation" / "research_blueprint.yaml",
+                    ctx.workspace_dir / "ideation" / "claim_registry.yaml",
+                    ctx.workspace_dir / "ideation" / "exp_plan.yaml",
+                    ctx.workspace_dir / "ideation" / "hypotheses.md",
+                    ctx.workspace_dir / "ideation" / "proposal" / "research_proposal.md",
+                ]
+            if any(not path.is_file() or path.stat().st_size <= 0 for path in outputs):
+                return False
+            if not self._outputs_newer_than_inputs(
+                ctx,
+                outputs=outputs,
+                inputs=inputs,
+                event="t45_formalization_resume_prefinalize_skipped",
+                reason="formalization_outputs_older_than_inputs",
+            ):
+                return False
+            ok, err = self.agent.validate_outputs(ctx)
+            if not ok:
+                self.log.info("t45_formalization_resume_prefinalize_skipped", reason=err)
+                return False
+            self.progress.emit(
+                "[Research Formalizer Agent] 已有研究正式化产物完整且校验通过，跳过重复 LLM 读取与确认。",
+                important=True,
+            )
+            relative_outputs = [path.relative_to(ctx.workspace_dir).as_posix() for path in outputs]
+            self._record_runtime_completion(
+                ctx,
+                "t45_formalization_resume_prefinalize",
+                {"outputs": relative_outputs},
+                action_type="t45_formalization_resume_prefinalize",
+            )
+            return True
+
         if ctx.task_id != "T4.5":
             return False
 
@@ -6746,25 +6960,44 @@ class AgentRunner:
         return True
 
     async def _maybe_finalize_t8_resource_before_llm(self, ctx: ExecutionContext) -> bool:
-        """Reuse a completed T8 resource index after resume."""
+        """Build or reuse T8's fixed provenance-indexing outputs without LLM calls."""
 
         if ctx.task_id != "T8-RESOURCE":
             return False
         if ctx.mode not in {None, "resource_index"} and ctx.extra.get("phase") != "resource_index":
             return False
-        if not self._is_resume_run(ctx):
-            return False
         ok, err = self.agent.validate_outputs(ctx)
+        reused = bool(ok)
         if not ok:
-            self.log.info("t8_resource_prefinalize_skipped", reason=err)
-            return False
+            from .manuscript_recovery import build_t8_resource_outputs
+
+            self.progress.emit(
+                "[Writer Agent] T8-RESOURCE 正在确定性构建资源索引与证据对齐，不调用模型...",
+                important=True,
+            )
+            built, build_error = await build_t8_resource_outputs(ctx.workspace_dir)
+            if not built:
+                self.log.warning(
+                    "t8_resource_deterministic_build_failed",
+                    validation_error=err,
+                    build_error=build_error,
+                )
+                return False
+            ok, err = self.agent.validate_outputs(ctx)
+            if not ok:
+                self.log.warning("t8_resource_deterministic_validation_failed", error=err)
+                return False
         self.progress.emit(
-            "[Writer Agent] T8-RESOURCE 检测到资源索引产物已合格，跳过重复 LLM 并进入下一阶段",
+            (
+                "[Writer Agent] T8-RESOURCE 检测到资源索引产物已合格，跳过重复 LLM 并进入下一阶段"
+                if reused
+                else "[Writer Agent] T8-RESOURCE 资源索引与证据对齐已确定性完成"
+            ),
             important=True,
         )
         self._record_runtime_completion(
             ctx,
-            "t8_resource_prefinalize",
+            "t8_resource_prefinalize" if reused else "t8_resource_deterministic",
             {
                 "outputs": [
                     "drafts/manuscript_resource_index.json",
@@ -6777,7 +7010,7 @@ class AgentRunner:
                     "drafts/alignment_matrix.json",
                 ],
             },
-            action_type="t8_resource_prefinalize",
+            action_type="t8_resource_prefinalize" if reused else "t8_resource_deterministic",
         )
         return True
 
@@ -6902,6 +7135,58 @@ class AgentRunner:
                 ],
             },
             action_type="t8_section_plan_prefinalize",
+        )
+        return True
+
+    async def _maybe_finalize_t8_section_before_llm(self, ctx: ExecutionContext) -> bool:
+        """Reuse one already committed T8 section when all shared inputs remain current."""
+
+        if not ctx.task_id.startswith("T8-SEC-") or ctx.task_id == "T8-SECTION-PLAN":
+            return False
+        if ctx.mode not in {None, "section_draft"} and ctx.extra.get("phase") != "section_draft":
+            return False
+        from ..agents.writer import _validate_paper_state
+        from ..tools.manuscript import normalize_section_id
+
+        section_id = normalize_section_id(
+            str(ctx.extra.get("section_id") or ctx.extra.get("section") or "")
+        )
+        if not section_id:
+            return False
+        state_path = ctx.workspace_dir / "drafts" / "paper_state.json"
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return False
+        entry = (
+            state.get("sections", {}).get(section_id, {})
+            if isinstance(state.get("sections"), dict)
+            else {}
+        )
+        if not isinstance(entry, dict) or entry.get("status") not in {"written", "revised"}:
+            return False
+        state_ok, state_error = _validate_paper_state(ctx.workspace_dir)
+        if not state_ok:
+            self.log.info(
+                "t8_section_prefinalize_skipped_stale_state",
+                task=ctx.task_id,
+                reason=state_error,
+            )
+            return False
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.info("t8_section_prefinalize_skipped", task=ctx.task_id, reason=err)
+            return False
+        output = f"drafts/sections/{section_id}.tex"
+        self.progress.emit(
+            f"[Writer Agent] {ctx.task_id} 检测到当前共享输入下已提交的合格章节，跳过重复 LLM",
+            important=True,
+        )
+        self._record_runtime_completion(
+            ctx,
+            "t8_section_resume_prefinalize",
+            {"outputs": [output], "section_id": section_id},
+            action_type="t8_section_resume_prefinalize",
         )
         return True
 
@@ -7444,11 +7729,21 @@ class AgentRunner:
             parameter_content = f"Parameter validation error: {exc}"
             if tc.name == "write_structured_file":
                 attempted_path = tool_arguments.get("path")
+                attempted_schema = tool_arguments.get("schema_name")
+                raw_arguments = str(tool_arguments.get("__raw__") or "")
+                if raw_arguments:
+                    path_match = re.search(r'"path"\s*:\s*"([^"\\]+)"', raw_arguments)
+                    schema_match = re.search(r'"schema_name"\s*:\s*"([^"\\]+)"', raw_arguments)
+                    attempted_path = attempted_path or (path_match.group(1) if path_match else None)
+                    attempted_schema = attempted_schema or (schema_match.group(1) if schema_match else None)
                 parameter_data = {
                     "path": attempted_path,
+                    "schema_name": attempted_schema,
                     "required_fields": ["path", "schema_name", "format", "data"],
                     "repair_scope": "structured_file_parameter_validation",
                     "repairable": True,
+                    "raw_arguments_length": len(raw_arguments),
+                    "json_parse_failed": bool(tool_arguments.get("__parse_error__")),
                 }
                 parameter_content = (
                     "write_structured_file 参数无效。path 必须是非空 workspace 相对路径，"
@@ -8670,10 +8965,12 @@ class AgentRunner:
             try:
                 arguments = json.loads(tool_call.function.arguments)
             except json.JSONDecodeError:
-                arguments = {
-                    "__raw__": tool_call.function.arguments,
-                    "__parse_error__": True,
-                }
+                arguments = self._repair_trailing_json_delimiters(tool_call.function.arguments)
+                if arguments is None:
+                    arguments = {
+                        "__raw__": tool_call.function.arguments,
+                        "__parse_error__": True,
+                    }
             tool_calls.append(
                 ToolCall(id=tool_call.id, name=tool_call.function.name, arguments=arguments)
             )
@@ -8685,6 +8982,25 @@ class AgentRunner:
                 content = recovered_content
                 tool_calls = recovered_calls
         return Message.assistant(content=content, tool_calls=tool_calls, step=step)
+
+    @staticmethod
+    def _repair_trailing_json_delimiters(raw: str) -> dict[str, object] | None:
+        """Recover one complete object followed only by redundant closers.
+
+        Some OpenAI-compatible endpoints occasionally append one extra `}` to
+        an otherwise complete native tool argument.  `raw_decode` lets us
+        accept that lossless syntax repair.  Truncation, concatenated objects,
+        missing commas, or any non-delimiter suffix remain hard failures.
+        """
+
+        try:
+            value, end = json.JSONDecoder().raw_decode(str(raw or ""))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        suffix = str(raw or "")[end:].strip()
+        if not isinstance(value, dict) or not suffix or any(char not in "}]" for char in suffix):
+            return None
+        return value
 
     def _recover_textual_tool_calls(self, content: str) -> tuple[str | None, list[ToolCall]]:
         """从文本中恢复 DSML 风格的伪工具调用。"""
@@ -10106,20 +10422,18 @@ class AgentRunner:
         repair_guidance = audit.get("repair_guidance") if isinstance(audit.get("repair_guidance"), dict) else {}
         diversity = repair_guidance.get("citation_diversity") if isinstance(repair_guidance.get("citation_diversity"), dict) else {}
         contract = diversity.get("coverage_contract") if isinstance(diversity.get("coverage_contract"), dict) else {}
-        lines = ["以下是本轮审计直接注入的 citation coverage 修复事实："]
+        lines = ["以下是本轮审计直接注入的 citation utilization 事实："]
         if contract:
             lines.append(
-                "- 硬目标：{required} 个可追溯不同引用 / {eligible} 个可用条目（{ratio:.0%}）；当前 {current}，还差 {missing}。".format(
-                    required=int(contract.get("required_unique_citations") or 0),
+                "- 范围内可追溯条目 {eligible} 个；正文实际使用 {current} 个（{actual:.0%}）。这是诊断，不是覆盖配额。".format(
                     eligible=int(contract.get("eligible_traceable_keys") or 0),
-                    ratio=float(contract.get("minimum_coverage_ratio") or 0),
                     current=int(contract.get("cited_traceable_keys") or 0),
-                    missing=int(contract.get("missing_unique_citations") or 0),
+                    actual=float(contract.get("actual_traceable_coverage_ratio") or 0),
                 )
             )
         queue = diversity.get("section_review_queue") if isinstance(diversity.get("section_review_queue"), list) else []
         if queue:
-            lines.append("- 必须逐节审阅下列队列；每一项均须先打开 source_file 核验，再判断是否能支撑已有句子：")
+            lines.append("- 若当前 section 存在实质缺口或引用集中，可按需审阅下列候选；使用前必须打开 source_file 核验：")
             for item in queue:
                 if not isinstance(item, dict):
                     continue
@@ -10234,11 +10548,11 @@ class AgentRunner:
                 return (
                     base
                     + "读取 `drafts/survey/survey_audit.md` 和 `drafts/survey/survey_audit.json`。"
-                    "若失败为 `citation_diversity`，coverage_contract 是硬性放行条件。必须逐节处理 section_review_queue，"
-                    "先打开每个候选的 source_file，逐句核验论文主题、对象、方法、证据等级和当前论断是否匹配。"
+                    "若失败为 `citation_diversity`，先检查是否为单一来源过度集中；coverage_contract 本身只是信息利用诊断。"
+                    "section_review_queue 只提供可能的替代材料；先打开候选 source_file，逐句核验论文主题、对象、方法、证据等级和当前论断是否匹配。"
                     "FULL/PARTIAL 仅在核验后支持具体论断；ABSTRACT-ONLY 仅可用于背景、趋势、范围或证据边界。"
                     "先合并真正重复的表达，再使用确实支持已有历史、比较、边界或方法句的候选。不得用 citation padding、"
-                    "无关论文、abstract-only 线索支撑强论断或新编造事实来达到指标。"
+                    "无关论文、abstract-only 线索支撑强论断或新编造事实来改变覆盖数字。"
                     "只编辑受影响的 `drafts/survey/sections/*.tex`，然后调用 assemble_survey 与 audit_survey_coverage；"
                     "不要直接编辑派生的 `survey.tex`。若逐节核验后仍没有安全替代来源，写 `drafts/survey/survey_assemble_repair_plan.md`，"
                     "逐条记录拒用的 bib_key、source_file、原因、需要补检的具体主题和受影响 section，再 finish_task 以进入人工恢复决策。\n"

@@ -27,7 +27,7 @@ from ..ideation.proposal import repair_t45_proposal_manifest, validate_t45_resea
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
-from ._common import load_project, prepend_resume_prefix, read_text_file
+from ._common import load_project, prepend_resume_prefix
 
 
 class ResearchFormalizerAgent(Agent):
@@ -44,17 +44,25 @@ class ResearchFormalizerAgent(Agent):
                         "read_file",
                         "write_file",
                         "write_structured_file",
+                        "query_research_evidence",
+                        "targeted_literature_supplement",
                         "validate_t45_formalization_sources",
                         "validate_t45_research_package",
-                        "list_files",
                         "finish_task",
                     ],
                     "max_steps": 45,
                     "max_tokens_total": 120_000,
                     "max_wall_seconds": 900,
                     "temperature": 0.35,
-                    "allowed_read_prefixes": ["", "ideation/", "literature/"],
-                    "allowed_write_prefixes": ["ideation/"],
+                    "allowed_read_prefixes": ["project.yaml", "ideation/", "literature/"],
+                    "allowed_write_prefixes": [
+                        "ideation/",
+                        "literature/evidence_queries/",
+                        "literature/targeted_supplements/",
+                        "literature/shallow_read_notes/",
+                        "literature/related_work.bib",
+                        "literature/literature_manifest.json",
+                    ],
                     # Some OpenAI-compatible providers choose `edit_file`
                     # after reading prose. Its implementation delegates to
                     # WriteFileTool, so schema-bound sources retain the same
@@ -88,24 +96,12 @@ class ResearchFormalizerAgent(Agent):
         structured_sources_ok, structured_sources_error = validate_t45_structured_sources(workspace)
         formalization_ok, formalization_error = validate_t45_formalization_core(workspace)
         quality_diagnostics = collect_t45_quality_diagnostics(workspace)
-        artifact_preview = {
-            "selected_candidate": read_text_file(workspace / "ideation" / "selected" / "selected_candidate.json", default="")[:6000],
-            "hypothesis_brief": read_text_file(workspace / "ideation" / "hypothesis_brief.yaml", default="")[:4000],
-            "novelty_audit": read_text_file(workspace / "ideation" / "novelty_audit.md", default="")[:6000],
-            "synthesis": read_text_file(workspace / "literature" / "synthesis.md", default="")[:5000],
-            "blueprint": read_text_file(workspace / BLUEPRINT_REL_PATH, default="")[:9000],
-            "claim_registry": read_text_file(workspace / CLAIM_REGISTRY_REL_PATH, default="")[:9000],
-            "hypotheses": read_text_file(workspace / "ideation" / "hypotheses.md", default="")[:7000],
-            "exp_plan": read_text_file(workspace / "ideation" / "exp_plan.yaml", default="")[:7000],
-            "proposal": read_text_file(workspace / "ideation" / "proposal" / "research_proposal.md", default="")[:9000],
-        }
         return render_prompt(
             self.spec.prompt_template,
             ctx,
             phase=phase,
             project=project,
             orientation=orientation,
-            artifact_preview=artifact_preview,
             structured_sources_ok=structured_sources_ok,
             structured_sources_error=structured_sources_error or "",
             formalization_ok=formalization_ok,
@@ -117,20 +113,31 @@ class ResearchFormalizerAgent(Agent):
         phase = self._phase(ctx)
         if phase == "review":
             message = (
-                "执行 T4.5 的 Orientation-Aware Review and Repair。先读取已保存的 blueprint、claim registry、"
-                "hypotheses、experiment plan、proposal 和 orientation config。按当前 orientation 审阅；发现问题时只修复"
+                "执行 T4.5 的 Orientation-Aware Review and Repair。第一个工具回合并行读取已保存的 blueprint、claim registry、"
+                "hypotheses、experiment plan、proposal 和 ideation/orientation_config.yaml，并同时调用 validate_t45_research_package。"
+                "不要探测 orientation_config.json。按当前 orientation 一次性审阅完整研究包；发现问题时只修复"
                 "受影响的 source artifact，然后重新读取其内容确认一致。最后用 write_structured_file 写 "
                 "ideation/orientation_review.json（schema_name='orientation_review', format='json'）。"
+                "同一 prose 文件的多个独立修复用一次 edit_file(replacements=[...]) 原子完成，不要每项开启一个模型回合。"
+                "在一个协调工具回合中提交所有已识别的 source 修复，每个 source 最多写一次。"
                 "复核新增或改写的术语和缩写是否已在首次出现处自然定义且跨文件一致。"
-                "写入 review 前调用 validate_t45_research_package(include_orientation_review=false)；"
+                "第一个工具回合的 validate_t45_research_package(include_orientation_review=false) 结果就是写 review 前的权威检查；"
+                "若此后没有修改 source，不要重复调用。只有完成 source 修复后才重新调用一次；"
                 "写入 accepted review 后再次调用 validate_t45_research_package(include_orientation_review=true)。"
                 "只有所有问题已修复、scores 达到规范且 status='accepted' 时才 finish_task；不要把 novelty audit 的内部标签写入 proposal，"
                 "也不要写 runtime 负责生成的 manifest、map、dossier 或 receipt。"
             )
         else:
             message = (
+                "不要递归列出 workspace 根目录，也不要读取 state.yaml、_runtime、_DIR_GUIDE 或 user_seeds；"
+                "先在一个并行工具回合中精确读取 selected_candidate、hypothesis_brief、novelty_audit 与 synthesis；"
+                "不要再次读取这些不变来源。需要定位证据时先调用 "
+                "query_research_evidence(stage='t45-formalize', purpose='proposal', max_results<=8)。"
+                "只有一个会实质改变设计的外部事实缺口存在时，才调用一次 targeted_literature_supplement，"
+                "且 target_record_count<=6。"
                 "先调用 validate_t45_formalization_sources；它的最新 `valid` 结果是本轮唯一权威状态，"
                 "会覆盖启动时的任何旧诊断。若 valid=false，只用 write_structured_file 修复它指出的 source 或最小同步集合，"
+                "不要重写当前错误未指向且已通过自身 schema 的来源。"
                 "然后再次调用该工具。若 valid=true，不得再重写已通过的 research_blueprint、claim_registry 与 exp_plan；"
                 "改为写缺失或不合格的 hypotheses.md 和 proposal/research_proposal.md，并在写后重新读取二者。"
                 "正文必须遵守当前 formalization language、术语/缩写首次定义规则和七节 Proposal 结构。"

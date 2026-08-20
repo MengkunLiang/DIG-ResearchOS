@@ -67,6 +67,7 @@ from .runtime.model_settings import (
 )
 from .runtime.observability.reporter import public_error_summary
 from .runtime.system_config import system_config_path
+from .runtime.workflow_mode import AUTO_PRESETS, configure_workflow_mode, load_workflow_mode
 from .runtime.trace import render_trace_for_humans
 from .runtime.bridge_catalog import migrate_legacy_bridge_catalogs
 from .runtime.literature_contract import build_literature_manifest, migrate_legacy_literature_paths
@@ -1869,6 +1870,17 @@ async def run_command(args: argparse.Namespace) -> int:
     if entry_error is not None:
         return entry_error
     ensure_workspace_layout(workspace_dir, runtime_settings)
+    if any(
+        getattr(args, name, None)
+        for name in ("workflow_mode", "auto_preset", "auto_t4_mode")
+    ):
+        existing_workflow = load_workflow_mode(workspace_dir)
+        configure_workflow_mode(
+            workspace_dir,
+            mode=getattr(args, "workflow_mode", None) or str(existing_workflow.get("mode") or "copilot"),
+            preset=getattr(args, "auto_preset", None),
+            t4_mode=getattr(args, "auto_t4_mode", None),
+        )
     _configure_workspace_logging(args, workspace_dir, runtime_settings)
     _emit_startup_ui(
         args=args,
@@ -3518,13 +3530,21 @@ def init_workspace_command(args: argparse.Namespace) -> int:
         force_project_file=args.force_project_file,
         runtime_dir_name=runtime_settings.workspace.runtime_dir,
     )
+    workflow_profile = configure_workflow_mode(
+        workspace_dir,
+        mode=getattr(args, "workflow_mode", "copilot"),
+        preset=getattr(args, "auto_preset", "research_ccf"),
+        t4_mode=getattr(args, "auto_t4_mode", None),
+    )
     print(
         yaml.safe_dump(
             {
                 "ok": True,
                 "workspace": str(result.workspace_dir),
                 "created_dirs": result.created_dirs,
-                "project_file": str(result.project_file) if result.project_file else None,
+            "project_file": str(result.project_file) if result.project_file else None,
+            "workflow_mode": workflow_profile.get("mode"),
+            "workflow_preset": workflow_profile.get("preset"),
             },
             allow_unicode=True,
             sort_keys=False,
@@ -4704,6 +4724,9 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--topic", default="")
     init_parser.add_argument("--no-project-file", action="store_true")
     init_parser.add_argument("--force-project-file", action="store_true")
+    init_parser.add_argument("--workflow-mode", choices=["auto", "copilot"], default="copilot")
+    init_parser.add_argument("--auto-preset", choices=sorted(AUTO_PRESETS), default="research_ccf")
+    init_parser.add_argument("--auto-t4-mode", choices=["standard", "quick", "deep", "auto"], default=None)
 
     run_parser = subparsers.add_parser("run", help="运行完整 pipeline")
     _add_shared_cli_options(run_parser, runtime_settings, use_defaults=False)
@@ -4720,6 +4743,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument("--startup-selftest", action="store_true")
     run_parser.add_argument("--skip-startup-selftest", action="store_true")
+    run_parser.add_argument("--workflow-mode", choices=["auto", "copilot"], default=None)
+    run_parser.add_argument("--auto-preset", choices=sorted(AUTO_PRESETS), default=None)
+    run_parser.add_argument("--auto-t4-mode", choices=["standard", "quick", "deep", "auto"], default=None)
 
     smoke_parser = subparsers.add_parser("run_smoke", help="运行真实 pipeline 快速联调模式")
     _add_shared_cli_options(smoke_parser, runtime_settings, use_defaults=False)
@@ -4776,6 +4802,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     resume_parser.add_argument("--startup-selftest", action="store_true")
     resume_parser.add_argument("--skip-startup-selftest", action="store_true")
+    resume_parser.add_argument("--workflow-mode", choices=["auto", "copilot"], default=None)
+    resume_parser.add_argument("--auto-preset", choices=sorted(AUTO_PRESETS), default=None)
+    resume_parser.add_argument("--auto-t4-mode", choices=["standard", "quick", "deep", "auto"], default=None)
 
     run_t8_parser = subparsers.add_parser(
         "run-t8",

@@ -15,7 +15,12 @@ from ..tools.manuscript import (
     AssembleManuscriptTool,
     AuditManuscriptClaimsTool,
     AuditWritingCraftTool,
+    BuildAlignmentMatrixTool,
+    BuildManuscriptRegistriesTool,
+    BuildManuscriptResourceIndexTool,
     InitializeManuscriptStateTool,
+    PlanManuscriptEvidenceTool,
+    PlanManuscriptSectionsTool,
 )
 from ..tools.external_experiment import AuditPaperClaimsTool
 from ..tools.workspace_policy import WorkspaceAccessPolicy
@@ -29,6 +34,104 @@ T8_SECTION_PLAN_REQUIRED_INPUTS = [
     "drafts/figure_table_plan.json",
     "drafts/alignment_matrix.json",
 ]
+
+
+async def build_t8_resource_outputs(workspace_dir: Path) -> tuple[bool, str | None]:
+    """Build the fixed T8 resource/planning artifacts without an LLM loop.
+
+    These tools only inventory provenance and seed writing slots. They do not
+    choose the paper's claims or write prose, so asking a model to select the
+    same five calls adds latency and repeated schemas without research value.
+    """
+
+    workspace_dir = workspace_dir.resolve()
+    policy = WorkspaceAccessPolicy(
+        workspace_dir=workspace_dir,
+        allowed_read_prefixes=[
+            "project.yaml",
+            "drafts/",
+            "literature/",
+            "ideation/",
+            "experiments/",
+            "external_executor/",
+            "novelty/",
+            "evaluation/",
+            "pilot/",
+        ],
+        allowed_write_prefixes=["drafts/", "literature/literature_manifest.json"],
+        task_id="T8-RESOURCE",
+    )
+    venue = _load_target_venue(workspace_dir)
+    actions = [
+        (
+            "build_manuscript_resource_index",
+            BuildManuscriptResourceIndexTool(policy),
+            {
+                "output_path": "drafts/manuscript_resource_index.json",
+                "include_previews": False,
+            },
+        ),
+        (
+            "plan_manuscript_sections",
+            PlanManuscriptSectionsTool(policy),
+            {
+                "resource_index_path": "drafts/manuscript_resource_index.json",
+                "output_path": "drafts/section_plan.json",
+                "target_venue": venue,
+            },
+        ),
+        (
+            "plan_manuscript_evidence",
+            PlanManuscriptEvidenceTool(policy),
+            {
+                "resource_index_path": "drafts/manuscript_resource_index.json",
+                "evidence_output_path": "drafts/evidence_plan.json",
+                "figure_output_path": "drafts/figure_table_plan.json",
+                "target_venue": venue,
+            },
+        ),
+        (
+            "build_manuscript_registries",
+            BuildManuscriptRegistriesTool(policy),
+            {
+                "resource_index_path": "drafts/manuscript_resource_index.json",
+                "evidence_plan_path": "drafts/evidence_plan.json",
+                "figure_table_plan_path": "drafts/figure_table_plan.json",
+                "cdr_output_path": "drafts/cdr_claim_ledger.json",
+                "claim_output_path": "drafts/claim_ledger.json",
+                "figure_output_path": "drafts/figure_registry.json",
+            },
+        ),
+        (
+            "build_alignment_matrix",
+            BuildAlignmentMatrixTool(policy),
+            {
+                "cdr_claim_ledger_path": "drafts/cdr_claim_ledger.json",
+                "evidence_plan_path": "drafts/evidence_plan.json",
+                "figure_table_plan_path": "drafts/figure_table_plan.json",
+                "synthesis_path": "literature/synthesis.md",
+                "hypotheses_path": "ideation/hypotheses.md",
+                "idea_scorecard_path": "ideation/idea_scorecard.yaml",
+                "output_path": "drafts/alignment_matrix.json",
+            },
+        ),
+    ]
+    for name, tool, kwargs in actions:
+        result = await tool.execute(**kwargs)
+        if not result.ok:
+            detail = result.content or result.error or "unknown tool failure"
+            return False, f"{name} failed: {detail}"
+
+    ctx = ExecutionContext(
+        workspace_dir=workspace_dir,
+        project_id="validator",
+        task_id="T8-RESOURCE",
+        run_id="t8-resource-deterministic",
+        mode="resource_index",
+        extra={"phase": "resource_index"},
+    )
+    ok, err = WriterAgent(mode="resource_index").validate_outputs(ctx)
+    return (True, None) if ok else (False, err)
 
 
 def can_repair_t8_section_plan(workspace_dir: Path) -> bool:
@@ -55,6 +158,20 @@ async def repair_t8_section_plan_outputs(
     workspace_dir = workspace_dir.resolve()
     if not can_repair_t8_section_plan(workspace_dir):
         return False, "T8-SECTION-PLAN 缺少 outline/resource/section/evidence/figure plan，无法确定性修复"
+
+    # Section plans before 1.1 merged optional artifacts into the hard-input
+    # list.  Reconstructing only paper_state would faithfully preserve that
+    # misleading plan and make section writers probe optional directories.
+    # Refresh the deterministic resource bundle first; this is a migration,
+    # not a new scientific or LLM step.
+    try:
+        section_plan = json.loads((workspace_dir / "drafts" / "section_plan.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        section_plan = {}
+    if str(section_plan.get("version") or "") != "1.1":
+        rebuilt, rebuild_error = await build_t8_resource_outputs(workspace_dir)
+        if not rebuilt:
+            return False, "T8-SECTION-PLAN 无法刷新过期 section_plan: " + str(rebuild_error or "unknown error")
 
     policy = WorkspaceAccessPolicy(
         workspace_dir=workspace_dir,

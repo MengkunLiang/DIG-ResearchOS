@@ -1476,6 +1476,16 @@ states:
       domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib
       hypotheses: ideation/hypotheses.md
+      selected_candidate: ideation/selected/selected_candidate.json
+      research_blueprint: ideation/research_blueprint.yaml
+      claim_registry: ideation/claim_registry.yaml
+      orientation_review: ideation/orientation_review.json
+      research_dossier: ideation/research_dossier.json
+      research_proposal: ideation/proposal/research_proposal.md
+      proposal_manifest: ideation/proposal/proposal_manifest.json
+      validation_map: ideation/validation_map.yaml
+      contribution_hypothesis_map: ideation/contribution_hypothesis_map.yaml
+      kill_criteria: ideation/kill_criteria.yaml
       exp_plan: ideation/exp_plan.yaml
       novelty_audit: ideation/novelty_audit.md
       idea_scorecard: ideation/idea_scorecard.yaml
@@ -1518,6 +1528,16 @@ states:
       domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib     # 输入：引用库
       hypotheses: ideation/hypotheses.md                # 输入：研究假设
+      selected_candidate: ideation/selected/selected_candidate.json
+      research_blueprint: ideation/research_blueprint.yaml
+      claim_registry: ideation/claim_registry.yaml
+      orientation_review: ideation/orientation_review.json
+      research_dossier: ideation/research_dossier.json
+      research_proposal: ideation/proposal/research_proposal.md
+      proposal_manifest: ideation/proposal/proposal_manifest.json
+      validation_map: ideation/validation_map.yaml
+      contribution_hypothesis_map: ideation/contribution_hypothesis_map.yaml
+      kill_criteria: ideation/kill_criteria.yaml
       idea_scorecard: ideation/idea_scorecard.yaml
       manuscript_resource_index: drafts/manuscript_resource_index.json
       section_plan: drafts/section_plan.json
@@ -1555,8 +1575,19 @@ states:
       domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib
       hypotheses: ideation/hypotheses.md
+      selected_candidate: ideation/selected/selected_candidate.json
+      research_blueprint: ideation/research_blueprint.yaml
+      claim_registry: ideation/claim_registry.yaml
+      orientation_review: ideation/orientation_review.json
+      research_dossier: ideation/research_dossier.json
+      research_proposal: ideation/proposal/research_proposal.md
+      proposal_manifest: ideation/proposal/proposal_manifest.json
+      validation_map: ideation/validation_map.yaml
+      contribution_hypothesis_map: ideation/contribution_hypothesis_map.yaml
+      kill_criteria: ideation/kill_criteria.yaml
       idea_scorecard: ideation/idea_scorecard.yaml
       outline: drafts/outline.md
+      writing_storyline: drafts/writing_storyline.md
       manuscript_resource_index: drafts/manuscript_resource_index.json
       section_plan: drafts/section_plan.json
       evidence_plan: drafts/evidence_plan.json
@@ -1586,6 +1617,16 @@ states:
       section_outline: drafts/section_outlines/methodology.md
       hypotheses: ideation/hypotheses.md
       exp_plan: ideation/exp_plan.yaml
+      selected_candidate: ideation/selected/selected_candidate.json
+      research_blueprint: ideation/research_blueprint.yaml
+      claim_registry: ideation/claim_registry.yaml
+      orientation_review: ideation/orientation_review.json
+      research_dossier: ideation/research_dossier.json
+      research_proposal: ideation/proposal/research_proposal.md
+      proposal_manifest: ideation/proposal/proposal_manifest.json
+      validation_map: ideation/validation_map.yaml
+      contribution_hypothesis_map: ideation/contribution_hypothesis_map.yaml
+      kill_criteria: ideation/kill_criteria.yaml
       idea_scorecard: ideation/idea_scorecard.yaml
       novelty_audit: ideation/novelty_audit.md
       design_rationale_tuples_dir: ideation/_design_rationale_tuples
@@ -1654,6 +1695,16 @@ states:
       domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib
       comparison_table: literature/comparison_table.csv
+      selected_candidate: ideation/selected/selected_candidate.json
+      research_blueprint: ideation/research_blueprint.yaml
+      claim_registry: ideation/claim_registry.yaml
+      orientation_review: ideation/orientation_review.json
+      research_dossier: ideation/research_dossier.json
+      research_proposal: ideation/proposal/research_proposal.md
+      proposal_manifest: ideation/proposal/proposal_manifest.json
+      validation_map: ideation/validation_map.yaml
+      contribution_hypothesis_map: ideation/contribution_hypothesis_map.yaml
+      kill_criteria: ideation/kill_criteria.yaml
       idea_scorecard: ideation/idea_scorecard.yaml
       manuscript_resource_index: drafts/manuscript_resource_index.json
       evidence_plan: drafts/evidence_plan.json

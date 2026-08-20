@@ -466,17 +466,17 @@ _T2_COVERAGE_GATE_INPUT_PATHS = {
 _LITERATURE_PARAM_PRESETS: dict[str, dict[str, Any]] = {
     "standard_research": {
         "profile": "research_article",
-        "t2_finalize": {"active_pool_max": 120},
+        "t2_finalize": {"active_pool_max": 50},
         "reader": {
-            "deep_read_min": 35,
-            "deep_read_target": 35,
-            "deep_read_max": 45,
+            "deep_read_min": 24,
+            "deep_read_target": 30,
+            "deep_read_max": 36,
             "require_deep_read_target": True,
             "abstract_sweep": {
                 # The retained pool is the total distinct-paper reading
                 # budget.  Deep and shallow reading are complementary, not
                 # two independent pools that silently add up past it.
-                "lite_paper_num": 85,
+                "lite_paper_num": 20,
                 "sources": ["papers_verified", "papers_dedup"],
                 "include_metadata_only": True,
                 "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
@@ -485,14 +485,14 @@ _LITERATURE_PARAM_PRESETS: dict[str, dict[str, Any]] = {
     },
     "survey_balanced": {
         "profile": "survey",
-        "t2_finalize": {"active_pool_max": 180},
+        "t2_finalize": {"active_pool_max": 80},
         "reader": {
-            "deep_read_min": 50,
-            "deep_read_target": 60,
-            "deep_read_max": 70,
+            "deep_read_min": 32,
+            "deep_read_target": 40,
+            "deep_read_max": 48,
             "require_deep_read_target": True,
             "abstract_sweep": {
-                "lite_paper_num": 120,
+                "lite_paper_num": 40,
                 "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
                 "include_metadata_only": True,
                 "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
@@ -501,14 +501,14 @@ _LITERATURE_PARAM_PRESETS: dict[str, dict[str, Any]] = {
     },
     "survey_exhaustive": {
         "profile": "survey",
-        "t2_finalize": {"active_pool_max": 240},
+        "t2_finalize": {"active_pool_max": 120},
         "reader": {
-            "deep_read_min": 70,
-            "deep_read_target": 80,
-            "deep_read_max": 95,
+            "deep_read_min": 45,
+            "deep_read_target": 55,
+            "deep_read_max": 65,
             "require_deep_read_target": True,
             "abstract_sweep": {
-                "lite_paper_num": 160,
+                "lite_paper_num": 65,
                 "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
                 "include_metadata_only": True,
                 "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
@@ -527,9 +527,9 @@ _LITERATURE_PARAM_PRESET_LABELS = {
 
 
 _LITERATURE_PARAM_PRESET_NOTES = {
-    "standard_research": "适合 research article：候选池和轻读覆盖较克制，精读目标 35 篇。",
-    "survey_balanced": "适合一般综述：保留候选 180 篇，精读目标 60 篇，摘要轻读最多 120 篇。",
-    "survey_exhaustive": "适合正式综述/展示型综述：保留候选 240 篇，精读目标 80 篇，摘要轻读最多 180 篇，运行时间和 LLM 成本更高。",
+    "standard_research": "适合 research article：覆盖 50 篇，精读 30 篇，摘要轻读 20 篇。",
+    "survey_balanced": "适合一般综述：覆盖 80 篇，精读 40 篇，摘要轻读 40 篇。",
+    "survey_exhaustive": "适合正式综述：覆盖 120 篇，精读 55 篇，摘要轻读 65 篇，运行时间和 LLM 成本更高。",
     "custom": "只改覆盖目标；网络补资源仍由系统自动尽量执行。",
 }
 
@@ -684,9 +684,9 @@ def build_literature_param_gate_preview(workspace_dir: Path | None = None) -> di
         "options": options,
         "custom_input_examples": {
             "coverage_total": "例如 total=30 或 总共30；表示本轮阅读的不同论文总数，系统会按精读目标自动补足摘要轻读数量",
-            "active_pool_max": "例如 180；表示本轮需要覆盖的不同论文总数。系统会在其中分配精读和摘要轻读，超额论文进入后备清单",
-            "deep_read_target": "例如 60；表示 T3 正常应完成 60 篇结构化精读笔记；也可输入 deep_read=35/35/45 一次指定 min/target/max",
-            "deep_read_min": "可选；例如 35。留空则沿用所选基础档位并不超过 target",
+            "active_pool_max": "例如 80；表示本轮需要覆盖的不同论文总数。系统会在其中分配精读和摘要轻读，超额论文进入后备清单",
+            "deep_read_target": "例如 40；表示 T3 正常应完成 40 篇结构化精读笔记；也可输入 deep_read=24/30/36 一次指定 min/target/max",
+            "deep_read_min": "可选；例如 24。留空则沿用所选基础档位并不超过 target",
             "deep_read_max": "可选；例如 45。留空则按所选基础档位或 target 自动设置",
             "abstract_sweep_target": "例如 15、rough=15、粗读15 或 all_readable；表示 T3 后 LLM 摘要轻读多少篇；all_readable 只覆盖保留候选，不全读 backlog",
             "require_deep_read_target": "true/false；true 表示未读满 deep_read_target 不放行到 T3.5",
@@ -1502,7 +1502,7 @@ def build_literature_param_payload(
         explicit_abstract_target = captured.get("abstract_sweep_target") not in (None, "")
         deep_target = _safe_int(
             captured.get("deep_read_target"),
-            default=int(base_summary.get("deep_read_target") or 60),
+            default=int(base_summary.get("deep_read_target") or 30),
             minimum=1,
         )
         abstract_target_raw: str | int = str(
@@ -1517,7 +1517,7 @@ def build_literature_param_payload(
         else:
             abstract_target = "all_readable"
         coverage_total = _safe_optional_int(captured.get("coverage_total") or captured.get("total") or captured.get("reading_total"), minimum=1)
-        active_default = int(base_summary.get("active_pool_max") or 180)
+        active_default = int(base_summary.get("active_pool_max") or 50)
         if coverage_total is not None:
             active_default = coverage_total
         elif captured.get("abstract_sweep_target") not in (None, "") and isinstance(abstract_target, int):
@@ -2035,8 +2035,12 @@ def _template_selection_from_gate(
     family = _normalize_template_family(defaults.get("template_family") or defaults.get("template_type") or option_id)
     template_id = _normalize_template_id(defaults.get("template_id") or defaults.get("template") or family)
     language = _normalize_writing_language(defaults.get("writing_language") or defaults.get("language") or "")
-    if family == "ccf" and template_id in {"", "auto", "ccf", "ccf_neurips"}:
-        template_id = "neurips"
+    if family == "ccf" and template_id in {"", "auto", "ccf"}:
+        # A writing style is not a venue selection.  Preserve the CCF/AI
+        # rhetorical profile while using the neutral English shell until the
+        # researcher names an actual conference.
+        family = "basic_en"
+        template_id = "basic_en"
     if family == "utd" and template_id in {"", "auto", "utd", "is_informs", "utd_informs"}:
         template_id = "informs"
     if family == "basic_zh":
@@ -3587,6 +3591,46 @@ class StateMachine:
         a context-free ``PAUSED`` state after retry exhaustion.
         """
 
+        if workspace_dir is not None:
+            pending_path = Path(workspace_dir) / "_runtime" / "pending_human_interaction.json"
+            try:
+                pending = json.loads(pending_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                pending = {}
+            if (
+                isinstance(pending, dict)
+                and pending.get("semantics") == "pending_agent_human_interaction"
+                and str(pending.get("task_id") or "") == state.current_task
+                and str(pending.get("question") or "").strip()
+            ):
+                state.pending_gate = GateState(
+                    gate_id="agent_ask_human_gate",
+                    presented_at=str(pending.get("created_at") or _now_iso()),
+                    presentation={
+                        "_title": "继续回答上次的确认问题",
+                        "_description": (
+                            "问题和当前任务位置已保存。resume 会回到同一问题，"
+                            "本次等待不计入任务失败或迭代死锁。"
+                        ),
+                        "interaction_id": pending.get("interaction_id"),
+                        "question_fingerprint": pending.get("question_fingerprint"),
+                        "question": pending.get("question"),
+                        "suggestions": pending.get("suggestions") or [],
+                    },
+                    options=[{"id": "answer", "label": "提交回答"}],
+                )
+                state.status = "WAITING_HUMAN"
+                state.paused_at = _now_iso()
+                state.last_error = None
+                state.task_context["pending_agent_human_interaction"] = {
+                    "interaction_id": pending.get("interaction_id"),
+                    "question_fingerprint": pending.get("question_fingerprint"),
+                    "task_id": state.current_task,
+                    "run_id": pending.get("run_id"),
+                    "request_path": "_runtime/pending_human_interaction.json",
+                }
+                return state
+
         if self.is_hard_runtime_integrity_error(error):
             return None
         payload = dict(recovery or {})
@@ -4716,6 +4760,12 @@ class StateMachine:
             state.task_context.pop("t2_user_requested_expansion", None)
             state.task_context.pop("allow_t2_failure_recovery", None)
 
+        resumed_human = state.task_context.get("resumed_human_interaction")
+        if isinstance(resumed_human, dict) and resumed_human.get("task_id") == state.current_task:
+            state.task_context.pop("resumed_human_interaction", None)
+            if workspace_dir is not None:
+                (workspace_dir / "_runtime" / "resume" / "resumed_human_answer.json").unlink(missing_ok=True)
+
         if node.gate:
             gate_id = self._gate_id_for_node(node)
             gate_spec = self._find_gate(gate_id)
@@ -4762,6 +4812,62 @@ class StateMachine:
         """处理一个已挂起 gate 的用户选择。"""
         if state.pending_gate is None:
             raise ValueError("No pending gate to resolve")
+        if state.pending_gate.gate_id == "agent_ask_human_gate":
+            if workspace_dir is None:
+                raise ValueError("Agent ask_human recovery requires a workspace")
+            captured = gate_result.get("captured") if isinstance(gate_result.get("captured"), dict) else {}
+            answer = str(captured.get("answer") or "").strip()
+            if not answer:
+                raise ValueError("Agent ask_human recovery received an empty answer")
+            presentation = state.pending_gate.presentation
+            fingerprint = str(
+                captured.get("question_fingerprint")
+                or presentation.get("question_fingerprint")
+                or ""
+            ).strip()
+            interaction_id = str(
+                captured.get("interaction_id")
+                or presentation.get("interaction_id")
+                or f"human_{uuid.uuid4().hex[:12]}"
+            )
+            answered_at = _now_iso()
+            receipt = {
+                "version": "1.0",
+                "semantics": "resumed_agent_human_answer",
+                "interaction_id": interaction_id,
+                "question_fingerprint": fingerprint,
+                "task_id": state.current_task,
+                "answered_at": answered_at,
+                "question": str(presentation.get("question") or ""),
+                "suggestions": presentation.get("suggestions") or [],
+                "answer": answer,
+            }
+            answer_path = workspace_dir / "_runtime" / "resume" / "resumed_human_answer.json"
+            answer_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = answer_path.with_suffix(answer_path.suffix + ".tmp")
+            tmp.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            tmp.replace(answer_path)
+            pending_path = workspace_dir / "_runtime" / "pending_human_interaction.json"
+            pending_path.unlink(missing_ok=True)
+
+            # The interrupted run stopped at a human wait boundary. Remove
+            # its startup signature from generic deadlock accounting and mark
+            # the history as a wait, not a failed task attempt.
+            attempts = state.iteration_history.get(state.current_task)
+            if isinstance(attempts, list) and attempts:
+                attempts.pop()
+            if state.history and state.history[-1].task == state.current_task:
+                state.history[-1].status = "WAITING_HUMAN_RESOLVED"
+                state.history[-1].finished_at = answered_at
+                state.history[-1].stop_reason = "human_wait_resolved"
+                state.history[-1].error = None
+            state.task_context.pop("pending_agent_human_interaction", None)
+            state.task_context["resumed_human_interaction"] = receipt
+            state.pending_gate = None
+            state.status = "RUNNING"
+            state.paused_at = None
+            state.last_error = None
+            return state
         if state.pending_gate.gate_id == "t4_prerun_gate":
             if workspace_dir is None:
                 raise ValueError("T4 pre-run gate requires a workspace")
