@@ -140,6 +140,20 @@ class ReaderAgent(Agent):
             )
         )
         self._mode = mode
+        if mode == "survey_supplement_read":
+            # T3.6 already performed the broad retrieval.  This narrow pass
+            # upgrades only the selected local PDFs and must not reopen T3's
+            # full queue, rebuild synthesis, or launch another supplement.
+            self.spec.tool_names = [
+                "read_file",
+                "write_file",
+                "lookup_paper_record",
+                "fetch_paper_pdf",
+                "extract_paper_sections",
+                "extract_pdf_text",
+                "save_paper_note",
+                "finish_task",
+            ]
 
     def system_prompt(self, ctx: ExecutionContext) -> str:
         """根据mode渲染不同的system prompt。"""
@@ -202,6 +216,8 @@ class ReaderAgent(Agent):
             "resume_reason": str(ctx.extra.get("resume_reason", "")),
             "cdr_schema_summary": cdr_schema_prompt_summary(),
             "domain_map_exists": (ctx.workspace_dir / "literature" / "domain_map.json").exists(),
+            "survey_supplement_upgrade_queue_path": "literature/survey_supplement/reading_upgrade_queue.jsonl",
+            "survey_supplement_upgrade_queue": [],
         }
 
         if mode == "read":
@@ -268,6 +284,9 @@ class ReaderAgent(Agent):
                 records_per_bridge=2,
                 abstract_excerpt_chars=360,
             )
+        elif mode == "survey_supplement_read":
+            upgrade_path = ctx.workspace_dir / "literature" / "survey_supplement" / "reading_upgrade_queue.jsonl"
+            context_vars["survey_supplement_upgrade_queue"] = load_jsonl(upgrade_path) if upgrade_path.exists() else []
         elif mode == "synthesize":
             note_files = _iter_paper_note_paths(ctx.workspace_dir / "literature")
             note_count = len(note_files)
@@ -320,6 +339,16 @@ class ReaderAgent(Agent):
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         """根据mode返回不同的初始消息。"""
+        if (ctx.mode or "read") == "survey_supplement_read":
+            return prepend_resume_prefix(
+                ctx,
+                (
+                    "请执行 T3.6 的定向补读升级。只读取 literature/survey_supplement/reading_upgrade_queue.jsonl。"
+                    "该队列为空时直接 finish_task。对每一条可解析 PDF，只在它能回答所列 taxonomy/history/comparison 缺口时"
+                    "提取必要页、写入完整的深读或部分深读 note；保存时必须传 queue_path=\"literature/survey_supplement/reading_upgrade_queue.jsonl\"。"
+                    "不要重新搜索、不要处理主 T3 队列、不要为凑引用阅读无关论文。"
+                ),
+            )
         if (ctx.mode or "read") == "read":
             existing_note_count = len(_iter_paper_note_paths(ctx.workspace_dir / "literature"))
             if existing_note_count > 0 or ctx.extra.get("is_resume"):
@@ -373,9 +402,50 @@ class ReaderAgent(Agent):
         mode = ctx.mode or "read"
         if mode == "read":
             return self._validate_read_outputs(ctx)
+        elif mode == "survey_supplement_read":
+            return self._validate_survey_supplement_read_outputs(ctx)
         elif mode == "synthesize":
             return self._validate_synthesize_outputs(ctx)
         return False, f"未知模式: {mode}"
+
+    def _validate_survey_supplement_read_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
+        """Require a transparent decision for a nonempty T3.6 upgrade queue.
+
+        A selected PDF may still prove irrelevant once read.  The receipt keeps
+        that legitimate stop from becoming a silent loss of the supplement,
+        while deliberately avoiding an arbitrary minimum number of upgrades.
+        """
+
+        queue_path = ctx.workspace_dir / "literature" / "survey_supplement" / "reading_upgrade_queue.jsonl"
+        queue = load_jsonl(queue_path) if queue_path.exists() else []
+        if not queue:
+            return True, None
+        receipt_path = ctx.workspace_dir / "literature" / "survey_supplement" / "reading_upgrade_receipt.json"
+        if not receipt_path.is_file():
+            return False, "补检升级队列非空，但缺少 literature/survey_supplement/reading_upgrade_receipt.json"
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            return False, f"reading_upgrade_receipt.json 无法解析: {exc}"
+        decisions = receipt.get("decisions") if isinstance(receipt, dict) else None
+        if not isinstance(decisions, list) or not decisions:
+            return False, "reading_upgrade_receipt.json 必须包含至少一条 decisions 记录"
+        queue_ids = {normalize_text_key(str(item.get("paper_id") or item.get("title") or "")) for item in queue}
+        recorded_ids = {
+            normalize_text_key(str(item.get("paper_id") or item.get("title") or ""))
+            for item in decisions
+            if isinstance(item, dict)
+        }
+        if not queue_ids <= recorded_ids:
+            return False, "reading_upgrade_receipt.json 未说明所有选中补检论文的升级或跳过决定"
+        for item in decisions:
+            if not isinstance(item, dict):
+                return False, "reading_upgrade_receipt.json 的 decisions 必须是对象数组"
+            decision = str(item.get("decision") or "").strip().lower()
+            rationale = str(item.get("rationale") or "").strip()
+            if decision not in {"upgraded", "skipped"} or len(rationale) < 12:
+                return False, "每条补检升级决定必须有 decision=upgraded/skipped 和具体 rationale"
+        return True, None
 
     def _validate_read_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
         """校验T3 read模式的输出。"""

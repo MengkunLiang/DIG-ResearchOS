@@ -74,7 +74,7 @@ T1
  -> T3.6-GATE-SURVEY
     -> no: T4
     -> yes: T3.6-PLAN -> T3.6-GATE-OUTLINE -> T3.6-GATE-CORPUS
-            -> optional T3.6-EXPAND
+            -> optional T3.6-EXPAND -> T3.6-SUPPLEMENT-READ
             -> T3.6-STATE
             -> T3.6-SEC-BACKGROUND -> T3.6-SEC-TAXONOMY
             -> T3.6-SEC-THEME-1 -> T3.6-SEC-THEME-2 -> T3.6-SEC-THEME-3 -> T3.6-SEC-THEME-4
@@ -2085,6 +2085,10 @@ This step is not a T4 → T2 loop; it does not automatically claim “domain gap
 
 This tool has its own long-operation window and does not inherit the ordinary 60-second Tool default. After every completed query it updates `literature/survey_supplement/expansion_checkpoint.json`, partial retrieval records, and the search log. A network timeout, process interruption, or resume skips completed queries and continues from the incomplete work. When a materially different plan supersedes an earlier supplement, the old retrieval receipts and tool-generated shallow notes are archived under `literature/survey_supplement/archive/`; their generated BibTeX entries are retracted before the new manifest is built. Human-authored and ordinary T2/T3 notes are never removed. The checkpoint only recovers the same query plan; it does not turn the one-time supplement into an unbounded search loop.
 
+#### `T3.6-SUPPLEMENT-READ`
+
+Complete mode does not pretend that every new search result has been used. `T3.6-EXPAND` writes `literature/survey_supplement/reading_upgrade_queue.jsonl` only for locally parseable PDFs that can strengthen distinct named taxonomy, historical, or comparative gaps and that do not already have a strong note. The Reader performs one narrow pass over that queue, saving a FULL/PARTIAL canonical note only when the text actually answers the named gap. It writes `reading_upgrade_receipt.json` for every selected record with `upgraded` or `skipped` and a concrete reason. An empty queue is valid and does not trigger more retrieval. This preserves a usable path from supplementary discovery to claim-capable evidence without turning a survey supplement into another full T3 run.
+
 #### `T3.6-STATE`
 
 The Agent calls `build_survey_state`. The tool mechanically transforms `survey_plan.json` into:
@@ -2099,10 +2103,13 @@ The Agent calls `build_survey_state`. The tool mechanically transforms `survey_p
 - `section_outlines/introduction.md`
 - `section_outlines/conclusion.md`
 - `section_outlines/abstract.md`
+- `section_evidence_plan.json`
 
 In compact mode, all `theme_1` through `theme_4` are marked as `skipped`, and the taxonomy/comparison section outlines explicitly state the rule that “taxonomy classes are written inside this section.” Here, “skipped” only means “no standalone theme chapter is generated,” not that the thematic content is deleted; `survey_state.shared_facts.theme_coverage_contract` requires each taxonomy class to appear in both Taxonomy and Comparative Analysis. The `T3.6-SEC-THEME-*` nodes remain for backward compatibility and explicit long-form survey mode; if `survey_state` marks them as skipped, that node simply calls `update_survey_section_state(..., status="skipped")` and ends without writing body text.
 
 Each `section_outlines/*.md` includes a `Section Writing Contract` with section purpose, required_content, internal_shape, evidence_rules, and avoid. Abstract, Introduction, Background, Taxonomy, Comparison, Challenges, Future, and Conclusion have distinct writing tasks and cannot share the same short template. In compact mode, Taxonomy/Comparison also include a `Compact Theme Coverage Contract`; if old state/outlines lack these contracts, resume will require rebuilding `T3.6-STATE`.
+
+The state builder also derives a compact `Section Evidence Routing Plan` from T3.5's citation workbench, the current note/BibTeX map, and direct taxonomy links. It supplies each section with claim-capable anchors, abstract-level coverage leads, and named gaps. It is a route for reading and sentence-level verification, not a citation quota. When the plan, workbench, manifest, comparison table, or bibliography changes, completed sections are not silently preserved through a state rebuild, so new evidence cannot be stranded outside the prose.
 
 If `survey_plan.sectioning_policy.mode=standalone_theme_sections`, the tool will map a small number of theme outlines to fixed slots; exceeding `max_theme_sections` will fail, requiring a return to PLAN/outline gate to merge or remove chapters.
 
@@ -2123,7 +2130,7 @@ Each `survey_section` node writes only one file:
 - `T3.6-SEC-CONCLUSION` → `drafts/survey/sections/conclusion.tex`
 - `T3.6-SEC-ABSTRACT` → `drafts/survey/sections/abstract.tex`
 
-Each call's input contains only `survey_state.json`, the current `section_outline`, the evidence files needed for that section, and necessary adjacent sections. The Writer must not generate `\documentclass`, `\begin{document}`, or other section titles. Non-abstract sections must include the current section title, language must match `survey_plan.writing_language`, and the length must meet the minimum expansion requirements for different sections; Introduction/Background/Taxonomy/Comparison/Challenges/Future/Conclusion have different thresholds and cannot be fudged with the same short template. The section validator also intercepts drafts lacking survey argumentation signals, such as literature laundry lists, no comparative evaluation, or future directions with only vague phrases like “strengthen theory/empirical/cross-disciplinary research.” `abstract.tex` is the abstract source fragment and must contain only the abstract body text; it must not write `\section{Abstract}`, `\section*{Abstract}`, `\begin{abstract}`, or `\end{abstract}`; `assemble_survey` handles placement within the abstract environment. After writing, it must call `update_survey_section_state(section_id=..., status="written")`.
+Each call's input contains only `survey_state.json`, the current `section_outline`, the evidence files needed for that section, and necessary adjacent sections. The Writer must not generate `\documentclass`, `\begin{document}`, or other section titles. Non-abstract sections must include the current section title, language must match `survey_plan.writing_language`, and the length must meet the minimum expansion requirements for different sections; Introduction/Background/Taxonomy/Comparison/Challenges/Future/Conclusion have different thresholds and cannot be fudged with the same short template. The section validator also intercepts drafts lacking survey argumentation signals, such as literature laundry lists, no comparative evaluation, or future directions with only vague phrases like “strengthen theory/empirical/cross-disciplinary research.” It additionally emits a non-blocking warning when short prose is fragmented into many micro-headings or repeated paragraph labels; the repair is to merge labels that do not change the reader's question, not to erase legitimate structure. `abstract.tex` is the abstract source fragment and must contain only the abstract body text; it must not write `\section{Abstract}`, `\section*{Abstract}`, `\begin{abstract}`, or `\end{abstract}`; `assemble_survey` handles placement within the abstract environment. After writing, it must call `update_survey_section_state(section_id=..., status="written")`.
 
 The section order is intentionally: background/taxonomy/theme/comparison/challenges/future to establish fact-dense content first, then introduction, conclusion, abstract. This prevents abstract and introduction from being fabricated before methods, comparisons, and challenges stabilize.
 

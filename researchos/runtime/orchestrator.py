@@ -4653,7 +4653,7 @@ class AgentRunner:
 
         literature_consumers = {
             "T3", "T3.5", "T3.6-GATE-SURVEY", "T3.6-PLAN", "T3.6-GATE-CORPUS",
-            "T3.6-EXPAND", "T3.6-STATE", "T3.6-VISUALS", "T4", "T4.5", "T5-HANDOFF",
+            "T3.6-EXPAND", "T3.6-SUPPLEMENT-READ", "T3.6-STATE", "T3.6-VISUALS", "T4", "T4.5", "T5-HANDOFF",
             "T8", "T8-RESOURCE",
         }
         if ctx.task_id not in literature_consumers:

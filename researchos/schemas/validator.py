@@ -934,6 +934,19 @@ def register_builtin_task_checkers():
         )
         return SurveyWriterAgent(mode=mode).validate_outputs(ctx)
 
+    def check_survey_supplement_reader_phase(workspace_dir: Path) -> tuple[bool, str | None]:
+        from ..agents.reader import ReaderAgent
+        from ..runtime.agent import ExecutionContext
+
+        ctx = ExecutionContext(
+            workspace_dir=workspace_dir,
+            project_id="validator",
+            task_id="T3.6-SUPPLEMENT-READ",
+            run_id="validator",
+            mode="survey_supplement_read",
+        )
+        return ReaderAgent(mode="survey_supplement_read").validate_outputs(ctx)
+
     register_task_checker("HELLO", check_hello)
     register_task_checker("T3", check_t3)
     register_task_checker("T4", check_ideation_phase)
@@ -997,6 +1010,7 @@ def register_builtin_task_checkers():
             task_id,
             lambda workspace_dir, task_id=task_id: check_survey_writer_phase(workspace_dir, task_id),
         )
+    register_task_checker("T3.6-SUPPLEMENT-READ", check_survey_supplement_reader_phase)
 
     # TODO: 为T1-T9添加更多checker
 

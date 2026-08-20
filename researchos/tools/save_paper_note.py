@@ -23,6 +23,7 @@ from ..runtime.t3_notes_manifest import (
     find_queue_record_by_rank,
     load_jsonl,
 )
+from ..runtime.literature_contract import build_literature_manifest
 from ..literature_identity import record_note_id
 from ..literature_identity import display_record_key
 from .base import Tool, ToolResult
@@ -111,6 +112,7 @@ class SavePaperNoteTool(Tool):
                 )
                 manifest = _build_manifest_for_source_queue(self.policy.workspace_dir, source_queue)
                 citation_maps = refresh_literature_citation_maps(self.policy.workspace_dir, write=True)
+                literature_manifest = build_literature_manifest(self.policy.workspace_dir, write=True)
                 progress = _progress_summary(manifest)
                 entry = _find_manifest_entry(manifest, rel_path, params.queue_rank)
                 note_status = _extract_note_status(_safe_read_text(abs_path))
@@ -140,6 +142,7 @@ class SavePaperNoteTool(Tool):
                         "paper_note_index_path": "literature/paper_note_index.json",
                         "citation_map_path": "literature/citation_map.json",
                         "mapped_bib_count": (citation_maps.get("citation_map") or {}).get("mapped_bib_count", 0),
+                        "literature_manifest_note_count": (literature_manifest.get("counts") or {}).get("note_cards", 0),
                         "resource_catalog": resource_receipt,
                         "compact_note_view": _compact_note_view(abs_path, self.policy.workspace_dir),
                     },
@@ -155,6 +158,7 @@ class SavePaperNoteTool(Tool):
         ok, err = _validate_note(abs_path, require_current_schema=is_new_note)
         manifest = _build_manifest_for_source_queue(self.policy.workspace_dir, source_queue)
         citation_maps = refresh_literature_citation_maps(self.policy.workspace_dir, write=True)
+        literature_manifest = build_literature_manifest(self.policy.workspace_dir, write=True)
         resource_receipt = ingest_paper_resources(
             self.policy.workspace_dir,
             paper_record=record,
@@ -186,6 +190,7 @@ class SavePaperNoteTool(Tool):
             "paper_note_index_path": "literature/paper_note_index.json",
             "citation_map_path": "literature/citation_map.json",
             "mapped_bib_count": (citation_maps.get("citation_map") or {}).get("mapped_bib_count", 0),
+            "literature_manifest_note_count": (literature_manifest.get("counts") or {}).get("note_cards", 0),
             "resource_catalog": resource_receipt,
         }
         if not ok:

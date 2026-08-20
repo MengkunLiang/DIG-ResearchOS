@@ -447,9 +447,15 @@ class BuildSurveyStateParams(BaseModel):
     survey_plan_path: str = Field(default="drafts/survey/survey_plan.json")
     corpus_decision_path: str = Field(default="drafts/survey/corpus_decision.json")
     expansion_path: str = Field(default="drafts/survey/survey_expansion.json")
+    synthesis_workbench_path: str = Field(default="literature/synthesis_workbench.json")
+    literature_manifest_path: str = Field(default="literature/literature_manifest.json")
+    domain_map_path: str = Field(default="literature/domain_map.json")
+    comparison_table_path: str = Field(default="literature/comparison_table.csv")
+    related_work_bib_path: str = Field(default="literature/related_work.bib")
     metadata_triage_path: str = Field(default="literature/metadata_triage.md")
     state_output_path: str = Field(default="drafts/survey/survey_state.json")
     section_outline_dir: str = Field(default="drafts/survey/section_outlines")
+    section_evidence_plan_path: str = Field(default="drafts/survey/section_evidence_plan.json")
     max_theme_sections: int = Field(default=DEFAULT_MAX_THEME_SECTIONS, ge=0, le=4)
 
 
@@ -1661,6 +1667,7 @@ class ExpandSurveyCorpusParams(BaseModel):
     corpus_decision_path: str = Field(default="drafts/survey/corpus_decision.json")
     supplement_dir: str = Field(default="literature/survey_supplement")
     checkpoint_path: str = Field(default="literature/survey_supplement/expansion_checkpoint.json")
+    reading_upgrade_queue_path: str = Field(default="literature/survey_supplement/reading_upgrade_queue.jsonl")
 
 
 class BuildSurveyStateTool(Tool):
@@ -1684,9 +1691,11 @@ class BuildSurveyStateTool(Tool):
                 params.corpus_decision_path,
             )
             expansion = _read_optional_json(self.policy, params.expansion_path)
+            synthesis_workbench = _read_optional_json(self.policy, params.synthesis_workbench_path)
             metadata_triage = _read_optional_text(self.policy, params.metadata_triage_path)
             state_path = self.policy.resolve_write(params.state_output_path)
             outline_dir = self.policy.resolve_write(params.section_outline_dir)
+            evidence_plan_path = self.policy.resolve_write(params.section_evidence_plan_path)
         except (ToolAccessDenied, FileNotFoundError, ValueError) as exc:
             return ToolResult(ok=False, content=str(exc), error="invalid_input")
 
@@ -1771,6 +1780,19 @@ class BuildSurveyStateTool(Tool):
                     item.get("class_id") or item.get("name") for item in taxonomy_classes if isinstance(item, dict)
                 ]
 
+        # The workbench deliberately stores a broad evidence inventory.  A
+        # section writer, however, should not have to rediscover the same
+        # taxonomy links from an opaque directory on every call.  Build a
+        # compact, auditable *selection plan*: it names candidates and their
+        # permissible evidence level, but never treats them as a citation
+        # quota or as proof that they support a particular sentence.
+        section_evidence_plan = _build_section_evidence_plan(
+            workspace=self.policy.workspace_dir,
+            plan=plan,
+            sections=sections,
+            synthesis_workbench=synthesis_workbench,
+        )
+
         state = {
             "semantics": "survey_state_for_taxonomy_driven_section_writing_not_final_claims",
             "survey_plan": params.survey_plan_path,
@@ -1780,6 +1802,11 @@ class BuildSurveyStateTool(Tool):
                     "survey_plan": params.survey_plan_path,
                     "corpus_decision": params.corpus_decision_path,
                     "survey_expansion": params.expansion_path,
+                    "synthesis_workbench": params.synthesis_workbench_path,
+                    "literature_manifest": params.literature_manifest_path,
+                    "domain_map": params.domain_map_path,
+                    "comparison_table": params.comparison_table_path,
+                    "related_work_bib": params.related_work_bib_path,
                     "metadata_triage": params.metadata_triage_path,
                     "bridge_catalog_index": "literature/cross_domain_catalogs/index.json",
                     "bridge_catalog_root": "literature/cross_domain_catalogs",
@@ -1808,6 +1835,7 @@ class BuildSurveyStateTool(Tool):
                 "scope_boundaries": plan.get("scope_boundaries") or {},
                 "quality_plan": plan.get("quality_plan") or {},
                 "coverage_selfcheck": plan.get("coverage_selfcheck") or {},
+                "section_evidence_plan": params.section_evidence_plan_path,
                 "resource_upgrade_needs": _merge_resource_upgrade_needs(
                     _resource_upgrade_needs(plan),
                     _metadata_triage_upgrade_needs(metadata_triage),
@@ -1830,7 +1858,15 @@ class BuildSurveyStateTool(Tool):
         outline_dir.mkdir(parents=True, exist_ok=True)
         for section_id, entry in sections.items():
             outline_path = outline_dir / f"{section_id}.md"
-            outline_path.write_text(_section_outline_text(section_id, entry, plan), encoding="utf-8")
+            outline_path.write_text(
+                _section_outline_text(
+                    section_id,
+                    entry,
+                    plan,
+                    evidence_packet=section_evidence_plan.get("sections", {}).get(section_id, {}),
+                ),
+                encoding="utf-8",
+            )
 
         preserved_sections = _preserve_completed_survey_sections(
             workspace=self.policy.workspace_dir,
@@ -1838,6 +1874,10 @@ class BuildSurveyStateTool(Tool):
             rebuilt_state=state,
         )
         state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        evidence_plan_path.write_text(
+            json.dumps(section_evidence_plan, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
         return ToolResult(
             ok=True,
@@ -1847,6 +1887,7 @@ class BuildSurveyStateTool(Tool):
             ),
             data={
                 "state_path": params.state_output_path,
+                "section_evidence_plan_path": params.section_evidence_plan_path,
                 "active_sections": state["write_order"],
                 "skipped_sections": [sid for sid, entry in sections.items() if entry["status"] == "skipped"],
                 "preserved_sections": preserved_sections,
@@ -1872,11 +1913,32 @@ def _preserve_completed_survey_sections(
 
     previous_fingerprints = previous_state.get("input_fingerprints")
     rebuilt_fingerprints = rebuilt_state.get("input_fingerprints")
-    previous_plan = previous_fingerprints.get("survey_plan") if isinstance(previous_fingerprints, dict) else {}
-    rebuilt_plan = rebuilt_fingerprints.get("survey_plan") if isinstance(rebuilt_fingerprints, dict) else {}
-    previous_sha = previous_plan.get("sha256") if isinstance(previous_plan, dict) else ""
-    rebuilt_sha = rebuilt_plan.get("sha256") if isinstance(rebuilt_plan, dict) else ""
-    if not previous_sha or previous_sha != rebuilt_sha:
+    # Reusing a completed section after a changed corpus or workbench is a
+    # silent information-utilization failure: the section still validates,
+    # but cannot possibly reflect the new notes, comparison table, or
+    # bibliography.  Preservation therefore requires the complete evidence
+    # basis used to create its outline to be unchanged, not merely the plan.
+    reuse_inputs = (
+        "survey_plan",
+        "corpus_decision",
+        "survey_expansion",
+        "synthesis_workbench",
+        "literature_manifest",
+        "domain_map",
+        "comparison_table",
+        "related_work_bib",
+    )
+    if not isinstance(previous_fingerprints, dict) or not isinstance(rebuilt_fingerprints, dict):
+        return []
+    for key in reuse_inputs:
+        previous_item = previous_fingerprints.get(key)
+        rebuilt_item = rebuilt_fingerprints.get(key)
+        previous_sha = previous_item.get("sha256") if isinstance(previous_item, dict) else ""
+        rebuilt_sha = rebuilt_item.get("sha256") if isinstance(rebuilt_item, dict) else ""
+        if not previous_sha or previous_sha != rebuilt_sha:
+            return []
+
+    if not all(rebuilt_fingerprints.get(key) for key in reuse_inputs):
         return []
 
     previous_sections = previous_state.get("sections")
@@ -2942,6 +3004,13 @@ class ExpandSurveyCorpusTool(Tool):
             self.policy.workspace_dir,
             deduplicated,
         )
+        upgrade_queue_path = self.policy.resolve_write(params.reading_upgrade_queue_path)
+        reading_upgrade = _build_survey_supplement_reading_upgrade_queue(
+            workspace=self.policy.workspace_dir,
+            records=deduplicated,
+            weak_classes=weak_classes,
+        )
+        _write_jsonl(upgrade_queue_path, reading_upgrade["records"])
         resource_catalog = refresh_resource_catalog(self.policy.workspace_dir)
         section_map = _survey_supplement_section_map(
             query_plan,
@@ -3007,12 +3076,23 @@ class ExpandSurveyCorpusTool(Tool):
                     "ABSTRACT_ONLY until explicit full/partial reading coverage is saved."
                 ),
             },
+            "reading_upgrade": {
+                "queue_path": params.reading_upgrade_queue_path,
+                "selected_count": len(reading_upgrade["records"]),
+                "eligible_parseable_count": reading_upgrade["eligible_parseable_count"],
+                "selection_policy": reading_upgrade["selection_policy"],
+                "usage_boundary": (
+                    "Only selected locally parseable PDFs enter the one-pass reading upgrade. The Reader may skip an item that "
+                    "cannot answer a named survey gap; an empty queue is a valid outcome and never blocks survey writing."
+                ),
+            },
             "supplement_artifacts": {
                 "search_plan": f"{params.supplement_dir}/search_plan.json",
                 "search_log": f"{params.supplement_dir}/search_log.jsonl",
                 "checkpoint": params.checkpoint_path,
                 "papers": f"{params.supplement_dir}/papers_retrieved.jsonl",
                 "section_evidence_map": f"{params.supplement_dir}/section_evidence_map.json",
+                "reading_upgrade_queue": params.reading_upgrade_queue_path,
             },
             "note": (
                 "Retrieved records are a one-shot targeted supplement. Records with an abstract are materialized as canonical "
@@ -3115,6 +3195,105 @@ def _materialize_survey_supplement_shallow_notes(
         "no_abstract_count": no_abstract_count,
         "note_paths": note_paths,
         "note_paths_by_paper_id": paths_by_paper_id,
+    }
+
+
+def _build_survey_supplement_reading_upgrade_queue(
+    *,
+    workspace: Path,
+    records: list[dict[str, Any]],
+    weak_classes: list[Any],
+) -> dict[str, Any]:
+    """Select the smallest useful set of readable supplement PDFs for T3.6.
+
+    Full reading is expensive, so "complete" retrieval does not blindly turn
+    every new hit into a deep-read obligation.  The queue covers distinct
+    named gaps first, excludes records already represented by a strong note,
+    and remains empty when no local PDF can be parsed.  The cap is solely an
+    operational guard against a one-shot supplement becoming a second T3;
+    it is not a quality floor and does not restrict later explicit reading.
+    """
+
+    strong_lookup = build_note_card_lookup(workspace, include_shallow=False)
+    existing_strong_ids = {normalize_paper_note_alias(key) for key in strong_lookup}
+    candidates: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        paper_id = record_note_id(record)
+        acquisition = record.get("pdf_acquisition") if isinstance(record.get("pdf_acquisition"), dict) else {}
+        status = str(acquisition.get("status") or "")
+        pdf_path = str(acquisition.get("pdf_path") or "")
+        if status not in {"acquired_parseable", "existing_parseable"} or not pdf_path:
+            continue
+        if normalize_paper_note_alias(paper_id) in existing_strong_ids:
+            continue
+        supplement = record.get("survey_supplement") if isinstance(record.get("survey_supplement"), dict) else {}
+        try:
+            relevance = float(supplement.get("relevance_score") or 0.0)
+        except (TypeError, ValueError):
+            relevance = 0.0
+        section_ids = [str(item) for item in supplement.get("section_ids") or [] if str(item).strip()]
+        candidates.append(
+            {
+                **record,
+                "_upgrade_relevance": relevance,
+                "_upgrade_section_ids": section_ids,
+                "_upgrade_pdf_path": pdf_path,
+            }
+        )
+    candidates.sort(
+        key=lambda item: (
+            -float(item.get("_upgrade_relevance") or 0.0),
+            str(item.get("title") or "").casefold(),
+        )
+    )
+    gap_labels = {
+        str(item.get("class_or_topic") or item.get("name") or item.get("class_id") or "").strip().casefold()
+        if isinstance(item, dict)
+        else str(item or "").strip().casefold()
+        for item in weak_classes
+    }
+    gap_labels.discard("")
+    # One readable anchor per distinct supplement target gives the LLM a
+    # meaningful comparative addition without duplicating near-identical hits.
+    selected: list[dict[str, Any]] = []
+    covered_targets: set[tuple[str, ...]] = set()
+    operational_cap = min(4, max(1, len(gap_labels) or 1))
+    for candidate in candidates:
+        targets = tuple(sorted(candidate.get("_upgrade_section_ids") or ["survey-wide"]))
+        if targets in covered_targets and len(selected) >= max(1, len(gap_labels)):
+            continue
+        rank = len(selected) + 1
+        record = {key: value for key, value in candidate.items() if not key.startswith("_upgrade_")}
+        record.update(
+            {
+                "queue_rank": rank,
+                "target_bucket": "survey_supplement_upgrade",
+                "read_disposition": "survey_gap_targeted_upgrade",
+                "queue_reason": (
+                    "Locally parseable survey supplement selected to strengthen a named taxonomy/history/comparison gap; "
+                    "read only insofar as it can answer that gap."
+                ),
+                "survey_supplement_upgrade": {
+                    "pdf_path": candidate["_upgrade_pdf_path"],
+                    "target_sections": list(targets),
+                    "selection_relevance_score": candidate["_upgrade_relevance"],
+                    "evidence_boundary": "unread_until_reader_records_full_or_partial_coverage",
+                },
+            }
+        )
+        selected.append(record)
+        covered_targets.add(targets)
+        if len(selected) >= operational_cap:
+            break
+    return {
+        "records": selected,
+        "eligible_parseable_count": len(candidates),
+        "selection_policy": (
+            "reuse strong notes first; select locally parseable records linked to distinct named gaps; stop after the smallest "
+            "gap-covering queue (operational cap four); retain all other records as canonical abstract-level leads"
+        ),
     }
 
 
@@ -3926,6 +4105,19 @@ def _survey_section_quality_issues(section_id: str, text: str) -> list[str]:
             issues.append("looks like paper-by-paper summary rather than synthesis")
     if section_id in {"comparison", "challenges", "future"} and _generic_future_or_gap_text(plain):
         issues.append("contains generic gap/future wording without concrete agenda")
+    # A review becomes hard to read when every paper, micro-claim, or label
+    # receives its own heading.  This is deliberately a soft density signal,
+    # not a universal heading cap: a long technical taxonomy may need more
+    # structure, while a short section with the same number of headings is
+    # usually fragmented regardless of venue.
+    structural_heads = re.findall(r"\\(?:subsection|subsubsection)\*?\{[^{}]+\}", text)
+    paragraph_heads = re.findall(r"\\paragraph\*?\{[^{}]+\}", text)
+    if len(structural_heads) >= 5 and len(plain) / max(1, len(structural_heads)) < 420:
+        issues.append(
+            "has fragmented heading density; merge micro-headings into connected claim-bearing paragraphs or a smaller number of argument-led subsections"
+        )
+    if len(paragraph_heads) > 2:
+        issues.append("uses repeated paragraph labels instead of continuous scholarly prose")
     return issues
 
 
@@ -4403,7 +4595,328 @@ def _corpus_scope(decision: dict[str, Any]) -> str:
     return "unspecified"
 
 
-def _section_outline_text(section_id: str, entry: dict[str, Any], plan: dict[str, Any]) -> str:
+def _build_section_evidence_plan(
+    *,
+    workspace: Path,
+    plan: dict[str, Any],
+    sections: dict[str, dict[str, Any]],
+    synthesis_workbench: dict[str, Any],
+) -> dict[str, Any]:
+    """Translate the T3.5 evidence inventory into small section-level routes.
+
+    This is intentionally an information-routing artifact rather than an
+    automatic citation generator.  It helps a Writer find diverse, relevant
+    notes that have already been read, while preserving the sentence-level
+    evidence check and the distinction between claim evidence and abstract
+    coverage leads.  In particular, it keeps the writer from repeatedly
+    selecting the first few familiar papers merely because the global
+    workbench is too broad to inspect during one section call.
+    """
+
+    coverage = (
+        synthesis_workbench.get("citation_coverage_plan")
+        if isinstance(synthesis_workbench.get("citation_coverage_plan"), dict)
+        else {}
+    )
+    raw_refs: list[dict[str, Any]] = []
+    for field in ("main_claim_refs", "coverage_refs", "weak_or_context_refs"):
+        values = coverage.get(field) if isinstance(coverage, dict) else []
+        if isinstance(values, list):
+            raw_refs.extend(item for item in values if isinstance(item, dict))
+
+    # Supplements added after T3.5 are absent from its workbench.  The shared
+    # citation map is the durable bridge that lets a rebuilt T3.6 state expose
+    # those records as bounded abstract-level leads instead of losing them.
+    citation_map = refresh_literature_citation_maps(workspace, write=True).get("citation_map", {})
+    for item in citation_map.get("entries") or []:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("bib_key") or "").strip()
+        if not key:
+            continue
+        raw_refs.append(
+            {
+                "note_id": item.get("note_id"),
+                "paper_id": item.get("paper_id"),
+                "title": item.get("title"),
+                "citation_ref": item.get("citation_ref"),
+                "bib_key": key,
+                "source_file": _citation_source_path(item),
+                "evidence_level": item.get("evidence_level"),
+                "citation_use": "supporting_context",
+                "citation_quality_score": 0.0,
+            }
+        )
+
+    refs: dict[str, dict[str, Any]] = {}
+    for raw in raw_refs:
+        ref = _normalize_section_evidence_ref(raw)
+        # Survey TeX requires a real BibTeX key.  A note with no mapped key is
+        # still discoverable through query_research_evidence, but it is not a
+        # useful planned citation anchor and should not crowd out a citable
+        # record in this compact route.
+        key = str(ref.get("bib_key") or "").strip()
+        if (
+            not key
+            or not str(ref.get("source_file") or "").strip()
+            or str(ref.get("citation_use") or "").casefold() == "do_not_cite"
+        ):
+            continue
+        existing = refs.get(key)
+        if existing is None or _section_evidence_rank(ref) > _section_evidence_rank(existing):
+            refs[key] = ref
+
+    taxonomy_classes = _taxonomy_classes(plan)
+    class_by_ref: dict[str, list[str]] = {}
+    for taxonomy_class in taxonomy_classes:
+        if not isinstance(taxonomy_class, dict):
+            continue
+        label = str(taxonomy_class.get("name") or taxonomy_class.get("class_id") or "").strip()
+        if not label:
+            continue
+        for raw_id in taxonomy_class.get("paper_ids") or []:
+            matched = _match_section_evidence_ref(raw_id, refs.values())
+            if matched is not None:
+                class_by_ref.setdefault(_section_evidence_identity(matched), []).append(label)
+
+    weak_classes = _classes_needing_lit(plan)
+    evidence_sections: dict[str, dict[str, Any]] = {}
+    for section_id, entry in sections.items():
+        if str(entry.get("status") or "") == "skipped":
+            evidence_sections[section_id] = {"status": "skipped", "anchors": [], "coverage_leads": []}
+            continue
+        # The abstract is citation-free and the conclusion must not introduce
+        # a fresh external claim.  Giving either section a broad evidence
+        # bundle wastes context and subtly invites forbidden late citations.
+        if section_id in {"abstract", "conclusion"}:
+            evidence_sections[section_id] = {
+                "status": "active",
+                "section_id": section_id,
+                "roles": _section_evidence_roles(section_id),
+                "anchors": [],
+                "coverage_leads": [],
+                "known_gaps": [],
+                "selection_rule": (
+                    "Do not introduce new external evidence here. Use preceding sections to verify continuity, and preserve "
+                    "their established boundaries in the final synthesis."
+                ),
+            }
+            continue
+        direct_ids = [str(value) for value in entry.get("paper_ids") or []]
+        if section_id in {"taxonomy", "comparison"}:
+            direct_ids.extend(
+                str(value)
+                for taxonomy_class in taxonomy_classes
+                if isinstance(taxonomy_class, dict)
+                for value in taxonomy_class.get("paper_ids") or []
+            )
+        selected: list[dict[str, Any]] = []
+        for raw_id in direct_ids:
+            matched = _match_section_evidence_ref(raw_id, refs.values())
+            if matched is not None:
+                selected.append(dict(matched))
+
+        # Fill with diverse existing claim-capable evidence.  This is a
+        # bounded reading route, not a cap on citations: a writer may use fewer
+        # sources or retrieve another exact note section when its claim needs
+        # it.  The bound prevents the plan itself from becoming context noise.
+        target = SURVEY_NOTE_CARD_BUDGETS.get(section_id, (6, 10))[0]
+        ranked = sorted(
+            refs.values(),
+            key=lambda item: (
+                0 if _section_evidence_identity(item) in {_section_evidence_identity(value) for value in selected} else 1,
+                -_section_evidence_section_score(item, section_id, entry, class_by_ref),
+                -_section_evidence_rank(item)[0],
+                -_section_evidence_rank(item)[1],
+                str(item.get("title") or ""),
+            ),
+        )
+        for candidate in ranked:
+            identity = _section_evidence_identity(candidate)
+            if any(_section_evidence_identity(item) == identity for item in selected):
+                continue
+            if str(candidate.get("evidence_level") or "").upper() == "ABSTRACT_ONLY":
+                continue
+            selected.append(dict(candidate))
+            if len(selected) >= target:
+                break
+
+        anchors = [item for item in selected if str(item.get("evidence_level") or "").upper() != "ABSTRACT_ONLY"]
+        leads = [
+            dict(item)
+            for item in ranked
+            if str(item.get("evidence_level") or "").upper() == "ABSTRACT_ONLY"
+            and not any(_section_evidence_identity(existing) == _section_evidence_identity(item) for existing in anchors)
+        ][:4]
+        for item in [*anchors, *leads]:
+            item["taxonomy_classes"] = sorted(set(class_by_ref.get(_section_evidence_identity(item), [])))
+        evidence_sections[section_id] = {
+            "status": "active",
+            "section_id": section_id,
+            "roles": _section_evidence_roles(section_id),
+            "anchors": anchors,
+            "coverage_leads": leads,
+            "known_gaps": _section_evidence_gaps(section_id, weak_classes),
+            "selection_rule": (
+                "Start with the relevant anchors, verify the exact note section before citing, and use only the smallest set "
+                "that changes the section's argument. Coverage leads are not mechanism evidence. A named material gap may "
+                "justify one bounded supplement or a reading upgrade; ordinary explanation may rely on scholarly reasoning."
+            ),
+        }
+    return {
+        "schema_version": "1.0.0",
+        "semantics": "section_level_evidence_routing_plan_not_citation_quota",
+        "generated_from": {
+            "survey_plan": "drafts/survey/survey_plan.json",
+            "synthesis_workbench": "literature/synthesis_workbench.json",
+            "citation_map": "literature/citation_map.json",
+        },
+        "sections": evidence_sections,
+    }
+
+
+def _citation_source_path(entry: dict[str, Any]) -> str:
+    source = str(entry.get("source_file") or "").strip().replace("\\", "/")
+    return source if source.startswith("literature/") else f"literature/{source}" if source else ""
+
+
+def _normalize_section_evidence_ref(raw: dict[str, Any]) -> dict[str, Any]:
+    source = _citation_source_path(raw)
+    level = str(raw.get("evidence_level") or "").strip().upper()
+    if level in {"FULL_TEXT", "PARTIAL_TEXT", "FULL_OR_PARTIAL_TEXT"}:
+        level = "FULL_OR_PARTIAL_TEXT"
+    elif level != "ABSTRACT_ONLY":
+        level = "ABSTRACT_ONLY"
+    try:
+        quality = float(raw.get("citation_quality_score") or 0.0)
+    except (TypeError, ValueError):
+        quality = 0.0
+    return {
+        "paper_id": str(raw.get("paper_id") or "").strip(),
+        "note_id": str(raw.get("note_id") or "").strip(),
+        "title": str(raw.get("title") or "").strip(),
+        "bib_key": str(raw.get("bib_key") or "").strip(),
+        "citation_ref": str(raw.get("citation_ref") or "").strip(),
+        "source_file": source,
+        "evidence_level": level,
+        "citation_use": str(raw.get("citation_use") or "").strip(),
+        "citation_quality_score": round(quality, 3),
+    }
+
+
+def _section_evidence_identity(item: dict[str, Any]) -> str:
+    return str(item.get("bib_key") or item.get("paper_id") or item.get("note_id") or item.get("source_file") or "").casefold()
+
+
+def _section_evidence_rank(item: dict[str, Any]) -> tuple[int, float]:
+    strong = 1 if str(item.get("evidence_level") or "").upper() == "FULL_OR_PARTIAL_TEXT" else 0
+    try:
+        quality = float(item.get("citation_quality_score") or 0.0)
+    except (TypeError, ValueError):
+        quality = 0.0
+    return strong, quality
+
+
+def _match_section_evidence_ref(raw_id: Any, refs: Any) -> dict[str, Any] | None:
+    raw = str(raw_id or "").strip()
+    if not raw:
+        return None
+    normalized = re.sub(r"[^a-z0-9]+", "", raw.casefold())
+    for ref in refs:
+        aliases = (ref.get("paper_id"), ref.get("note_id"), ref.get("bib_key"))
+        if any(re.sub(r"[^a-z0-9]+", "", str(value or "").casefold()) == normalized for value in aliases):
+            return ref
+    return None
+
+
+def _section_evidence_section_score(
+    item: dict[str, Any],
+    section_id: str,
+    entry: dict[str, Any],
+    class_by_ref: dict[str, list[str]],
+) -> int:
+    score = 0
+    if class_by_ref.get(_section_evidence_identity(item)) and section_id in {"taxonomy", "comparison"}:
+        score += 100
+    section_text = " ".join(
+        str(entry.get(field) or "") for field in ("title", "reader_question", "section_argument", "covers")
+    ).casefold()
+    title = str(item.get("title") or "").casefold()
+    section_tokens = set(re.findall(r"[a-z][a-z0-9-]{2,}", section_text))
+    title_tokens = set(re.findall(r"[a-z][a-z0-9-]{2,}", title))
+    score += len(section_tokens & title_tokens) * 8
+    return score
+
+
+def _section_evidence_roles(section_id: str) -> list[str]:
+    return {
+        "introduction": ["problem framing", "review contribution", "scope boundary"],
+        "background": ["conceptual definition", "historical turn", "scope boundary"],
+        "taxonomy": ["classification anchor", "mechanism distinction", "class boundary"],
+        "comparison": ["cross-stream comparison", "evidence-strength contrast", "boundary trade-off"],
+        "challenges": ["cross-paper tension", "limitation", "unresolved boundary"],
+        "future": ["gap-to-design transition", "testable agenda", "governance or deployment implication"],
+    }.get(section_id, ["continuity with established survey argument"])
+
+
+def _section_evidence_gaps(section_id: str, weak_classes: list[Any]) -> list[str]:
+    if section_id not in {"introduction", "background", "taxonomy", "comparison", "challenges", "future"}:
+        return []
+    gaps: list[str] = []
+    for raw in weak_classes:
+        if isinstance(raw, dict):
+            label = str(raw.get("class_or_topic") or raw.get("name") or raw.get("class_id") or "").strip()
+            detail = str(raw.get("gap") or raw.get("action") or "").strip()
+        else:
+            label, detail = str(raw or "").strip(), ""
+        if label:
+            gaps.append(f"{label}: {detail}".strip())
+    return gaps[:6]
+
+
+def _section_evidence_packet_lines(packet: dict[str, Any]) -> list[str]:
+    if not isinstance(packet, dict) or packet.get("status") != "active":
+        return []
+    lines = ["## Section Evidence Routing Plan", "- This is a retrieval route, not a citation quota. Verify exact sentence-level support before citing."]
+    roles = packet.get("roles") if isinstance(packet.get("roles"), list) else []
+    if roles:
+        lines.append("- scholarly_roles: " + "; ".join(str(item) for item in roles))
+    anchors = packet.get("anchors") if isinstance(packet.get("anchors"), list) else []
+    if anchors:
+        lines.append("- claim-capable anchors to inspect:")
+        for item in anchors:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or item.get("paper_id") or "untitled").replace("\n", " ")[:160]
+            key = str(item.get("bib_key") or "no mapped BibTeX key")
+            source = str(item.get("source_file") or "")
+            classes = ", ".join(str(value) for value in item.get("taxonomy_classes") or [])
+            suffix = f"; taxonomy: {classes}" if classes else ""
+            lines.append(f"  - {title} | key: {key} | note: {source}{suffix}")
+    leads = packet.get("coverage_leads") if isinstance(packet.get("coverage_leads"), list) else []
+    if leads:
+        lines.append("- abstract-level coverage leads only; do not use them alone for mechanism/result claims:")
+        for item in leads:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or item.get("paper_id") or "untitled").replace("\n", " ")[:140]
+            lines.append(f"  - {title} | key: {item.get('bib_key') or 'unmapped'} | note: {item.get('source_file') or ''}")
+    gaps = packet.get("known_gaps") if isinstance(packet.get("known_gaps"), list) else []
+    if gaps:
+        lines.append("- known evidence gaps. Do not compensate by overclaiming or padding citations:")
+        lines.extend(f"  - {str(item)[:280]}" for item in gaps)
+    lines.append("- use rule: " + str(packet.get("selection_rule") or ""))
+    lines.append("")
+    return lines
+
+
+def _section_outline_text(
+    section_id: str,
+    entry: dict[str, Any],
+    plan: dict[str, Any],
+    *,
+    evidence_packet: dict[str, Any] | None = None,
+) -> str:
     title = entry.get("title") or SURVEY_SECTION_TITLES.get(section_id, section_id)
     covers = entry.get("covers") or []
     paper_ids = entry.get("paper_ids") or []
@@ -4439,6 +4952,7 @@ def _section_outline_text(section_id: str, entry: dict[str, Any], plan: dict[str
         "## Note Card Retrieval Plan",
         *_survey_note_card_retrieval_lines(section_id),
         "",
+        *_section_evidence_packet_lines(evidence_packet or {}),
         "## Survey Quality Standard",
         "- A survey is a second-order research contribution: it reorganizes literature around a question, not a list of papers.",
         "- Every section needs an internal argument. Use claim -> evidence -> comparison -> evaluation paragraphs.",
@@ -6175,7 +6689,8 @@ def _survey_quality_warning_guidance(checks: list[dict[str, Any]]) -> list[dict[
             "Read every section named in the detail. Where its existing claim needs evidence, inspect the section's local note queue and add only a semantically matching source; otherwise narrow or remove the unsupported sentence."
         ),
         "survey_section_depth": (
-            "Read the named section and replace paper-by-paper summary with evidence-backed synthesis, comparison, and boundaries."
+            "Read the named section and replace paper-by-paper summary or micro-headings with evidence-backed synthesis, comparison, and boundaries. "
+            "Keep a heading only when it changes the reader's question; merge labels that merely divide one argument."
         ),
     }
     guidance: list[dict[str, str]] = []

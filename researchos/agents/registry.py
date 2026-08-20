@@ -54,6 +54,7 @@ TASK_TO_AGENT_MAP = {
     "T3.6-GATE-OUTLINE": SurveyWriterAgent,  # taxonomy 大纲确认
     "T3.6-GATE-CORPUS": SurveyWriterAgent,  # 综述素材范围确认
     "T3.6-EXPAND": SurveyWriterAgent,  # 一次性定向补检计划
+    "T3.6-SUPPLEMENT-READ": ReaderAgent,  # complete 模式下少量可读补检材料的证据升级
     "T3.6-STATE": SurveyWriterAgent,  # 综述逐章状态初始化
     "T3.6-SEC-BACKGROUND": SurveyWriterAgent,
     "T3.6-SEC-TAXONOMY": SurveyWriterAgent,

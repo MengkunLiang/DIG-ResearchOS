@@ -74,7 +74,7 @@ T1
  -> T3.6-GATE-SURVEY
     -> no: T4
     -> yes: T3.6-PLAN -> T3.6-GATE-OUTLINE -> T3.6-GATE-CORPUS
-            -> optional T3.6-EXPAND
+            -> optional T3.6-EXPAND -> T3.6-SUPPLEMENT-READ
             -> T3.6-STATE
             -> T3.6-SEC-BACKGROUND -> T3.6-SEC-TAXONOMY
             -> T3.6-SEC-THEME-1 -> T3.6-SEC-THEME-2 -> T3.6-SEC-THEME-3 -> T3.6-SEC-THEME-4
@@ -2087,6 +2087,10 @@ Agent 调用 `expand_corpus_for_survey`。这个工具读取 `survey_plan.json`�
 
 该工具有自己的长操作窗口，不继承普通工具的 60 秒默认值。每完成一条查询都会更新 `literature/survey_supplement/expansion_checkpoint.json`、部分检索记录和 search log；网络超时、进程中断或 resume 后会跳过已完成查询，从未完成处继续。若出现实质不同的新 query plan，旧补检的检索回执与该工具生成的 shallow note 会归档到 `literature/survey_supplement/archive/`，并在构建新 manifest 前撤回对应的自动生成 BibTeX 条目；人工写入的笔记和普通 T2/T3 笔记绝不删除。这个 checkpoint 只保证同一份 query plan 的恢复，不会把一次性补检变成无限检索循环。
 
+#### `T3.6-SUPPLEMENT-READ`
+
+complete 模式不会把每条新检索命中假装成已经利用。`T3.6-EXPAND` 只会将本地可解析、能够补强不同命名 taxonomy、发展脉络或比较缺口、且尚无强证据笔记的 PDF 写入 `literature/survey_supplement/reading_upgrade_queue.jsonl`。Reader 对该队列执行一次窄范围阅读，只有当正文确实能回答命名缺口时才保存 FULL/PARTIAL canonical note。它会为每条选中记录在 `reading_upgrade_receipt.json` 中写明 `upgraded` 或 `skipped` 及具体原因。空队列是正常结果，不会触发额外检索。这样补检可以从 discovery material 进入可支持论断的证据层，又不会退化成第二轮全量 T3。
+
 #### `T3.6-STATE`
 
 Agent 调用 `build_survey_state`。工具把 `survey_plan.json` 机械转换为：
@@ -2101,10 +2105,13 @@ Agent 调用 `build_survey_state`。工具把 `survey_plan.json` 机械转换为
 - `section_outlines/introduction.md`
 - `section_outlines/conclusion.md`
 - `section_outlines/abstract.md`
+- `section_evidence_plan.json`
 
 默认 compact 模式会把 `theme_1` 到 `theme_4` 都标记为 `skipped`，并在 taxonomy/comparison 的 section outline 中写明“taxonomy 类写入本节内部”的规则。这里的 skipped 只表示“不生成独立 theme 大章”，不表示删除主题内容；`survey_state.shared_facts.theme_coverage_contract` 会要求每个 taxonomy class 同时出现在 Taxonomy 和 Comparative Analysis。`T3.6-SEC-THEME-*` 节点仍保留是为了兼容旧状态机和显式长综述模式；如果 `survey_state` 标记 skipped，该节点只调用 `update_survey_section_state(..., status="skipped")` 后结束，不写正文。
 
 每个 `section_outlines/*.md` 都会写入 `Section Writing Contract`，包括本节 purpose、required_content、internal_shape、evidence_rules 和 avoid。Abstract、Introduction、Background、Taxonomy、Comparison、Challenges、Future、Conclusion 的写作任务不同，不能共用同一套短模板。Taxonomy/Comparison 在 compact 模式下还会写入 `Compact Theme Coverage Contract`；旧 state/outline 缺少这些契约时，resume 会要求重建 `T3.6-STATE`。
+
+state builder 还会从 T3.5 citation workbench、当前 note/BibTeX 映射和 taxonomy 直接链接中生成紧凑的 `Section Evidence Routing Plan`。它为每节提供可支撑论断的 anchors、仅摘要级的 coverage leads 和命名缺口。这是一条阅读与逐句核验路线，不是 citation 配额。若 plan、workbench、manifest、comparison table 或 bibliography 变化，重建 state 时不会静默保留已完成 section，从而避免新证据被搁置在正文之外。
 
 如果 `survey_plan.sectioning_policy.mode=standalone_theme_sections`，工具才会把少量 theme outline 映射到固定槽位；超过 `max_theme_sections` 会失败，要求回到 PLAN/outline gate 合并或删减章节。
 
@@ -2125,7 +2132,7 @@ Agent 调用 `build_survey_state`。工具把 `survey_plan.json` 机械转换为
 - `T3.6-SEC-CONCLUSION` -> `drafts/survey/sections/conclusion.tex`
 - `T3.6-SEC-ABSTRACT` -> `drafts/survey/sections/abstract.tex`
 
-每次调用输入只包含 `survey_state.json`、当前 `section_outline`、该节需要的证据文件和必要的相邻 section。Writer 不允许生成 `\documentclass`、`\begin{document}` 或其它 section 标题。非 abstract section 必须包含当前节标题，语言必须与 `survey_plan.writing_language` 一致，且篇幅要满足不同 section 的最低展开要求；Introduction/Background/Taxonomy/Comparison/Challenges/Future/Conclusion 的阈值不同，不能用同一短模板糊过去。section validator 还会拦截缺少综述论证信号的草稿，例如文献串烧、没有比较评价、future 只有“加强理论/实证/跨学科研究”等空泛话。`abstract.tex` 是摘要源片段，只能包含摘要纯正文，不能写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`；`assemble_survey` 会负责放入 abstract 环境。写完后必须调用 `update_survey_section_state(section_id=..., status="written")`。
+每次调用输入只包含 `survey_state.json`、当前 `section_outline`、该节需要的证据文件和必要的相邻 section。Writer 不允许生成 `\documentclass`、`\begin{document}` 或其它 section 标题。非 abstract section 必须包含当前节标题，语言必须与 `survey_plan.writing_language` 一致，且篇幅要满足不同 section 的最低展开要求；Introduction/Background/Taxonomy/Comparison/Challenges/Future/Conclusion 的阈值不同，不能用同一短模板糊过去。section validator 还会拦截缺少综述论证信号的草稿，例如文献串烧、没有比较评价、future 只有“加强理论/实证/跨学科研究”等空泛话。它还会在短正文被大量微型标题或重复 `paragraph` 标签切碎时给出非阻塞警告；修复方式是合并没有改变读者问题的标签，而不是删除必要结构。`abstract.tex` 是摘要源片段，只能包含摘要纯正文，不能写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`；`assemble_survey` 会负责放入 abstract 环境。写完后必须调用 `update_survey_section_state(section_id=..., status="written")`。
 
 章节顺序有意安排为：background/taxonomy/theme/comparison/challenges/future 先确定事实密集内容，再写 introduction、conclusion、abstract。这样 abstract 和 introduction 不会在方法、比较和挑战尚未稳定时先行编造。
 

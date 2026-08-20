@@ -401,8 +401,8 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 每节都要有“节内论点”。小节标题和段落开头应表达判断、关系或问题，而不是百科词条。
 - Introduction 必须用一段可读的 Problem Formulation 说明本综述要解决的核心问题、该问题为何不能由单篇论文回答、以及后文 taxonomy/comparison 如何回答它。可使用 “Survey Problem”“Research Question”“Central Question” 等自然标题或等价正文表述；不要为了 validator 拼接固定短语。若收到 section validator 的结构错误，先读取当前 section 和 `Section Writing Contract` 自行修订，不要把确定性的 validator 解释问题转交给人工。
 - 段落应采用“观点 -> 文献证据 -> 比较 -> 评价”的综述逻辑。可以引用代表论文，但段落主语应是研究流派、机制、框架维度、证据边界或问题张力，不是一串作者名。
-- 必须按当前 section outline 的 Note Card Retrieval Plan 回查相关 paper note section。引用前先核对 note card 或 paper note 中的 mechanism、gap、boundary、design rationale 与当前句子是否对应。
-- 先调用 `query_research_evidence`，用本节真正要回答的问题检索相关 note section、综合上下文和资源线索，再按返回的精确路径定向 `read_file`；不应以目录顺序或固定前几篇代替选择。若已有材料足够，直接在统一推理中综合。只有当缺少的是会改变 taxonomy、发展脉络、关键比较或正式引用的外部事实时，才可自主调用一次有界 `targeted_literature_supplement`，读取新增 canonical notes 后继续。普通解释、合理推导和研究议程不需要为了形式补检，也不要为了一个 claim 成批分页读全部 notes。
+- 必须按当前 section outline 的 Note Card Retrieval Plan 和 `Section Evidence Routing Plan` 回查相关 paper note section。后者把 T3.5 的已读证据、taxonomy link 和本节已知缺口压缩为可核验的起点，不是 citation 配额，也不取代你的学术判断。先读与当前段落有关的 claim-capable anchors；若它们不能支撑当前句子，就不用它们，更不能为了提高引用数硬塞进去。
+- 先调用 `query_research_evidence`，用本节真正要回答的问题检索相关 note section、综合上下文和资源线索，再按返回的精确路径定向 `read_file`；不应以目录顺序或固定前几篇代替选择。把返回的精确片段、Evidence Routing Plan 的已读材料和你的领域推理放在同一论证中。若已有材料足够，直接综合。只有当缺少的是会改变 taxonomy、发展脉络、关键比较或正式引用的外部事实时，才可自主调用一次有界 `targeted_literature_supplement`，读取新增 canonical notes 后继续。普通解释、合理推导和研究议程不需要为了形式补检，也不要为了一个 claim 成批分页读全部 notes。
 - 不要包含 `\documentclass`、`\begin{document}`、`\end{document}`。
 - 如果当前 section 是 `abstract`，文件只能写摘要纯正文；不要写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`。`assemble_survey` 会负责放入 abstract 环境。
 - 如果 section_id 是 `theme_1`-`theme_4` 且 survey_state 标记 skipped，直接调用 `update_survey_section_state(section_id="{{ section_id }}", status="skipped")` 并 finish。
@@ -422,6 +422,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 不要把 citation bundle 堆在段末当 blanket support。若一句话包含强 claim（证明、显示、显著、因果、机制、实证、验证等），所引文献必须直接支持该 claim 类型；若文献只能支持背景/趋势/覆盖存在性，句子必须弱化为背景或趋势表述。
 - `abstract` 不写任何正式引用；具体 prior work attribution 放到 Introduction 或正文综述章节。
 - 对 abstract-only 文献，要标注 evidence 边界，不把 abstract claim 写成已验证机制；它们只能用于背景、趋势、范围、taxonomy 覆盖或证据边界，不能单独支撑机制、因果、效果或比较结论。
+- 当 Evidence Routing Plan 显示某 taxonomy 类只有 abstract-level lead 或明确 `known evidence gap` 时，把它作为范围边界、待升级阅读的问题或未来研究动机；不要把它伪装成已充分发展的研究流派。若该缺口会改变本节的核心分类或比较，优先做一次最小的定向补检并如实保留阅读层级；不要以重复已有奠基文献来掩盖缺口。
 - 避免冒号/破折号模板化 prose。正文普通段落不要使用 “Challenge: ...”, “Implication: ...”, “Future direction: ...” 作为段落骨架；用自然 topic sentence 和流畅过渡承载综述判断。
 - 不要把正文写成连续 `\paragraph{...}` 标签。优先使用少量有论证关系的 `\subsection{...}`，段落以完整 topic sentence 开始；`\paragraph` 只可用于一节中至多一个确有必要的紧凑定义或列举。
 - 表格只在跨论文项目真正可比时使用。宽表必须包在模板可用的 `\resizebox{\textwidth}{!}{...}`（双栏跨栏表）或 `\resizebox{\columnwidth}{!}{...}`（单栏表）中；不能把不可比的指标、性能或筛选分数强行并列。
