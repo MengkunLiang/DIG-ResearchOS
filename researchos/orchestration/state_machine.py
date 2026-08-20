@@ -440,6 +440,7 @@ def _ccf_template_gate_options(*, task_id: str) -> list[dict[str, Any]]:
 _T2_LITERATURE_PARAM_GATE_INPUT_PATHS = {
     "project": "project.yaml",
     "seed_outline_profile": "user_seeds/seed_outline_profile.json",
+    "retrieval_scope_plan": "literature/retrieval_scope_plan.json",
     "bridge_domain_plan": "literature/bridge_domain_plan.json",
 }
 
@@ -447,6 +448,7 @@ _T2_LITERATURE_PARAM_CONFIRM_GATE_INPUT_PATHS = {
     "project": "project.yaml",
     "literature_params": "literature/literature_params.json",
     "seed_outline_profile": "user_seeds/seed_outline_profile.json",
+    "retrieval_scope_plan": "literature/retrieval_scope_plan.json",
     "bridge_domain_plan": "literature/bridge_domain_plan.json",
 }
 

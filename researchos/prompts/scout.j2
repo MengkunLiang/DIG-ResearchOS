@@ -55,6 +55,11 @@
 {{ bridge_domain_plan_preview }}
 `bridge_domain_plan.json` 只定义召回优先级，不决定论文的学术角色。后续必须依据 title、abstract、来源和项目机制完成 `semantic_screen` 后，才能标为 `theory_bridge` 或进入深读。
 {% endif %}
+{% if has_retrieval_scope_plan %}
+## T1 已确认的三层检索范围
+{{ retrieval_scope_plan_preview }}
+先用 `core_lines` 设计主线问题、方法/基线、理论机制和评价查询。`must_cover` 表示本轮覆盖必须能回答该核心问题，不表示每条 line 都单独消耗一次工具调用；应合并语义相近的核心线，保持总 query 预算。`adjacent_lines` 只在能帮助机制、比较、边界或评价时使用。只有 `cross_domain_bridges` 才可使用 Bridge ID 和 `must_explore` 语义；不得把 core/adjacent 条目改标为 `query_bucket=theory_bridge` 或 `bridge_id`。
+{% endif %}
 
 ## Step 2: 用多个来源检索，并立即保留返回结果
 - 优先使用 `openalex_search`、`crossref_search`、`arxiv_search`；有凭据时可使用 `semantic_scholar_search`、`elsevier_scopus_search`。OR/MS 或管理科学主题可补充 `informs_search`。传统 MCP 连接若配置可用也可使用；未配置时继续使用公开来源，不要停在等待 MCP。

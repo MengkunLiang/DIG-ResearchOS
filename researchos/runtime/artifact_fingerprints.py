@@ -22,6 +22,7 @@ T45_INPUT_FINGERPRINT_PATHS = {
     "synthesis": "literature/synthesis.md",
     "synthesis_workbench": "literature/synthesis_workbench.json",
     "comparison_table": "literature/comparison_table.csv",
+    "retrieval_scope_plan": "literature/retrieval_scope_plan.json",
     "bridge_domain_plan": "literature/bridge_domain_plan.json",
     "agent_params_config": "config/system_config/agent_params.yaml",
 }

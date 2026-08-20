@@ -44,6 +44,8 @@ READ_FILE_T2_RAW_MIN_PAGE_TOKENS = 2_000
 # slow and less reliable when one raw JSONL page consumes most of that window.
 READ_FILE_T2_RAW_MAX_PAGE_TOKENS = 32_000
 STRUCTURED_ONLY_WRITE_PATHS = {
+    "retrieval_scope_plan.json": "retrieval_scope_plan",
+    "literature/retrieval_scope_plan.json": "retrieval_scope_plan",
     "bridge_domain_plan.json": "bridge_domain_plan",
     "literature/bridge_domain_plan.json": "bridge_domain_plan",
     "ideation/exp_plan.yaml": "exp_plan",

@@ -80,6 +80,7 @@ T2_FINALIZE_SOFT_TEXT_INPUTS = {"seed_ideas", "seed_constraints"}
 T2_FINALIZE_INPUT_PATHS = {
     "project": "project.yaml",
     "papers_raw": "literature/papers_raw.jsonl",
+    "retrieval_scope_plan": "literature/retrieval_scope_plan.json",
     "bridge_domain_plan": "literature/bridge_domain_plan.json",
     "seed_papers": "user_seeds/seed_papers.jsonl",
     "seed_pdfs": "user_seeds/pdfs",

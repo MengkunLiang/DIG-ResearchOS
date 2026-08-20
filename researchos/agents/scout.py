@@ -165,6 +165,10 @@ class ScoutAgent(Agent):
             ctx.workspace_dir / "literature" / "bridge_domain_plan.json",
             default="",
         )
+        retrieval_scope_plan = read_text_file(
+            ctx.workspace_dir / "literature" / "retrieval_scope_plan.json",
+            default="",
+        )
         literature_quality_policy = load_literature_quality_policy(ctx.workspace_dir)
         t2_config = load_t2_finalize_config(ctx.workspace_dir)
         reader_params = get_effective_reader_read_params(ctx.workspace_dir)
@@ -197,6 +201,8 @@ class ScoutAgent(Agent):
             has_external_resources=bool(external_resources),
             bridge_domain_plan_preview=bridge_domain_plan[:3000],
             has_bridge_domain_plan=bool(bridge_domain_plan.strip()),
+            retrieval_scope_plan_preview=retrieval_scope_plan[:6000],
+            has_retrieval_scope_plan=bool(retrieval_scope_plan.strip()),
             literature_quality_policy=literature_quality_policy.to_dict(),
             manuscript_language=manuscript_language,
             include_chinese_literature=allow_chinese_literature,

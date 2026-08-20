@@ -1502,6 +1502,7 @@ class IdeaEvolutionController:
         seed_ideas_excerpt = excerpt("user_seeds/seed_ideas.md", 2400)
         constraints_excerpt = excerpt("user_seeds/seed_constraints.md", 2400)
         seed_outline_excerpt = excerpt("user_seeds/seed_outline_profile.json", 3000)
+        retrieval_scope_excerpt = excerpt("literature/retrieval_scope_plan.json", 3600)
         seed_resource_records: list[dict[str, Any]] = []
         for index, item in enumerate(_read_jsonl_dicts(self.store.path("user_seeds/seed_external_resources.jsonl")), start=1):
             resource_id = str(item.get("id") or item.get("name") or item.get("source") or f"seed-{index}").strip()
@@ -1585,13 +1586,13 @@ class IdeaEvolutionController:
                     used_bridges.add(bridge_id)
         atoms = select_evidence_index_records(
             atom_records,
-            queries=[project_excerpt, synthesis_excerpt, seed_ideas_excerpt, constraints_excerpt, seed_outline_excerpt],
+            queries=[project_excerpt, synthesis_excerpt, seed_ideas_excerpt, constraints_excerpt, seed_outline_excerpt, retrieval_scope_excerpt],
             explicit_atom_ids=explicit_bridge_atom_ids,
             max_results=12,
         )
         resource_leads = select_evidence_index_records(
             resource_records,
-            queries=[project_excerpt, synthesis_excerpt, seed_ideas_excerpt, constraints_excerpt, seed_outline_excerpt],
+            queries=[project_excerpt, synthesis_excerpt, seed_ideas_excerpt, constraints_excerpt, seed_outline_excerpt, retrieval_scope_excerpt],
             max_results=4,
         )
         planner_bundle = {
@@ -1618,6 +1619,7 @@ class IdeaEvolutionController:
             "user_seed_ideas_excerpt": seed_ideas_excerpt,
             "user_constraints_excerpt": constraints_excerpt,
             "user_seed_outline_excerpt": seed_outline_excerpt,
+            "retrieval_scope_excerpt": retrieval_scope_excerpt,
             "evidence_atoms": atoms,
             "resource_leads": resource_leads,
             "resource_usage_boundary": (

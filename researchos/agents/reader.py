@@ -154,6 +154,10 @@ class ReaderAgent(Agent):
             ctx.workspace_dir / "user_seeds" / "seed_constraints.md",
             default="",
         )
+        retrieval_scope_plan = read_text_file(
+            ctx.workspace_dir / "literature" / "retrieval_scope_plan.json",
+            default="",
+        )
         if is_placeholder_text(seed_constraints):
             seed_constraints = ""
         queue_config = load_deep_read_queue_config(ctx.workspace_dir)
@@ -165,6 +169,8 @@ class ReaderAgent(Agent):
             "has_seed_outline_profile": bool(seed_outline_profile.strip()),
             "seed_constraints_preview": seed_constraints[:1500],
             "has_seed_constraints": bool(seed_constraints.strip()),
+            "retrieval_scope_plan_preview": retrieval_scope_plan[:4200],
+            "has_retrieval_scope_plan": bool(retrieval_scope_plan.strip()),
             "verified_paper_count": 0,
             "verified_paper_preview": [],
             "existing_note_count": 0,

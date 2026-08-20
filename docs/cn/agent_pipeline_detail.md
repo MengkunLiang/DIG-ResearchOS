@@ -527,6 +527,7 @@ researchos run-task HELLO --workspace ./workspace/dev-smoke
 | - | `user_seeds/seed_ideas.md` | 如用户在 T1 阶段明确了想法 |
 | - | `user_seeds/seed_constraints.md` | 如用户给出硬约束 |
 | - | `user_seeds/seed_external_resources.jsonl` | 如用户给出额外资源 |
+| `retrieval_scope_plan` | `literature/retrieval_scope_plan.json` | T1 的核心/邻接/Bridge 三层检索范围真源 |
 | `bridge_domain_plan` | `literature/bridge_domain_plan.json` | T2 跨领域召回计划；可以为空计划 |
 
 ### `project.yaml` 到底存什么
@@ -551,8 +552,8 @@ T1 的本质不是“自由聊天”，而是一个结构化初始化阶段：
 3. 通过多轮交互明确研究方向和边界
 4. 收集用户已有资源
 5. 形成 `project.yaml`
-6. 生成或确认 `literature/bridge_domain_plan.json`
-7. 对 `project.yaml` 和 bridge plan 做 schema/语义校验
+6. 确认含核心、邻接与真正 Bridge 三层的 `literature/retrieval_scope_plan.json`，并派生窄 Bridge 计划
+7. 对 `project.yaml`、检索范围和派生 Bridge plan 做 schema/语义校验
 8. 进行伦理/风险 screening
 9. 写入 `state.yaml`
 
@@ -570,9 +571,9 @@ T1 的本质不是“自由聊天”，而是一个结构化初始化阶段：
 | 第2轮 | 后续文献检索和 idea generation 需要 seed 作为偏好和约束 | 种子论文、已有想法、硬约束；已在 `user_seeds/` 中发现的内容可直接确认 |
 | 第2.5轮 | T5 外部实验 handoff 需要可复用资源 | 数据集、代码仓库、benchmark、baseline、预训练模型 |
 | 第3轮 | 写入 `project.yaml` 前需要用户确认 | 草案是否正确、是否需要修改 |
-| 桥接轮 | T2 需要知道是否重点探索跨领域迁移素材 | LLM 提出候选 bridge domains；用户可选择重点交叉、删除、手动新增或全部跳过 |
+| 范围与桥接轮 | T2 同时需要主线文献范围与真正跨领域迁移素材 | LLM 区分核心研究线、邻接线与真正 Bridge；用户确认、修改、新增或跳过 Bridge 层 |
 
-如果用户给出论文条目，T1 优先用 `process_seed_paper` 规范化后写入 seed 文件。桥接轮由 LLM 先根据 `project.yaml` 草案、seed papers 和 seed ideas 生成候选方向，再通过 `ask_human` 让用户确认。这个 gate 必须允许四类选择：重点交叉（`priority=must_explore`）、普通交叉（`priority=should_explore`）、删除某些方向、或“不交叉/全部跳过”。正式 `literature/bridge_domain_plan.json` 只包含用户确认后的清单；一旦写入正式清单，条目就是 confirmed bridge，条目内 `source=user|auto` 只记录候选最初来自用户还是 LLM 建议，不再决定是否 confirmed。用户选择不交叉时必须写合法空计划：`{"semantics":"bridge_domain_plan","source":"none","bridge_domains":[]}`；此时 T2 不做 bridge 专属 query，T3 不强制读 bridge 论文，T4 也不强制生成 `bridge_synthesis` idea。最终它用 `write_structured_file` 生成 `project.yaml` 和 `literature/bridge_domain_plan.json`，必要时写 `state.yaml` 和 seed artifacts。`bridge_domain_plan.json` 不能写在 workspace 根目录：`write_file` 会拒绝这类结构化产物，`write_structured_file(schema_name="bridge_domain_plan")` 也只接受 `literature/bridge_domain_plan.json`，因为 T2 只读取这个正式路径。收尾时 `validate_outputs()` 会用 `project` 与 `bridge_domain_plan` schema 检查结构，并检查 source=none 时清单必须为空、非空清单必须有 `bridge_id` 和专属 `queries`；如果发现敏感研究方向，伦理 screening 会阻止完成。
+如果用户给出论文条目，T1 优先用 `process_seed_paper` 规范化后写入 seed 文件。范围与桥接轮会根据 `project.yaml` 草案、seed papers 和 seed ideas 生成 `retrieval_scope_plan`，并明确区分核心研究线、邻接理论/方法线和真正跨领域 Bridge。直接使用的方法栈、种子论文的直接延伸、主要 baseline 或核心理论必须留在核心或邻接层，不能写成 Bridge。一个真正 Bridge 必须有不同来源领域、结构映射和可证伪的迁移问题。用户确认或修改三层内容，也可跳过 Bridge 层而保留核心范围。T1 写入 `project.yaml` 与 `literature/retrieval_scope_plan.json`；结构化写入工具会验证范围计划，并从已确认的 `cross_domain_bridges` 确定性生成兼容的 `literature/bridge_domain_plan.json`。因此 `must_explore` 只属于真正 Bridge；核心线的 `must_cover` 指导正常 T2 主线检索，不占用 Bridge 保留位。空 Bridge 投影合法，T2/T3/T4 不会产生 Bridge 特有义务。收尾时 `validate_outputs()` 校验 project、范围计划和派生 Bridge 契约；敏感研究方向仍由伦理 screening 阻止完成。
 
 T1 可能显得比普通聊天久，原因是它不是一次问答，而是要把人类偏好、已有材料、外部资源和约束整理成可被 T2-T9 复用的结构化事实源。若 workspace 已经有完整 `project.yaml` 和 seed 文件，可以直接从 T2 或后续节点恢复/调试；否则 T1 必须先问清楚，避免后面大量 LLM/检索/实验资源浪费在错误方向上。
 
@@ -1163,7 +1164,7 @@ T2 deterministic finalize 还会把 citation graph 转成可读证据链，而�
 
 Bridge domain 是一条独立于主线文献池的补强链路，不等于“把所有跨域材料都强行写进论文”。当前实现按以下契约运行：
 
-1. **T1 来源契约**：`literature/bridge_domain_plan.json` 是唯一正式清单。`source=none + bridge_domains=[]` 表示用户选择不交叉，T2/T3/T4 不强制 bridge；非空清单表示用户已确认这些 bridge，条目内 `source=user|auto` 只记录候选来源，不决定 confirmed 身份。
+1. **T1 来源契约**：`literature/retrieval_scope_plan.json` 是研究者确认后的唯一真源，分别记录核心、邻接与真正跨领域三层。结构化写入工具只从第三层派生 `bridge_domain_plan.json`。因此 `source=none + bridge_domains=[]` 仍表示 T2/T3/T4 不强制跨域工作，但不会删除已确认的核心检索范围。
 2. **T2 专属召回**：Scout 读取正式清单后，为 `must_explore` 设计至少 3 条带 `bridge_id` 的专属 query，为 `should_explore` 至少设计 1 条 query。检索结果保留 `bridge_id` / `recalled_by_bridges`，去重时同一论文可同时保留多个 bridge 来源。
 3. **两道召回门**：Scout validator 分开检查 recall 层和 screen 层。`must_explore` 若 raw 层完全无命中，会在 T2 直接报告召回层断裂；若有命中但没有任何 `semantic_screen.can_enter_deep_read=true` 的候选，会报告 screen 层断裂。`should_explore` 不足只作为覆盖提示，不强行阻断。
 4. **身份冲突归一**：如果论文通过 core screen（`can_enter_core=true`、`role=core`、关系属于可解释机制/方法/评价/baseline-dataset），它归入 `deep_read_notes/` 主线，`bridge_id` 被剥离；原 bridge 来源写入 `contributed_bridges`，供 T3.5/T4 仍能追溯迁移线索。未通过 core screen 但通过 bridge screen 的跨域论文进入 bridge 桶。

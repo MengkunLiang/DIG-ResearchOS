@@ -63,6 +63,7 @@ class PIAgent(Agent):
                     "prompt_template": "pi.j2",
                     "structured_outputs": {
                         "project.yaml": "project",
+                        "literature/retrieval_scope_plan.json": "retrieval_scope_plan",
                         "literature/bridge_domain_plan.json": "bridge_domain_plan",
                     },
                 },
@@ -195,12 +196,41 @@ class PIAgent(Agent):
 
         # 3. seed 文件是可选的，不强制要求
         # 如果用户没有提供种子数据，Agent 可以不创建这些文件
-        # 这里只检查 project.yaml、state.yaml 和 bridge_domain_plan.json
+        # T1 writes one researcher-confirmed scope plan.  The narrow Bridge
+        # plan is a deterministic projection for older downstream consumers.
+        ok, err = self._validate_retrieval_scope_plan(ctx)
+        if not ok:
+            return False, err
 
         ok, err = self._validate_bridge_domain_plan(ctx)
         if not ok:
             return False, err
 
+        return True, None
+
+    def _validate_retrieval_scope_plan(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
+        plan_path = ctx.workspace_dir / "literature" / "retrieval_scope_plan.json"
+        if not plan_path.exists():
+            # Keep legacy/direct Agent validation usable when the caller did
+            # not declare the modern T1 output contract.  The state-machine
+            # T1 context does declare it and therefore remains fail-closed.
+            if "retrieval_scope_plan" not in ctx.outputs_expected:
+                return True, None
+            return False, "缺少 literature/retrieval_scope_plan.json；T1 必须确认核心、邻接与真正跨领域的检索范围"
+        try:
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return False, f"retrieval_scope_plan.json 解析失败: {exc}"
+        valid, error = validate_record(plan, "retrieval_scope_plan") if isinstance(plan, dict) else (False, "根对象不是 JSON object")
+        if not valid:
+            return False, f"retrieval_scope_plan.json schema 校验失败: {error}"
+        if not isinstance(plan, dict) or plan.get("semantics") != "retrieval_scope_plan":
+            return False, "retrieval_scope_plan.json semantics 必须为 retrieval_scope_plan"
+        for key in ("core_lines", "adjacent_lines", "cross_domain_bridges"):
+            if not isinstance(plan.get(key), list):
+                return False, f"retrieval_scope_plan.json {key} 必须是数组"
+        if not plan["core_lines"]:
+            return False, "retrieval_scope_plan.json 至少需要一条核心研究线；研究范围不明确时应先补充 project.yaml"
         return True, None
 
     def _validate_bridge_domain_plan(self, ctx: ExecutionContext) -> tuple[bool, str | None]:

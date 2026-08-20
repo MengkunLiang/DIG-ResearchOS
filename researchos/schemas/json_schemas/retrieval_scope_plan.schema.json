@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://researchos.dev/schemas/retrieval_scope_plan.schema.json",
+  "title": "Retrieval Scope Plan",
+  "description": "T1's researcher-confirmed three-layer literature scope. Core and adjacent lines guide mainline retrieval; only cross-domain bridges are projected into bridge_domain_plan.json.",
+  "type": "object",
+  "required": ["semantics", "source", "core_lines", "adjacent_lines", "cross_domain_bridges"],
+  "properties": {
+    "version": {"type": "string"},
+    "semantics": {"const": "retrieval_scope_plan"},
+    "source": {"enum": ["user", "auto", "mixed"]},
+    "core_lines": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/core_line"}
+    },
+    "adjacent_lines": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/adjacent_line"}
+    },
+    "cross_domain_bridges": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/bridge_line"}
+    }
+  },
+  "definitions": {
+    "core_line": {
+      "type": "object",
+      "required": ["line_id", "name", "role", "why", "queries", "priority", "source"],
+      "properties": {
+        "line_id": {"type": "string", "pattern": "^core[1-9][0-9]*$"},
+        "name": {"type": "string", "minLength": 3},
+        "role": {"enum": ["research_object", "method_or_model", "theory_or_mechanism", "baseline_or_evaluation"]},
+        "why": {"type": "string", "minLength": 12},
+        "queries": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 3}},
+        "priority": {"enum": ["must_cover", "should_cover"]},
+        "source": {"enum": ["user", "auto"]}
+      },
+      "additionalProperties": true
+    },
+    "adjacent_line": {
+      "type": "object",
+      "required": ["line_id", "name", "why", "queries", "source"],
+      "properties": {
+        "line_id": {"type": "string", "pattern": "^adj[1-9][0-9]*$"},
+        "name": {"type": "string", "minLength": 3},
+        "why": {"type": "string", "minLength": 12},
+        "queries": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 3}},
+        "source": {"enum": ["user", "auto"]}
+      },
+      "additionalProperties": true
+    },
+    "bridge_line": {
+      "type": "object",
+      "required": ["bridge_id", "name", "source_field", "structural_mapping", "transfer_question", "why", "queries", "priority", "source"],
+      "properties": {
+        "bridge_id": {"type": "string", "pattern": "^b[1-9][0-9]*$"},
+        "name": {"type": "string", "minLength": 3},
+        "source_field": {"type": "string", "minLength": 3},
+        "structural_mapping": {"type": "string", "minLength": 20},
+        "transfer_question": {"type": "string", "minLength": 20},
+        "why": {"type": "string", "minLength": 12},
+        "queries": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 3}},
+        "priority": {"enum": ["must_explore", "should_explore"]},
+        "source": {"enum": ["user", "auto"]}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

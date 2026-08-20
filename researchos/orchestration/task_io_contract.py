@@ -118,12 +118,14 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "outputs": {
             "project": "project.yaml",
             "state": "state.yaml",
+            "retrieval_scope_plan": "literature/retrieval_scope_plan.json",
             "bridge_domain_plan": "literature/bridge_domain_plan.json",
             # seed 文件是可选的，如果用户没有提供则可以不创建或创建空文件
         },
         "required_inputs": [],
         "schemas": {
             "project": "project",
+            "retrieval_scope_plan": "retrieval_scope_plan",
             "bridge_domain_plan": "bridge_domain_plan",
         },
     },
@@ -131,6 +133,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "inputs": {
             "project": "project.yaml",
             "seed_outline_profile": "user_seeds/seed_outline_profile.json",
+            "retrieval_scope_plan": "literature/retrieval_scope_plan.json",
             "bridge_domain_plan": "literature/bridge_domain_plan.json",
         },
         "outputs": {
@@ -144,6 +147,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "project": "project.yaml",
             "literature_params": "literature/literature_params.json",
             "seed_outline_profile": "user_seeds/seed_outline_profile.json",
+            "retrieval_scope_plan": "literature/retrieval_scope_plan.json",
             "bridge_domain_plan": "literature/bridge_domain_plan.json",
         },
         "outputs": {
@@ -163,6 +167,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "seed_ideas": "user_seeds/seed_ideas.md",
             "seed_outline_profile": "user_seeds/seed_outline_profile.json",
             "seed_external_resources": "user_seeds/seed_external_resources.jsonl",
+            "retrieval_scope_plan": "literature/retrieval_scope_plan.json",
             "bridge_domain_plan": "literature/bridge_domain_plan.json",
         },
         "outputs": {
@@ -253,6 +258,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
     "T3.5": {
         "inputs": {
             "project": "project.yaml",
+            "retrieval_scope_plan": "literature/retrieval_scope_plan.json",
             "deep_read_notes_dir": "literature/deep_read_notes",
             "comparison_table": "literature/comparison_table.csv",
             **LITERATURE_RESOURCE_CATALOG_INPUTS,
@@ -755,6 +761,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
     "T4": {
         "inputs": {
             "project": "project.yaml",
+            "retrieval_scope_plan": "literature/retrieval_scope_plan.json",
             "synthesis": "literature/synthesis.md",
             "comparison_table": "literature/comparison_table.csv",
             **LITERATURE_RESOURCE_CATALOG_INPUTS,
@@ -842,6 +849,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
     "T4.5": {
         "inputs": {
             "project": "project.yaml",
+            "retrieval_scope_plan": "literature/retrieval_scope_plan.json",
             "hypothesis_brief": "ideation/hypothesis_brief.yaml",
             "selected_candidate": "ideation/selected/selected_candidate.json",
             "t45_search_targets": "ideation/selected/t45_search_targets.json",
@@ -1258,6 +1266,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
     "T8": {
         "inputs": {
             "project": "project.yaml",
+            "retrieval_scope_plan": "literature/retrieval_scope_plan.json",
             "writing_style": "drafts/writing_style.json",
             "synthesis": "literature/synthesis.md",
             "synthesis_workbench": "literature/synthesis_workbench.json",

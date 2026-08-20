@@ -90,6 +90,7 @@ class NoveltyAuditorAgent(Agent):
         brief, brief_text, anchors = _load_pre_novelty_brief(ws)
         synthesis = read_text_file(ws / "literature" / "synthesis.md", default="")
         comparison_table = read_text_file(ws / "literature" / "comparison_table.csv", default="")
+        retrieval_scope_plan = read_text_file(ws / "literature" / "retrieval_scope_plan.json", default="")
         resource_catalog_summary = read_text_file(
             ws / "literature" / "resource_catalog_summary.json", default=""
         )
@@ -107,6 +108,7 @@ class NoveltyAuditorAgent(Agent):
             hypotheses_preview=brief_text[:5000],
             synthesis_preview=synthesis[:3000],
             comparison_table_preview=comparison_table[:1000],
+            retrieval_scope_plan_preview=retrieval_scope_plan[:2400],
             resource_catalog_summary_preview=resource_catalog_summary[:2200],
             paper_card_inventory=paper_card_inventory,
             bridge_catalog_preview=bridge_catalogs,

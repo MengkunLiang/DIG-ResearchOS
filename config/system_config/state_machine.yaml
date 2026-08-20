@@ -55,6 +55,7 @@ states:
     mode: init
     outputs:
       project: project.yaml      # 项目配置文件
+      retrieval_scope_plan: literature/retrieval_scope_plan.json # T1 确认的核心/邻接/跨域检索范围
       bridge_domain_plan: literature/bridge_domain_plan.json # T2 跨领域检索计划，可为空
       state: state.yaml          # 项目状态文件
     next_on_success: T2-PARAM-GATE
@@ -71,6 +72,7 @@ states:
     inputs:
       project: project.yaml
       seed_outline_profile: user_seeds/seed_outline_profile.json
+      retrieval_scope_plan: literature/retrieval_scope_plan.json
       bridge_domain_plan: literature/bridge_domain_plan.json
     outputs:
       literature_params: literature/literature_params.json
@@ -91,6 +93,7 @@ states:
       project: project.yaml
       literature_params: literature/literature_params.json
       seed_outline_profile: user_seeds/seed_outline_profile.json
+      retrieval_scope_plan: literature/retrieval_scope_plan.json
       bridge_domain_plan: literature/bridge_domain_plan.json
     outputs:
       literature_params_confirmation: literature/literature_params_confirmation.json
@@ -114,6 +117,7 @@ states:
       seed_ideas: user_seeds/seed_ideas.md             # 种子想法（可选）
       seed_outline_profile: user_seeds/seed_outline_profile.json # 结构化 seed outline（可选）
       seed_external_resources: user_seeds/seed_external_resources.jsonl  # 外部资源（可选）
+      retrieval_scope_plan: literature/retrieval_scope_plan.json # T1 确认的主线/邻接/跨域范围
       bridge_domain_plan: literature/bridge_domain_plan.json # T1 交互生成的桥接领域计划（可空）
     outputs:
       papers_raw: literature/papers_raw.jsonl           # 原始检索结果
@@ -211,6 +215,7 @@ states:
     mode: synthesize
     inputs:
       project: project.yaml                             # 输入：项目配置
+      retrieval_scope_plan: literature/retrieval_scope_plan.json # T1 确认的核心/邻接/跨域范围，仅作覆盖先验
       deep_read_notes_dir: literature/deep_read_notes           # 输入：论文笔记
       comparison_table: literature/comparison_table.csv # 输入：对比表
       resource_catalog: literature/resource_catalog.jsonl # 可选：论文关联资源发现目录，仅用于可行性/基线资源核验
@@ -903,6 +908,7 @@ states:
     agent: ideation
     inputs:
       project: project.yaml                             # 项目配置
+      retrieval_scope_plan: literature/retrieval_scope_plan.json # T1 范围真源；主线与跨域语义不得混淆
       synthesis: literature/synthesis.md               # 文献综述
       literature_manifest: literature/literature_manifest.json # 跨任务统一文献清单
       comparison_table: literature/comparison_table.csv # 方法对比表
@@ -979,6 +985,7 @@ states:
     agent: novelty_auditor
     inputs:
       project: project.yaml                             # 输入：项目配置
+      retrieval_scope_plan: literature/retrieval_scope_plan.json # 范围与桥接语义审计先验，非碰撞证据
       hypothesis_brief: ideation/hypothesis_brief.yaml  # T4 Gate1 选择后的 Pre-Novelty draft bundle
       selected_candidate: ideation/selected/selected_candidate.json
       t45_search_targets: ideation/selected/t45_search_targets.json

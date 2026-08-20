@@ -43,6 +43,7 @@ T4_INPUT_FINGERPRINT_PATHS: dict[str, str] = {
     "synthesis_workbench": "literature/synthesis_workbench.json",
     "domain_map": "literature/domain_map.json",
     "comparison_table": "literature/comparison_table.csv",
+    "retrieval_scope_plan": "literature/retrieval_scope_plan.json",
     "bridge_domain_plan": "literature/bridge_domain_plan.json",
     "literature_manifest": "literature/literature_manifest.json",
     "core_deep_notes": "literature/deep_read_notes",

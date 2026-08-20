@@ -22,7 +22,7 @@ T1 -> T2 -> T3 -> T3.5
 
 | Stage | Research question | Key outputs | Human control |
 | --- | --- | --- | --- |
-| T1 | What is in scope and what constraints/seed materials govern it? | `project.yaml`, scope/bridge artifacts | Scope and bridge gates |
+| T1 | What is in scope and what constraints/seed materials govern it? | `project.yaml`, three-layer retrieval scope, derived Bridge plan | Scope and bridge gates |
 | T2 | Which source-backed papers form the credible candidate pool? | verified papers, domain map, queues, backlog, search log | Coverage/language parameter gate |
 | T3 | What does each retained work actually support? | paper notes/cards, comparison table, reading audit | Access/evidence pauses |
 | T3.5 | What mechanisms, tensions, contribution spaces, and transfers emerge? | synthesis/workbench, missing-area audit | Optional Survey decision and current-corpus vs targeted-retrieval preference |

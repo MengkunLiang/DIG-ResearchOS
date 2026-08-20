@@ -32,6 +32,14 @@ Start with `query_research_evidence(purpose="novelty")` using the candidate prob
 {{ comparison_table_preview }}
 {% endif %}
 
+{% if retrieval_scope_plan_preview %}
+### Confirmed retrieval scope
+
+{{ retrieval_scope_plan_preview }}
+
+Use this only to distinguish the project's core literature from a genuine cross-domain transfer and to check whether a material neighbor may be missing. It is not evidence that a collision, mechanism, or novelty claim is true.
+{% endif %}
+
 {% if resource_catalog_summary_preview %}
 ### Resource catalog preview
 

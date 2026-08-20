@@ -26,6 +26,13 @@
 {{ seed_constraints_preview }}
 {% endif %}
 
+{% if has_retrieval_scope_plan %}
+## T1 已确认的三层检索范围
+{{ retrieval_scope_plan_preview }}
+
+这是本轮综合的覆盖与取舍先验，不是论文证据。以 `core_lines` 检查主线、方法/机制与基线是否获得足够的真实阅读材料；仅在能帮助解释机制、比较、边界或评价时使用 `adjacent_lines`。只有 `cross_domain_bridges` 可以作为跨域迁移候选，且仍须由实际 note 决定其可支持的论断。不要为了逐项“完成范围”而制造方法家族、研究问题或引用配额。
+{% endif %}
+
 ## 你的任务
 精读 workspace/literature/papers_verified.jsonl / papers_dedup.jsonl 中的 {{ paper_count }} 篇论文，并优先围绕 deep-read 队列产出结构化笔记。
 {% if resume_mode or existing_note_count > 0 %}

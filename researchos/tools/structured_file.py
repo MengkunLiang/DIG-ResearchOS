@@ -119,6 +119,35 @@ class WriteStructuredFileTool(Tool):
                 ),
                 error="wrong_artifact_path",
             )
+        if (
+            schema_name == "bridge_domain_plan"
+            and self.policy.task_id == "T1"
+            and (self.policy.workspace_dir / "literature" / "retrieval_scope_plan.json").is_file()
+        ):
+            return ToolResult(
+                ok=False,
+                content=(
+                    "T1 已有 retrieval_scope_plan.json。Bridge plan 必须由其真正跨领域层自动投影，"
+                    "不能再单独覆盖；请修改 retrieval_scope_plan.json 并重新写入。"
+                ),
+                error="bridge_plan_is_derived",
+            )
+        if schema_name == "retrieval_scope_plan" and normalized_path != "literature/retrieval_scope_plan.json":
+            return ToolResult(
+                ok=False,
+                content=(
+                    "retrieval_scope_plan 是 T1 的正式三层检索范围计划，必须写入 "
+                    "literature/retrieval_scope_plan.json；其中真正跨领域的条目会自动投影到 "
+                    "literature/bridge_domain_plan.json。"
+                ),
+                error="wrong_artifact_path",
+            )
+        if schema_name == "retrieval_scope_plan" and format_type != "json":
+            return ToolResult(
+                ok=False,
+                content="retrieval_scope_plan.json 必须使用 JSON 格式写入；T1 与后续阶段会将其作为 JSON 读取。",
+                error="wrong_artifact_format",
+            )
 
         if schema_name == "research_blueprint":
             # Keep one canonical on-disk shape while accepting only lossless
@@ -168,6 +197,22 @@ class WriteStructuredFileTool(Tool):
                         error="schema_validation_failed",
                     )
 
+            derived_bridge_plan: dict[str, Any] | None = None
+            if schema_name == "retrieval_scope_plan":
+                # Validate the deterministic projection before persisting
+                # either file.  A malformed projection must not leave T1
+                # reporting a half-saved, internally inconsistent scope.
+                from ..runtime.retrieval_scope import project_bridge_domain_plan
+
+                derived_bridge_plan = project_bridge_domain_plan(data)
+                bridge_ok, bridge_error = validate_record(derived_bridge_plan, "bridge_domain_plan")
+                if not bridge_ok:
+                    return ToolResult(
+                        ok=False,
+                        content=f"检索范围计划的 Bridge 投影未通过校验: {bridge_error}",
+                        error="bridge_projection_validation_failed",
+                    )
+
             # 2. 序列化
             if format_type == "yaml":
                 content = yaml.safe_dump(
@@ -197,6 +242,21 @@ class WriteStructuredFileTool(Tool):
             abs_path = self.policy.resolve_write(path)
             abs_path.parent.mkdir(parents=True, exist_ok=True)
             abs_path.write_text(content, encoding="utf-8")
+            derived_bridge: dict[str, Any] | None = None
+            if derived_bridge_plan is not None:
+                # The existing Bridge plan has expensive, downstream
+                # must-explore semantics.  Derive it from the narrow bridge
+                # lane so core method lines can never receive those slots.
+                from ..runtime.retrieval_scope import BRIDGE_DOMAIN_PLAN_REL_PATH
+
+                bridge_path = self.policy.resolve_write(BRIDGE_DOMAIN_PLAN_REL_PATH)
+                bridge_path.parent.mkdir(parents=True, exist_ok=True)
+                bridge_content = json.dumps(derived_bridge_plan, ensure_ascii=False, indent=2) + "\n"
+                bridge_path.write_text(bridge_content, encoding="utf-8")
+                derived_bridge = {
+                    "path": BRIDGE_DOMAIN_PLAN_REL_PATH,
+                    "bridge_count": len(derived_bridge_plan["bridge_domains"]),
+                }
 
             # A successful schema write is deliberately not mislabeled as a
             # successful T4.5 formalization.  The three source files share
@@ -233,6 +293,8 @@ class WriteStructuredFileTool(Tool):
                 "schema_name": schema_name,
                 "normalizations": normalizations,
             }
+            if derived_bridge is not None:
+                data["derived_bridge_plan"] = derived_bridge
             if is_t45_source:
                 data.update(
                     {
@@ -273,6 +335,12 @@ class WriteStructuredFileTool(Tool):
                     f"✅ 成功写入 {len(content)} 字符到 {path}\n"
                     f"格式: {format_type}, Schema: {schema_name}"
                     + ("\n已规范化兼容字段: " + "; ".join(normalizations) if normalizations else "")
+                    + (
+                        "\n已同步生成 bridge_domain_plan.json："
+                        f"{derived_bridge['bridge_count']} 条真正跨领域 Bridge"
+                        if derived_bridge is not None
+                        else ""
+                    )
                     + ("\n" + completion if completion else "")
                 ),
                 data=data,

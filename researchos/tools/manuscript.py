@@ -1662,6 +1662,7 @@ def build_resource_index(workspace: Path, *, include_previews: bool = False) -> 
     artifacts: list[dict[str, Any]] = []
     for rel in [
         "project.yaml",
+        "literature/retrieval_scope_plan.json",
         "literature/synthesis.md",
         "literature/synthesis_workbench.json",
         "literature/comparison_table.csv",

@@ -9,7 +9,9 @@ Use this guidance before calling search or paper-processing tools.
 
 ## LLM Responsibilities
 
-- Infer the research domain from `project.yaml`, seed papers, seed ideas, constraints, and user-provided resources.
+- Infer the research domain from `project.yaml`, seed papers, seed ideas, constraints, user-provided resources, and the researcher-confirmed `literature/retrieval_scope_plan.json` when present.
+- Treat the scope plan as three distinct inputs. `core_lines` define normal mainline retrieval and must never be relabelled as a Bridge. `adjacent_lines` are selective theory/method or comparison leads. Only `cross_domain_bridges` can use a Bridge ID or the costly `must_explore` reservation semantics.
+- Cover every `must_cover` core line through the smallest non-redundant set of queries. Combine closely related lines into one query where that preserves the research distinction; do not mechanically issue one search per line.
 - Build a `domain_profile` with inclusion concepts, exclusion concepts, ambiguous terms, target venue/category hints, dataset or benchmark names, and related subfields.
 - Design diverse queries from multiple angles: core mechanism, task/application, evaluation setting, baseline family, adjacent field, and recent terminology.
 - Choose the source portfolio from the project-derived domain profile. Use broad scholarly indexes for every project, add `informs_search` for OR/MS, management science, information systems, operations, supply chain, queueing, or optimization questions, and favor computer-science sources for CS-heavy topics. An empty specialized source is acceptable and must not block T2.
