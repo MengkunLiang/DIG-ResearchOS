@@ -167,6 +167,15 @@ _AUDIT_LANGUAGE = re.compile(
     r"proposed_not_verified)\b"
 )
 
+# These are runtime/provenance labels, not academic prose.  A Proposal should
+# state a falsifiable prediction or a concrete pre-execution check instead of
+# exposing a workflow flag such as ``verification_required`` or ``待验证``.
+_INTERNAL_VERIFICATION_LABEL = re.compile(
+    r"(?i)\b(?:verification_required|requires_verification|proposed_not_verified|"
+    r"to_be_verified|pending_verification|evidence[_ ]?(?:level|status))\b|"
+    r"\b(?:to be verified|pending verification)\b|待(?:验证|核验|补证)|(?:需要|需)核验|证据(?:等级|状态)"
+)
+
 
 def canonical_orientation(profile_type: str | None) -> str:
     """Map T4's durable profile spelling to one of the three T4.5 lenses."""
@@ -927,6 +936,13 @@ def _claims_markdown_errors(
 
     if not re.search(r"(?im)^#\s*(?:Research Claims and Hypotheses|研究主张与假设)\s*$", text):
         return "hypotheses.md must start with '# Research Claims and Hypotheses' or '# 研究主张与假设'", []
+    verification_labels = _INTERNAL_VERIFICATION_LABEL.findall(text)
+    if verification_labels:
+        return (
+            "hypotheses.md exposes internal verification labels; express the uncertainty as a falsifiable prediction, "
+            "competing explanation, or planned disconfirming test",
+            [],
+        )
     audit_hits = _AUDIT_LANGUAGE.findall(text)
     if len(audit_hits) > 1:
         return "hypotheses.md leaks internal novelty-audit labels into researcher-facing claims", []
@@ -990,6 +1006,13 @@ def _proposal_text_errors(
     repeated = _repeated_sentence_count(text)
     if repeated >= 3:
         return "research_proposal.md repeats the same sentence or near-identical sentence blocks instead of developing the argument", []
+    verification_labels = _INTERNAL_VERIFICATION_LABEL.findall(text)
+    if verification_labels:
+        return (
+            "research_proposal.md exposes internal verification labels; express a material uncertainty once as a "
+            "concrete pre-execution validation, mitigation, or fallback in Risks, Limitations and Execution Plan",
+            [],
+        )
     audit_hits = _AUDIT_LANGUAGE.findall(text)
     if len(audit_hits) > 1:
         return "research_proposal.md is audit-dominated; move internal T4.5/collision labels to novelty_audit.md", []

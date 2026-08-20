@@ -2744,6 +2744,8 @@ validator 会检查：
 
 `T4.5-FORMALIZE` 使用新的 `ResearchFormalizerAgent` 上下文，只生成或修复构成同一研究方案所需的 source artifact：`research_blueprint.yaml`、`claim_registry.yaml`、`hypotheses.md`、`exp_plan.yaml` 和七部分 Proposal。正式化每轮以 `validate_t45_formalization_sources` 的**最新** `valid` 结果为准：启动时的 prompt 诊断只是快照，不能在同一轮结构化修复后继续阻止 prose 写作。`valid=false` 时只修复错误指定的结构化来源或最小同步集合；`valid=true` 后只写 hypotheses/Proposal 并回读。运行时随后确定性编译 contribution-hypothesis map、validation map、kill criteria、research dossier 与 proposal manifest；这些派生产物不能由 Formalizer 直接写入。Formalizer 不能把计划结果提升为实证结果，也不能覆盖 novelty audit。
 
+Proposal 与 hypotheses 的不确定性必须写成研究语言，而不是运行时标签。机制与贡献用“本文提出”及其设计理由表达，假设写成可被竞争解释和反事实检验推翻的预测；资源、数据或实施条件尚未确定时，只在“风险、局限与执行计划”中一次说明相应的前置核验、缓解或备选方案。`verification_required`、`proposed_not_verified`、`待验证`、证据等级、T4.5、collision、Candidate ID 等内部词汇不得进入研究者可见正文。
+
 每次对 blueprint、claim registry 或 experiment plan 调用 `write_structured_file` 时，系统先验证该文件自身的 schema，再立即报告**三份文件合在一起**是否通过 T4.5 共同研究契约。因此，若仍有 claim 映射、design rationale、challenge-to-component 链接或组件 ablation/mechanism-test 覆盖问题，界面不会把“文件已保存”伪装成“正式化已完成”。报告会同时列出所有彼此独立的当前失败项，让 Formalizer 一次修复最小来源集合，而不是每次尝试写 Proposal 才发现一个新阻塞项。
 
 同样地，`researchos validate --task T4.5 --scope outputs` 现在明确输出两类结果：`checks.outputs` 仅表示新颖性审计节点本身；`checks.t45_research_package` 才表示面向研究者的完整研究包。若 audit verdict 已通过但 `t45_research_package.ok=false`，说明仍需完成 T4.5-FORMALIZE 或 T4.5-REVIEW，T5 尚未被授权。若 audit 未通过，则会如实显示正式化尚未获授权，而不是误报成缺文件。
