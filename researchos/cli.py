@@ -1880,6 +1880,7 @@ async def run_command(args: argparse.Namespace) -> int:
             mode=getattr(args, "workflow_mode", None) or str(existing_workflow.get("mode") or "copilot"),
             preset=getattr(args, "auto_preset", None),
             t4_mode=getattr(args, "auto_t4_mode", None),
+            selection_source="command_line",
         )
     _configure_workspace_logging(args, workspace_dir, runtime_settings)
     _emit_startup_ui(
@@ -3530,12 +3531,15 @@ def init_workspace_command(args: argparse.Namespace) -> int:
         force_project_file=args.force_project_file,
         runtime_dir_name=runtime_settings.workspace.runtime_dir,
     )
-    workflow_profile = configure_workflow_mode(
-        workspace_dir,
-        mode=getattr(args, "workflow_mode", "copilot"),
-        preset=getattr(args, "auto_preset", "research_ccf"),
-        t4_mode=getattr(args, "auto_t4_mode", None),
-    )
+    workflow_profile = None
+    if any(getattr(args, name, None) for name in ("workflow_mode", "auto_preset", "auto_t4_mode")):
+        workflow_profile = configure_workflow_mode(
+            workspace_dir,
+            mode=getattr(args, "workflow_mode", None) or "copilot",
+            preset=getattr(args, "auto_preset", None),
+            t4_mode=getattr(args, "auto_t4_mode", None),
+            selection_source="command_line",
+        )
     print(
         yaml.safe_dump(
             {
@@ -3543,8 +3547,8 @@ def init_workspace_command(args: argparse.Namespace) -> int:
                 "workspace": str(result.workspace_dir),
                 "created_dirs": result.created_dirs,
             "project_file": str(result.project_file) if result.project_file else None,
-            "workflow_mode": workflow_profile.get("mode"),
-            "workflow_preset": workflow_profile.get("preset"),
+            "workflow_mode": workflow_profile.get("mode") if workflow_profile else "pending_t1_selection",
+            "workflow_preset": workflow_profile.get("preset") if workflow_profile else None,
             },
             allow_unicode=True,
             sort_keys=False,
@@ -4724,8 +4728,8 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--topic", default="")
     init_parser.add_argument("--no-project-file", action="store_true")
     init_parser.add_argument("--force-project-file", action="store_true")
-    init_parser.add_argument("--workflow-mode", choices=["auto", "copilot"], default="copilot")
-    init_parser.add_argument("--auto-preset", choices=sorted(AUTO_PRESETS), default="research_ccf")
+    init_parser.add_argument("--workflow-mode", choices=["auto", "copilot"], default=None)
+    init_parser.add_argument("--auto-preset", choices=sorted(AUTO_PRESETS), default=None)
     init_parser.add_argument("--auto-t4-mode", choices=["standard", "quick", "deep", "auto"], default=None)
 
     run_parser = subparsers.add_parser("run", help="运行完整 pipeline")

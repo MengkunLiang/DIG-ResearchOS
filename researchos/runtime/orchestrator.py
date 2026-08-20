@@ -68,6 +68,11 @@ from .t3_recovery import prepare_t3_resume_artifacts
 from .t3_notes_manifest import validate_t3_input_fingerprints
 from .bridge_catalog import iter_bridge_catalog_paths
 from .artifact_fingerprints import validate_t45_fingerprint_report
+from .workflow_mode import (
+    configure_workflow_mode,
+    parse_workflow_mode_answer,
+    workflow_mode_needs_confirmation,
+)
 from .task_recovery import prepare_generic_resume_artifacts
 from .run_logger import RunLogger
 from ..agents.ideation import (
@@ -1161,6 +1166,7 @@ class AgentRunner:
         t45_schema_failure_state: dict[tuple[str, str, str], tuple[str, int]] = {}
 
         try:
+            await self._maybe_run_t1_workflow_mode_gate(ctx, tool_map, messages, trace)
             await self._maybe_run_t1_startup_gate(ctx, tool_map, messages, trace)
 
             t9_pre_finalized = await self._maybe_finalize_t9_submission_before_hooks(ctx)
@@ -3457,6 +3463,67 @@ class AgentRunner:
         outcome = hook(ctx, result)
         if inspect.isawaitable(outcome):
             await outcome
+
+    async def _maybe_run_t1_workflow_mode_gate(
+        self,
+        ctx: ExecutionContext,
+        tool_map: dict[str, Tool],
+        messages: list[Message],
+        trace: TraceWriter,
+    ) -> None:
+        """Get an explicit Auto/Copilot choice before T1 gathers materials."""
+
+        if ctx.task_id != "T1" or self.agent.spec.name != "pi" or (ctx.mode or "init") != "init":
+            return
+        if not workflow_mode_needs_confirmation(ctx.workspace_dir):
+            return
+        tool = tool_map.get("ask_human")
+        if tool is None:
+            raise RecoverableRuntimePause("T1 工作模式选择需要 ask_human 工具，但当前策略没有开放它。")
+
+        question = (
+            "# 选择本项目的运行方式\n\n"
+            "这只决定哪些已预设的流程 Gate 可自动通过，不会替你决定研究问题、文献范围、"
+            "关键假设、外部实验或失败恢复。\n\n"
+            "## Copilot\n\n"
+            "所有关键 Gate 都由你确认。适合希望逐步调整检索规模、阅读、T4 候选与写作方向的项目。\n\n"
+            "## Auto · CCF/AI 研究\n\n"
+            "采用标准研究型文献规模、自动 T4 运行、CCF/AI 写作取向，默认跳过独立综述论文支线。\n\n"
+            "## Auto · UTD/IS 研究\n\n"
+            "采用标准研究型文献规模、自动 T4 运行、UTD/IS 写作取向，默认跳过独立综述论文支线。\n\n"
+            "## 其他 Auto 配置\n\n"
+            "可输入 `Auto survey_ccf`、`Auto survey_utd` 或 `Auto survey_exhaustive_utd`；"
+            "也可在后面附加 `quick`、`standard` 或 `deep` 调整 T4 探索力度。\n\n"
+            "请直接回答：`Copilot`、`Auto research_ccf`、`Auto research_utd`，或上述其他 Auto 配置。"
+        )
+        result = await tool.execute(
+            question=question,
+            suggestions=["Copilot", "Auto research_ccf", "Auto research_utd"],
+        )
+        if not result.ok:
+            raise RecoverableRuntimePause(str(result.content or result.error or "未获得工作模式选择"))
+        data = result.data if isinstance(result.data, dict) else {}
+        answer = str(data.get("answer") or "").strip()
+        parsed = parse_workflow_mode_answer(answer)
+        if parsed is None:
+            raise RecoverableRuntimePause(
+                "未识别工作模式。请在恢复后明确输入 Copilot，或 Auto research_ccf / Auto research_utd。"
+            )
+        mode, preset, t4_mode = parsed
+        profile = configure_workflow_mode(
+            ctx.workspace_dir,
+            mode=mode,
+            preset=preset,
+            t4_mode=t4_mode,
+            selection_source="t1_gate",
+        )
+        summary = (
+            f"已确认 {profile['mode']} 模式，预设={profile['preset']}，"
+            f"T4={profile['settings']['t4_mode']}。"
+        )
+        note = Message.user(f"【T1 工作模式已确认】\n{summary}", step=0)
+        messages.append(note)
+        trace.write_message(note)
 
     async def _maybe_run_t1_startup_gate(
         self,

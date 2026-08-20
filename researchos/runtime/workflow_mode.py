@@ -55,6 +55,7 @@ def configure_workflow_mode(
     mode: str,
     preset: str | None = None,
     t4_mode: str | None = None,
+    selection_source: str = "api",
 ) -> dict[str, Any]:
     normalized_mode = str(mode or "copilot").strip().casefold()
     if normalized_mode not in {"auto", "copilot"}:
@@ -86,6 +87,7 @@ def configure_workflow_mode(
             "It never auto-resolves recovery, failed novelty, external side-effect, or changed-research-scope Gates."
         ),
         "configured_at": datetime.now(timezone.utc).isoformat(),
+        "selection_source": str(selection_source or "api"),
     }
     path = workspace / WORKFLOW_MODE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -93,6 +95,62 @@ def configure_workflow_mode(
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     tmp.replace(path)
     return payload
+
+
+def workflow_mode_needs_confirmation(workspace: Path) -> bool:
+    """Return whether T1 must ask the researcher to choose a workflow mode.
+
+    Older workspaces and the previous ``init-workspace`` default carried a
+    silent Copilot fallback without recording that a researcher chose it.  It
+    is safe for a runtime fallback, but not permission to suppress the first
+    Auto/Copilot decision.
+    """
+
+    path = Path(workspace) / WORKFLOW_MODE_PATH
+    if not path.is_file():
+        return True
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return True
+    if not isinstance(payload, dict):
+        return True
+    return str(payload.get("selection_source") or "").strip() not in {
+        "command_line",
+        "t1_gate",
+        "api",
+    }
+
+
+def parse_workflow_mode_answer(answer: str) -> tuple[str, str, str | None] | None:
+    """Parse the small, explicit T1 workflow-mode menu without an LLM."""
+
+    normalized = " ".join(str(answer or "").strip().casefold().split())
+    if not normalized:
+        return None
+    if normalized in {"1", "[1]"} or "copilot" in normalized or "协作" in normalized:
+        return "copilot", "research_ccf", None
+    if normalized in {"2", "[2]"}:
+        return "auto", "research_ccf", None
+    if normalized in {"3", "[3]"}:
+        return "auto", "research_utd", None
+    if "auto" not in normalized and "自动" not in normalized:
+        return None
+
+    if "exhaustive" in normalized or "全面综述" in normalized:
+        preset = "survey_exhaustive_utd"
+    elif "survey" in normalized or "综述" in normalized:
+        preset = "survey_utd" if any(token in normalized for token in ("utd", "is", "管理")) else "survey_ccf"
+    elif any(token in normalized for token in ("utd", "informs", "is", "管理")):
+        preset = "research_utd"
+    else:
+        preset = "research_ccf"
+
+    t4_mode = next(
+        (effort for effort in ("quick", "standard", "deep") if effort in normalized),
+        None,
+    )
+    return "auto", preset, t4_mode
 
 
 def load_workflow_mode(workspace: Path) -> dict[str, Any]:

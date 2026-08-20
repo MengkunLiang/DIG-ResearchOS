@@ -577,6 +577,8 @@ If the user provides paper entries, T1 first uses `process_seed_paper` to normal
 
 T1 may appear slower than ordinary chat because it is not a single Q&A but instead organizes human preferences, existing materials, external resources, and constraints into a structured source of truth reusable by T2–T9. If the workspace already has a complete `project.yaml` and seed files, you can resume/debug directly from T2 or a later node; otherwise T1 must first ask clearly to avoid wasting large amounts of subsequent LLM/retrieval/experiment resources on the wrong direction.
 
+Before the material-supplement gate, a new T1 workspace asks the researcher to choose **Copilot** or **Auto**. Copilot leaves all normal research Gates to the researcher. Auto pre-authorizes only a named preset's routine decisions: T2 literature parameters, the T3.6 survey branch, T4 effort/orientation and compatible writing-style Gates. The available presets are `research_ccf`, `research_utd`, `survey_ccf`, `survey_utd`, and `survey_exhaustive_utd`; `quick`, `standard`, or `deep` may refine T4 effort. Auto never chooses the research question, the T1 retrieval scope, a recovery action, failed novelty verdict, external side effect, or a materially changed research scope. A caller can also preconfigure the choice with `--workflow-mode auto --auto-preset research_utd --auto-t4-mode deep`. Older silent defaults are deliberately treated as unconfirmed and are asked once.
+
 ### Standalone Run vs Full Run
 
 - Running `run-task T1` alone only completes the initialization files and will not automatically enter T2
