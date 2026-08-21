@@ -117,8 +117,9 @@ class ValidateT45FormalizationSourcesTool(Tool):
         if initialization_required:
             content = (
                 "T4.5 formalization is initializing a new research contract. The three structured sources do not "
-                "exist yet; this is expected immediately after Candidate selection. Create the complete blueprint, "
-                "claim registry, and experiment plan directly with write_structured_file, then call this checkpoint again."
+                "exist yet; this is expected immediately after Candidate selection. Create research_blueprint first "
+                "with write_structured_file, call this checkpoint again, then derive claim_registry and exp_plan in "
+                "that dependency order. Do not try to create the three complete contracts in one oversized tool call."
             )
             disposition = "initialization_required"
         else:
@@ -212,9 +213,28 @@ class ValidateT45ResearchPackageTool(Tool):
                 + " | ".join(semantic_candidates)
             )
         if semantic_only_failure:
-            semantic_note += (
-                " This checkpoint found no deterministic hard-contract failure behind the reported prose concern; "
-                "after a complete self-review, finish_task may request the independent semantic adjudication."
+            return ToolResult(
+                ok=True,
+                content=(
+                    "T4.5 structural and source-contract preflight passed. A surface-form heuristic raised the "
+                    "following prose-only concern, but it is not a deterministic repair instruction: "
+                    f"{detail}. Do not rewrite natural academic prose merely to add labels. If the current argument "
+                    "already explains the claim, mechanism/rationale, expected observation, evaluation, competing "
+                    "explanation, and falsification in connected prose, call finish_task. Runtime will request one "
+                    "independent, quote-bound LLM semantic adjudication before accepting the package."
+                ),
+                data={
+                    # ``valid`` means every deterministic condition available
+                    # at this preflight has passed.  It does not claim that
+                    # the semantic concern was waived; final validation owns
+                    # the independent LLM decision and its hash-bound receipt.
+                    "valid": True,
+                    "semantic_adjudication_required": True,
+                    "semantic_review_candidates": semantic_candidates,
+                    "checks": checks,
+                    "include_orientation_review": include_review,
+                    "display_disposition": "semantic_adjudication_required",
+                },
             )
         return ToolResult(
             ok=True,

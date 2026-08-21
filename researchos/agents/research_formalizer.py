@@ -123,9 +123,11 @@ class ResearchFormalizerAgent(Agent):
         phase = self._phase(ctx)
         if phase == "review":
             message = (
-                "执行 T4.5 的 Orientation-Aware Review and Repair。第一个工具回合并行读取已保存的 blueprint、claim registry、"
-                "hypotheses、experiment plan、proposal 和 ideation/orientation_config.yaml，并同时调用 validate_t45_research_package。"
-                "不要探测 orientation_config.json。按当前 orientation 一次性审阅完整研究包；发现问题时只修复"
+                "执行 T4.5 的 Orientation-Aware Review and Repair。第一个工具回合读取 hypotheses、proposal 和 "
+                "ideation/orientation_config.yaml，并同时调用 validate_t45_research_package。不要例行读取 blueprint、"
+                "claim registry 或 experiment plan：结构契约已由 checkpoint 核验，只有当前 proposal/hypotheses 无法回答"
+                "某一具体 review 问题时，才读取必要的结构化来源。不要探测 orientation_config.json。"
+                "按当前 orientation 一次性审阅完整研究包；发现问题时只修复"
                 "受影响的 source artifact，然后重新读取其内容确认一致。最后用 write_structured_file 写 "
                 "ideation/orientation_review.json（schema_name='orientation_review', format='json'）。"
                 "同一 prose 文件的多个独立修复用一次 edit_file(replacements=[...]) 原子完成，不要每项开启一个模型回合。"
@@ -140,8 +142,9 @@ class ResearchFormalizerAgent(Agent):
         else:
             initializing, _missing_sources = t45_structured_source_initialization_state(ctx.workspace_dir)
             initialization_instruction = (
-                "这是一个全新 formalization：三个结构化来源尚未创建是正常起点。读取上游材料并收到首次 checkpoint 后，"
-                "直接用 write_structured_file 一次协调创建 research_blueprint、claim_registry 与 exp_plan；"
+                "这是一个全新 formalization：三个结构化来源尚未创建是正常起点。读取紧凑上游材料并收到首次 checkpoint 后，"
+                "先只创建 research_blueprint；收到其 checkpoint 后再创建 claim_registry；只有 registry 通过后才创建 exp_plan。"
+                "这三个步骤共享同一研究判断，但必须按依赖顺序完成，不能在一个大工具调用中盲写三份 YAML。"
                 "不要对这三个尚不存在的路径调用 read_file，也不要把创建误当作失败修复。"
                 if initializing
                 else
@@ -149,9 +152,12 @@ class ResearchFormalizerAgent(Agent):
             )
             message = (
                 "不要递归列出 workspace 根目录，也不要读取 state.yaml、_runtime、_DIR_GUIDE 或 user_seeds；"
-                "先在一个并行工具回合中精确读取 selected_candidate、hypothesis_brief、novelty_audit 与 synthesis；"
-                "不要再次读取这些不变来源。需要定位证据时先调用 "
-                "query_research_evidence(stage='t45-formalize', purpose='proposal', max_results<=8)。"
+                "先在一个并行工具回合中精确读取 pre_novelty_brief、hypothesis_brief 与 novelty_audit；"
+                "不要把 selected_candidate 或完整 synthesis 当作例行首读，也不要重复读取上述不变来源。"
+                "用已读材料形成一个具体的证据问题后，调用一次 "
+                "query_research_evidence(stage='t45-formalize', purpose='proposal', max_results<=8)，"
+                "让它从完整文献库、综合综述和资源索引中返回最相关片段。"
+                "只有该定向结果不能回答一个会实质改变研究设计的问题时，才按页读取 selected_candidate 或 synthesis 的必要片段。"
                 "只有一个会实质改变设计的外部事实缺口存在时，才调用一次 targeted_literature_supplement，"
                 "且 target_record_count<=6。"
                 "先调用 validate_t45_formalization_sources；它的最新 `valid` 结果是本轮唯一权威状态，"
@@ -160,7 +166,11 @@ class ResearchFormalizerAgent(Agent):
                 + initialization_instruction
                 + "\n"
                 "然后再次调用该工具。若 valid=true，不得再重写已通过的 research_blueprint、claim_registry 与 exp_plan；"
-                "改为写缺失或不合格的 hypotheses.md 和 proposal/research_proposal.md，并在写后重新读取二者。"
+                "若 hypotheses.md 与 proposal/research_proposal.md 已存在，先读取二者并调用 validate_t45_research_package；"
+                "只有它报告确定性的 source/prose 缺口才改写对应文件。否则再写缺失或确定性不合格的 hypotheses.md 和 proposal/research_proposal.md，"
+                "并在写后重新读取二者。"
+                "若 checkpoint 报告 semantic_adjudication_required，说明结构校验已通过而只剩自然语言语义争议；"
+                "不要为凑固定标签重写连贯正文，直接 finish_task 交给独立、引文绑定的 LLM 复核。"
                 "正文必须遵守当前 formalization language 与术语/缩写首次定义规则，并以连贯论证覆盖 Proposal 的七项研究功能；"
                 "可以在不牺牲可读性的前提下自然合并相邻小节。"
                 "不要写 proposal_manifest、post_novelty_formalization、research_dossier、validation_map、"

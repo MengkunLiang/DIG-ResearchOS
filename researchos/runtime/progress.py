@@ -134,6 +134,8 @@ def classify_tool_outcome(
     failure_class = str(payload.get("failure_class") or error or "").casefold()
     if disposition == "initialization_required":
         return ToolOutcome("INITIALIZING", "cyan", False)
+    if disposition == "semantic_adjudication_required":
+        return ToolOutcome("SEMANTIC_REVIEW", "cyan", False)
     # Read-only validation tools can successfully execute while reporting that
     # the inspected research package is not valid.  Preserve ``ok=True`` for
     # the model-facing tool protocol (the diagnostic is usable), but never
@@ -664,13 +666,14 @@ class CliProgressEmitter:
         # These outcomes have an established local repair, fallback, or
         # optional-input path. Keep their full diagnostics for the Agent and
         # trace, but do not interrupt ordinary researcher-facing progress.
-        if outcome.status in {"SKIPPED", "INITIALIZING", "AUTO_REPAIR", "AUTO_FALLBACK", "DEGRADED", "EXPLORATORY_MISS"} and not self.verbose:
+        if outcome.status in {"SKIPPED", "INITIALIZING", "SEMANTIC_REVIEW", "AUTO_REPAIR", "AUTO_FALLBACK", "DEGRADED", "EXPLORATORY_MISS"} and not self.verbose:
             return
         if self.quiet and not important:
             return
         status = "完成" if ok else {
             "SKIPPED": "跳过",
             "INITIALIZING": "正在初始化",
+            "SEMANTIC_REVIEW": "正在语义复核",
             "AUTO_REPAIR": "正在自动修补",
             "AUTO_FALLBACK": "已自动降级",
             "DEGRADED": "降级继续",
@@ -1364,6 +1367,8 @@ def summarize_tool_result(
     outcome = classify_tool_outcome(ok=ok, data=data, error=error, tool_name=tool_name)
     if outcome.status == "INITIALIZING":
         return "正在建立研究蓝图、主张与实验计划。", None
+    if outcome.status == "SEMANTIC_REVIEW":
+        return "结构校验已通过；将在提交时独立复核正文语义。", None
     if outcome.status == "VALIDATION_FAILED":
         if error in {"t45_incomplete_proposal_replacement", "t45_destructive_prose_replacement"}:
             detail = _compact_text(data.get("validation_error") or content or "Proposal replacement was blocked", 300)

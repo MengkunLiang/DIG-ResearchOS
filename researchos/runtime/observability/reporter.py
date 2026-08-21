@@ -431,13 +431,14 @@ class StageReporter:
         if _is_exploratory_probe_miss(tool_name, error=error, data=data) and self.verbosity != "detailed":
             return
         status = _tool_disposition(ok=ok, data=data, error=error, tool_name=tool_name)
-        if status in {"INITIALIZING", "SKIPPED", "AUTO_REPAIR", "AUTO_FALLBACK", "DEGRADED"} and self.verbosity != "detailed":
+        if status in {"INITIALIZING", "SEMANTIC_REVIEW", "SKIPPED", "AUTO_REPAIR", "AUTO_FALLBACK", "DEGRADED"} and self.verbosity != "detailed":
             return
         style = _tool_style(tool_name, ok=ok, disposition=status)
         text = _compact_cli_text(summary, 220)
         status_label = {
             "DONE": "已完成",
             "INITIALIZING": "正在初始化",
+            "SEMANTIC_REVIEW": "正在语义复核",
             "SKIPPED": "已跳过",
             "AUTO_REPAIR": "正在自动修补",
             "AUTO_FALLBACK": "已自动降级",
@@ -449,7 +450,7 @@ class StageReporter:
             (
                 "✓ "
                 if status == "DONE"
-                else ("· " if status in {"INITIALIZING", "SKIPPED", "EXPLORATORY_MISS"} else ("◐ " if status in {"AUTO_REPAIR", "AUTO_FALLBACK", "DEGRADED"} else "! ")),
+                else ("· " if status in {"INITIALIZING", "SEMANTIC_REVIEW", "SKIPPED", "EXPLORATORY_MISS"} else ("◐ " if status in {"AUTO_REPAIR", "AUTO_FALLBACK", "DEGRADED"} else "! ")),
                 f"bold {style}",
             ),
             (_tool_label(tool_name), "bold"),
@@ -463,7 +464,7 @@ class StageReporter:
                     if status == "DONE"
                     else (
                         "cyan"
-                        if status in {"INITIALIZING", "AUTO_REPAIR", "AUTO_FALLBACK"}
+                        if status in {"INITIALIZING", "SEMANTIC_REVIEW", "AUTO_REPAIR", "AUTO_FALLBACK"}
                         else ("yellow" if status in {"SKIPPED", "DEGRADED"} else ("dim" if status == "EXPLORATORY_MISS" else "red"))
                     ),
                 )
@@ -1324,6 +1325,8 @@ def _tool_disposition(
     failure = str(payload.get("failure_class") or error or "").casefold()
     if str(payload.get("display_disposition") or "").casefold() == "initialization_required":
         return "INITIALIZING"
+    if str(payload.get("display_disposition") or "").casefold() == "semantic_adjudication_required":
+        return "SEMANTIC_REVIEW"
     if ok:
         return "DONE"
     if _is_exploratory_probe_miss(str(tool_name or ""), error=error, data=payload):
@@ -1367,7 +1370,7 @@ def _tool_style(tool_name: str, ok: bool | None, disposition: str | None = None)
         return "yellow"
     if disposition == "EXPLORATORY_MISS":
         return "dim"
-    if disposition in {"INITIALIZING", "AUTO_REPAIR"}:
+    if disposition in {"INITIALIZING", "SEMANTIC_REVIEW", "AUTO_REPAIR"}:
         return "cyan"
     if disposition == "AUTO_FALLBACK":
         return "cyan"

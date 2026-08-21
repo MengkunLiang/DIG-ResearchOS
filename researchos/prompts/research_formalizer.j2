@@ -77,19 +77,18 @@ Preserve an English title or established term found here as its canonical form u
 
 ## Shared formalization sources
 
-Read the following exact sources once, together, before drafting. They are deliberately not copied into this prompt because duplicate and truncated copies dilute the reasoning context:
+Start from the following compact, decision-bearing sources. They are deliberately not copied into this prompt because duplicate and truncated copies dilute the reasoning context:
 
-- `ideation/selected/selected_candidate.json`
+- `ideation/selected/pre_novelty_brief.md`
 - `ideation/hypothesis_brief.yaml`
 - `ideation/novelty_audit.md`
-{% if phase != 'review' %}- `literature/synthesis.md`{% endif %}
 
-After this first read, use the returned content already in conversation. Do not enumerate directories or re-read an unchanged source.
+After this first read, use the returned content already in conversation. Do not enumerate directories or re-read an unchanged source. For literature, evidence, resources, or a detail of the selected Candidate, first ask a concrete question through `query_research_evidence`; it searches the complete canonical corpus and returns a small provenance-bearing bundle. Read a necessary passage from `literature/synthesis.md` or `ideation/selected/selected_candidate.json` only when that bundle identifies a material unresolved design question. This is information selection, not evidence deletion: the full artifacts remain canonical and reachable, but they must not dilute the initial design judgment.
 
 {% if phase == 'review' %}
 ### Exact review sources
 
-The mutable blueprint, claim registry, hypotheses, experiment plan and Proposal are not copied into this system prompt. Read their current complete files after `validate_t45_research_package` identifies the active package. This avoids reviewing a truncated or stale duplicate and lets one tool result serve as the only reasoning context for each source.
+The mutable blueprint, claim registry, hypotheses, experiment plan and Proposal are not copied into this system prompt. Start with the complete hypotheses and Proposal after `validate_t45_research_package` identifies the active package; the checkpoint already establishes structural consistency. Read a specific structured source only when a review question cannot be resolved from the researcher-facing argument or the checkpoint. This avoids re-sending an entire contract merely to review prose and lets one tool result serve as the only reasoning context for each source.
 
 Review the complete, frozen evidence package once before editing. Submit all independent corrections in one coordinated tool round, with at most one write per affected source. For multiple prose corrections in one file, call `edit_file(path=..., replacements=[{"old_text": ..., "new_text": ...}, ...])`; the tool applies all unique replacements atomically. Do not serialize one sentence edit per model turn. This independent Review does not change the literature basis after the novelty audit and Formalizer pass. If a material external fact is still missing, record it as a concrete unresolved repair issue rather than silently changing the review baseline.
 
@@ -133,7 +132,7 @@ For `ideation/hypotheses.md` and `ideation/proposal/research_proposal.md`, use
 - `ideation/exp_plan.yaml` (`exp_plan`)
 - `ideation/orientation_review.json` (`orientation_review`, review phase)
 
-Read a file before replacing it. A prose repair must retain valid current material while making the targeted change; a structured repair must supply the complete validated data object rather than a text patch.
+Read an existing file before replacing it. A prose repair must retain valid current material while making the targeted change; a structured repair must supply the complete validated data object rather than a text patch. A missing structured source is the sole exception: create it directly after the live checkpoint says it is missing.
 
 ### Required research logic
 
@@ -161,7 +160,7 @@ risks: {novelty_risks: [], technical_risks: [], data_or_experimental_risks: [], 
 
 `artifact_type` is exactly one of `algorithm`, `model`, `system`, `framework`, or `intervention`. `affected_actors`, every evaluation category, every contribution category, and every risk category are arrays. A component uses `technical_role`, never `function`. Contributions use `technical`, `theoretical_or_design`, and `practical_or_managerial`, never `primary` or `secondary`. Risks are the object shown above, never a flat list. The following nested fields are also exact; do not replace them with near-synonyms such as `component_refs`, `approach`, or `why_insufficient`:
 
-Keep this structured blueprint a compact reasoning backbone, not the Proposal itself. Target roughly 8,000–12,000 characters for the complete tool argument. Use the smallest coherent number of challenges, components and active claims, normally one or two for a focused Candidate. A single challenge is acceptable only when it is genuinely central and every proposed component, active claim, competing explanation, counterfactual, falsification condition, and discriminating evaluation makes that one challenge scientifically demanding. Use two or more challenges when they introduce independent failure mechanisms or evaluation requirements. Never split one issue into labels merely to satisfy a count. Give each field one precise sentence and avoid repeating the same rationale across `technical_problem`, `proposed_approach`, `evaluation`, `contributions`, and `risks`. Detailed exposition belongs in `hypotheses.md` and the Proposal after the shared structured contract passes.
+Keep this structured blueprint a compact reasoning backbone, not the Proposal itself. Target roughly 8,000–12,000 characters for the complete tool argument. Use the smallest coherent number of challenges, components and active claims, normally one or two for a focused Candidate. A single challenge is acceptable only when it is genuinely central and every proposed component, active claim, competing explanation, counterfactual, falsification condition, and discriminating evaluation makes that one challenge scientifically demanding. Use two or more challenges when they introduce independent failure mechanisms or evaluation requirements. Never split one issue into labels merely to satisfy a count. Give each field one precise sentence and avoid repeating the same rationale across `technical_problem`, `proposed_approach`, `evaluation`, `contributions`, and `risks`. Detailed exposition belongs in `hypotheses.md` and the Proposal after the shared structured contract passes. During blank-slate initialization, write this blueprint first, validate it, then derive the registry from its active claims and the experiment plan from the accepted registry. Do not attempt the three source contracts in one oversized tool call.
 
 Every entry inside the blueprint's evaluation, contribution, and risk arrays is an object, never a bare string. Material entries in `novelty_risks`, `technical_risks`, and `data_or_experimental_risks` use `{risk, mitigation}` rather than `{description, mitigation}`. Objects in `ablations` and `mechanism_tests` include `component_id` or `component_ref` plus a substantive `planned_test`.
 

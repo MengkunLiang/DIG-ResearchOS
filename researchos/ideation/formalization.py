@@ -990,9 +990,15 @@ def _claims_markdown_errors(
         if _research_text_length(block) < 80:
             semantic_errors.append(f"{claim_id} in hypotheses.md is only a short assertion, not a testable research claim")
         labels = {
-            "rationale": ("rationale", "理由", "依据"),
+            # A claim's causal/mechanistic account is often its rationale in
+            # Chinese academic prose.  Requiring a second heading literally
+            # named “理由” turns coherent argument into a field checklist and
+            # has caused needless T4.5 rewrites.  We still require either a
+            # reasoned account or a mechanism, plus all other falsifiability
+            # elements below.
+            "rationale": ("rationale", "理由", "依据", "理论推理", "机制", "设计推理"),
             "mechanism": ("mechanism", "机制", "设计推理"),
-            "expected observation": ("expected observation", "预期观察", "可观察"),
+            "expected observation": ("expected observation", "预期观察", "预期观测", "可观察"),
             "evaluation": ("evaluation", "评测", "检验方法"),
             "competing explanation": ("competing explanation", "竞争解释", "替代解释"),
             "falsification": ("falsification", "证伪", "失败条件"),

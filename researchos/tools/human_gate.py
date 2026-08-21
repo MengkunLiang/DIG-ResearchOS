@@ -8,12 +8,14 @@ from __future__ import annotations
 
 
 from abc import ABC, abstractmethod
+import asyncio
 import io
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import sys
 import unicodedata
 from typing import Any, Awaitable, Callable
 
@@ -184,7 +186,53 @@ def _read_cli_line(prompt: str) -> str:
     return _strip_terminal_control_sequences(input(prompt))
 
 
-def _read_cli_multiline(
+async def _read_cli_line_async(prompt: str) -> str:
+    """Read a terminal line without preventing a running CLI from pausing.
+
+    ``input()`` blocks the event-loop thread.  That makes a Gate appear to
+    ignore Ctrl+C/SIGTERM: the signal callback cannot cancel and persist the
+    active pipeline task until the researcher types a line.  On POSIX TTYs an
+    ``add_reader`` callback keeps canonical terminal editing while allowing
+    the loop to process cancellation immediately.  The thread fallback keeps
+    Windows and redirected-input support, where ``add_reader`` is unavailable.
+    """
+
+    _configure_readline_once()
+    try:
+        loop = asyncio.get_running_loop()
+        fileno = sys.stdin.fileno()
+        if os.name == "nt" or not sys.stdin.isatty():
+            raise OSError("use portable input fallback")
+    except (AttributeError, OSError, RuntimeError):
+        return await asyncio.to_thread(_read_cli_line, prompt)
+
+    print(prompt, end="", flush=True)
+    result: asyncio.Future[str] = loop.create_future()
+
+    def _read_ready() -> None:
+        if result.done():
+            return
+        try:
+            line = sys.stdin.readline()
+        except BaseException as exc:  # pragma: no cover - terminal-specific
+            result.set_exception(exc)
+            return
+        if line == "":
+            result.set_exception(EOFError())
+        else:
+            result.set_result(_strip_terminal_control_sequences(line.rstrip("\n")))
+
+    try:
+        loop.add_reader(fileno, _read_ready)
+    except (NotImplementedError, OSError):
+        return await asyncio.to_thread(_read_cli_line, prompt)
+    try:
+        return await result
+    finally:
+        loop.remove_reader(fileno)
+
+
+async def _read_cli_multiline(
     *,
     prompt: str = "> ",
     continuation_prompt: str | None = None,
@@ -210,7 +258,7 @@ def _read_cli_multiline(
     hint_printed = False
     try:
         while True:
-            line = _read_cli_line(current_prompt)
+            line = await _read_cli_line_async(current_prompt)
             if line.strip().casefold() == "end":
                 break
             lines.append(line)
@@ -1076,7 +1124,7 @@ class CLIHumanInterface(HumanInterface):
             ],
         )
         try:
-            answer = _read_cli_line("批准执行? [y/N]: ").strip().lower()
+            answer = (await _read_cli_line_async("批准执行? [y/N]: ")).strip().lower()
         except EOFError as exc:
             raise HumanInputUnavailable(f"{tool_name} 需要用户批准，但当前输入不可用。") from exc
         return answer in {"y", "yes"}
@@ -1109,7 +1157,7 @@ class CLIHumanInterface(HumanInterface):
             lines: list[str] = []
             try:
                 while True:
-                    line = _read_cli_line("> ")
+                    line = await _read_cli_line_async("> ")
                     if line.strip() == "END":
                         break
                     lines.append(line)
@@ -1239,7 +1287,7 @@ class CLIHumanInterface(HumanInterface):
         while selected is None:
             try:
                 if gate_id == "t4_gate1_selection_gate":
-                    raw_answer = _read_cli_multiline(
+                    raw_answer = await _read_cli_multiline(
                         prompt="T4> ",
                         continuation_prompt="T4... ",
                         submit_hint=(
@@ -1253,7 +1301,7 @@ class CLIHumanInterface(HumanInterface):
                             f"[T4] 已提交 {len(raw_answer.splitlines())} 行输入；正在判断是查看、比较还是研究操作。"
                         )
                 else:
-                    raw_answer = _read_cli_line("请选择: ").strip()
+                    raw_answer = (await _read_cli_line_async("请选择: ")).strip()
             except EOFError:
                 raise HumanInputUnavailable(f"确认步骤 {gate_id} 需要你的选择，但当前输入不可用。") from None
             if gate_id == "t2_literature_param_gate":
@@ -1295,11 +1343,11 @@ class CLIHumanInterface(HumanInterface):
         else:
             for field_name in selected.get("collect_input", []):
                 if gate_id == "t36_corpus_gate" and field_name == "supplement_target_papers":
-                    captured[field_name] = self._collect_t36_supplement_target(presentation)
+                    captured[field_name] = await self._collect_t36_supplement_target(presentation)
                     continue
                 prompt = self._collect_input_prompt(selected, field_name)
                 try:
-                    captured[field_name] = _read_cli_line(f"{prompt}: ").strip()
+                    captured[field_name] = (await _read_cli_line_async(f"{prompt}: ")).strip()
                 except EOFError as exc:
                     raise HumanInputUnavailable(f"确认步骤 {gate_id} 需要补充 {field_name}，但当前输入不可用。") from exc
         defaults = selected.get("captured_defaults")
@@ -1312,8 +1360,10 @@ class CLIHumanInterface(HumanInterface):
                 "external_executor/expr 仅用于部署 our method 和 baseline，可能消耗较多算力/时间。"
             )
             try:
-                confirm = _read_cli_line(
-                    "确认允许真实实验？输入 yes 继续，其它任意输入降级为 Claude Code 窗口: "
+                confirm = (
+                    await _read_cli_line_async(
+                        "确认允许真实实验？输入 yes 继续，其它任意输入降级为 Claude Code 窗口: "
+                    )
                 ).strip()
             except EOFError as exc:
                 raise HumanInputUnavailable("codex_cli 真实执行需要二次确认，但当前输入不可用。") from exc
@@ -2714,7 +2764,7 @@ class CLIHumanInterface(HumanInterface):
         )
         for attempt in range(1, 4):
             try:
-                raw = _read_cli_line("自定义参数: ").strip()
+                raw = (await _read_cli_line_async("自定义参数: ")).strip()
             except EOFError as exc:
                 raise HumanInputUnavailable("T2 自定义参数需要一行输入，但当前输入不可用。") from exc
             captured = await self._interpret_t2_literature_param_text(raw)
@@ -2733,7 +2783,7 @@ class CLIHumanInterface(HumanInterface):
         return {}
 
     @staticmethod
-    def _collect_t36_supplement_target(presentation: dict[str, Any]) -> str:
+    async def _collect_t36_supplement_target(presentation: dict[str, Any]) -> str:
         """Collect a bounded retrieval target with the computed default visible.
 
         The corpus gate asks a researcher for an exploration *record target*,
@@ -2754,7 +2804,7 @@ class CLIHumanInterface(HumanInterface):
         prompt = f"目标补充记录数（直接回车采用建议 {default}；也可输入任意正整数）"
         for attempt in range(1, 4):
             try:
-                raw = _read_cli_line(f"{prompt}: ").strip()
+                raw = (await _read_cli_line_async(f"{prompt}: ")).strip()
             except EOFError as exc:
                 raise HumanInputUnavailable("确认步骤 t36_corpus_gate 需要补充检索目标数，但当前输入不可用。") from exc
             if not raw:

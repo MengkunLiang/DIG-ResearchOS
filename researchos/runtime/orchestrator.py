@@ -9303,10 +9303,12 @@ class AgentRunner:
             return (
                 "[Runtime T4.5 formalization initialization] This is the normal blank-slate opening after a Candidate "
                 "selection, not a failed research package.\n"
-                f"Create now: {target_text}\n"
-                "These paths do not exist yet, so do not probe them with read_file. Use write_structured_file to create "
-                "the complete blueprint, claim registry, and experiment plan as one coordinated source contract. Then "
-                "call the checkpoint once to verify their cross-file consistency; only after valid=true may you write prose."
+                f"Pending source contract: {target_text}\n"
+                "These paths do not exist yet, so do not probe them with read_file. First create only "
+                "ideation/research_blueprint.yaml with write_structured_file, then call the checkpoint. Derive "
+                "claim_registry.yaml from the accepted blueprint, call the checkpoint again, and only then map those "
+                "claims into exp_plan.yaml. This dependency order preserves research coherence and keeps a blank-slate "
+                "initialization from becoming one oversized, fragile tool call. Only after valid=true may you write prose."
             )
         return (
             "[Runtime T4.5 checkpoint repair] The read-only checkpoint executed successfully but `valid=false`; "
@@ -9910,9 +9912,14 @@ class AgentRunner:
                 timeout=self._llm_request_timeout_seconds(),
                 max_retries_per_model=self._llm_retry_overrides()[0],
                 retry_base_delay=self._llm_retry_overrides()[1],
+                # This is a bounded, typed adjudication rather than an
+                # open-ended critique.  Reasoning-capable providers otherwise
+                # may spend the full completion budget thinking and return an
+                # empty final message, which looks like a validator failure.
+                reasoning_effort="low",
             )
             budget.add_tokens(response.tokens_in, response.tokens_out, response.cost_usd)
-            raw_content = str(getattr(response.raw.choices[0].message, "content", "") or "")
+            raw_content = self._semantic_adjudication_response_text(response)
             decision = self._parse_t45_semantic_adjudication_json(raw_content)
         except (LLMProviderError, OSError, ValueError, KeyError, IndexError, json.JSONDecodeError) as exc:
             run_logger.event(
@@ -10157,9 +10164,12 @@ class AgentRunner:
                 timeout=self._llm_request_timeout_seconds(),
                 max_retries_per_model=self._llm_retry_overrides()[0],
                 retry_base_delay=self._llm_retry_overrides()[1],
+                # See the matching T3.6 call above: a concise, typed verdict
+                # should prioritize a usable final JSON object.
+                reasoning_effort="low",
             )
             budget.add_tokens(response.tokens_in, response.tokens_out, response.cost_usd)
-            raw_content = str(getattr(response.raw.choices[0].message, "content", "") or "")
+            raw_content = self._semantic_adjudication_response_text(response)
             decision = self._parse_t45_semantic_adjudication_json(raw_content)
         except (LLMProviderError, OSError, ValueError, KeyError, IndexError, json.JSONDecodeError) as exc:
             run_logger.event(
@@ -10281,16 +10291,56 @@ class AgentRunner:
 
     @staticmethod
     def _parse_t45_semantic_adjudication_json(content: str) -> dict[str, object]:
-        """Parse one JSON object, accepting a fenced provider response only."""
+        """Parse one JSON object from an OpenAI-compatible reviewer response."""
 
         candidate = str(content or "").strip()
         if candidate.startswith("```"):
             candidate = re.sub(r"^```(?:json)?\s*", "", candidate, flags=re.IGNORECASE)
             candidate = re.sub(r"\s*```$", "", candidate).strip()
-        value = json.loads(candidate)
-        if not isinstance(value, dict):
-            raise ValueError("semantic adjudicator did not return a JSON object")
-        return value
+        decoder = json.JSONDecoder()
+        for index, character in enumerate(candidate):
+            if character != "{":
+                continue
+            try:
+                value, _end = decoder.raw_decode(candidate[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                return value
+        raise ValueError("semantic adjudicator did not return a JSON object")
+
+    @staticmethod
+    def _semantic_adjudication_response_text(response: object) -> str:
+        """Recover final text from compatible chat-message representations.
+
+        Some reasoning-capable OpenAI-compatible endpoints return text blocks
+        rather than a scalar ``content`` value.  The adjudicator uses a strict
+        JSON contract, so losing those blocks creates a false "unavailable"
+        outcome and unnecessarily sends the author back into a rewrite loop.
+        """
+
+        try:
+            message = response.raw.choices[0].message  # type: ignore[attr-defined]
+        except (AttributeError, IndexError, TypeError):
+            return ""
+        values: list[object] = [getattr(message, "content", None)]
+        if isinstance(message, dict):
+            values.append(message.get("content"))
+        parts: list[str] = []
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+            elif isinstance(value, list):
+                for block in value:
+                    if isinstance(block, str) and block.strip():
+                        parts.append(block.strip())
+                    elif isinstance(block, dict):
+                        text = block.get("text") or block.get("content")
+                        if isinstance(text, str) and text.strip():
+                            parts.append(text.strip())
+            if parts:
+                break
+        return "\n".join(parts)
 
     @staticmethod
     def _t36_quality_source_fingerprint(

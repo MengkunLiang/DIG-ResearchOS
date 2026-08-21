@@ -54,6 +54,8 @@ If startup finds a mismatch between a YAML node and the Python I/O contract, the
 
 Raw tool payloads and provider responses belong in traces, not normal console output. The CLI startup panel is centralized in `runtime/cli_ui.py` and emitted once at `main` for every actual command. Runtime commands may later add a workspace discovery summary without replaying the banner.
 
+Human gates use asynchronous terminal reads. A pause request such as `Ctrl+C` can therefore reach the running event loop while the terminal is waiting for an answer, persist the recoverable state, and return cleanly to `resume` instead of leaving a blocked process behind. Multi-line answers accept `END` everywhere, with the platform-specific EOF gesture shown in the prompt.
+
 The normal terminal renders a researcher-facing summary rather than repeating the result already delivered to the Agent. PDF extraction reports page coverage and continuation status; section extraction reports recognized parts; web, command, Docker, LaTeX, and structured-write tools report only status, counts, artifact paths, and a necessary next action. Full PDF text, HTML, stdout, JSON payloads, provider diagnostics, and stack traces remain available in Agent context, traces, and logs for audit without flooding the terminal.
 
 ### Terminal Presentation And Information Levels
@@ -69,6 +71,8 @@ The user interface says material preparation, paper reading note, relevant paper
 One request uses the same provider/model configured in `config/model_settings.yaml`. On timeout, connection interruption, 502/503/504, or temporary overload, the runtime first follows the same-model retry policy in that file; if recovery still fails, the terminal offers clear Retry now, Retry after waiting, and Pause project choices. Waiting is excluded from effective Agent work time and does not consume a research step.
 
 A pause preserves the current task and all artifacts; use the original `resume` command when service returns. A file written before a pause is reported as staged and awaiting completion validation, not as a ready downstream result. This distinction matters when a recovery compiler records an intentionally blocked handoff or partial report. Detailed mode and the event trace retain the full staged-file inventory and diagnostics. Normal CLI output does not expose API keys, complete SDK stack traces, or internal retry details. Authentication, URL, and model errors directly name `configure-llm` instead of entering meaningless network retries.
+
+For T3.6 and T4.5, deterministic validators remain authoritative for required files, schemas, identifiers, source provenance, and other reproducible facts. When only a natural-language label or an equivalent scholarly formulation is in doubt, the runtime can request one independent, quote-bound semantic adjudication. The adjudicator receives only the implicated current text and returns a short typed verdict. Its acceptance is fingerprinted to that text and never overrides a hard structural or evidence failure. This prevents keyword-driven rewrite loops without accepting unsupported research claims.
 
 ## Guided Skill Sessions
 
