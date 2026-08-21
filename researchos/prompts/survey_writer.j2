@@ -216,11 +216,12 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 {% if phase == "survey_plan" %}
 ## Phase: T3.6-PLAN taxonomy + outline
 
-先读取完整输入。`read_file` 只能接收文件，绝不能传目录路径：对 note root 先用 `list_files` 或 `grep_search` 找到具体 `.md`，再按需读取精确文件；对 Cross-domain catalog 先读 `index.json`，再读取其中列出的精确 `bridge_context.json` / `paper_catalog.json`。不要尝试 `read_file("literature/deep_read_notes/")`、`read_file("literature/bridge_notes/")` 或 `read_file("literature/cross_domain_catalogs/")`。
+先读取最小必要输入。`read_file` 只能接收文件，绝不能传目录路径：对 note root 先用 `list_files` 或 `grep_search` 找到具体 `.md`，再按需读取精确文件；对 Cross-domain catalog 先读 `index.json`，再读取其中列出的精确 `bridge_context.json` / `paper_catalog.json`。不要尝试 `read_file("literature/deep_read_notes/")`、`read_file("literature/bridge_notes/")` 或 `read_file("literature/cross_domain_catalogs/")`。大文件先读其紧凑索引；若运行时提示上下文预览已截断，按提示用 `grep_search` 或 `read_file(offset=..., max_chars=...)` 续读，不能把全文反复塞回会话。
 
 - 具体文件输入：
 - `literature/synthesis.md`
-- `literature/synthesis_workbench.json`
+- `literature/synthesis_context.json`（全库推理的默认入口）
+- `literature/synthesis_workbench.json`（完整可审计 archive；只在需要核验具体字段时按页读取，不作为默认全文输入）
 - `literature/domain_map.json`
 - `literature/comparison_table.csv`
 - `literature/cross_domain_catalogs/index.json`，以及 index 指向的具体 `bridge_context.json` 与 `paper_catalog.json`（如果存在；已检索的 Cross-domain 补充轨道，与真实 Bridge 阅读笔记目录 `literature/bridge_notes/` 分开，即使未深读也不能被忽略）。catalog 可帮助组织历史脉络、相邻领域概念、taxonomy 边界、比较维度和后续阅读优先级；只有 linked canonical note 才能支持具体机制、结果或强比较。

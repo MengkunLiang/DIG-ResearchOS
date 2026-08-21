@@ -329,7 +329,7 @@ class SurveyWriterAgent(Agent):
             )
         elif phase == "survey_plan":
             message = (
-                "请执行 T3.6-PLAN：基于 literature/synthesis.md、synthesis_workbench.json、"
+                "请执行 T3.6-PLAN：基于 literature/synthesis.md、synthesis_context.json（完整 workbench 仅作按需审计）、"
                 "domain_map.json、comparison_table.csv、deep_read_notes 和 shallow_read_notes 规划 taxonomy-driven survey。"
                 "目录不能传给 read_file：先用 list_files/grep_search 枚举三类 note root 的具体 .md；先读 literature/cross_domain_catalogs/index.json，"
                 "再按 index 路径查看每个已确认 Cross-domain bridge 的 bridge_context.json 与 paper_catalog.json：它们可用于历史发展、前沿、"

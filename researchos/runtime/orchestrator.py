@@ -241,6 +241,22 @@ TOOL_CONTEXT_CONTENT_LIMITS = {
     "extract_paper_sections": 12000,
     "extract_pdf_text": 50000,
 }
+# A read can be perfectly valid as an artifact operation while still being far
+# too large to append wholesale to an agent's next conversational turn.  These
+# are per-result visibility caps; the complete file stays in the workspace and
+# the cap receipt tells the model how to continue with a smaller page.  They
+# protect task quality by preserving room for the question, tool schemas, and
+# synthesis rather than treating a giant first page as evidence utilization.
+TASK_READ_FILE_CONTEXT_CHAR_CAPS = {
+    "T3": 48_000,
+    "T3.5": 64_000,
+    "T3.6": 56_000,
+    "T4": 64_000,
+    "T4.5-FORMALIZE": 48_000,
+    "T4.5-REVIEW": 48_000,
+    "T8": 56_000,
+}
+DEFAULT_READ_FILE_CONTEXT_CHAR_CAP = 64_000
 T2_CROSS_DOMAIN_QUERY_BUCKET_ALIASES = {
     "adjacent": "adjacent_field",
     "adjacent-field": "adjacent_field",
@@ -8252,7 +8268,13 @@ class AgentRunner:
 
         content = result.content
         metadata = {"data": result.data, "error": result.error}
-        content, cap_metadata = self._cap_tool_content_for_context(tc.name, content)
+        content, cap_metadata = self._cap_tool_content_for_context(
+            tc.name,
+            content,
+            task_id=ctx.task_id,
+            tool_data=result.data if isinstance(result.data, dict) else None,
+            tool_arguments=model_dump(parsed),
+        )
         if cap_metadata:
             metadata["context_cap"] = cap_metadata
         if auto_persist_metadata:
@@ -8695,16 +8717,38 @@ class AgentRunner:
         if key is not None and cache is not None:
             cache[key] = message
 
-    @staticmethod
     def _cap_tool_content_for_context(
+        self,
         tool_name: str,
         content: str,
+        *,
+        task_id: str | None = None,
+        tool_data: dict[str, object] | None = None,
+        tool_arguments: dict[str, object] | None = None,
     ) -> tuple[str, dict[str, object] | None]:
-        """限制高风险工具返回给下一轮 LLM 的文本量。"""
+        """Bound one tool result before it enters the next LLM turn.
+
+        Artifact files are the source of truth.  A tool reply is only a
+        reasoning view, so a large successful read must become a navigable
+        preview rather than silently consuming the context needed to interpret
+        it.  The receipt is intentionally actionable: it names the durable
+        path and an exact/near-exact continuation page when available.
+        """
 
         limit = TOOL_CONTEXT_CONTENT_LIMITS.get(tool_name)
+        cap_reason = "tool_context_content_limit"
+        if tool_name == "read_file":
+            read_limit = TASK_READ_FILE_CONTEXT_CHAR_CAPS.get(
+                str(task_id or ""), DEFAULT_READ_FILE_CONTEXT_CHAR_CAP
+            )
+            if limit is None:
+                limit = read_limit
+            else:
+                limit = min(limit, read_limit)
+            cap_reason = "task_read_file_context_budget"
         if limit is None or len(content) <= limit:
             return content, None
+
         capped = content[:limit]
         if tool_name == "extract_pdf_text":
             capped = AgentRunner._rewrite_pdf_metadata_after_runtime_cap(
@@ -8712,15 +8756,45 @@ class AgentRunner:
                 original_chars=len(content),
                 limit=limit,
             )
-        capped += (
-            f"\n\n[Runtime] Tool output truncated before LLM context: "
-            f"{limit}/{len(content)} chars shown. Use narrower parameters if more detail is needed."
-        )
-        return capped, {
+        receipt: dict[str, object] = {
             "original_chars": len(content),
             "shown_chars": limit,
-            "reason": "tool_context_content_limit",
+            "reason": cap_reason,
+            "task_id": task_id,
         }
+        if tool_name == "read_file":
+            data = tool_data or {}
+            arguments = tool_arguments or {}
+            path = str(data.get("path") or arguments.get("path") or "").strip()
+            try:
+                offset = int(data.get("offset", arguments.get("offset", 0)) or 0)
+            except (TypeError, ValueError):
+                offset = 0
+            already_paged = bool(data.get("truncated"))
+            if already_paged:
+                next_offset = data.get("next_offset")
+            else:
+                next_offset = offset + limit
+            continuation = {
+                "path": path,
+                "offset": next_offset,
+                "max_chars": min(32_000, max(8_000, limit // 2)),
+            }
+            receipt["continuation"] = continuation
+            continuation_text = (
+                f" Full content remains at `{path or '<unknown path>'}`. "
+                "Use grep_search for a concept first; if a sequential read is necessary, call "
+                f"read_file(path=\"{path}\", offset={next_offset}, max_chars={continuation['max_chars']})."
+                if path and next_offset is not None
+                else " Full content remains in the workspace; use grep_search or a smaller read_file page."
+            )
+        else:
+            continuation_text = " Use narrower parameters if more detail is needed."
+        capped += (
+            f"\n\n[Runtime] Tool output truncated before LLM context: "
+            f"{limit}/{len(content)} chars shown.{continuation_text}"
+        )
+        return capped, receipt
 
     @staticmethod
     def _rewrite_pdf_metadata_after_runtime_cap(

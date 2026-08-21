@@ -210,7 +210,16 @@ class ReadFileParams(BaseModel):
         ge=0,
         description=(
             "从第几个字符开始读取；用于在 grep_search 已定位内容后的分页。"
-            "单次返回长度始终由当前模型实际上下文窗口动态决定，不能手动指定。"
+            "不传 max_chars 时，单次返回长度由当前模型上下文窗口动态决定。"
+        ),
+    )
+    max_chars: int | None = Field(
+        default=None,
+        ge=1_000,
+        le=120_000,
+        description=(
+            "可选的单页最大字符数。仅在需要流式/分页阅读大文件时设置；"
+            "优先使用 grep_search 或结构化索引定位后，再读取最小必要片段。"
         ),
     )
 
@@ -402,6 +411,7 @@ class ReadFileTool(Tool):
         requested_path = kwargs["path"]
         path, canonicalized_from = self._canonicalize_common_misrooted_read_path(requested_path)
         offset = int(kwargs.get("offset") or 0)
+        requested_max_chars = kwargs.get("max_chars")
         try:
             abs_path = self.policy.resolve_read(path)
             full_content = abs_path.read_text(encoding="utf-8")
@@ -410,6 +420,9 @@ class ReadFileTool(Tool):
             max_chars, max_chars_source, estimated_tokens, usable_context_tokens = (
                 self._default_max_chars(full_content, relative_path=relative_path)
             )
+            if requested_max_chars is not None:
+                max_chars = min(max_chars, int(requested_max_chars))
+                max_chars_source = "requested_stream_page"
             page_end = min(offset + max_chars, size)
             # JSONL pages preserve record boundaries. The returned next_offset
             # is authoritative, so a caller never has to infer a resume point
@@ -437,11 +450,14 @@ class ReadFileTool(Tool):
                     "size": size,
                     "offset": offset,
                     "max_chars": max_chars,
+                    "requested_max_chars": requested_max_chars,
                     "next_offset": page_end,
                     "max_chars_source": max_chars_source,
                     "budget_policy": (
                         "t2_raw_jsonl_checkpointed_paging"
                         if max_chars_source == "t2_raw_jsonl_checkpointed_page"
+                        else "requested_stream_page"
+                        if max_chars_source == "requested_stream_page"
                         else "dynamic_model_context"
                     ),
                     "llm_max_context": self.llm_max_context,

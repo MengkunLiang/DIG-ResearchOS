@@ -1297,6 +1297,7 @@ class IdeationAgent(Agent):
         domain_map = read_text_file(ws / "literature" / "domain_map.json", default="")
         bridge_domain_plan = read_text_file(ws / "literature" / "bridge_domain_plan.json", default="")
         synthesis_workbench = read_text_file(ws / "literature" / "synthesis_workbench.json", default="")
+        synthesis_context = read_text_file(ws / "literature" / "synthesis_context.json", default="")
         survey_insights = read_text_file(ws / "ideation" / "survey_insights.json", default="")
         t4_context_pack = read_text_file(ws / T4_CONTEXT_PACK_MD, default="")
         shallow_reading_summary = _shallow_reading_prompt_summary(synthesis_workbench)
@@ -1328,8 +1329,12 @@ class IdeationAgent(Agent):
                 budget_chars=budgets["bridge_domain_plan"],
             ),
             synthesis_workbench_preview=_t4_prompt_material(
-                synthesis_workbench,
-                path="literature/synthesis_workbench.json",
+                synthesis_context or synthesis_workbench,
+                path=(
+                    "literature/synthesis_context.json"
+                    if synthesis_context.strip()
+                    else "literature/synthesis_workbench.json"
+                ),
                 budget_chars=budgets["workbench"],
             ),
             t4_context_pack_preview=_t4_prompt_material(
