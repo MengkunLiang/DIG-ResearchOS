@@ -62,6 +62,12 @@ def _terminal_eof_submit_instruction(*, include_end: bool = True) -> str:
     return f"按 {gesture} 提交"
 
 
+def _multiline_editing_instruction() -> str:
+    """Return the recoverable edit gestures for a multiline Gate."""
+
+    return "当前行可按 Ctrl+U 清空；若已换行，单独输入 CLEAR（或“重输”）可清空整段后重新输入"
+
+
 def _clarification_reference_answers(question: str, suggestions: list[str] | None) -> list[str]:
     """Return three useful, editable answer examples for ordinary text gates.
 
@@ -259,8 +265,15 @@ async def _read_cli_multiline(
     try:
         while True:
             line = await _read_cli_line_async(current_prompt)
-            if line.strip().casefold() == "end":
+            normalized = line.strip().casefold()
+            if normalized == "end":
                 break
+            if normalized in {"clear", "重输", "清空"}:
+                lines.clear()
+                current_prompt = prompt
+                hint_printed = False
+                print("已清空本次回答，请重新输入。")
+                continue
             lines.append(line)
             if continuation_prompt is not None:
                 current_prompt = continuation_prompt
@@ -1181,19 +1194,21 @@ class CLIHumanInterface(HumanInterface):
                         lines.extend([f"{idx}. {suggestion}", ""])
             self._render_panel(title="需要你的输入", border_style="bright_yellow", lines=lines)
         for attempt in range(1, self.CLARIFICATION_EMPTY_RETRIES + 1):
-            print("请输入回答（输入完成后，" + _terminal_eof_submit_instruction() + "）:")
-
-            lines: list[str] = []
+            print(
+                "请输入回答（输入完成后，"
+                + _terminal_eof_submit_instruction()
+                + "；"
+                + _multiline_editing_instruction()
+                + "）:"
+            )
             try:
-                while True:
-                    line = await _read_cli_line_async("> ")
-                    if line.strip() == "END":
-                        break
-                    lines.append(line)
+                answer = await _read_cli_multiline(
+                    prompt="> ",
+                    continuation_prompt="> ",
+                )
             except EOFError:
-                pass  # Current platform's EOF gesture normally submits the block.
+                answer = ""  # EOF with no text is a cancelled empty attempt.
 
-            answer = "\n".join(lines).strip()
             if answer:
                 print("已收到输入，继续处理...")
                 return answer
