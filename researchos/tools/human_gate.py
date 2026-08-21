@@ -938,14 +938,20 @@ class CLIHumanInterface(HumanInterface):
 
         if "T1 文献范围与跨域探索确认" not in question:
             return None
-        # T1's durable question uses an H2 title and H3 layer headings.  Older
-        # prompts used H2 for both, so accept either level rather than silently
-        # falling back to the generic Markdown panel in Auto mode.
-        heading_pattern = re.compile(r"(?m)^#{2,}\s+(.+?)\s*$")
+        # The model is allowed to use either Markdown headings or bold labels
+        # for the three scope layers.  These are presentation-equivalent, so
+        # gate rendering must be anchored to the stable layer semantics rather
+        # than a particular number of ``#`` characters.  Otherwise an Auto
+        # run can silently fall back to an unreadable generic Markdown panel.
+        heading_pattern = re.compile(
+            r"(?m)^(?:#{1,6}\s+)?(?:\*\*)?(?P<heading>"
+            r"核心研究线.*|邻接(?:理论/方法)?线.*|真正(?:跨领域)?\s*Bridge.*"
+            r")(?:\*\*)?\s*$"
+        )
         matches = list(heading_pattern.finditer(question))
         recognized: list[tuple[re.Match[str], str]] = []
         for match in matches:
-            heading = match.group(1).strip()
+            heading = match.group("heading").strip()
             if "核心研究线" in heading:
                 recognized.append((match, "core"))
             elif "邻接" in heading:
@@ -972,7 +978,10 @@ class CLIHumanInterface(HumanInterface):
             # Suggestions are rendered separately from the authoritative
             # ``suggestions`` argument.  Do not place them inside the Bridge
             # table or print the same reference answers twice.
-            reference_match = re.search(r"(?m)^#{2,}\s*可直接输入的参考回答\s*$", answer_help)
+            reference_match = re.search(
+                r"(?m)^(?:#{1,6}\s+|\*\*)可直接输入的参考回答(?:\*\*)?\s*$",
+                answer_help,
+            )
             if reference_match:
                 answer_help = answer_help[: reference_match.start()].strip()
             sections[-1] = (last_kind, last_section[: answer_match.start()].strip())
