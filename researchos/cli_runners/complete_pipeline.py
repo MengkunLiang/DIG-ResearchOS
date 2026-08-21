@@ -1021,13 +1021,24 @@ class CompletePipelineRunner:
                 gate_id=gate_id,
                 decision=str(gate_result.get("option_id") or "human_selection"),
             )
-            self.progress.stage_completed(
-                task_id=before_task,
-                run_id=gate_run_id,
-                outputs=outputs,
-                ok=True,
-                summary=f"Human Gate 已记录选择：{gate_result.get('option_id') or 'human_selection'}。",
-            )
+            if state.current_task != before_task:
+                self.progress.stage_completed(
+                    task_id=before_task,
+                    run_id=gate_run_id,
+                    outputs=outputs,
+                    ok=True,
+                    summary=f"Human Gate 已记录选择：{gate_result.get('option_id') or 'human_selection'}。",
+                )
+            else:
+                # Recovery confirmations such as T4.5 Review -> T4.5 Review
+                # authorize another attempt in the *same* stage.  They are
+                # not a stage completion and must keep the structured run
+                # open; otherwise the console records a false completion,
+                # renders downstream artifacts as accepted, and reports a
+                # confusing "completed event" before the agent has run.
+                self.progress.emit(
+                    "[Gate] 已记录恢复选择，继续当前阶段；研究产物仍需通过本阶段校验。"
+                )
         state.dump_yaml(state_path)
         # A human decision is a conversation, rather than an invocation
         # boundary.  Some paths deliberately chain gates (for example the

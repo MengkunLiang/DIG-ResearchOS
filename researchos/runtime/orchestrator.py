@@ -8316,7 +8316,14 @@ class AgentRunner:
 
         return bool(
             re.search(r"(?m)^\s*(?:\[\d+\]|\d+[.)、])\s+.+", content)
-            and re.search(r"(?i)(请选择|please choose|选择|option|继续|停止|confirm|确认)", content)
+            # A numbered completion summary often says that a check has been
+            # "confirmed".  That is not an invitation for the researcher to
+            # decide anything.  Require an actual selection/request phrase
+            # here; explicit "请确认"/"请选择" were already caught above.
+            and re.search(
+                r"(?i)(请选择|please choose|需要(?:你)?选择|请作出选择|option\s*[:：]|继续还是|停止还是)",
+                content,
+            )
         )
 
     @staticmethod

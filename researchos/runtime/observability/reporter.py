@@ -586,7 +586,15 @@ class StageReporter:
             visible_insights = insights if self.detailed else insights[:1]
             for insight in visible_insights:
                 renderables.append(self._insight_panel(insight))
-        if task_id == "T4.5-REVIEW" and ok:
+        # A recovery Gate can resolve *within* T4.5-REVIEW.  Its choice is a
+        # completed human interaction, not an accepted research package.
+        # Rendering the package-complete guide here previously made a paused
+        # Review look finished while its provider call was still pending.
+        if (
+            task_id == "T4.5-REVIEW"
+            and ok
+            and not summary.startswith("Human Gate 已记录选择：")
+        ):
             file_guide = self._t45_completion_guide()
             if file_guide is not None:
                 renderables.append(file_guide)

@@ -312,6 +312,9 @@ class ReadFileTool(Tool):
         return max_chars, "model_context_chunk", estimated_tokens, usable_tokens
 
     def _canonicalize_common_misrooted_read_path(self, path: str) -> tuple[str, str | None]:
+        path, t45_canonicalized_from = self._canonicalize_t45_review_read_path(path)
+        if t45_canonicalized_from is not None:
+            return path, t45_canonicalized_from
         normalized = str(path or "").replace("\\", "/").lstrip("/")
         prefix = "drafts/survey/literature/"
         if not normalized.startswith(prefix):
@@ -329,6 +332,71 @@ class ReadFileTool(Tool):
         if resolved:
             return resolved, normalized
         return path, None
+
+    def _canonicalize_t45_review_read_path(self, path: str) -> tuple[str, str | None]:
+        """Recover only the known prose-path slips in the independent review.
+
+        T4.5 Review has a deliberately small, fixed input package.  Several
+        providers nevertheless drop the ``ideation/`` prefix or guess the
+        historical proposal location on their first tool round.  Letting those
+        harmless slips fail costs another full model turn and has repeatedly
+        turned a healthy review into a provider-timeout loop.  This is not a
+        broad alias system: it applies only to Review and only maps the three
+        canonical sources named in its prompt.  Directory reads and newly
+        invented names still fail normally, so the model cannot use this to
+        probe the workspace or bypass the artifact contract.
+        """
+
+        if self.policy.task_id != "T4.5-REVIEW":
+            return path, None
+        normalized = str(path or "").replace("\\", "/").lstrip("./")
+        aliases = {
+            "hypotheses.md": "ideation/hypotheses.md",
+            "ideation/hypotheses": "ideation/hypotheses.md",
+            "research_proposal.md": "ideation/proposal/research_proposal.md",
+            "proposal.md": "ideation/proposal/research_proposal.md",
+            "t45_proposal.md": "ideation/proposal/research_proposal.md",
+            "proposal_cn.md": "ideation/proposal/research_proposal.md",
+            "main.md": "ideation/proposal/research_proposal.md",
+            "formalized_proposal.md": "ideation/proposal/research_proposal.md",
+            "ideation/research_proposal.md": "ideation/proposal/research_proposal.md",
+            "orientation_config.yaml": "ideation/orientation_config.yaml",
+        }
+        # Legacy traces show that an otherwise capable provider may try a
+        # succession of self-invented proposal filenames after one miss. They
+        # are all unambiguous variants of the single canonical Proposal; map
+        # them here instead of paying a complete model turn for every 404.
+        for alias in (
+            "ideation/proposal.md",
+            "ideation/research_proposal",
+            "ideation/t45_proposal.md",
+            "ideation/proposal_cn.md",
+            "ideation/main.md",
+            "ideation/formalized_proposal.md",
+            "ideation/proposal_zh.md",
+            "ideation/research.md",
+            "ideation/proposal_v1.md",
+            "ideation/draft.md",
+            "ideation/final_proposal.md",
+            "ideation/paper.md",
+            "ideation/rp.md",
+            "ideation/research_proposal_final.md",
+            "ideation/t45_research_proposal.md",
+            "ideation/proposal_draft.md",
+            "ideation/proposal.txt",
+            "ideation/研究提案.md",
+            "ideation/研究方案.md",
+            "ideation/docs/research_proposal.md",
+        ):
+            aliases[alias] = "ideation/proposal/research_proposal.md"
+        canonical = aliases.get(normalized)
+        if canonical is None or normalized == canonical:
+            return path, None
+        if not (self.policy.workspace_dir / canonical).is_file():
+            # A missing canonical source is a real package failure.  Preserve
+            # the requested path so the normal error remains diagnostic.
+            return path, None
+        return canonical, normalized
 
     async def execute(self, **kwargs) -> ToolResult:
         requested_path = kwargs["path"]

@@ -126,7 +126,9 @@ class ResearchFormalizerAgent(Agent):
         if phase == "review":
             message = (
                 "执行 T4.5 的 Orientation-Aware Review and Repair。第一个工具回合读取 hypotheses、proposal 和 "
-                "ideation/orientation_config.yaml，并同时调用 validate_t45_research_package。不要例行读取 blueprint、"
+                "ideation/orientation_config.yaml，并同时调用 validate_t45_research_package。这里的三个确切路径是 "
+                "`ideation/hypotheses.md`、`ideation/proposal/research_proposal.md` 和 "
+                "`ideation/orientation_config.yaml`；不得读取裸文件名、目录或猜测的 proposal 别名。不要例行读取 blueprint、"
                 "claim registry 或 experiment plan：结构契约已由 checkpoint 核验，只有当前 proposal/hypotheses 无法回答"
                 "某一具体 review 问题时，才读取必要的结构化来源。不要探测 orientation_config.json。"
                 "按当前 orientation 一次性审阅完整研究包；发现问题时只修复"

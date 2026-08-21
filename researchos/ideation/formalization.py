@@ -162,12 +162,34 @@ _ORIENTATION_SPECS: dict[str, dict[str, Any]] = {
 # argument.  Surface-form departures are reviewed semantically below.
 PROPOSAL_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("motivation", ("research motivation and core problem", "研究动机与核心问题", "研究背景与核心问题")),
-    ("gap_and_challenges", ("prior research, gap and key challenges", "现有研究、缺口与关键挑战", "文献缺口与关键挑战")),
+    (
+        "gap_and_challenges",
+        (
+            "prior research, gap and key challenges",
+            "现有研究、缺口与关键挑战",
+            "文献基础、研究缺口与关键挑战",
+            "文献缺口与关键挑战",
+        ),
+    ),
     ("approach", ("proposed approach and design rationale", "技术方案与设计理由", "研究方法与设计理由")),
-    ("claims", ("research questions, claims and hypotheses", "研究问题、研究主张与假设", "research claims and hypotheses")),
+    (
+        "claims",
+        (
+            "research questions, claims and hypotheses",
+            "研究问题、研究主张与假设",
+            "研究问题、主张与假设",
+            "research claims and hypotheses",
+        ),
+    ),
     ("evaluation", ("research design and evaluation", "研究设计与评测", "研究设计与评估")),
-    ("contributions", ("expected contributions and implications", "预期贡献与现实含义", "预期贡献与影响")),
-    ("risks", ("risks, limitations and execution plan", "风险、局限与执行计划", "风险、局限与实施计划")),
+    (
+        "contributions",
+        ("expected contributions and implications", "预期贡献与现实含义", "预期贡献与影响", "预期贡献与启示"),
+    ),
+    (
+        "risks",
+        ("risks, limitations and execution plan", "风险、局限与执行计划", "风险、局限与实施计划", "风险、限制与执行计划"),
+    ),
 )
 
 _MINIMUM_PROPOSAL_SUBSTANCE = 600
@@ -1827,9 +1849,17 @@ def _proposal_sections(text: str) -> dict[str, str]:
         # deterministic checks more precise; merged or discipline-specific
         # headings remain eligible for quote-bound semantic review.
         title = re.sub(r"^\d+(?:\.\d+)*[.)、．]?\s+", "", title)
+        # Chinese research proposals commonly keep the canonical English term
+        # in a trailing full-width parenthesis, e.g. ``研究问题、主张与假设
+        # （Research Claims and Hypotheses）``.  It is still one clear
+        # researcher-facing heading, not a merged structure that should force
+        # an LLM adjudication or a rewrite.  Compare both the bilingual
+        # rendering and its Chinese/English base title deterministically.
+        base_title = re.sub(r"\s*[（(][^()（）]*[)）]\s*$", "", title).strip()
+        title_variants = {title, base_title}
         end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
         for key, aliases in PROPOSAL_SECTIONS:
-            if any(alias.casefold() == title for alias in aliases):
+            if any(alias.casefold() in title_variants for alias in aliases):
                 result[key] = text[heading.end() : end]
                 break
     return result

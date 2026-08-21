@@ -120,6 +120,23 @@ T4 通过 `write_structured_file` 写入 `ideation/idea_rationales.json` 和 `id
 
 T4 提示和 Gate1 渲染器会保留所有候选项。在不同字段上重复出现错误，并不是盲目调用相同写入操作的理由：应修复报告的对象并重试。当外部包装器仅输出错误代码时，`trace <run-id>` 包含完整的有界诊断载荷。
 
+## T4.5 审阅：提供程序暂停不等于 Proposal 失败
+
+Review 只以三份固定输入开始：`ideation/hypotheses.md`、
+`ideation/proposal/research_proposal.md` 与
+`ideation/orientation_config.yaml`。第一轮 checkpoint 会在任何改写前
+检查研究包。因此，checkpoint 已通过后出现超时，只表示模型服务没有在时限内返回，**不**表示 Proposal、研究蓝图或实验计划未通过校验。
+
+只有确实需要诊断时才使用 `trace <run-id>`。若 trace 显示模型读取了
+`proposal.md` 等裸文件名，或把 `ideation/` 这样的目录交给 `read_file`，
+请更新 ResearchOS 后直接恢复，而不要手工改写产物。运行时现在只会将一小组已知的历史 Proposal 别名转到规范路径，并在 trace 中记录 `canonicalized_from`；目录和新编造的文件名绝不会被当作有效来源。这样可避免一串无害的 404 在真正审阅前耗尽模型回合。
+
+当 checkpoint 已通过而控制台提示提供程序暂停时，等待服务恢复或选择暂停，然后使用下面的普通恢复命令。不要在同一 workspace 启动第二个写入者，也不要为了恢复 T4.5 而重跑 T4。
+
+```bash
+python -m researchos.cli resume --workspace ./workspace/project-a
+```
+
 ## 不应从日志中推断的内容
 
 - 检索覆盖率的缺口不是研究缺口。
