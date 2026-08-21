@@ -216,6 +216,18 @@ T36_QUALITY_SOURCE_ARTIFACTS = (
 T45_HISTORY_MAX_INPUT_TOKENS = 96_000
 T45_HISTORY_TRIGGER_RATIO = 0.72
 T45_HISTORY_TARGET_RATIO = 0.55
+# Reader stages repeatedly inspect long evidence artifacts.  Their durable
+# note cards and workbenches are available through targeted tools, so retaining
+# an almost-full provider context of historic PDF previews and prior tool
+# outputs has no research benefit and has caused otherwise healthy T3.5 calls
+# to exceed the request deadline.  These are history caps, not evidence caps.
+READER_HISTORY_MAX_INPUT_TOKENS = {
+    "T3": 96_000,
+    "T3.5": 112_000,
+    "T3.6": 112_000,
+}
+READER_HISTORY_TRIGGER_RATIO = 0.78
+READER_HISTORY_TARGET_RATIO = 0.60
 T45_RESEARCH_CONTENT_SOURCE_ARTIFACTS = (
     "ideation/research_blueprint.yaml",
     "ideation/claim_registry.yaml",
@@ -7489,6 +7501,7 @@ class AgentRunner:
         synthesis_inputs = [path for path in [*note_files, *bridge_inputs] if path.is_file()]
         staged_outputs = [
             ctx.workspace_dir / "literature" / "synthesis_workbench.json",
+            ctx.workspace_dir / "literature" / "synthesis_context.json",
             ctx.workspace_dir / "literature" / "synthesis_outline.md",
             ctx.workspace_dir / "literature" / "synthesis_draft.md",
         ]
@@ -7499,8 +7512,8 @@ class AgentRunner:
                 self.progress.emit(
                     "[Synthesizer Agent] T3.5 使用已有结构化综合材料\n"
                     f"- 输入: 检测到 {len(note_files)} 份 paper notes 与 {len(bridge_inputs)} 个 Cross-domain 上下文入口，现有 workbench 未过期\n"
-                    "- 输出: literature/synthesis_workbench.json；literature/synthesis_outline.md；literature/synthesis_draft.md\n"
-                    "- 后续: LLM 将复核这些材料并写最终 synthesis.md",
+                    "- 输出: 完整审计 workbench、紧凑 reasoning index、outline 与 draft guidance\n"
+                    "- 后续: LLM 先基于紧凑 index 复核，只对关键论断定向回查笔记后写 synthesis.md",
                     important=True,
                 )
                 actions = ctx.extra.setdefault("runtime_actions", [])
@@ -7537,6 +7550,7 @@ class AgentRunner:
             str(path)
             for path in (
                 outputs.get("workbench"),
+                outputs.get("context"),
                 outputs.get("outline"),
                 outputs.get("draft"),
             )
@@ -7555,8 +7569,8 @@ class AgentRunner:
         self.progress.emit(
             "[Synthesizer Agent] T3.5 结构化综合摘要\n"
             f"- 输入: {'；'.join(summary_bits)}\n"
-            f"- 输出: {'；'.join(output_bits) if output_bits else 'literature/synthesis_workbench.json / synthesis_outline.md / synthesis_draft.md'}\n"
-            "- 后续: LLM 将复核 workbench 并写最终 synthesis.md",
+            f"- 输出: {'；'.join(output_bits) if output_bits else 'literature/synthesis_workbench.json / synthesis_context.json / synthesis_outline.md / synthesis_draft.md'}\n"
+            "- 后续: LLM 将先复核紧凑 index；只有关键不确定点才回查对应笔记，再写最终 synthesis.md",
             important=True,
         )
 
@@ -9353,6 +9367,10 @@ class AgentRunner:
             limit = min(limit, T45_HISTORY_MAX_INPUT_TOKENS)
             trigger_ratio = T45_HISTORY_TRIGGER_RATIO
             target_ratio = T45_HISTORY_TARGET_RATIO
+        elif task_id in READER_HISTORY_MAX_INPUT_TOKENS:
+            limit = min(limit, READER_HISTORY_MAX_INPUT_TOKENS[task_id])
+            trigger_ratio = READER_HISTORY_TRIGGER_RATIO
+            target_ratio = READER_HISTORY_TARGET_RATIO
         trigger = int(limit * trigger_ratio)
         target = int(limit * target_ratio)
         current = self.llm.count_tokens([m.to_openai_dict() for m in messages], binding)

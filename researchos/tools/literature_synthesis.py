@@ -311,6 +311,14 @@ class BuildSynthesisWorkbenchTool(Tool):
         # clusters, not authoritative domain consensus.
         workbench["domain_consensus"] = workbench["mechanism_claim_clusters"]
 
+        # The complete workbench remains the durable audit record.  It embeds
+        # every normalized Note Card and can easily reach hundreds of
+        # thousands of characters.  Sending that archive back through the
+        # conversational tool channel made T3.5 slower and less reliable than
+        # reading the actual relevant notes.  Give the LLM a compact index for
+        # whole-corpus reasoning, then let it retrieve precise note sections
+        # for claims that need more detail.
+        synthesis_context = _build_synthesis_context(workbench)
         outline = _render_outline(workbench, missing_areas)
         draft = (
             _render_synthesis(workbench, missing_areas)
@@ -320,9 +328,11 @@ class BuildSynthesisWorkbenchTool(Tool):
 
         output_dir.mkdir(parents=True, exist_ok=True)
         workbench_path = output_dir / "synthesis_workbench.json"
+        context_path = output_dir / "synthesis_context.json"
         outline_path = output_dir / "synthesis_outline.md"
         draft_path = output_dir / "synthesis_draft.md"
         workbench_path.write_text(json.dumps(workbench, ensure_ascii=False, indent=2), encoding="utf-8")
+        context_path.write_text(json.dumps(synthesis_context, ensure_ascii=False, indent=2), encoding="utf-8")
         outline_path.write_text(outline, encoding="utf-8")
         draft_path.write_text(draft, encoding="utf-8")
         final_path = None
@@ -342,6 +352,7 @@ class BuildSynthesisWorkbenchTool(Tool):
             "family_count": len(families),
             "outputs": {
                 "workbench": str(workbench_path.relative_to(self.policy.workspace_dir)),
+                "context": str(context_path.relative_to(self.policy.workspace_dir)),
                 "outline": str(outline_path.relative_to(self.policy.workspace_dir)),
                 "draft": str(draft_path.relative_to(self.policy.workspace_dir)),
                 "final": str(final_path.relative_to(self.policy.workspace_dir)) if final_path else None,
@@ -354,12 +365,42 @@ class BuildSynthesisWorkbenchTool(Tool):
                 "Built staged synthesis workbench from "
                 f"{len(deep_notes)} deep-reading notes, {len(bridge_notes)} Bridge paper notes, "
                 f"{len(shallow_read_notes)} shallow-reading notes, and {len(bridge_catalogs)} Cross-domain catalog tracks into {data['outputs']['workbench']}, "
-                f"{data['outputs']['outline']}, {data['outputs']['draft']}. "
+                f"{data['outputs']['context']}, {data['outputs']['outline']}, {data['outputs']['draft']}. "
                 f"Citable FULL/PARTIAL inventory: {data['citable_ref_count']} refs; no fixed coverage target. "
                 "Final synthesis remains the Reader LLM's responsibility."
             ),
             data=data,
         )
+
+
+def _build_synthesis_context(workbench: dict[str, Any]) -> dict[str, Any]:
+    """Project a bounded reasoning index from the complete workbench.
+
+    Per-paper Note Card copies remain only in ``synthesis_workbench.json``.
+    This avoids four redundant copies of the corpus in a single model turn
+    while retaining the coverage plan, method families, tensions, evidence
+    boundaries, and stable IDs that the Synthesizer needs to choose a precise
+    follow-up retrieval.
+    """
+
+    excluded = {
+        "notes",
+        "bridge_notes",
+        "shallow_read_notes",
+        "all_note_cards",
+        # Legacy aliases duplicate structured information already retained in
+        # the canonical fields below.
+        "domain_consensus",
+        "weak_evidence_and_resource_upgrade",
+    }
+    context = {key: value for key, value in workbench.items() if key not in excluded}
+    context["semantics"] = "t35_compact_reasoning_index_not_full_note_archive"
+    context["full_workbench_path"] = "literature/synthesis_workbench.json"
+    context["retrieval_instruction"] = (
+        "Use this index for corpus-level synthesis. For a claim whose mechanism, result, boundary, or citation fit is uncertain, "
+        "call query_research_evidence and then read only the returned note sections. Do not read the full workbench merely to obtain note text."
+    )
+    return context
 
 
 def _parse_note(

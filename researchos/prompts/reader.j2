@@ -468,6 +468,8 @@ BibTeX 只保存可发表引用元数据：title、author、year、journal/bookt
 - `literature/cross_domain_catalogs/<bridge-id>/bridge_context.json` 与 `paper_catalog.json`：T2 已检索的 Cross-domain 补充轨道。它与 `literature/bridge_notes/` 中真实的 Bridge 阅读笔记分开；即使该方向暂未深读，catalog 仍可用于梳理历史发展、前沿线索、相邻概念、taxonomy 边界、比较维度、反例和后续阅读优先级，但不能被直接写成机制、结果、实现细节或强比较证据，也不能作为正式 citation anchor
 - `literature/shallow_read_notes/`: {% if abstract_note_count %}{{ abstract_note_count }} 篇 abstract-only 笔记（证据较弱）{% else %}abstract-only 笔记（如有，由 runtime 自动补读）{% endif %}
 - `literature/notes_manifest.json`: 包含每篇 deep note 的 completion 状态和 citation_quality_score/citation_use（如已刷新）
+- `literature/synthesis_context.json`: 从完整 workbench 投影出的紧凑 reasoning index，包含方法家族、citation coverage、张力、贡献空间、Bridge 与稳定 paper IDs；用于全库综合推理
+- `literature/synthesis_workbench.json`: 完整可审计 archive，包含全部 Note Card 副本。不要为了通读笔记而整文件读取；遇到关键机制、结果、边界或引用适配不确定时，用 `query_research_evidence` 取得最小 note-section bundle
 - `literature/metadata_triage.md`: metadata-only 候选的批量补资源/升级阅读线索；不是 family、trend、mechanism 或 claim 的证据
 - `literature/comparison_table.csv`: 论文对比表
 - `literature/domain_map.json`: T2 生成的引用图领域地图；用于把 citation_edges 作为客观骨架，并识别 core/theory_bridge/adjacent/boundary 区域
@@ -522,6 +524,7 @@ T3.5 的 `synthesis.md` 是 Markdown 研究综合和 T4/T3.6/T8 的证据桥，�
 
 ## 输出
 - `literature/synthesis_workbench.json`: 工具抽取的证据矩阵和候选问题
+- `literature/synthesis_context.json`: 供 LLM 整体推理的紧凑索引，不替代完整审计 workbench
 - `literature/synthesis_outline.md`: 分阶段大纲
 - `literature/synthesis_draft.md`: 工具生成的写作指导/证据脚手架，不是最终结论
 - `literature/synthesis.md`: 由你审阅证据后亲自写出的最终文献综合
@@ -532,7 +535,7 @@ T3.5 的 `synthesis.md` 是 Markdown 研究综合和 T4/T3.6/T8 的证据桥，�
 
 先调用一次 `build_synthesis_workbench(write_final=false, render_draft=false, domain_map_path="literature/domain_map.json")`，不传 `llm_insights`。这次调用只把全部 note 的可追溯字段、证据层级、citation、domain map 和 bridge catalog 组装为统一索引，不代表最终学术判断。不要先逐文件通读全部 notes，也不要按目录顺序读取固定前几篇。
 
-读取 `synthesis_workbench.json` 与 `synthesis_outline.md` 后，用自己的 LLM 能力在统一上下文中生成以下洞察。对会改变分类、趋势、张力或研究问题的含糊证据，先调用 `query_research_evidence` 获取最小 note-section bundle，再只打开返回的精确 section。索引内容、论文证据和你的学术理解应在同一推理中融合；工具候选不能覆盖你的判断。
+读取 `synthesis_context.json` 与 `synthesis_outline.md` 后，用自己的 LLM 能力在统一上下文中生成以下洞察。完整 `synthesis_workbench.json` 是审计 archive，不应整文件塞入会话；对会改变分类、趋势、张力或研究问题的含糊证据，先调用 `query_research_evidence` 获取最小 note-section bundle，再只打开返回的精确 section。索引内容、论文证据和你的学术理解应在同一推理中融合；工具候选不能覆盖你的判断。
 
 #### 1a. 方法家族分类
 逐篇分析 deep_read_notes，根据论文的**实际方法内容**（不是标题关键词）归纳方法家族。家族数量由真实方法差异决定，使用能够解释主要设计分歧的最小充分集合，不要为了满足固定数量拆分或合并流派。
@@ -599,7 +602,7 @@ build_synthesis_workbench(
 
 ### 阶段 3：审阅与修订
 
-读取工具生成的 `synthesis_workbench.json`、`synthesis_outline.md` 和 `synthesis_draft.md`，但不要把工具草稿当作最终文献判断。你必须检查：
+读取工具生成的 `synthesis_context.json`、`synthesis_outline.md` 和 `synthesis_draft.md`，但不要把工具草稿当作最终文献判断。仅在需要审计完整字段时定向查询 `synthesis_workbench.json` 或对应 note sections。你必须检查：
 1. 方法家族分类是否准确反映了论文实际内容
 2. 共同假设是否有足够的论文支持
 3. 研究问题是否可操作
