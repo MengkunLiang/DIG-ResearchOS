@@ -53,8 +53,8 @@ python -m researchos.cli init-workspace --workspace ./workspace/my-survey \
 
 | Preset | Intended output | Literature setup |
 | --- | --- | --- |
-| `research_ccf` / `research_utd` | Research paper | 25 candidates, 15 deep reads, 10 abstract reads. |
-| `survey_ccf` / `survey_utd` | Field Survey | 60 candidates, 30 deep reads, 30 abstract reads. |
+| `research_ccf` / `research_utd` | Research paper | 40 candidates, 25 deep reads, 15 abstract reads. |
+| `survey_ccf` / `survey_utd` | Field Survey | 80 candidates, 40 deep reads, 40 abstract reads. |
 | `survey_exhaustive_utd` | Broad UTD/IS Survey | 90 candidates, 40 deep reads, 50 abstract reads. |
 
 Copilot is the better choice when you want to see and adjust these settings during the run.

@@ -217,7 +217,7 @@ class CompletePipelineRunner:
         keep their original timestamps and content for auditability.
         """
 
-        canonical_project_id = load_workspace_project_id(self.workspace)
+        canonical_project_id = resolve_workspace_project_id(self.workspace, state.project_id)
         if canonical_project_id is None or canonical_project_id == state.project_id:
             return
         previous_project_id = state.project_id

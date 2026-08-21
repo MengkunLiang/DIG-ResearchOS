@@ -3545,7 +3545,7 @@ class AgentRunner:
             "项目草案和检索范围确认，不会跳过它们。失败恢复、研究范围变更、外部执行和新颖性失败仍必须人工处理。\n\n"
             f"当前推荐：{auto_execution_setup_summary(profile)}\n\n"
             "## 可调整的两项\n\n"
-            "文献覆盖可选 `standard_research`（25/15/10）、`survey_balanced`（60/30/30）或 "
+            "文献覆盖可选 `standard_research`（40/25/15）、`survey_balanced`（80/40/40）或 "
             "`survey_exhaustive`（90/40/50）。三个数字依次是候选、精读、摘要轻读。\n\n"
             "T4 探索可选 `quick`、`standard` 或 `deep`；默认 `auto` 会依问题与证据质量选择。\n\n"
             "例如：`确认`、`standard_research quick`、`survey_balanced standard` 或 "

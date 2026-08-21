@@ -49,8 +49,8 @@ AUTO_PRESETS: dict[str, dict[str, str]] = {
 }
 
 _LITERATURE_PRESET_SUMMARIES = {
-    "standard_research": "研究论文覆盖：25 篇候选，15 篇精读，10 篇摘要轻读",
-    "survey_balanced": "综述均衡覆盖：60 篇候选，30 篇精读，30 篇摘要轻读",
+    "standard_research": "研究论文覆盖：40 篇候选，25 篇精读，15 篇摘要轻读",
+    "survey_balanced": "综述均衡覆盖：80 篇候选，40 篇精读，40 篇摘要轻读",
     "survey_exhaustive": "综述强覆盖：90 篇候选，40 篇精读，50 篇摘要轻读",
 }
 

@@ -163,10 +163,30 @@ def load_workspace_project_id(workspace_dir: Path) -> str | None:
     return normalized or None
 
 
-def resolve_workspace_project_id(workspace_dir: Path, fallback: str | None = None) -> str:
-    """Return ``project.yaml`` identity, or a non-empty runtime fallback."""
+def default_project_id_for_workspace(workspace_dir: Path) -> str:
+    """Derive a stable non-placeholder identity when no project ID was supplied."""
 
-    return load_workspace_project_id(workspace_dir) or str(fallback or "").strip() or DEFAULT_PROJECT_ID
+    name = Path(workspace_dir).resolve().name.strip()
+    return name or DEFAULT_PROJECT_ID
+
+
+def resolve_workspace_project_id(workspace_dir: Path, fallback: str | None = None) -> str:
+    """Return a durable identity without surfacing the historical placeholder.
+
+    ``demo-project`` was a CLI default in older workspaces.  It carries no
+    research identity, so retain it only for old files while presenting and
+    reconciling new runtime state with the workspace name.  An explicitly
+    supplied non-placeholder ID always takes precedence when no project file
+    exists; a real ID in ``project.yaml`` remains canonical.
+    """
+
+    canonical = load_workspace_project_id(workspace_dir)
+    if canonical and canonical != DEFAULT_PROJECT_ID:
+        return canonical
+    supplied = str(fallback or "").strip()
+    if supplied and supplied != DEFAULT_PROJECT_ID:
+        return supplied
+    return default_project_id_for_workspace(workspace_dir)
 
 
 def merge_workspace_artifact(
@@ -285,7 +305,7 @@ def initialize_workspace(
     if create_project_file:
         project_file = write_project_stub(
             workspace_dir,
-            project_id=project_id or DEFAULT_PROJECT_ID,
+            project_id=project_id or default_project_id_for_workspace(workspace_dir),
             topic=topic or "",
             force=force_project_file,
         )

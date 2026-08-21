@@ -4647,7 +4647,7 @@ def _add_shared_cli_options(
     )
     parser.add_argument(
         "--project-id",
-        default="demo-project" if use_defaults else default,
+        default=None if use_defaults else default,
     )
     parser.add_argument(
         "--state-machine",

@@ -53,8 +53,8 @@ python -m researchos.cli init-workspace --workspace ./workspace/my-survey \
 
 | 预设 | 面向的产出 | 文献设置 |
 | --- | --- | --- |
-| `research_ccf` / `research_utd` | 研究论文 | 25 篇候选、15 篇精读、10 篇摘要轻读。 |
-| `survey_ccf` / `survey_utd` | 领域综述 | 60 篇候选、30 篇精读、30 篇摘要轻读。 |
+| `research_ccf` / `research_utd` | 研究论文 | 40 篇候选、25 篇精读、15 篇摘要轻读。 |
+| `survey_ccf` / `survey_utd` | 领域综述 | 80 篇候选、40 篇精读、40 篇摘要轻读。 |
 | `survey_exhaustive_utd` | 覆盖更广的 UTD/IS 综述 | 90 篇候选、40 篇精读、50 篇摘要轻读。 |
 
 若你希望在运行时逐项查看和调整这些设置，应选择 Copilot。

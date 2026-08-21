@@ -577,7 +577,7 @@ T1 的本质不是“自由聊天”，而是一个结构化初始化阶段：
 
 T1 可能显得比普通聊天久，原因是它不是一次问答，而是要把人类偏好、已有材料、外部资源和约束整理成可被 T2-T9 复用的结构化事实源。若 workspace 已经有完整 `project.yaml` 和 seed 文件，可以直接从 T2 或后续节点恢复/调试；否则 T1 必须先问清楚，避免后面大量 LLM/检索/实验资源浪费在错误方向上。
 
-在材料补充 Gate 之前，新建 T1 workspace 会先让研究者选择 **Copilot** 或 **Auto**。Copilot 保留所有普通科研 Gate 供研究者确认。交互式选择 Auto 后，T1 会再问一次启动配置，包括 T2/T3 文献覆盖档位和 T4 探索力度。三种覆盖档分别是标准研究 `25/15/10`、综述均衡 `60/30/30`、综述强覆盖 `90/40/50`，三个数字依次表示保留候选、精读和摘要级轻读。最初的 Auto 预设决定写作取向与综述策略，`quick`、`standard`、`deep` 或质量感知的 `auto` 决定 T4 力度。可直接输入 `Auto survey_ccf deep`、`Auto survey_utd standard` 或 `Auto survey_exhaustive_utd deep`；第二步可输入 `确认`、`standard_research quick`、`survey_balanced standard` 或 `survey_exhaustive deep`。T1 仍会完成种子、研究边界、项目草案和检索范围确认，不会被跳过。Auto 只预授权后续常规决策，不会替用户决定研究问题或范围、恢复操作、失败的新颖性 verdict、外部副作用，或发生实质变化的研究范围。也可以在命令行预设，例如 `--workflow-mode auto --auto-preset research_utd --auto-t4-mode deep`。历史版本静默写入的默认值会被视为未确认，并在 T1 首次进入时补问一次。
+在材料补充 Gate 之前，新建 T1 workspace 会先让研究者选择 **Copilot** 或 **Auto**。Copilot 保留所有普通科研 Gate 供研究者确认。交互式选择 Auto 后，T1 会再问一次启动配置，包括 T2/T3 文献覆盖档位和 T4 探索力度。三种覆盖档分别是标准研究 `40/25/15`、综述均衡 `80/40/40`、综述强覆盖 `90/40/50`，三个数字依次表示保留候选、精读和摘要级轻读。最初的 Auto 预设决定写作取向与综述策略，`quick`、`standard`、`deep` 或质量感知的 `auto` 决定 T4 力度。可直接输入 `Auto survey_ccf deep`、`Auto survey_utd standard` 或 `Auto survey_exhaustive_utd deep`；第二步可输入 `确认`、`standard_research quick`、`survey_balanced standard` 或 `survey_exhaustive deep`。T1 仍会完成种子、研究边界、项目草案和检索范围确认，不会被跳过。Auto 只预授权后续常规决策，不会替用户决定研究问题或范围、恢复操作、失败的新颖性 verdict、外部副作用，或发生实质变化的研究范围。也可以在命令行预设，例如 `--workflow-mode auto --auto-preset research_utd --auto-t4-mode deep`。历史版本静默写入的默认值会被视为未确认，并在 T1 首次进入时补问一次。
 
 ### 单独运行 vs 完整运行
 
@@ -1578,7 +1578,7 @@ T8/T9 会直接消费它，而不是重新从 note 手工抽引用。
 
 ### T3 的 Abstract Sweep（轻量补读）
 
-Deep read 完成后，orchestrator 自动运行 abstract sweep，补读尚未被 `deep_read_notes/` 或 `shallow_read_notes/` 覆盖的保留候选。它读取 title/abstract/metadata 而不是全文。含 abstract 的论文写入 `literature/shallow_read_notes/`，并会实际扩展 T3.5 的 coverage、taxonomy、trend、comparison、bridge discovery 和 research-question discovery；但写作时必须明确是 abstract-level 描述，不能单独确认机制、因果结果或实现细节。只有 title/year/venue/DOI 等 metadata 的候选不再逐篇伪装成 note，而是批量写入 `literature/metadata_triage.md`，作为资源补取线索。三档 `T2-PARAM-GATE` 分别把阅读覆盖分配为标准研究 `15+10=25`、综述均衡 `30+30=60` 和综述强覆盖 `40+50=90`；`papers_backlog.jsonl` 只用于替换不可读候选或后续显式补检，不会暗中扩大确认后的阅读覆盖。
+Deep read 完成后，orchestrator 自动运行 abstract sweep，补读尚未被 `deep_read_notes/` 或 `shallow_read_notes/` 覆盖的保留候选。它读取 title/abstract/metadata 而不是全文。含 abstract 的论文写入 `literature/shallow_read_notes/`，并会实际扩展 T3.5 的 coverage、taxonomy、trend、comparison、bridge discovery 和 research-question discovery；但写作时必须明确是 abstract-level 描述，不能单独确认机制、因果结果或实现细节。只有 title/year/venue/DOI 等 metadata 的候选不再逐篇伪装成 note，而是批量写入 `literature/metadata_triage.md`，作为资源补取线索。三档 `T2-PARAM-GATE` 分别把阅读覆盖分配为标准研究 `25+15=40`、综述均衡 `40+40=80` 和综述强覆盖 `40+50=90`；`papers_backlog.jsonl` 只用于替换不可读候选或后续显式补检，不会暗中扩大确认后的阅读覆盖。
 
 配置在 `config/system_config/agent_params.yaml` 的 `reader.modes.read.behavior.abstract_sweep`：
 
@@ -1589,7 +1589,7 @@ reader:
       behavior:
         abstract_sweep:
           enabled: true
-          lite_paper_num: 10      # 标准研究默认 15 篇精读 + 10 篇轻读 = 25 篇阅读覆盖；综述档位按各自候选总数分配；可显式设 all_readable
+          lite_paper_num: 15      # 标准研究默认 25 篇精读 + 15 篇轻读 = 40 篇阅读覆盖；综述档位按各自候选总数分配；可显式设 all_readable
           min_relevance: 0.0      # 默认不按 metadata hint 丢弃
           sources: [papers_verified, papers_dedup]
           exclude_already_read: true

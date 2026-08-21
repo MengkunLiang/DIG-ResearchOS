@@ -104,8 +104,8 @@ gates:
       how_to_choose:
         literal: |
           如何选择：
-          - 如果你在写研究论文：通常选“标准研究论文覆盖”，共覆盖 25 篇候选，其中精读 15 篇、摘要轻读 10 篇。
-          - 如果你在写综述：通常选“综述均衡覆盖”，共覆盖 60 篇候选，其中精读 30 篇、摘要轻读 30 篇。
+          - 如果你在写研究论文：通常选“标准研究论文覆盖”，共覆盖 40 篇候选，其中精读 25 篇、摘要轻读 15 篇。
+          - 如果你在写综述：通常选“综述均衡覆盖”，共覆盖 80 篇候选，其中精读 40 篇、摘要轻读 40 篇。
           - 如果这是最终展示型综述或你特别在意覆盖面：选“综述强覆盖”，但运行更久、LLM 成本更高。
           - 如果你只想改数字：选“自定义关键数字”。自定义只影响覆盖目标，不影响系统尽可能补摘要/PDF/DOI 的策略。
           - 也可以直接输入一句修改要求，例如：把 active pool 改成 300；或：候选数300，精读80，摘要轻读120，require=false。若你明确给出的精读加摘要轻读大于候选数，确认页会先说明并把候选数调到两者之和，等待你确认后才开始 T2。
@@ -131,12 +131,12 @@ gates:
     options:
       - id: standard_research
         label: "标准研究论文覆盖"
-        description: "写 research article 时的默认强度：共覆盖 25 篇候选，其中 T3 精读目标 15 篇、摘要轻读 10 篇。"
+        description: "写 research article 时的默认强度：共覆盖 40 篇候选，其中 T3 精读目标 25 篇、摘要轻读 15 篇。"
         aliases: ["standard", "research", "默认", "研究"]
         next: T2-PARAM-CONFIRM-GATE
       - id: survey_balanced
         label: "综述均衡覆盖（推荐综述）"
-        description: "一般综述建议：共覆盖 60 篇候选，其中 T3 精读目标 30 篇、摘要轻读 30 篇。"
+        description: "一般综述建议：共覆盖 80 篇候选，其中 T3 精读目标 40 篇、摘要轻读 40 篇。"
         aliases: ["survey", "review", "综述", "均衡"]
         next: T2-PARAM-CONFIRM-GATE
       - id: survey_exhaustive

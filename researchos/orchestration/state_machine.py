@@ -468,17 +468,17 @@ _T2_COVERAGE_GATE_INPUT_PATHS = {
 _LITERATURE_PARAM_PRESETS: dict[str, dict[str, Any]] = {
     "standard_research": {
         "profile": "research_article",
-        "t2_finalize": {"active_pool_max": 25},
+        "t2_finalize": {"active_pool_max": 40},
         "reader": {
-            "deep_read_min": 12,
-            "deep_read_target": 15,
-            "deep_read_max": 18,
+            "deep_read_min": 20,
+            "deep_read_target": 25,
+            "deep_read_max": 30,
             "require_deep_read_target": True,
             "abstract_sweep": {
                 # The retained pool is the total distinct-paper reading
                 # budget.  Deep and shallow reading are complementary, not
                 # two independent pools that silently add up past it.
-                "lite_paper_num": 10,
+                "lite_paper_num": 15,
                 "sources": ["papers_verified", "papers_dedup"],
                 "include_metadata_only": True,
                 "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
@@ -487,14 +487,14 @@ _LITERATURE_PARAM_PRESETS: dict[str, dict[str, Any]] = {
     },
     "survey_balanced": {
         "profile": "survey",
-        "t2_finalize": {"active_pool_max": 60},
+        "t2_finalize": {"active_pool_max": 80},
         "reader": {
-            "deep_read_min": 24,
-            "deep_read_target": 30,
-            "deep_read_max": 36,
+            "deep_read_min": 32,
+            "deep_read_target": 40,
+            "deep_read_max": 48,
             "require_deep_read_target": True,
             "abstract_sweep": {
-                "lite_paper_num": 30,
+                "lite_paper_num": 40,
                 "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
                 "include_metadata_only": True,
                 "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
@@ -529,8 +529,8 @@ _LITERATURE_PARAM_PRESET_LABELS = {
 
 
 _LITERATURE_PARAM_PRESET_NOTES = {
-    "standard_research": "适合 research article：覆盖 25 篇，精读 15 篇，摘要轻读 10 篇。",
-    "survey_balanced": "适合一般综述：覆盖 60 篇，精读 30 篇，摘要轻读 30 篇。",
+    "standard_research": "适合 research article：覆盖 40 篇，精读 25 篇，摘要轻读 15 篇。",
+    "survey_balanced": "适合一般综述：覆盖 80 篇，精读 40 篇，摘要轻读 40 篇。",
     "survey_exhaustive": "适合正式综述：覆盖 90 篇，精读 40 篇，摘要轻读 50 篇，运行时间和 LLM 成本更高。",
     "custom": "只改覆盖目标；网络补资源仍由系统自动尽量执行。",
 }

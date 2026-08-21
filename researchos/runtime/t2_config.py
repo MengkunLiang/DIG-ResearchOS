@@ -24,7 +24,7 @@ from .literature_quality import (
 
 @dataclass(frozen=True)
 class T2FinalizeConfig:
-    active_pool_max: int = 25
+    active_pool_max: int = 40
     bridge_active_pool_cap_per_bridge: int = 15
     must_bridge_active_pool_cap_per_bridge: int = 15
     should_bridge_active_pool_cap_per_bridge: int = 5
@@ -61,11 +61,11 @@ class T2FinalizeConfig:
 
 @dataclass(frozen=True)
 class DeepReadQueueConfig:
-    deep_read_min: int = 12
-    deep_read_target: int = 15
-    deep_read_max: int = 18
-    probe_pool: int = 18
-    mainline_screened_cap: int = 25
+    deep_read_min: int = 20
+    deep_read_target: int = 25
+    deep_read_max: int = 30
+    probe_pool: int = 30
+    mainline_screened_cap: int = 40
     bridge_deep_floor: int = 3
     bridge_screened_cap: int = 7
     bridge_pool_cap: int = 15
