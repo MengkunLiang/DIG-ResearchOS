@@ -1483,6 +1483,38 @@ _FINAL_CARD_LIST_FIELDS = frozenset(
         "dependency_candidate_ids",
     }
 )
+
+# ``ImpactImplication.evidence_status`` is an operational evidence-boundary
+# code, not prose. Final Card models understandably tend to write a useful
+# explanation next to that code (for example ``conjecture（需全文核验）``),
+# but a strict enum then turns a complete researcher-facing card into a
+# needless LLM repair. These aliases only *downgrade or preserve* the boundary;
+# they never infer direct support from a narrative explanation.
+_FINAL_CARD_EVIDENCE_STATUS_ALIASES: tuple[tuple[str, str], ...] = (
+    ("direct_support", "direct_support"),
+    ("direct support", "direct_support"),
+    ("直接支持", "direct_support"),
+    ("limited_support", "limited_support"),
+    ("limited support", "limited_support"),
+    ("partial", "limited_support"),
+    ("部分", "limited_support"),
+    ("有限", "limited_support"),
+    ("abstract_hint", "abstract_hint"),
+    ("abstract hint", "abstract_hint"),
+    ("abstract", "abstract_hint"),
+    ("摘要", "abstract_hint"),
+    ("llm_inference", "llm_inference"),
+    ("llm inference", "llm_inference"),
+    ("模型推断", "llm_inference"),
+    ("模型推理", "llm_inference"),
+    ("conjecture", "conjecture"),
+    ("proposed_not_verified", "conjecture"),
+    ("proposed", "conjecture"),
+    ("proposal", "conjecture"),
+    ("猜想", "conjecture"),
+    ("提案", "conjecture"),
+    ("待验证", "conjecture"),
+)
 _FINAL_CARD_ALLOWED_FIELDS = frozenset(
     {
         "candidate_id",
@@ -1557,6 +1589,58 @@ def _normalize_final_card_presentation_fields(payload: dict[str, Any]) -> dict[s
             continue
         elif not isinstance(value, list):
             normalized[field] = [value]
+    implications = normalized.get("implications")
+    if isinstance(implications, list):
+        normalized_implications: list[object] = []
+        for raw_implication in implications:
+            if not isinstance(raw_implication, dict):
+                normalized_implications.append(raw_implication)
+                continue
+            implication = dict(raw_implication)
+            for canonical, aliases in {
+                "implication_type": ("type", "impact_type"),
+                "statement": ("summary", "explanation", "implication"),
+                "evidence_status": ("evidence", "status", "evidence_level"),
+                "conditions": ("condition", "dependencies", "assumptions"),
+            }.items():
+                if implication.get(canonical) not in (None, "", [], {}):
+                    continue
+                for alias in aliases:
+                    value = implication.get(alias)
+                    if value not in (None, "", [], {}):
+                        implication[canonical] = value
+                        break
+            conditions = implication.get("conditions")
+            if isinstance(conditions, str) and conditions.strip():
+                implication["conditions"] = [conditions.strip()]
+            elif conditions is None:
+                implication["conditions"] = []
+            raw_status = implication.get("evidence_status")
+            if isinstance(raw_status, str):
+                compact = raw_status.strip().casefold()
+                mapped = next(
+                    (canonical for alias, canonical in _FINAL_CARD_EVIDENCE_STATUS_ALIASES if alias in compact),
+                    None,
+                )
+                if mapped is not None:
+                    implication["evidence_status"] = mapped
+                    # Keep explanatory qualifiers that accompanied the enum in
+                    # a visible condition. This retains the scientific caveat
+                    # without making a display string masquerade as a code.
+                    if compact != mapped:
+                        evidence_note = "Evidence boundary: " + raw_status.strip()
+                        existing = implication.get("conditions")
+                        condition_list = existing if isinstance(existing, list) else []
+                        if evidence_note not in condition_list:
+                            implication["conditions"] = [*condition_list, evidence_note]
+            normalized_implications.append(
+                {
+                    key: value
+                    for key, value in implication.items()
+                    if key in {"implication_type", "statement", "evidence_status", "conditions"}
+                }
+            )
+        normalized["implications"] = normalized_implications
     return {key: value for key, value in normalized.items() if key in _FINAL_CARD_ALLOWED_FIELDS}
 
 

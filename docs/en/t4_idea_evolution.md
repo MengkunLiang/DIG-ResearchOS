@@ -476,6 +476,8 @@ saved Candidate / Score / Population
   -> Human Recovery Gate after the bounded attempts are exhausted
 ```
 
+Before an LLM repair is needed, the runtime losslessly normalizes known display forms. In particular, an implication status such as `conjecture（requires a reading upgrade）` is stored as the canonical `conjecture` code and retains the qualifier in that implication's conditions. This neither strengthens evidence nor invents prose, and prevents a complete card from being rejected for putting an explanation beside a machine-readable status.
+
 ```text
 provider timeout | empty response | response parse failure | schema mismatch
 coverage mismatch | immutable-field mismatch | stale card/population | missing source data

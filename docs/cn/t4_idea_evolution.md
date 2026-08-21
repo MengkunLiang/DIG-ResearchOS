@@ -633,6 +633,8 @@ Card 不得改写 Genome、Score、SourceRef 或 lineage。若 card 缺失，Can
 
 诊断会区分 `llm_timeout`、`provider_failure`、`empty_response`、`response_parse_failure`、`schema_mismatch`、`coverage_mismatch`、`immutable_field_mismatch`、`stale_population_or_card`、`source_data_missing` 和 `unexpected_final_card_failure`。这使修复针对真实原因，而不是把所有问题粗暴归为“Validator 太严”。
 
+在调用 LLM 修复前，runtime 会先无损规范化已知展示形式。比如 `conjecture（需全文核验）` 会保存为机器可读的 `conjecture`，同时把限定语保留到该 implication 的 `conditions`。这既不会强化证据，也不会编造解释，因此不会再因“把说明写在状态码旁边”而拒绝一张内容完整的 Card。
+
 ### 6.5 Legacy 投影的正确位置
 
 `researchos/ideation/legacy_projection.py` 是从原生 Population 导出 Gate1 兼容文件的 best-effort 投影层。它不是默认 Idea Generator，也不应静默调用旧 `ideation.j2`。原生 `CandidateDossier`、`ScoreReport`、`PopulationSnapshot` 与 `EvolutionPlan` 始终是事实和谱系的权威。
