@@ -803,6 +803,7 @@ class AgentRunner:
         retry_batches: int,
         cooldown_seconds: float,
         long_cooldown_seconds: float,
+        failure_category: str | None = None,
     ) -> tuple[str, float]:
         """Choose a safe next action after a recoverable provider failure.
 
@@ -812,6 +813,16 @@ class AgentRunner:
 
         if failed_batches < retry_batches:
             return "retry", cooldown_seconds
+
+        if failure_category == "timeout":
+            failure_explanation = (
+                f"本次模型请求在配置的 {self._llm_request_timeout_seconds()} 秒内没有返回。"
+                "这不表示已检测到上下文或校验错误。"
+            )
+        elif failure_category == "rate_limit":
+            failure_explanation = "模型服务当前触发频率或配额限制。"
+        else:
+            failure_explanation = "本次模型请求未能从服务端获得可用回复。"
 
         self.progress.stage_human_action_required(
             task_id=ctx.task_id,
@@ -825,18 +836,22 @@ class AgentRunner:
                 presentation={
                     "_title": "模型服务暂时不可用",
                     "_description": (
-                        f"系统已自动重试 {failed_batches} 次，但当前请求仍未完成。"
+                        f"{failure_explanation} 已完成 {failed_batches} 轮受限请求，当前任务尚未改变任何产物。"
                         "项目进度已经安全保留，请选择下一步。"
                     ),
                     "task_id": ctx.task_id,
                     "retry_count": failed_batches,
                 },
                 options=[
-                    {"id": "retry_now", "label": "立即再试", "description": "重新从首选模型服务链开始请求。"},
+                    {
+                        "id": "retry_now",
+                        "label": "立即重新提交",
+                        "description": "用相同输入重新发起一次请求；适合确认服务已恢复时使用。",
+                    },
                     {
                         "id": "wait_20_seconds",
                         "label": "等待 20 秒后重试",
-                        "description": "适合服务刚刚超时或负载较高的情况。",
+                        "description": "服务可能拥堵时使用；不会重做已完成的工具或产物。",
                     },
                     {"id": "pause", "label": "暂停项目", "description": "保留进度，稍后使用 resume 继续。"},
                 ],
@@ -877,7 +892,7 @@ class AgentRunner:
         wait_seconds = max(0.0, seconds)
         if wait_seconds:
             self.progress.emit(
-                f"[Runtime] 模型服务暂时不可用，{wait_seconds:g} 秒后重试（{attempt}/{retry_batches}）。",
+                f"[Runtime] 将在 {wait_seconds:g} 秒后重新提交模型请求（第 {attempt} 轮受限请求）。",
                 important=True,
             )
             self._record_skill_progress(
@@ -892,7 +907,7 @@ class AgentRunner:
             budget.exclude_wall_time(time.time() - started)
         else:
             self.progress.emit(
-                f"[Runtime] 模型服务暂时不可用，正在立即重试（{attempt}/{retry_batches}）。",
+                "[Runtime] 已按你的选择重新提交模型请求；不会重做已完成的工具或产物。",
                 important=True,
             )
 
@@ -1598,6 +1613,7 @@ class AgentRunner:
                             retry_batches=provider_retry_batches,
                             cooldown_seconds=provider_cooldown,
                             long_cooldown_seconds=provider_long_cooldown,
+                            failure_category=self._provider_error_category(exc),
                         )
                         if action == "retry":
                             await self._wait_before_llm_provider_retry(
@@ -6112,6 +6128,7 @@ class AgentRunner:
                     retry_batches=retry_batches,
                     cooldown_seconds=cooldown,
                     long_cooldown_seconds=long_cooldown,
+                    failure_category=self._provider_error_category(exc),
                 )
                 if action != "retry":
                     raise self._t4_provider_pause(

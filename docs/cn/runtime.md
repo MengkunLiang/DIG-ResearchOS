@@ -68,7 +68,7 @@ config/system_config/state_machine.yaml
 
 ### 临时提供方故障
 
-一个请求只使用 `config/model_settings.yaml` 中配置的同一个 provider/model。若因 timeout、连接中断、502/503/504 或临时过载失败，runtime 会先按该文件中的同模型 retry 策略等待并重试；连续恢复仍失败时，终端提供“立即重试”“等待后重试”“暂停项目”三个明确选项。等待不计入 Agent 的有效工作时间，也不会消耗研究步骤。
+一个请求只使用 `config/model_settings.yaml` 中配置的同一个 provider/model。若因 timeout、连接中断、502/503/504 或临时过载失败，runtime 会先执行该文件允许的同模型恢复；`retry_after_timeout: false` 时，达到完整请求 deadline 后不会暗中再等一轮。终端会明确说明这是请求在 deadline 内未返回，或是频率/配额问题，而不会误报为上下文或校验错误；随后提供“立即重新提交”“等待后重试”“暂停项目”。立即重新提交只重发当前请求，不会重做已完成的 Tool 或产物。等待不计入 Agent 的有效工作时间，也不会消耗研究步骤。
 
 暂停会保留当前任务和所有 artifact；服务恢复后使用原来的 `resume` 命令继续。暂停前写入的文件会显示为“已写入，待完成校验”，而不是可供下游使用的完成结果。当恢复编译器有意保留 blocked handoff 或部分报告时，这一区分尤其重要。详细模式与事件 trace 会保留完整的暂存文件清单和诊断。普通 CLI 不显示 API key、完整 SDK stack trace 或内部 retry 细节。认证、URL 与 model 配置问题会直接提示运行 `configure-llm`，而不是进入无意义的网络重试。
 

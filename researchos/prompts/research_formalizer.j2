@@ -96,6 +96,10 @@ The mutable blueprint, claim registry, hypotheses, experiment plan and Proposal 
 
 Review the complete, frozen evidence package once before editing. Submit all independent corrections in one coordinated tool round, with at most one write per affected source. For multiple prose corrections in one file, call `edit_file(path=..., replacements=[{"old_text": ..., "new_text": ...}, ...])`; the tool applies all unique replacements atomically. Do not serialize one sentence edit per model turn. This independent Review does not change the literature basis after the novelty audit and Formalizer pass. If a material external fact is still missing, record it as a concrete unresolved repair issue rather than silently changing the review baseline.
 
+For prose, use the compatible
+`edit_file` only after reading the current file. For a structured source, use
+`write_structured_file` with the complete validated object; never patch YAML or JSON as prose.
+
 The `validate_t45_research_package(include_orientation_review=false)` call in the first parallel read round is the authoritative pre-review checkpoint. If it passes and you do not change a source, write `orientation_review.json` directly; do not call the identical checkpoint a second time. Re-run it before the review write only after a source repair.
 
 Write the final review with `write_structured_file(path="ideation/orientation_review.json", schema_name="orientation_review", format="json", data={...})` using exactly:
@@ -112,6 +116,7 @@ repair_summary: []
 Every score is a number from 0 through 5. Use the exact key `theoretical_or_design_value`. `orientation` is only the profile string, not the orientation object. `repair_summary` is an array of strings. An accepted review may retain resolved issue objects, but every material issue must record a resolved, repaired, accepted-after-repair, or not-applicable status.
 {% endif %}
 
+{% if phase == 'formalize' %}
 ## One shared research-argument framework
 
 For UTD, CCF-A and Hybrid, the final Proposal must clearly cover these seven research functions. They are an argument checklist, not a compulsory seven-heading layout. Use canonical headings when they improve navigation; merge adjacent functions when that makes the argument more coherent.
@@ -238,7 +243,6 @@ Use this snapshot only to understand the opening state. A structured-source port
 
 ## Phase-specific instructions
 
-{% if phase == 'formalize' %}
 ### Live structured-source checkpoint and delivery protocol
 
 `validate_t45_formalization_sources` is the live authority for this turn. Its result may change after a successful `write_structured_file`; do not obey an older prompt snapshot once the tool reports a newer result.
