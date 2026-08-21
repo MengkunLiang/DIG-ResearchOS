@@ -938,7 +938,10 @@ class CLIHumanInterface(HumanInterface):
 
         if "T1 文献范围与跨域探索确认" not in question:
             return None
-        heading_pattern = re.compile(r"(?m)^##\s+(.+?)\s*$")
+        # T1's durable question uses an H2 title and H3 layer headings.  Older
+        # prompts used H2 for both, so accept either level rather than silently
+        # falling back to the generic Markdown panel in Auto mode.
+        heading_pattern = re.compile(r"(?m)^#{2,}\s+(.+?)\s*$")
         matches = list(heading_pattern.finditer(question))
         recognized: list[tuple[re.Match[str], str]] = []
         for match in matches:
@@ -959,10 +962,19 @@ class CLIHumanInterface(HumanInterface):
             sections.append((kind, question[match.start() : end].strip()))
 
         last_kind, last_section = sections[-1]
-        answer_match = re.search(r"(?m)^\*\*请.*?(?:回答|回复).*?$", last_section)
+        answer_match = re.search(
+            r"(?m)^(?:#{2,}\s*请.*?(?:回答|回复).*?|\*\*请.*?(?:回答|回复).*?\*\*)\s*$",
+            last_section,
+        )
         answer_help = ""
         if answer_match:
             answer_help = last_section[answer_match.start() :].strip()
+            # Suggestions are rendered separately from the authoritative
+            # ``suggestions`` argument.  Do not place them inside the Bridge
+            # table or print the same reference answers twice.
+            reference_match = re.search(r"(?m)^#{2,}\s*可直接输入的参考回答\s*$", answer_help)
+            if reference_match:
+                answer_help = answer_help[: reference_match.start()].strip()
             sections[-1] = (last_kind, last_section[: answer_match.start()].strip())
         return intro, sections, answer_help
 
@@ -987,19 +999,27 @@ class CLIHumanInterface(HumanInterface):
             table.add_row("—", "（本组暂无候选）", "—", "—")
             return table
         body = "\n".join(lines[1:]).strip()
-        chunks = re.split(r"(?m)^###\s+", body)
-        if len(chunks) <= 1:
+        # Current T1 prompts use bold candidate labels (``**core1 · …**``),
+        # whereas an older template used ``###`` headings.  Parse both forms
+        # so the presentation layer does not depend on the model's harmless
+        # Markdown choice.
+        candidate_pattern = re.compile(
+            r"(?m)^(?:###\s+(?P<h3>.+?)|\*\*(?P<bold>(?:core|adj|b)\d+\s*·\s*.+?)\*\*)\s*$"
+        )
+        matches = list(candidate_pattern.finditer(body))
+        if not matches:
             table.add_row("—", body or "（本组暂无候选）", "—", "—")
             return table
 
-        for chunk in chunks[1:]:
-            candidate_lines = chunk.strip().splitlines()
-            if not candidate_lines:
+        for index, match in enumerate(matches):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
+            candidate_title = str(match.group("h3") or match.group("bold") or "").strip()
+            candidate_lines = body[match.end() : end].strip().splitlines()
+            if not candidate_title:
                 continue
-            candidate_title = candidate_lines[0].strip()
             fields: dict[str, list[str]] = {}
             freeform_lines: list[str] = []
-            for line in candidate_lines[1:]:
+            for line in candidate_lines:
                 match = re.match(r"^\s*([^：:]{1,16})[：:]\s*(.+?)\s*$", line)
                 if match:
                     fields.setdefault(match.group(1).strip(), []).append(match.group(2).strip())
