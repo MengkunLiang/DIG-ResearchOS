@@ -130,6 +130,8 @@ class ResearchFormalizerAgent(Agent):
                 "按当前 orientation 一次性审阅完整研究包；发现问题时只修复"
                 "受影响的 source artifact，然后重新读取其内容确认一致。最后用 write_structured_file 写 "
                 "ideation/orientation_review.json（schema_name='orientation_review', format='json'）。"
+                "若系统提示 Proposal 存在可读性诊断，应保留研究内容、少量一级结构和论证链，仅在真实概念转换处重组为完整段落；"
+                "不要用碎小节、字段清单或机械空行替代论证。"
                 "同一 prose 文件的多个独立修复用一次 edit_file(replacements=[...]) 原子完成，不要每项开启一个模型回合。"
                 "在一个协调工具回合中提交所有已识别的 source 修复，每个 source 最多写一次。"
                 "复核新增或改写的术语和缩写是否已在首次出现处自然定义且跨文件一致。"

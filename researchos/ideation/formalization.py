@@ -1250,6 +1250,53 @@ def collect_t45_quality_diagnostics(workspace: Path) -> list[dict[str, str]]:
                     "action": "Check whether research reasoning, mechanisms, design comparisons, evaluation logic, or boundaries are genuinely missing. Expand only when the argument needs it; never pad to meet a length target.",
                 }
             )
+        if target_key == "proposal":
+            # This is a reader-oriented cue, not a fixed-layout validator. A
+            # coherent short section can legitimately remain one paragraph,
+            # but a long section with no paragraph transition usually hides
+            # the move from problem to gap, design, or test inside one dense
+            # block. Flag the pattern for the Review LLM without treating it
+            # as a structural failure or forcing a heading tree.
+            dense_sections: list[str] = []
+            for section_key, section_text in _proposal_sections(text).items():
+                if _research_text_length(section_text) < 260:
+                    continue
+                paragraphs = [
+                    paragraph.strip()
+                    for paragraph in re.split(r"\n\s*\n", section_text)
+                    if paragraph.strip()
+                ]
+                if len(paragraphs) < 2:
+                    dense_sections.append(section_key)
+            if dense_sections:
+                diagnostics.append(
+                    {
+                        "severity": "advisory",
+                        "code": "proposal_monolithic_sections",
+                        "artifact": relative_path,
+                        "message": "Long Proposal sections are rendered as one dense paragraph: " + ", ".join(dense_sections) + ".",
+                        "action": "Where the argument changes from setting to computational problem, gap, design choice, test, implication, or boundary, split it into connected paragraphs. Preserve the small top-level structure; do not add a heading tree or insert blank lines mechanically.",
+                    }
+                )
+            long_paragraph_sections: list[str] = []
+            for section_key, section_text in _proposal_sections(text).items():
+                paragraphs = [
+                    paragraph.strip()
+                    for paragraph in re.split(r"\n\s*\n", section_text)
+                    if paragraph.strip()
+                ]
+                if any(_research_text_length(paragraph) > 280 for paragraph in paragraphs):
+                    long_paragraph_sections.append(section_key)
+            if long_paragraph_sections:
+                diagnostics.append(
+                    {
+                        "severity": "advisory",
+                        "code": "proposal_dense_paragraphs",
+                        "artifact": relative_path,
+                        "message": "Proposal paragraphs are carrying several argumentative moves at once in: " + ", ".join(long_paragraph_sections) + ".",
+                        "action": "Improve reader navigation by separating only genuine conceptual transitions into full connected paragraphs. Keep evidence, claims, and terminology unchanged; do not replace reasoning with lists or add nested headings.",
+                    }
+                )
         if language == "zh":
             cjk_chars = len(re.findall(r"[\u3400-\u9fff]", text))
             latin_words = len(re.findall(r"\b[A-Za-z][A-Za-z0-9_-]*\b", text))
