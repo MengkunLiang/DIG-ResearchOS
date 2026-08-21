@@ -132,6 +132,8 @@ def classify_tool_outcome(
     payload = data if isinstance(data, dict) else {}
     disposition = str(payload.get("display_disposition") or "").casefold()
     failure_class = str(payload.get("failure_class") or error or "").casefold()
+    if disposition == "initialization_required":
+        return ToolOutcome("INITIALIZING", "cyan", False)
     # Read-only validation tools can successfully execute while reporting that
     # the inspected research package is not valid.  Preserve ``ok=True`` for
     # the model-facing tool protocol (the diagnostic is usable), but never
@@ -662,12 +664,13 @@ class CliProgressEmitter:
         # These outcomes have an established local repair, fallback, or
         # optional-input path. Keep their full diagnostics for the Agent and
         # trace, but do not interrupt ordinary researcher-facing progress.
-        if outcome.status in {"SKIPPED", "AUTO_REPAIR", "AUTO_FALLBACK", "DEGRADED", "EXPLORATORY_MISS"} and not self.verbose:
+        if outcome.status in {"SKIPPED", "INITIALIZING", "AUTO_REPAIR", "AUTO_FALLBACK", "DEGRADED", "EXPLORATORY_MISS"} and not self.verbose:
             return
         if self.quiet and not important:
             return
         status = "完成" if ok else {
             "SKIPPED": "跳过",
+            "INITIALIZING": "正在初始化",
             "AUTO_REPAIR": "正在自动修补",
             "AUTO_FALLBACK": "已自动降级",
             "DEGRADED": "降级继续",

@@ -39,6 +39,11 @@ FORMALIZATION_MANIFEST_REL_PATH = "ideation/post_novelty_formalization.json"
 T45_SELECTION_ISOLATION_REL_PATH = "ideation/t45_selection_isolation.json"
 T45_SELECTION_HISTORY_DIR = "ideation/t45_selection_history"
 T45_REPAIRABLE_WARNING_PREFIX = "T45_REPAIRABLE_WARNING:"
+T45_STRUCTURED_SOURCE_PATHS = (
+    BLUEPRINT_REL_PATH,
+    CLAIM_REGISTRY_REL_PATH,
+    "ideation/exp_plan.yaml",
+)
 
 # A Gate1 Candidate selection starts a new research-plan lineage. These are
 # active, selection-bound T4.5 artifacts, never shared workspace background.
@@ -798,8 +803,16 @@ def collect_t45_structured_source_errors(workspace: Path) -> list[str]:
     registry, registry_load_error = _load_structured(workspace / CLAIM_REGISTRY_REL_PATH, "claim_registry")
     exp_plan, exp_plan_error = _load_structured(workspace / "ideation" / "exp_plan.yaml", "exp_plan")
 
-    # Do not repeat the first source error: ``validate_blueprint_and_claim_registry``
-    # is already the canonical diagnostic for the first two artifacts.
+    # ``validate_blueprint_and_claim_registry`` reports one stable first
+    # error for compatibility.  The Formalizer needs all missing files on a
+    # fresh run, however: otherwise it is told to repair only the blueprint,
+    # then discovers a missing registry and plan in separate turns.  Keep the
+    # stable first error, and append the other independently unreadable
+    # sources once each.
+    if blueprint_load_error:
+        errors.append(str(blueprint_load_error))
+    if registry_load_error:
+        errors.append(str(registry_load_error))
     if exp_plan_error:
         errors.append(str(exp_plan_error))
     if blueprint_load_error or registry_load_error or exp_plan_error:
@@ -824,6 +837,22 @@ def collect_t45_structured_source_errors(workspace: Path) -> list[str]:
         )
 
     return list(dict.fromkeys(errors))
+
+
+def t45_structured_source_initialization_state(workspace: Path) -> tuple[bool, list[str]]:
+    """Identify the normal blank-slate opening of T4.5 formalization.
+
+    A selected Candidate intentionally has no blueprint, claim registry, or
+    experiment plan yet.  Treating that opening as a failed repair is both
+    misleading in the CLI and can induce an LLM to ``read_file`` paths that it
+    has just been told do not exist.  This helper is deliberately narrow:
+    partial packages remain ordinary recovery work and retain the strict
+    shared-contract validator.
+    """
+
+    root = Path(workspace)
+    missing = [path for path in T45_STRUCTURED_SOURCE_PATHS if not (root / path).is_file()]
+    return len(missing) == len(T45_STRUCTURED_SOURCE_PATHS), missing
 
 
 def validate_t45_structured_sources(workspace: Path) -> tuple[bool, str | None]:

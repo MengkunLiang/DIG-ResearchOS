@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from ..ideation.formalization import (
     collect_t45_structured_source_errors,
     collect_t45_semantic_errors,
+    t45_structured_source_initialization_state,
     validate_orientation_review,
     validate_t45_structured_sources,
 )
@@ -39,6 +40,18 @@ class ValidateT45FormalizationSourcesTool(Tool):
         """Map a deterministic source error to its smallest safe write set."""
 
         detail = str(error or "")
+        if detail.startswith("Missing required structured artifact:"):
+            normalized = detail.replace("\\", "/")
+            for path in (
+                "ideation/research_blueprint.yaml",
+                "ideation/claim_registry.yaml",
+                "ideation/exp_plan.yaml",
+            ):
+                if normalized.endswith(path):
+                    return (
+                        [path],
+                        "This source does not exist yet. Create it directly with write_structured_file; do not read it before its first write.",
+                    )
         if "UTD formalization must include" in detail or "CCF-A formalization must include" in detail:
             return (
                 [
@@ -86,6 +99,9 @@ class ValidateT45FormalizationSourcesTool(Tool):
                 ),
                 data={"valid": True, "sources": ["research_blueprint", "claim_registry", "exp_plan"]},
             )
+        initialization_required, missing_sources = t45_structured_source_initialization_state(
+            self.policy.workspace_dir
+        )
         detail = str(error or "unknown error")
         repair_plan = []
         repair_targets: list[str] = []
@@ -98,13 +114,23 @@ class ValidateT45FormalizationSourcesTool(Tool):
             f"- {item['error']}\n  Minimal repair: {item['action']}"
             for item in repair_plan
         )
-        return ToolResult(
-            ok=True,
-            content=(
+        if initialization_required:
+            content = (
+                "T4.5 formalization is initializing a new research contract. The three structured sources do not "
+                "exist yet; this is expected immediately after Candidate selection. Create the complete blueprint, "
+                "claim registry, and experiment plan directly with write_structured_file, then call this checkpoint again."
+            )
+            disposition = "initialization_required"
+        else:
+            content = (
                 "T4.5 structured-source contract has not passed. The following independent deterministic "
                 "findings are current; repair their listed minimal source sets together before writing prose:\n"
                 + findings
-            ),
+            )
+            disposition = "validation_failed"
+        return ToolResult(
+            ok=True,
+            content=content,
             data={
                 "valid": False,
                 "validation_error": detail,
@@ -112,10 +138,12 @@ class ValidateT45FormalizationSourcesTool(Tool):
                 "sources": ["research_blueprint", "claim_registry", "exp_plan"],
                 "repair_targets": repair_targets,
                 "repair_plan": repair_plan,
+                "initialization_required": initialization_required,
+                "missing_sources": missing_sources,
                 # The call itself succeeded and must remain model-readable,
-                # but the CLI uses this to render a clear failed checkpoint
-                # rather than a misleading green write success.
-                "display_disposition": "validation_failed",
+                # while the CLI distinguishes a normal blank-slate creation
+                # from an actual repair failure.
+                "display_disposition": disposition,
             },
         )
 

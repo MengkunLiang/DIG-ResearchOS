@@ -18,6 +18,7 @@ from ..ideation.formalization import (
     ensure_current_t45_selection_isolation,
     format_t45_repairable_quality_warnings,
     persist_orientation_configuration,
+    t45_structured_source_initialization_state,
     validate_orientation_review,
     validate_t45_structured_sources,
     validate_t45_formalization_core,
@@ -137,6 +138,15 @@ class ResearchFormalizerAgent(Agent):
                 "也不要写 runtime 负责生成的 manifest、map、dossier 或 receipt。"
             )
         else:
+            initializing, _missing_sources = t45_structured_source_initialization_state(ctx.workspace_dir)
+            initialization_instruction = (
+                "这是一个全新 formalization：三个结构化来源尚未创建是正常起点。读取上游材料并收到首次 checkpoint 后，"
+                "直接用 write_structured_file 一次协调创建 research_blueprint、claim_registry 与 exp_plan；"
+                "不要对这三个尚不存在的路径调用 read_file，也不要把创建误当作失败修复。"
+                if initializing
+                else
+                "这是已有 formalization 的恢复：只读取并修复当前 checkpoint 明确指向的既有来源，保留其它已通过内容。"
+            )
             message = (
                 "不要递归列出 workspace 根目录，也不要读取 state.yaml、_runtime、_DIR_GUIDE 或 user_seeds；"
                 "先在一个并行工具回合中精确读取 selected_candidate、hypothesis_brief、novelty_audit 与 synthesis；"
@@ -147,6 +157,8 @@ class ResearchFormalizerAgent(Agent):
                 "先调用 validate_t45_formalization_sources；它的最新 `valid` 结果是本轮唯一权威状态，"
                 "会覆盖启动时的任何旧诊断。若 valid=false，只用 write_structured_file 修复它指出的 source 或最小同步集合，"
                 "不要重写当前错误未指向且已通过自身 schema 的来源。"
+                + initialization_instruction
+                + "\n"
                 "然后再次调用该工具。若 valid=true，不得再重写已通过的 research_blueprint、claim_registry 与 exp_plan；"
                 "改为写缺失或不合格的 hypotheses.md 和 proposal/research_proposal.md，并在写后重新读取二者。"
                 "正文必须遵守当前 formalization language 与术语/缩写首次定义规则，并以连贯论证覆盖 Proposal 的七项研究功能；"

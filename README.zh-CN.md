@@ -37,7 +37,7 @@ T1 研究范围 -> T2 文献 -> T3 阅读 -> T3.5 综合
 | T3.5 综合 | 把文献整理成机制、方法差异、张力和研究缺口。 | 决定是否进入可选综述分支。 | `literature/synthesis.md` |
 | T3.6 可选综述 | 在当前证据足够时撰写领域综述；不做综述时会跳过。 | 选择跳过、使用当前语料库，或先做一次定向补检。 | `drafts/survey/` |
 | T4 研究方向 | 生成、比较和演化多个可选研究方向。 | 选择推进、优化、再探索，或只查看 Candidate。 | `ideation/` 下的 Candidate Card、评分、证据和谱系 |
-| T4.5 研究方案审计与正式化 | 审计相似工作和机制差异，再将选定方向形成蓝图、主张、实验计划、Proposal 与质量审阅记录。 | 仅在新颖性审计非通过时复核结论；UTD/CCF-A/Hybrid 已由 T4 继承，不会重复询问。 | `ideation/research_blueprint.yaml`、`ideation/claim_registry.yaml`、`ideation/proposal/research_proposal.md`、`ideation/orientation_review.json` |
+| T4.5 研究方案审计与正式化 | 审计相似工作和机制差异，再将选定方向形成蓝图、主张、实验计划、Proposal 与质量审阅记录。首次 Formalization checkpoint 会创建三份结构化来源；这是正常初始化，不是上游遗漏或失败修复。 | 仅在新颖性审计非通过时复核结论；UTD/CCF-A/Hybrid 已由 T4 继承，不会重复询问。 | `ideation/research_blueprint.yaml`、`ideation/claim_registry.yaml`、`ideation/proposal/research_proposal.md`、`ideation/orientation_review.json` |
 | T5 外部执行准备 | 把 T4.5 的正式研究包变成外部执行器不能擅自改写的交接。 | 明确仍影响研究边界的设置；可放置已有资源，或让执行器自动准备公开资源。 | `external_executor/handoff_pack.json`、`resources/` |
 | T8 写作 | 用已经核验的实验事实写作、审稿和修订。 | 选择写作风格或模板。 | `drafts/`、实验 claim/evidence 文件 |
 | T9 投稿 | 审阅、真实编译并生成提交包。 | 只在环境或编译恢复时处理问题。 | `submission/`、最终 PDF 与编译报告 |

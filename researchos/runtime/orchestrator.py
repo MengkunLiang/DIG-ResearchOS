@@ -9296,6 +9296,15 @@ class AgentRunner:
                 "ideation/exp_plan.yaml",
             ]
         target_text = ", ".join(target_list) or "the named source artifact"
+        if bool(data.get("initialization_required")):
+            return (
+                "[Runtime T4.5 formalization initialization] This is the normal blank-slate opening after a Candidate "
+                "selection, not a failed research package.\n"
+                f"Create now: {target_text}\n"
+                "These paths do not exist yet, so do not probe them with read_file. Use write_structured_file to create "
+                "the complete blueprint, claim registry, and experiment plan as one coordinated source contract. Then "
+                "call the checkpoint once to verify their cross-file consistency; only after valid=true may you write prose."
+            )
         return (
             "[Runtime T4.5 checkpoint repair] The read-only checkpoint executed successfully but `valid=false`; "
             "this is an actionable research-package failure, not a green success.\n"
