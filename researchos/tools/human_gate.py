@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import asyncio
+import codecs
 import io
 import json
 import os
@@ -193,49 +194,174 @@ def _read_cli_line(prompt: str) -> str:
 
 
 async def _read_cli_line_async(prompt: str) -> str:
-    """Read a terminal line without preventing a running CLI from pausing.
+    """Read one editable terminal line without blocking signal handling.
 
-    ``input()`` blocks the event-loop thread.  That makes a Gate appear to
-    ignore Ctrl+C/SIGTERM: the signal callback cannot cancel and persist the
-    active pipeline task until the researcher types a line.  On POSIX TTYs an
-    ``add_reader`` callback keeps canonical terminal editing while allowing
-    the loop to process cancellation immediately.  The thread fallback keeps
-    Windows and redirected-input support, where ``add_reader`` is unavailable.
+    ``input()`` provides a capable line editor, but blocks the event-loop
+    thread.  The former POSIX implementation replaced it with
+    ``sys.stdin.readline()`` behind ``add_reader``.  That preserved
+    cancellation but silently discarded readline's cursor and in-line-delete
+    behaviour.  Gates consequently looked editable while a researcher could
+    not move back through an answer and correct it.
+
+    A small cbreak-mode editor below retains the non-blocking reader and the
+    familiar terminal controls.  Windows and non-TTY input keep the portable
+    ``input()`` fallback, where the platform console already owns editing.
     """
 
     _configure_readline_once()
     try:
         loop = asyncio.get_running_loop()
         fileno = sys.stdin.fileno()
-        if os.name == "nt" or not sys.stdin.isatty():
+        if os.name == "nt" or not sys.stdin.isatty() or os.environ.get("TERM") == "dumb":
             raise OSError("use portable input fallback")
     except (AttributeError, OSError, RuntimeError):
         return await asyncio.to_thread(_read_cli_line, prompt)
 
+    try:
+        import termios
+        import tty
+    except ImportError:  # pragma: no cover - non-POSIX Python builds
+        return await asyncio.to_thread(_read_cli_line, prompt)
+
+    try:
+        original_terminal = termios.tcgetattr(fileno)
+        tty.setcbreak(fileno, termios.TCSANOW)
+    except termios.error:
+        return await asyncio.to_thread(_read_cli_line, prompt)
+
     print(prompt, end="", flush=True)
     result: asyncio.Future[str] = loop.create_future()
+    characters: list[str] = []
+    cursor = 0
+    escape = bytearray()
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")
+
+    def _display_width(value: str) -> int:
+        return sum(
+            0 if unicodedata.combining(char) else 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+            for char in value
+        )
+
+    def _redraw() -> None:
+        """Redraw the current input and put the cursor back inside it."""
+
+        value = "".join(characters)
+        suffix_width = _display_width("".join(characters[cursor:]))
+        sys.stdout.write(f"\r\x1b[2K{prompt}{value}")
+        if suffix_width:
+            sys.stdout.write(f"\x1b[{suffix_width}D")
+        sys.stdout.flush()
+
+    def _finish(value: str | None = None) -> None:
+        if result.done():
+            return
+        sys.stdout.write("\r\n")
+        sys.stdout.flush()
+        result.set_result(_strip_terminal_control_sequences(value if value is not None else "".join(characters)))
+
+    def _apply_escape(sequence: bytes) -> None:
+        """Apply the subset of ANSI editing sequences emitted by common terminals."""
+
+        nonlocal cursor
+        if sequence in {b"\x1b[D", b"\x1b[1D"}:
+            cursor = max(0, cursor - 1)
+        elif sequence in {b"\x1b[C", b"\x1b[1C"}:
+            cursor = min(len(characters), cursor + 1)
+        elif sequence in {b"\x1b[H", b"\x1b[1~", b"\x1bOH"}:
+            cursor = 0
+        elif sequence in {b"\x1b[F", b"\x1b[4~", b"\x1bOF"}:
+            cursor = len(characters)
+        elif sequence == b"\x1b[3~" and cursor < len(characters):
+            del characters[cursor]
+        _redraw()
+
+    def _accept_character(character: str) -> None:
+        nonlocal cursor
+        if character in {"\r", "\n"}:
+            _finish()
+        elif character == "\x04":  # Ctrl+D: EOF when empty, delete otherwise.
+            if not characters:
+                if not result.done():
+                    result.set_exception(EOFError())
+            elif cursor < len(characters):
+                del characters[cursor]
+                _redraw()
+        elif character in {"\x7f", "\x08"}:  # Backspace / Ctrl+H.
+            if cursor:
+                cursor -= 1
+                del characters[cursor]
+                _redraw()
+        elif character == "\x15":  # Ctrl+U.
+            characters.clear()
+            cursor = 0
+            _redraw()
+        elif character == "\x01":  # Ctrl+A.
+            cursor = 0
+            _redraw()
+        elif character == "\x05":  # Ctrl+E.
+            cursor = len(characters)
+            _redraw()
+        elif character == "\x17":  # Ctrl+W.
+            while cursor and characters[cursor - 1].isspace():
+                cursor -= 1
+                del characters[cursor]
+            while cursor and not characters[cursor - 1].isspace():
+                cursor -= 1
+                del characters[cursor]
+            _redraw()
+        elif character >= " ":
+            characters.insert(cursor, character)
+            cursor += 1
+            _redraw()
+
+    def _accept_byte(byte: int) -> None:
+        if escape:
+            escape.append(byte)
+            sequence = bytes(escape)
+            # CSI sequences end with an ASCII letter or ``~``.  SS3 Home/End
+            # use the same final-letter rule.  Discard unknown long sequences
+            # rather than inserting terminal-control bytes into the answer.
+            if len(sequence) >= 2 and sequence[1] not in {ord("["), ord("O")}:
+                escape.clear()
+            elif len(sequence) >= 3 and (64 <= byte <= 126):
+                _apply_escape(sequence)
+                escape.clear()
+            elif len(sequence) > 12:
+                escape.clear()
+            return
+        if byte == 0x1B:
+            escape.append(byte)
+            return
+        decoded = decoder.decode(bytes((byte,)), final=False)
+        for character in decoded:
+            _accept_character(character)
 
     def _read_ready() -> None:
         if result.done():
             return
         try:
-            line = sys.stdin.readline()
+            chunk = os.read(fileno, 1024)
         except BaseException as exc:  # pragma: no cover - terminal-specific
             result.set_exception(exc)
             return
-        if line == "":
+        if not chunk:
             result.set_exception(EOFError())
-        else:
-            result.set_result(_strip_terminal_control_sequences(line.rstrip("\n")))
+            return
+        for byte in chunk:
+            _accept_byte(byte)
+            if result.done():
+                return
 
     try:
         loop.add_reader(fileno, _read_ready)
     except (NotImplementedError, OSError):
+        termios.tcsetattr(fileno, termios.TCSANOW, original_terminal)
         return await asyncio.to_thread(_read_cli_line, prompt)
     try:
         return await result
     finally:
         loop.remove_reader(fileno)
+        termios.tcsetattr(fileno, termios.TCSANOW, original_terminal)
 
 
 async def _read_cli_multiline(
