@@ -951,25 +951,24 @@ class CLIHumanInterface(HumanInterface):
 
         if "T1 文献范围与跨域探索确认" not in question:
             return None
-        # The model is allowed to use either Markdown headings or bold labels
-        # for the three scope layers.  These are presentation-equivalent, so
-        # gate rendering must be anchored to the stable layer semantics rather
-        # than a particular number of ``#`` characters.  Otherwise an Auto
-        # run can silently fall back to an unreadable generic Markdown panel.
-        heading_pattern = re.compile(
-            r"(?m)^(?:#{1,6}\s+)?(?:\*\*)?(?P<heading>"
-            r"核心研究线.*|邻接(?:理论/方法)?线.*|真正(?:跨领域)?\s*Bridge.*"
-            r")(?:\*\*)?\s*$"
-        )
-        matches = list(heading_pattern.finditer(question))
+        # LLMs may place the ordinal inside or outside bold markup, use a
+        # Markdown heading, or emit a plain line.  Those forms are all the
+        # same scope heading.  Detect the semantic heading line-by-line
+        # instead of requiring one exact Markdown grammar.  We deliberately
+        # leave list markers intact: the explanatory bullets above the
+        # sections must not be mistaken for headings.
         recognized: list[tuple[re.Match[str], str]] = []
-        for match in matches:
-            heading = match.group("heading").strip()
-            if "核心研究线" in heading:
+        for match in re.finditer(r"(?m)^.*$", question):
+            raw_heading = match.group(0).strip()
+            heading = re.sub(r"^#{1,6}\s*", "", raw_heading)
+            heading = heading.replace("**", "").strip()
+            heading = re.sub(r"^[一二三123]\s*[、.)]\s*", "", heading)
+            heading = heading.rstrip(" ：:").strip()
+            if heading.startswith("核心研究线"):
                 recognized.append((match, "core"))
-            elif "邻接" in heading:
+            elif heading.startswith("邻接") and ("线" in heading or "理论" in heading):
                 recognized.append((match, "adjacent"))
-            elif "Bridge" in heading or "跨领域" in heading:
+            elif heading.startswith("真正") and ("Bridge" in heading or "跨领域" in heading):
                 recognized.append((match, "bridge"))
         if len(recognized) != 3 or {kind for _, kind in recognized} != {"core", "adjacent", "bridge"}:
             return None
@@ -981,10 +980,7 @@ class CLIHumanInterface(HumanInterface):
             sections.append((kind, question[match.start() : end].strip()))
 
         last_kind, last_section = sections[-1]
-        answer_match = re.search(
-            r"(?m)^(?:#{2,}\s*请.*?(?:回答|回复).*?|\*\*请.*?(?:回答|回复).*?\*\*)\s*$",
-            last_section,
-        )
+        answer_match = re.search(r"(?m)^\s*(?:#{1,6}\s+)?(?:\*\*)?请.*?(?:回答|回复).*", last_section)
         answer_help = ""
         if answer_match:
             answer_help = last_section[answer_match.start() :].strip()
@@ -992,7 +988,7 @@ class CLIHumanInterface(HumanInterface):
             # ``suggestions`` argument.  Do not place them inside the Bridge
             # table or print the same reference answers twice.
             reference_match = re.search(
-                r"(?m)^(?:#{1,6}\s+|\*\*)可直接输入的参考回答(?:\*\*)?\s*$",
+                r"(?m)^(?:#{1,6}\s+|\*\*)?可直接输入的参考回答(?:\*\*)?\s*[：:]?\s*$",
                 answer_help,
             )
             if reference_match:
@@ -1026,7 +1022,8 @@ class CLIHumanInterface(HumanInterface):
         # so the presentation layer does not depend on the model's harmless
         # Markdown choice.
         candidate_pattern = re.compile(
-            r"(?m)^(?:###\s+(?P<h3>.+?)|\*\*(?P<bold>(?:core|adj|b)\d+\s*·\s*.+?)\*\*)\s*$"
+            r"(?m)^(?:###\s+(?P<h3>.+?)|\*\*(?P<bold>(?:core|adj|b)\d+\s*·\s*.+?)\*\*|"
+            r"(?P<plain>(?:core|adj|b)\d+\s*·\s*.+?))\s*$"
         )
         matches = list(candidate_pattern.finditer(body))
         if not matches:
@@ -1035,7 +1032,9 @@ class CLIHumanInterface(HumanInterface):
 
         for index, match in enumerate(matches):
             end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
-            candidate_title = str(match.group("h3") or match.group("bold") or "").strip()
+            candidate_title = str(
+                match.group("h3") or match.group("bold") or match.group("plain") or ""
+            ).strip()
             candidate_lines = body[match.end() : end].strip().splitlines()
             if not candidate_title:
                 continue
