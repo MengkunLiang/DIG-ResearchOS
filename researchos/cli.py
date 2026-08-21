@@ -4742,8 +4742,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument(
         "--start-task",
+        "--from-task",
+        dest="start_task",
         default=None,
-        help="从指定状态机节点开始完整 pipeline，例如 T2、T3、T8-STYLE-GATE",
+        help="从指定状态机节点开始完整 pipeline；--from-task 是面向 run --from 的兼容别名，例如 T2、T3、T4.5、T8-STYLE-GATE",
     )
     run_parser.add_argument("--startup-selftest", action="store_true")
     run_parser.add_argument("--skip-startup-selftest", action="store_true")
