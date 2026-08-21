@@ -122,25 +122,11 @@ The T4 prompt and Gate1 renderer retain all candidates. A repeated error with a 
 
 ## T4.5 Review: A Provider Pause Is Not A Proposal Failure
 
-The Review starts from one small, fixed package: `ideation/hypotheses.md`,
-`ideation/proposal/research_proposal.md`, and
-`ideation/orientation_config.yaml`. The first checkpoint checks the package
-before any revision. A timeout after that checkpoint means that the model
-service did not answer in time; it does **not** mean that the Proposal, the
-blueprint, or the experiment plan failed validation.
+The Review starts from one small, fixed package: `ideation/hypotheses.md`, `ideation/proposal/research_proposal.md`, and `ideation/orientation_config.yaml`. The first checkpoint checks the package before any revision. A timeout after that checkpoint means that the model service did not answer in time; it does **not** mean that the Proposal, the blueprint, or the experiment plan failed validation.
 
-Use `trace <run-id>` only when diagnosis is needed. If the trace shows failed
-reads of bare names such as `proposal.md` or a directory such as `ideation/`,
-resume after updating ResearchOS rather than editing artifacts by hand. The
-runtime now redirects the narrowly defined historical aliases to the canonical
-Proposal and records `canonicalized_from` in the trace. It never treats a
-directory or a new invented filename as a valid source. This prevents a series
-of harmless 404s from consuming model turns before the actual review.
+Use `trace <run-id>` only when diagnosis is needed. If the trace shows failed reads of bare names such as `proposal.md` or a directory such as `ideation/`, resume after updating ResearchOS rather than editing artifacts by hand. The runtime now redirects the narrowly defined historical aliases to the canonical Proposal and records `canonicalized_from` in the trace. It never treats a directory or a new invented filename as a valid source. This prevents a series of harmless 404s from consuming model turns before the actual review.
 
-When the checkpoint has passed and the console reports a provider pause, wait
-for the provider or choose Pause, then run the ordinary command below. Do not
-start a second writer for the same workspace and do not rerun T4 merely to
-recover T4.5.
+When the checkpoint has passed and the console reports a provider pause, wait for the provider or choose Pause, then run the ordinary command below. Do not start a second writer for the same workspace and do not rerun T4 merely to recover T4.5.
 
 ```bash
 python -m researchos.cli resume --workspace ./workspace/project-a

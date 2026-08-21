@@ -928,6 +928,7 @@ class LLMClient:
         max_retries_per_model: int | None = None,
         retry_base_delay: float | None = None,
         reasoning_effort: str | None = None,
+        max_completion_tokens: int | None = None,
     ) -> LLMResponse:
         """执行一次模型调用。
 
@@ -993,6 +994,17 @@ class LLMClient:
                             "timeout": timeout,
                             **endpoint.to_litellm_kwargs(),
                         }
+                        # Do not silently rely on an endpoint's often-small
+                        # default completion limit for a tool call that must
+                        # carry one complete structured artifact.  This is an
+                        # operational delivery limit only: it never supplies,
+                        # edits, or validates research content on the model's
+                        # behalf.  ``None`` preserves the provider default
+                        # for ordinary short calls.
+                        if max_completion_tokens is not None:
+                            requested_completion = int(max_completion_tokens)
+                            if requested_completion > 0:
+                                kwargs["max_tokens"] = requested_completion
                         if reasoning_effort:
                             # OpenAI-compatible reasoning providers, including
                             # current DeepSeek models, accept this top-level

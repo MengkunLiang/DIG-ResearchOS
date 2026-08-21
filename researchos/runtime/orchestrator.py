@@ -1581,10 +1581,29 @@ class AgentRunner:
                             reasoning_effort=(
                                 "low"
                                 if (
-                                    (ctx.task_id == "T8-WRITE" and ctx.mode in {None, "outline"})
+                                    # A blank T4.5 source must be delivered as
+                                    # one valid native tool JSON.  On several
+                                    # OpenAI-compatible reasoning endpoints,
+                                    # leaving effort at the provider default
+                                    # exhausts the response allowance in hidden
+                                    # reasoning and truncates the final tool
+                                    # arguments.  The Formalizer still receives
+                                    # the full evidence and owns every research
+                                    # decision; this reserves output room for
+                                    # the model-authored contract.
+                                    ctx.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"}
+                                    or (ctx.task_id == "T8-WRITE" and ctx.mode in {None, "outline"})
                                     or ctx.task_id.startswith("T8-SEC-")
                                 )
                                 else None
+                            ),
+                            **(
+                                {"max_completion_tokens": 16_384}
+                                if (
+                                    ctx.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"}
+                                    and self._llm_chat_accepts_keyword("max_completion_tokens")
+                                )
+                                else {}
                             ),
                         )
                     except LLMProviderError as exc:
@@ -1997,8 +2016,24 @@ class AgentRunner:
                         key = (path, schema, failure_kind)
                         if structured_error and path and schema:
                             diagnostics = tool_data.get("schema_errors")
+                            # A schema failure can be a stable model-content
+                            # error.  A malformed native tool JSON is not: it
+                            # may be an endpoint completion cut-off, and its
+                            # exact raw shape is meaningful.  Do not classify
+                            # every parse error as the same failure and pause
+                            # after two attempts before the model has seen a
+                            # useful diagnosis.
+                            raw_arguments = str(tool_call.arguments.get("__raw__") or "")
                             signature = json.dumps(
-                                diagnostics if failure_kind == "schema_validation_failed" else failure_kind,
+                                diagnostics
+                                if failure_kind == "schema_validation_failed"
+                                else {
+                                    "raw_length": len(raw_arguments),
+                                    "open_curly": raw_arguments.count("{"),
+                                    "close_curly": raw_arguments.count("}"),
+                                    "open_square": raw_arguments.count("["),
+                                    "close_square": raw_arguments.count("]"),
+                                },
                                 ensure_ascii=False,
                                 sort_keys=True,
                                 default=str,
@@ -2006,7 +2041,13 @@ class AgentRunner:
                             previous_signature, previous_count = t45_schema_failure_state.get(key, ("", 0))
                             repeated_count = previous_count + 1 if signature == previous_signature else 1
                             t45_schema_failure_state[key] = (signature, repeated_count)
-                            if repeated_count >= 2:
+                            # Give the model a real, explicit repair chance.
+                            # We only interrupt after repeated *identical*
+                            # malformed calls have made no structural progress.
+                            # This is a circuit breaker for a broken endpoint,
+                            # not a substitute for model-authored repair.
+                            pause_threshold = 4 if failure_kind == "parameter_validation" else 2
+                            if repeated_count >= pause_threshold:
                                 failure_label = (
                                     "Schema 错误"
                                     if failure_kind == "schema_validation_failed"
@@ -3323,6 +3364,20 @@ class AgentRunner:
                 important=True,
             )
 
+
+    def _llm_chat_accepts_keyword(self, keyword: str) -> bool:
+        """Keep optional transport controls compatible with lightweight test clients."""
+
+        try:
+            parameters = inspect.signature(self.llm.chat).parameters.values()
+        except (TypeError, ValueError, AttributeError):
+            # The production client accepts the optional control.  If an
+            # adapter cannot be introspected, preserve that normal behavior.
+            return True
+        return any(
+            parameter.name == keyword or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
 
     async def _await_llm_with_progress(
         self,
@@ -7898,6 +7953,19 @@ class AgentRunner:
                     schema_match = re.search(r'"schema_name"\s*:\s*"([^"\\]+)"', raw_arguments)
                     attempted_path = attempted_path or (path_match.group(1) if path_match else None)
                     attempted_schema = attempted_schema or (schema_match.group(1) if schema_match else None)
+                parse_detail = ""
+                if raw_arguments and tool_arguments.get("__parse_error__"):
+                    try:
+                        json.loads(raw_arguments)
+                    except json.JSONDecodeError as parse_exc:
+                        parse_detail = (
+                            f"Native tool JSON was incomplete or malformed at character {parse_exc.pos}: "
+                            f"{parse_exc.msg}. "
+                        )
+                open_curly = raw_arguments.count("{")
+                close_curly = raw_arguments.count("}")
+                open_square = raw_arguments.count("[")
+                close_square = raw_arguments.count("]")
                 parameter_data = {
                     "path": attempted_path,
                     "schema_name": attempted_schema,
@@ -7906,6 +7974,12 @@ class AgentRunner:
                     "repairable": True,
                     "raw_arguments_length": len(raw_arguments),
                     "json_parse_failed": bool(tool_arguments.get("__parse_error__")),
+                    "json_structure": {
+                        "open_curly": open_curly,
+                        "close_curly": close_curly,
+                        "open_square": open_square,
+                        "close_square": close_square,
+                    },
                 }
                 parameter_content = (
                     "write_structured_file 参数无效。path 必须是非空 workspace 相对路径，"
@@ -7924,6 +7998,14 @@ class AgentRunner:
                         "T4.5 正式化必须先以结构化调用依次写入 research_blueprint、claim_registry 和 exp_plan。"
                         "当前先修正 path/schema_name/format/data，尤其不要使用 null path 或改用 write_file。"
                     )
+                    if raw_arguments and tool_arguments.get("__parse_error__"):
+                        parameter_content += (
+                            " "
+                            + parse_detail
+                            + "Do not try to repair this artifact in prose or by a text patch. "
+                            "Reissue one complete, compact model-authored write_structured_file call for the same source; "
+                            "include all closing JSON delimiters and no explanatory text in the tool arguments."
+                        )
             tool_msg = Message.tool(
                 tool_call_id=tc.id,
                 name=tc.name,
