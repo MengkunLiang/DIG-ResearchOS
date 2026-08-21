@@ -143,9 +143,21 @@ class TargetedLiteratureSupplementTool(Tool):
         if quota_error:
             return ToolResult(
                 ok=False,
-                content=quota_error,
+                content=(
+                    quota_error
+                    + " This is a bounded-retrieval safety boundary, not a missing-evidence failure. "
+                    "Reuse the archived supplement and current evidence, record any remaining external-coverage "
+                    "boundary in the relevant audit or plan, and do not retry equivalent supplement queries."
+                ),
                 error="autonomous_supplement_quota_reached",
-                data={"task_id": caller_task_id, "stage": stage},
+                data={
+                    "task_id": caller_task_id,
+                    "stage": stage,
+                    "display_disposition": "auto_fallback",
+                    "fallback_available": True,
+                    "fallback_action": "reuse_archived_supplement_and_continue_with_current_evidence",
+                    "quota_boundary": "autonomous_targeted_literature_supplement",
+                },
             )
         supplement_dir.mkdir(parents=True, exist_ok=True)
 
