@@ -10,7 +10,66 @@ T1 研究范围 -> T2 文献 -> T3 阅读 -> T3.5 综合
   -> T5 外部执行 -> T8 论文 -> T9 投稿包
 ```
 
-## 从这里开始
+## 三步开始
+
+如果环境已经安装好，开始前不需要先记住所有阶段名。只需配置一次模型、创建一个 workspace、启动流程；终端只会在确实需要研究决策时停下来。第一次安装请先看[本地安装](#本地安装)或[Docker Compose](#docker-compose)，完成后再回到这里。
+
+```bash
+# 1. 在本机配置一次模型连接。
+python -m researchos.cli configure-llm
+
+# 2. 一个研究项目对应一个 workspace。
+python -m researchos.cli init-workspace \
+  --workspace ./workspace/my-project \
+  --project-id my-project \
+  --topic "你的研究主题"
+
+# 3. 启动流程。之后无论因何暂停，都用 resume 继续，不要再次 run。
+python -m researchos.cli run --workspace ./workspace/my-project
+```
+
+在最后一步之前，你可以把种子 PDF、DOI 列表、简短想法说明或明确约束放进 `./workspace/my-project/user_seeds/`。这不是必需项，但若希望 T1–T3 有意识地使用这些材料，这就是正确位置。
+
+### 先选好“系统替你决定多少”
+
+| 模式 | 适合什么情况 | 系统预先决定什么 | 仍会问你的事 |
+| --- | --- | --- | --- |
+| `copilot` | 你希望亲自确认关键设置和研究决策。 | 除安全默认值外不预先替你决定。 | 研究范围、阅读设置、Idea 选择及其他研究决策。 |
+| `auto` | 你已明确投稿取向，希望尽可能连续地运行。 | 所选阅读预设、是否写 Survey、T4 探索设置与写作取向。 | 新颖性未通过、恢复选择、外部副作用，或任何会改变研究边界的决定。 |
+
+创建 workspace 时就可以设定模式；若不设定，T1 会在第一次运行时询问。下面是可直接使用的完整示例：
+
+```bash
+# 面向 CCF 的研究论文，使用标准阅读预设。
+python -m researchos.cli init-workspace --workspace ./workspace/my-project \
+  --project-id my-project --topic "你的研究主题" \
+  --workflow-mode auto --auto-preset research_ccf
+
+# 面向 UTD/IS 的领域综述，使用较广的阅读预设。
+python -m researchos.cli init-workspace --workspace ./workspace/my-survey \
+  --project-id my-survey --topic "你的综述主题" \
+  --workflow-mode auto --auto-preset survey_utd
+```
+
+| 预设 | 面向的产出 | 文献设置 |
+| --- | --- | --- |
+| `research_ccf` / `research_utd` | 研究论文 | 25 篇候选、15 篇精读、10 篇摘要轻读。 |
+| `survey_ccf` / `survey_utd` | 领域综述 | 60 篇候选、30 篇精读、30 篇摘要轻读。 |
+| `survey_exhaustive_utd` | 覆盖更广的 UTD/IS 综述 | 90 篇候选、40 篇精读、50 篇摘要轻读。 |
+
+若你希望在运行时逐项查看和调整这些设置，应选择 Copilot。
+
+### 只记住三个命令即可
+
+| 你想做什么 | 使用什么命令 | 用通俗话说 |
+| --- | --- | --- |
+| 新建项目 | `init-workspace`，然后 `run` | 创建项目并从 T1 开始。 |
+| 继续已有项目 | `resume --workspace <目录>` | 从保存的状态继续。 |
+| 看看现在该做什么 | `status --workspace <目录>` | 显示当前阶段、等待你的选择和下一条安全命令。 |
+
+终端出现 **Gate** 时，表示系统正在等待一个可能影响研究方向、证据边界或外部执行的选择；它不是报错页。按照编号选择即可。多行输入始终可用单独一行 `END` 提交；POSIX 使用 `Ctrl+D`，Windows 使用 `Ctrl+Z` 后按 Enter。
+
+## 已有 Workspace 时如何选择命令
 
 先按你的目标选择一条路径。不要为了跳到某个阶段而手工编辑 `state.yaml`，也不要在已有 `state.yaml` 的目录中再次使用 `run`。
 
@@ -23,7 +82,9 @@ T1 研究范围 -> T2 文献 -> T3 阅读 -> T3.5 综合
 | 只完成一个独立能力，例如论文卡或领域综合 | `browse-skills`，再 `run-skill` | 建立独立、可恢复的 Skill 会话；输入、输出和恢复路径由该 Skill 的契约决定。 | 不要直接运行仅由 pipeline/T5 拥有的内部 Skill。 |
 | T5 已到外部执行器选择 | 在 Gate 选执行器，然后按 `external_executor/AGENTS.md` 操作 | 外部执行器在同一 workspace 中准备资源、实现、实验、诊断和回传证据。 | 执行器写入期间，不要对同一 workspace 运行 `resume`、第二个执行器或 T8。 |
 
-## 先理解流程，而不是记住内部名称
+## 参考地图：各阶段在做什么
+
+当终端显示阶段名时再回来看这张表即可。它是参考，不是第一次运行前必须完成的清单。
 
 `T` 是流程阶段标签，不是你日常需要输入的命令。正常情况下只需新项目使用 `run`、暂停后使用 `resume`；系统会在需要你做研究决定时停在 `Gate`，并说明下一步。`T3.5` 是 T3 阅读后的综合，`T3.6` 是可选的综述分支，`T4.5` 是 T4 研究方向后的研究方案审计与正式化，不是需要你手动运行的“半个任务”。
 
@@ -37,12 +98,22 @@ T1 研究范围 -> T2 文献 -> T3 阅读 -> T3.5 综合
 | T3.5 综合 | 把文献整理成机制、方法差异、张力和研究缺口。 | 决定是否进入可选综述分支。 | `literature/synthesis.md` |
 | T3.6 可选综述 | 在当前证据足够时撰写领域综述；不做综述时会跳过。 | 选择跳过、使用当前语料库，或先做一次定向补检。 | `drafts/survey/` |
 | T4 研究方向 | 生成、比较和演化多个可选研究方向。 | 选择推进、优化、再探索，或只查看 Candidate。 | `ideation/` 下的 Candidate Card、评分、证据和谱系 |
-| T4.5 研究方案审计与正式化 | 审计相似工作和机制差异，再将选定方向形成蓝图、主张、实验计划、Proposal 与质量审阅记录。首次 Formalization checkpoint 会创建三份结构化来源；这是正常初始化，不是上游遗漏或失败修复。 | 仅在新颖性审计非通过时复核结论；UTD/CCF-A/Hybrid 已由 T4 继承，不会重复询问。 | `ideation/research_blueprint.yaml`、`ideation/claim_registry.yaml`、`ideation/proposal/research_proposal.md`、`ideation/orientation_review.json` |
+| T4.5 研究方案 | 检查新颖性，把选定 Idea 变成可检验的 Proposal，再做质量审阅。 | 仅在新颖性审计未通过时需要你复核。 | `ideation/` 下的 Proposal、假设、实验计划与审阅记录。 |
 | T5 外部执行准备 | 把 T4.5 的正式研究包变成外部执行器不能擅自改写的交接。 | 明确仍影响研究边界的设置；可放置已有资源，或让执行器自动准备公开资源。 | `external_executor/handoff_pack.json`、`resources/` |
 | T8 写作 | 用已经核验的实验事实写作、审稿和修订。 | 选择写作风格或模板。 | `drafts/`、实验 claim/evidence 文件 |
 | T9 投稿 | 审阅、真实编译并生成提交包。 | 只在环境或编译恢复时处理问题。 | `submission/`、最终 PDF 与编译报告 |
 
-最重要的两个边界是：T4.5 把“有潜力的想法”变成“有假设、实验计划和风险边界的研究方案”；T5 不自行跑实验，它只准备和核验执行契约，随后由同一 workspace 中的 Codex、Claude 或人工执行器完成真实工作。
+### 不用术语理解 T4.5 与 T5
+
+T4.5 的作用是把“有潜力的 Idea”变成“可执行、可证伪的研究方案”，依次经过三个检查点：
+
+1. **新颖性审计**：把 Idea 与当前文献比较，找出必须对比的已有方法。
+2. **研究正式化**：建立统一研究蓝图，导出主张，映射实验计划，并写出 Proposal。
+3. **质量审阅**：检查 Proposal 是否连贯、可检验、易读，并且与结构化计划一致。
+
+Proposal 是给研究者阅读的完整论证；蓝图和主张登记表则让后续实现保持精确。三者描述的是同一个研究方案，不是三份彼此竞争的版本。UTD、CCF-A 与 Hybrid 都遵循同一研究逻辑，只是在贡献和写作取向上权重不同。
+
+T5 **不会**静默替你跑实验。它先把已通过的 T4.5 方案编译为受约束的交接，再让你选择或授权外部执行器。执行器可以准备公开资源并完成已批准的工作，但不能静默修改研究问题、核心机制、必需 baseline、benchmark 范围或 claim 边界。
 
 只有 T4.5 最后的 orientation-aware 审阅接受研究包后，终端才会显示 Rich“研究方案审计与正式化已完成”表。它会列出 proposal、正式假设、研究蓝图、实验计划、贡献/验证映射、停止条件、新颖性审计、审阅记录与正式化通过回执，并说明每个文件的角色和后续用途；T5 只消费这一已接受研究包，不需要靠记忆寻找文件。
 

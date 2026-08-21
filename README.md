@@ -10,7 +10,66 @@ T1 scope -> T2 discover -> T3 read -> T3.5 synthesize
   -> T5 external execution -> T8 manuscript -> T9 submission bundle
 ```
 
-## Start Here
+## Start In Three Steps
+
+If the environment is already installed, you do not need to learn the stage names before starting. Configure the model once, create one workspace, and run it. The terminal will stop only when it needs a meaningful research decision. Installing for the first time? Go to [Native Setup](#native-setup) or [Docker Compose Setup](#docker-compose-setup), then return here.
+
+```bash
+# 1. Configure the model connection once on this machine.
+python -m researchos.cli configure-llm
+
+# 2. Create one workspace for one research project.
+python -m researchos.cli init-workspace \
+  --workspace ./workspace/my-project \
+  --project-id my-project \
+  --topic "your research topic"
+
+# 3. Start the workflow. Use resume, rather than run, after any pause.
+python -m researchos.cli run --workspace ./workspace/my-project
+```
+
+Before the final command, you may place seed PDFs, DOI lists, a short idea note, or explicit constraints in `./workspace/my-project/user_seeds/`. This is optional, but it is the right place for materials you want T1–T3 to use deliberately.
+
+### Choose How Much The System Decides
+
+| Mode | Choose it when | What it decides in advance | What it still asks you |
+| --- | --- | --- | --- |
+| `copilot` | You want to confirm the important settings and decisions yourself. | Nothing beyond safe defaults. | Scope, reading setup, idea choice, and other research decisions. |
+| `auto` | You already know the publication orientation and want a mostly uninterrupted run. | The selected reading preset, Survey policy, T4 exploration setting, and writing orientation. | Failed novelty checks, recovery choices, external side effects, or any change to the research boundary. |
+
+Set the mode while creating a workspace, or let T1 ask you on the first run. These are complete examples:
+
+```bash
+# CCF-oriented research paper, with the standard reading preset.
+python -m researchos.cli init-workspace --workspace ./workspace/my-project \
+  --project-id my-project --topic "your research topic" \
+  --workflow-mode auto --auto-preset research_ccf
+
+# UTD/IS-oriented literature Survey, with a broader reading preset.
+python -m researchos.cli init-workspace --workspace ./workspace/my-survey \
+  --project-id my-survey --topic "your review topic" \
+  --workflow-mode auto --auto-preset survey_utd
+```
+
+| Preset | Intended output | Literature setup |
+| --- | --- | --- |
+| `research_ccf` / `research_utd` | Research paper | 25 candidates, 15 deep reads, 10 abstract reads. |
+| `survey_ccf` / `survey_utd` | Field Survey | 60 candidates, 30 deep reads, 30 abstract reads. |
+| `survey_exhaustive_utd` | Broad UTD/IS Survey | 90 candidates, 40 deep reads, 50 abstract reads. |
+
+Copilot is the better choice when you want to see and adjust these settings during the run.
+
+### If You Only Remember Three Commands
+
+| You want to… | Use | In plain language |
+| --- | --- | --- |
+| Start a brand-new workspace | `init-workspace`, then `run` | Create the project and begin from T1. |
+| Continue an existing workspace | `resume --workspace <directory>` | Continue from the saved state. |
+| See what needs attention | `status --workspace <directory>` | Show the current stage, any pending decision, and the next safe command. |
+
+When the terminal shows a **Gate**, it is waiting for a choice that could affect the research direction, evidence boundary, or external execution. It is not an error page. Follow the numbered options; `END` always submits multi-line text, while terminal EOF is `Ctrl+D` on POSIX and `Ctrl+Z` then Enter on Windows.
+
+## Choose The Right Command For An Existing Workspace
 
 Choose the path that matches the state of your work. Do not edit `state.yaml` to jump between stages, and do not run `run` again inside a directory that already has a `state.yaml`.
 
@@ -24,7 +83,9 @@ Choose the path that matches the state of your work. Do not edit `state.yaml` to
 | Do one focused job, such as a PDF note card or a field synthesis | `browse-skills`, then `run-skill` | Creates a standalone, resumable Skill session with its own declared inputs, outputs, and recovery command. | Do not start pipeline-owned or T5 executor Skills with `run-skill`. |
 | T5 is waiting for an external executor | Select the executor at the Gate, then follow `external_executor/AGENTS.md` | The executor works in the same workspace and returns auditable resources, code, results, figures, and evidence. | Do not run `resume`, a second executor, or T8 while that executor is writing. |
 
-## Understand The Flow Before Internal Names
+## Reference Map: What The Stages Mean
+
+You can return to this map when the terminal names a stage. It is a reference, not a checklist for the first run.
 
 `T` is a workflow-stage label, not a command you need to type every day. In normal use, start a new project with `run` and continue a paused one with `resume`. ResearchOS stops at a `Gate` only when a research decision needs your input and explains the next action. `T3.5` is the synthesis after T3 reading, `T3.6` is the optional Survey branch, and `T4.5` is the research-plan audit and formalization stage after T4 ideation, not a separate “half task” to run manually.
 
@@ -38,12 +99,22 @@ Longer names such as `T5-REBOOST-GATE`, `T5-PROTOCOL-GATE`, and `T3.6-SEC-INTRO`
 | T3.5 synthesis | Turn the literature into mechanisms, method differences, tensions, and research gaps. | Decide whether to take the optional Survey branch. | `literature/synthesis.md` |
 | T3.6 optional Survey | Write a field Survey only when the current evidence justifies it; otherwise it is skipped. | Skip, write from the present corpus, or request one targeted supplement. | `drafts/survey/` |
 | T4 research ideas | Generate, compare, and evolve multiple research directions. | Proceed, optimize, explore again, or inspect a Candidate only. | Candidate Cards, scores, evidence, and lineage under `ideation/` |
-| T4.5 research-plan audit and formalization | Audit similar work and mechanism differences; then, in separate contexts, build one orientation-aware research blueprint, claims, experiment plan, Proposal, and final quality review before T5. Blank-slate Formalization is normal initialization, not a repair: it establishes the blueprint first, derives claims from it, then maps accepted claims into the experiment plan. It starts from the compact Pre-Novelty brief, hypothesis brief, and novelty audit, and asks the evidence index for only the literature fragments needed by the current design decision. Proposal review preserves a small, readable top-level structure and separates genuine argumentative transitions into connected paragraphs rather than generating heading trees or checklists. | Review a non-pass novelty verdict only; UTD/CCF-A/Hybrid is already inherited from T4 and is not asked again. | `ideation/research_blueprint.yaml`, `ideation/claim_registry.yaml`, `ideation/proposal/research_proposal.md`, `ideation/orientation_review.json` |
+| T4.5 research plan | Check novelty, turn the selected idea into a testable Proposal, then review it. | Only if the novelty audit does not pass. | Proposal, hypotheses, experiment plan, and review record under `ideation/`. |
 | T5 external-execution preparation | Compile the T4.5 package into an executor handoff whose research constraints cannot be silently changed. | Resolve only settings that affect research boundaries; place existing resources or let the executor prepare public ones. | `external_executor/handoff_pack.json`, `resources/` |
 | T8 writing | Write, review, and revise using verified experimental facts. | Choose a writing style or template. | `drafts/` and experiment claim/evidence files |
 | T9 submission | Review, genuinely compile, and package the submission. | Only when an environment or compilation recovery is needed. | `submission/`, final PDF, and compile report |
 
-The two most important boundaries are these: T4.5 uses three logical steps—Novelty Audit, Research Formalization, and Orientation-Aware Review/Repair. The first step owns collision labels and required baselines; the second owns a shared blueprint, claims, experiment plan, and Proposal; the third rejects thin, audit-dominated, inconsistent, or untestable plans. UTD, CCF-A, and Hybrid use the same seven research functions, with different weights and review emphasis. These functions guide argument coverage rather than forcing seven literal headings, so a Proposal may merge adjacent sections when that improves coherence. T5 is not an experiment runner: it consumes only a passed T4.5 package and prepares a verified execution contract for an external Codex, Claude, or human executor.
+### T4.5 And T5 Without The Jargon
+
+T4.5 turns a promising Idea into a research plan. It has three checkpoints:
+
+1. **Novelty audit** compares the idea with the current literature and identifies required baselines.
+2. **Formalization** establishes one shared blueprint, derives the claims, maps them to an experiment plan, and writes the Proposal.
+3. **Quality review** checks that the Proposal is coherent, testable, readable, and consistent with the structured plan.
+
+The Proposal is organized for readers, while the blueprint and claim registry keep the downstream implementation precise. The three artifacts describe the same research plan; they are not three competing versions. UTD, CCF-A, and Hybrid use the same basic research logic but emphasize different contribution and writing priorities.
+
+T5 does **not** silently run an experiment. It compiles the accepted T4.5 plan into a constrained handoff, then asks you to choose or authorize the external executor. That executor may prepare public resources and run the approved work, but cannot silently change the research question, core mechanism, required baselines, benchmark scope, or claim boundary.
 
 Only after T4.5's final orientation-aware review accepts the package, the terminal displays a Rich “research-plan audit and formalization complete” table with five researcher-facing entry points: the Proposal, hypotheses, design constraints (blueprint plus claim registry), experiment plan, and final review/novelty boundary. Contribution/validation maps, stopping criteria, manifests, and receipts remain saved for T5 and `--verbose`, but do not crowd the completion table. T5 consumes that accepted package; you do not need to find it from memory.
 
