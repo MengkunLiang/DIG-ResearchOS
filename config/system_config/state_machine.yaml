@@ -1022,6 +1022,7 @@ states:
       retrieval_scope_plan: literature/retrieval_scope_plan.json # 范围与桥接语义审计先验，非碰撞证据
       hypothesis_brief: ideation/hypothesis_brief.yaml  # T4 Gate1 选择后的 Pre-Novelty draft bundle
       selected_candidate: ideation/selected/selected_candidate.json
+      pre_novelty_brief: ideation/selected/pre_novelty_brief.md # 紧凑、决策导向的 T4→T4.5 交接材料
       t45_search_targets: ideation/selected/t45_search_targets.json
       synthesis: literature/synthesis.md                # 输入：文献综述
       literature_manifest: literature/literature_manifest.json # 跨任务统一文献清单
@@ -1055,6 +1056,7 @@ states:
       project: project.yaml
       hypothesis_brief: ideation/hypothesis_brief.yaml
       selected_candidate: ideation/selected/selected_candidate.json
+      pre_novelty_brief: ideation/selected/pre_novelty_brief.md
       novelty_audit: ideation/novelty_audit.md
       synthesis: literature/synthesis.md
       comparison_table: literature/comparison_table.csv

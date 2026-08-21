@@ -278,13 +278,21 @@ class WriteStructuredFileTool(Tool):
                 }
             )
             if is_t45_source:
-                from ..ideation.formalization import collect_t45_structured_source_errors
+                from ..ideation.formalization import (
+                    collect_t45_structured_source_errors,
+                    t45_structured_source_initialization_state,
+                )
 
                 t45_contract_errors = [
                     str(error).strip()
                     for error in collect_t45_structured_source_errors(self.policy.workspace_dir)
                     if str(error).strip()
                 ]
+                initialization_in_progress, missing_sources = t45_structured_source_initialization_state(
+                    self.policy.workspace_dir
+                )
+            else:
+                initialization_in_progress, missing_sources = False, []
             shared_contract_passed = is_t45_source and not t45_contract_errors
             data = {
                 "path": path,
@@ -309,18 +317,36 @@ class WriteStructuredFileTool(Tool):
                     # green formalization success.
                     data.update(
                         {
-                            "display_disposition": "validation_failed",
-                            "repairable": True,
-                            "repair_scope": "t45_shared_structured_contract",
+                            "display_disposition": (
+                                "initialization_required"
+                                if initialization_in_progress
+                                else "validation_failed"
+                            ),
+                            "repairable": not initialization_in_progress,
+                            "repair_scope": (
+                                "t45_ordered_source_initialization"
+                                if initialization_in_progress
+                                else "t45_shared_structured_contract"
+                            ),
+                            "initialization_required": initialization_in_progress,
+                            "missing_sources": missing_sources,
                         }
                     )
                     remaining = "\n".join(f"- {error}" for error in t45_contract_errors)
-                    completion = (
-                        "文件已通过自身 schema 并保存，但 T4.5 三份来源尚未共同通过研究契约；"
-                        "不要写 hypotheses 或 Proposal。当前仍需一次性修复：\n"
-                        + remaining
-                        + "\n修复后再次调用 validate_t45_formalization_sources；只有其 valid=true 才能写正文。"
-                    )
+                    if initialization_in_progress:
+                        next_source = missing_sources[0] if missing_sources else "下一份结构化来源"
+                        completion = (
+                            "文件已通过自身 schema 并保存。T4.5 正在按依赖顺序建立研究契约；"
+                            f"下一步只需创建 {next_source}，不是修复失败。"
+                            "随后调用 validate_t45_formalization_sources 再继续。"
+                        )
+                    else:
+                        completion = (
+                            "文件已通过自身 schema 并保存，但 T4.5 三份来源尚未共同通过研究契约；"
+                            "不要写 hypotheses 或 Proposal。当前仍需一次性修复：\n"
+                            + remaining
+                            + "\n修复后再次调用 validate_t45_formalization_sources；只有其 valid=true 才能写正文。"
+                        )
                 else:
                     completion = (
                         "文件已保存，且 research_blueprint、claim_registry 与 exp_plan 已共同通过 T4.5 研究契约。"

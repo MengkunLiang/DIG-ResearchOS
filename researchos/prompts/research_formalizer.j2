@@ -13,7 +13,8 @@ The Proposal is a research argument, not a provenance dashboard. Keep the distin
 - Remove unsupported external factual, novelty, or performance assertions unless they can be grounded. Do not turn an internal uncertainty flag into defensive prose throughout the Proposal.
 - Never expose internal tokens such as `verification_required`, `proposed_not_verified`, `requires_verification`, `T4.5`, evidence levels, collision labels, candidate IDs, fingerprints, or lineage hashes in `hypotheses.md` or the Proposal.
 
-Use `query_research_evidence(stage="t45-formalize", purpose="proposal", max_results=8)` when locating relevant workspace material. Use at most two materially different evidence queries in this phase; if both lack useful evidence, stop reformulating the query and continue with the existing materials plus your scholarly reasoning, unless one concrete external fact justifies the bounded supplement below. Do not recursively list the workspace root or inspect runtime state, guides, or seed folders: the declared upstream artifacts and targeted evidence query are the relevant context. If a missing recent work, baseline, measure or other external fact would materially change the design, you may autonomously run one bounded `targeted_literature_supplement` with `target_record_count` no greater than 6 and integrate the new canonical note. Do not stop because an ordinary design inference lacks a matching sentence in the literature, and do not retrieve material merely to fill a Proposal section.
+{% if phase != 'review' %}Use `query_research_evidence(stage="t45-formalize", purpose="proposal", max_results=8)` when locating relevant workspace material. Use at most two materially different evidence queries in this phase; if both lack useful evidence, stop reformulating the query and continue with the existing materials plus your scholarly reasoning, unless one concrete external fact justifies the bounded supplement below. Do not recursively list the workspace root or inspect runtime state, guides, or seed folders: the declared upstream artifacts and targeted evidence query are the relevant context. If a missing recent work, baseline, measure or other external fact would materially change the design, you may autonomously run one bounded `targeted_literature_supplement` with `target_record_count` no greater than 6 and integrate the new canonical note. Do not stop because an ordinary design inference lacks a matching sentence in the literature, and do not retrieve material merely to fill a Proposal section.
+{% endif %}
 
 ## Current phase
 
@@ -75,15 +76,18 @@ Preserve an English title or established term found here as its canonical form u
 - Do not manufacture a conventional setting merely to make a plan look complete. Keep an unresolved execution detail in the structured plan, then describe it once in the Proposal as a concrete pre-execution validation, mitigation, or fallback when it materially affects feasibility.
 - The novelty audit may constrain claims and required baselines.  Never expose its internal terms (T4.5, Level 0–3, true_collision, candidate ID, fingerprint, pass_to_experiment) in the main Proposal or claims document.
 
-## Shared formalization sources
+{% if phase != 'review' %}## Shared formalization sources
 
 Start from the following compact, decision-bearing sources. They are deliberately not copied into this prompt because duplicate and truncated copies dilute the reasoning context:
 
-- `ideation/selected/pre_novelty_brief.md`
+{% if pre_novelty_brief_available %}- `ideation/selected/pre_novelty_brief.md`
+{% else %}- `ideation/selected/pre_novelty_brief.md` is unavailable in this legacy workspace; use `ideation/selected/selected_candidate.json` only as its fallback
+{% endif %}
 - `ideation/hypothesis_brief.yaml`
 - `ideation/novelty_audit.md`
 
 After this first read, use the returned content already in conversation. Do not enumerate directories or re-read an unchanged source. For literature, evidence, resources, or a detail of the selected Candidate, first ask a concrete question through `query_research_evidence`; it searches the complete canonical corpus and returns a small provenance-bearing bundle. Read a necessary passage from `literature/synthesis.md` or `ideation/selected/selected_candidate.json` only when that bundle identifies a material unresolved design question. This is information selection, not evidence deletion: the full artifacts remain canonical and reachable, but they must not dilute the initial design judgment.
+{% endif %}
 
 {% if phase == 'review' %}
 ### Exact review sources
@@ -152,13 +156,13 @@ orientation: {profile_type, proposal_weights, guidance}
 core_problem: {real_world_context, affected_actors: [], decision_or_task, observed_failure, scientific_significance}
 technical_problem: {computational_abstraction, current_assumptions: [], failure_mechanisms: [], key_challenges: [{id, existing_assumption, why_it_fails, observable_consequence, required_new_capability}]}
 proposed_approach: {artifact_type, central_insight, components: [{id, name, challenge_refs: [], technical_role, expected_effect}], design_rationales: [], alternatives_considered: []}
-research_claims: {active_claim_ids: []}
+research_claims: {active_claim_ids: [], cross_level_links: [{technical_design, system_property, outcome}]}
 evaluation: {datasets_or_setting: [], baselines: [], primary_metrics: [], main_tests: [], ablations: [], mechanism_tests: [], robustness_tests: [], efficiency_tests: [], real_world_validation: []}
 contributions: {technical: [], theoretical_or_design: [], practical_or_managerial: []}
 risks: {novelty_risks: [], technical_risks: [], data_or_experimental_risks: [], fallback_designs: [], kill_criteria: []}
 ```
 
-`artifact_type` is exactly one of `algorithm`, `model`, `system`, `framework`, or `intervention`. `affected_actors`, every evaluation category, every contribution category, and every risk category are arrays. A component uses `technical_role`, never `function`. Contributions use `technical`, `theoretical_or_design`, and `practical_or_managerial`, never `primary` or `secondary`. Risks are the object shown above, never a flat list. The following nested fields are also exact; do not replace them with near-synonyms such as `component_refs`, `approach`, or `why_insufficient`:
+`artifact_type` is exactly one of `algorithm`, `model`, `system`, `framework`, or `intervention`. `affected_actors`, every evaluation category, every contribution category, and every risk category are arrays. A component uses `technical_role`, never `function`. Contributions use `technical`, `theoretical_or_design`, and `practical_or_managerial`, never `primary` or `secondary`. Risks are the object shown above, never a flat list. For the Hybrid orientation, `research_claims.cross_level_links` must contain at least one concrete mapping from a named technical design or mechanism, through the relevant system or decision property, to a user, organizational, platform, or decision outcome. This is the compact contract-level statement of the same cross-level reasoning that the Proposal will explain in prose. The following nested fields are also exact; do not replace them with near-synonyms such as `component_refs`, `approach`, or `why_insufficient`:
 
 Keep this structured blueprint a compact reasoning backbone, not the Proposal itself. Target roughly 8,000–12,000 characters for the complete tool argument. Use the smallest coherent number of challenges, components and active claims, normally one or two for a focused Candidate. A single challenge is acceptable only when it is genuinely central and every proposed component, active claim, competing explanation, counterfactual, falsification condition, and discriminating evaluation makes that one challenge scientifically demanding. Use two or more challenges when they introduce independent failure mechanisms or evaluation requirements. Never split one issue into labels merely to satisfy a count. Give each field one precise sentence and avoid repeating the same rationale across `technical_problem`, `proposed_approach`, `evaluation`, `contributions`, and `risks`. Detailed exposition belongs in `hypotheses.md` and the Proposal after the shared structured contract passes. During blank-slate initialization, write this blueprint first, validate it, then derive the registry from its active claims and the experiment plan from the accepted registry. Do not attempt the three source contracts in one oversized tool call.
 
@@ -171,7 +175,7 @@ Call `write_structured_file(path="ideation/claim_registry.yaml", schema_name="cl
 ```text
 semantics: "t45_claim_registry"
 orientation: utd | ccf_a | hybrid
-claims: [{id, claim_type, statement, rationale, related_components: [], mechanism, scope_or_boundary_conditions, expected_observation, baseline_or_counterfactual, evaluation_methods: [], competing_explanation, falsification_condition}]
+claims: [{id, claim_type, statement, rationale, related_components: [], mechanism, scope_or_boundary_conditions, expected_observation, baseline_or_counterfactual, evaluation_methods: [], competing_explanation, falsification_condition, cross_level_relation}]
 ```
 
 Claim IDs match `^(TC|MC|BH|CH|RC|GP|DP)[1-9][0-9]*$`. `claim_type` is one of `technical`, `algorithmic`, `system`, `mechanism`, `behavioral`, `causal`, `robustness`, `generalization`, or `design_proposition`. `claims` is always an array, and its IDs exactly equal the blueprint's `research_claims.active_claim_ids`.

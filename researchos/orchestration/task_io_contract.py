@@ -880,6 +880,10 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "retrieval_scope_plan": "literature/retrieval_scope_plan.json",
             "hypothesis_brief": "ideation/hypothesis_brief.yaml",
             "selected_candidate": "ideation/selected/selected_candidate.json",
+            # The compact pre-novelty brief is the primary T4.5/T4.5-
+            # FORMALIZE context.  It is optional for legacy workspaces, but
+            # must travel with a new workspace imported at either entry node.
+            "pre_novelty_brief": "ideation/selected/pre_novelty_brief.md",
             "t45_search_targets": "ideation/selected/t45_search_targets.json",
             "synthesis": "literature/synthesis.md",
             "comparison_table": "literature/comparison_table.csv",
@@ -905,6 +909,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "project": "project.yaml",
             "hypothesis_brief": "ideation/hypothesis_brief.yaml",
             "selected_candidate": "ideation/selected/selected_candidate.json",
+            "pre_novelty_brief": "ideation/selected/pre_novelty_brief.md",
             "novelty_audit": "ideation/novelty_audit.md",
             "synthesis": "literature/synthesis.md",
             "comparison_table": "literature/comparison_table.csv",

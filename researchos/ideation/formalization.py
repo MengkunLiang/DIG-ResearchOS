@@ -840,19 +840,21 @@ def collect_t45_structured_source_errors(workspace: Path) -> list[str]:
 
 
 def t45_structured_source_initialization_state(workspace: Path) -> tuple[bool, list[str]]:
-    """Identify the normal blank-slate opening of T4.5 formalization.
+    """Identify normal ordered initialization of a T4.5 source contract.
 
-    A selected Candidate intentionally has no blueprint, claim registry, or
-    experiment plan yet.  Treating that opening as a failed repair is both
-    misleading in the CLI and can induce an LLM to ``read_file`` paths that it
-    has just been told do not exist.  This helper is deliberately narrow:
-    partial packages remain ordinary recovery work and retain the strict
-    shared-contract validator.
+    A selected Candidate intentionally starts with none of the three sources.
+    The sources are then created in a strict dependency order: blueprint,
+    claim registry, and experiment plan.  Every prefix of that sequence is a
+    normal creation checkpoint, not a failed repair.  An out-of-order partial
+    package, by contrast, is a real recovery case because it may conceal a
+    stale or incompatible source.
     """
 
     root = Path(workspace)
     missing = [path for path in T45_STRUCTURED_SOURCE_PATHS if not (root / path).is_file()]
-    return len(missing) == len(T45_STRUCTURED_SOURCE_PATHS), missing
+    present = [path for path in T45_STRUCTURED_SOURCE_PATHS if path not in missing]
+    expected_prefix = list(T45_STRUCTURED_SOURCE_PATHS[: len(present)])
+    return present == expected_prefix and bool(missing), missing
 
 
 def validate_t45_structured_sources(workspace: Path) -> tuple[bool, str | None]:

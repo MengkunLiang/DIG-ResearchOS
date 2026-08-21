@@ -94,6 +94,7 @@ class ResearchFormalizerAgent(Agent):
         ensure_current_t45_selection_isolation(workspace)
         canonicalize_research_blueprint_file(workspace)
         orientation = persist_orientation_configuration(workspace)
+        pre_novelty_brief_available = (workspace / "ideation" / "selected" / "pre_novelty_brief.md").is_file()
         structured_sources_ok, structured_sources_error = validate_t45_structured_sources(workspace)
         formalization_ok, formalization_error = validate_t45_formalization_core(workspace)
         # Formalization sees advisory quality cues while composing the package,
@@ -117,6 +118,7 @@ class ResearchFormalizerAgent(Agent):
             formalization_ok=formalization_ok,
             formalization_error=formalization_error or "",
             quality_diagnostics=quality_diagnostics,
+            pre_novelty_brief_available=pre_novelty_brief_available,
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
@@ -142,21 +144,39 @@ class ResearchFormalizerAgent(Agent):
                 "也不要写 runtime 负责生成的 manifest、map、dossier 或 receipt。"
             )
         else:
-            initializing, _missing_sources = t45_structured_source_initialization_state(ctx.workspace_dir)
-            initialization_instruction = (
-                "这是一个全新 formalization：三个结构化来源尚未创建是正常起点。读取紧凑上游材料并收到首次 checkpoint 后，"
-                "先只创建 research_blueprint；收到其 checkpoint 后再创建 claim_registry；只有 registry 通过后才创建 exp_plan。"
-                "这三个步骤共享同一研究判断，但必须按依赖顺序完成，不能在一个大工具调用中盲写三份 YAML。"
-                "不要对这三个尚不存在的路径调用 read_file，也不要把创建误当作失败修复。"
-                if initializing
+            initializing, missing_sources = t45_structured_source_initialization_state(ctx.workspace_dir)
+            if initializing:
+                next_source = missing_sources[0] if missing_sources else "ideation/research_blueprint.yaml"
+                next_step_instruction = (
+                    "先只创建 research_blueprint；"
+                    if next_source == "ideation/research_blueprint.yaml"
+                    else f"当前只创建下一份来源 {next_source}；"
+                )
+                initialization_instruction = (
+                    "这是 T4.5 结构化来源的正常依赖初始化，不是失败修复。"
+                    + next_step_instruction
+                    + "保留已创建的依赖前缀，随后调用 checkpoint。"
+                    "research_blueprint、claim_registry、exp_plan 必须按这个顺序建立，不能在一个大工具调用中盲写三份 YAML。"
+                    "不要读取尚不存在的来源，也不要把创建误当作失败修复。"
+                )
+            else:
+                initialization_instruction = (
+                    "这是已有 formalization 的恢复：只读取并修复当前 checkpoint 明确指向的既有来源，保留其它已通过内容。"
+                )
+            compact_source_instruction = (
+                "先在一个并行工具回合中精确读取 pre_novelty_brief、hypothesis_brief 与 novelty_audit；"
+                "不要把 selected_candidate 或完整 synthesis 当作例行首读，也不要重复读取上述不变来源。"
+                if (ctx.workspace_dir / "ideation" / "selected" / "pre_novelty_brief.md").is_file()
                 else
-                "这是已有 formalization 的恢复：只读取并修复当前 checkpoint 明确指向的既有来源，保留其它已通过内容。"
+                "常规情况下会读取 pre_novelty_brief、hypothesis_brief 与 novelty_audit；当前 workspace 缺少可选的 "
+                "pre_novelty_brief，因此先在一个并行工具回合中精确读取 hypothesis_brief 与 novelty_audit。"
+                "只有这两份材料不足以回答具体设计问题时才读取 selected_candidate；"
+                "不要把 selected_candidate 或完整 synthesis 当作例行首读；不要为寻找该缺失兼容文件反复探测路径。"
             )
             message = (
                 "不要递归列出 workspace 根目录，也不要读取 state.yaml、_runtime、_DIR_GUIDE 或 user_seeds；"
-                "先在一个并行工具回合中精确读取 pre_novelty_brief、hypothesis_brief 与 novelty_audit；"
-                "不要把 selected_candidate 或完整 synthesis 当作例行首读，也不要重复读取上述不变来源。"
-                "用已读材料形成一个具体的证据问题后，调用一次 "
+                + compact_source_instruction
+                + "用已读材料形成一个具体的证据问题后，调用一次 "
                 "query_research_evidence(stage='t45-formalize', purpose='proposal', max_results<=8)，"
                 "让它从完整文献库、综合综述和资源索引中返回最相关片段。"
                 "只有该定向结果不能回答一个会实质改变研究设计的问题时，才按页读取 selected_candidate 或 synthesis 的必要片段。"

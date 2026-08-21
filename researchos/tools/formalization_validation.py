@@ -61,6 +61,11 @@ class ValidateT45FormalizationSourcesTool(Tool):
                 ],
                 "This is one minimal synchronized change set: add one substantive technical claim to the blueprint and registry, then map it in exp_plan.",
             )
+        if "explicit technical-to-real-world cross-level link" in detail:
+            return (
+                ["ideation/research_blueprint.yaml"],
+                "Repair research_blueprint.yaml only: add research_claims.cross_level_links with one concrete mapping from a named technical component or mechanism, through the relevant system/decision property, to a user, organizational, platform, or decision outcome. Do not rewrite the registry or experiment plan merely to restate that link.",
+            )
         if "evaluation.ablations or evaluation.mechanism_tests" in detail:
             return (
                 ["ideation/research_blueprint.yaml"],
@@ -115,11 +120,19 @@ class ValidateT45FormalizationSourcesTool(Tool):
             for item in repair_plan
         )
         if initialization_required:
+            next_source = missing_sources[0] if missing_sources else "the next structured source"
+            opening_instruction = (
+                "Create research_blueprint first with write_structured_file, then call this checkpoint again. "
+                if next_source == "ideation/research_blueprint.yaml"
+                else ""
+            )
             content = (
-                "T4.5 formalization is initializing a new research contract. The three structured sources do not "
-                "exist yet; this is expected immediately after Candidate selection. Create research_blueprint first "
-                "with write_structured_file, call this checkpoint again, then derive claim_registry and exp_plan in "
-                "that dependency order. Do not try to create the three complete contracts in one oversized tool call."
+                "T4.5 formalization is continuing its normal ordered source initialization, not repairing a failed "
+                "research package. Preserve the already-created dependency prefix and create only "
+                f"{next_source} next with write_structured_file. Call this checkpoint again before creating any "
+                "later source or prose. "
+                + opening_instruction
+                + "Maintain the dependency order and do not try to create the remaining contracts in one oversized tool call."
             )
             disposition = "initialization_required"
         else:
