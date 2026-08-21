@@ -213,7 +213,12 @@ def load_model_settings(path: Path | None = None) -> dict[str, Any]:
             "max_attempts": _positive_int(fallback.get("max_attempts"), 3, minimum=1, maximum=10),
             "initial_wait_seconds": _positive_float(fallback.get("initial_wait_seconds"), 3.0, minimum=0.0, maximum=60.0),
             "max_wait_seconds": _positive_float(fallback.get("max_wait_seconds"), 20.0, minimum=0.0, maximum=300.0),
-            "retry_after_timeout": _as_bool(fallback.get("retry_after_timeout"), True),
+            # A full request deadline is already substantial. Repeating it
+            # invisibly turns one unavailable provider into many minutes of
+            # apparent workflow deadlock; surface the recoverable retry Gate
+            # instead. Short non-timeout transient failures still use the
+            # configured max_attempts policy.
+            "retry_after_timeout": _as_bool(fallback.get("retry_after_timeout"), False),
         },
         "context_window_fallback": _positive_int(
             connection.get("context_window_fallback"),
@@ -369,7 +374,7 @@ def write_model_settings(
             "max_attempts": _positive_int(recovery.get("max_attempts"), 3, minimum=1, maximum=10),
             "initial_wait_seconds": _positive_float(recovery.get("initial_wait_seconds"), 3.0, minimum=0.0, maximum=60.0),
             "max_wait_seconds": _positive_float(recovery.get("max_wait_seconds"), 20.0, minimum=0.0, maximum=300.0),
-            "retry_after_timeout": _as_bool(recovery.get("retry_after_timeout"), True),
+            "retry_after_timeout": _as_bool(recovery.get("retry_after_timeout"), False),
         },
         "context_window_fallback": _positive_int(
             current.get("context_window_fallback"),

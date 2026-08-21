@@ -1362,6 +1362,8 @@ def summarize_tool_result(
     data = data if isinstance(data, dict) else {}
     metadata = metadata if isinstance(metadata, dict) else {}
     outcome = classify_tool_outcome(ok=ok, data=data, error=error, tool_name=tool_name)
+    if outcome.status == "INITIALIZING":
+        return "正在建立研究蓝图、主张与实验计划。", None
     if outcome.status == "VALIDATION_FAILED":
         if error in {"t45_incomplete_proposal_replacement", "t45_destructive_prose_replacement"}:
             detail = _compact_text(data.get("validation_error") or content or "Proposal replacement was blocked", 300)

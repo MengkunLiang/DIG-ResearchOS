@@ -81,4 +81,6 @@ fallback:
   max_attempts: 3
   initial_wait_seconds: 3
   max_wait_seconds: 20
-  retry_after_timeout: true
+  # A full request deadline is not retried invisibly. On timeout the pipeline
+  # preserves state and offers a visible retry/wait/pause decision.
+  retry_after_timeout: false

@@ -516,11 +516,14 @@ class AgentRunner:
         try:
             batches = int(raw_batches)
         except (TypeError, ValueError):
-            batches = 10
-        # Historically ``0`` meant "do not auto-pause".  Bound it now rather
-        # than allowing an unattended infinite retry loop.
+            batches = 1
+        # Historically ``0`` meant "do not auto-pause". A provider recovery
+        # batch may itself contain the configured connection retries, so more
+        # than one unattended batch compounds a 120-second timeout into an
+        # opaque multi-minute wait without adding research information. Keep
+        # the default to one; the visible Gate still offers retry and delay.
         if batches <= 0:
-            batches = 10
+            batches = 1
         batches = max(1, min(batches, 50))
 
         raw_cooldown = self.retry_policy.get("llm_provider_initial_cooldown_seconds")

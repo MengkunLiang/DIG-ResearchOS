@@ -97,12 +97,12 @@ fallback:
   max_attempts: 3
   initial_wait_seconds: 3
   max_wait_seconds: 20
-  retry_after_timeout: true
+  retry_after_timeout: false
 ```
 
 `api_key` 可以直接填写，也可以使用环境变量占位符。即使留空，runtime 仍会查找 provider 的惯例变量，例如 `DEEPSEEK_API_KEY`。`.env` 会从仓库或当前 project 加载，但不会覆盖 shell 或 Docker 已经传入的环境变量。`openai_compatible` 必须填写准确的 `api_base`；已知 provider 在该字段留空时使用官方 endpoint。`model_settings.example.yaml` 只是示例，runtime 不会读取它；只有同目录的 `model_settings.yaml` 会生效。使用自定义位置时，同样在保存后执行 `python -m researchos.cli selftest --model-settings /absolute/path/model_settings.yaml`。
 
-`fallback` 只针对同一条连接。`request_timeout_seconds` 控制每一次正式科研模型请求的最长等待；timeout、临时过载等情况再按 `max_attempts`、`initial_wait_seconds`、`max_wait_seconds` 与 `retry_after_timeout` 重试。认证错误、URL 错误和 model 不存在不能靠重试解决，因此会立即提示修正配置。重试耗尽时，workspace 保持可恢复状态，runtime 会走正常的 retry / wait / pause 交互，不会悄悄切换到其他模型。所有 provider 尝试结束后，SDK/HTTP 清理最多等待“60 秒与请求 deadline 一半”中的较小值（默认 120 秒调用即最多 60 秒）。这个清理期限是内部保护，不另设第二个用户配置；它只用于避免失效的 client transport 无限等待。
+`fallback` 只针对同一条连接。`request_timeout_seconds` 控制每一次正式科研模型请求的最长等待；短暂临时错误或过载再按 `max_attempts`、`initial_wait_seconds` 和 `max_wait_seconds` 重试。`retry_after_timeout` 默认是 `false`，因此完整 deadline 到期后不会静默重复，把服务故障伪装成流水线卡死。timeout 或重试耗尽时，workspace 保持可恢复状态，runtime 会走正常的 retry / wait / pause 交互，不会悄悄切换到其他模型。认证错误、URL 错误和 model 不存在不能靠重试解决，因此会立即提示修正配置。所有 provider 尝试结束后，SDK/HTTP 清理最多等待“60 秒与请求 deadline 一半”中的较小值（默认 120 秒调用即最多 60 秒）。这个清理期限是内部保护，不另设第二个用户配置；它只用于避免失效的 client transport 无限等待。
 
 ## 上下文容量兜底
 

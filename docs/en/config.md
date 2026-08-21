@@ -97,12 +97,12 @@ fallback:
   max_attempts: 3
   initial_wait_seconds: 3
   max_wait_seconds: 20
-  retry_after_timeout: true
+  retry_after_timeout: false
 ```
 
 `api_key` accepts a direct value or an environment placeholder. A blank value still checks the conventional provider variable, such as `DEEPSEEK_API_KEY`. `.env` is loaded from the repository or current project without replacing values already supplied by the shell or Docker environment. `openai_compatible` must provide its exact `api_base`; known providers use their official endpoint when this field is blank. `model_settings.example.yaml` is only a template and is never loaded; only its sibling `model_settings.yaml` takes effect. With a custom target, use the same command after the subcommand: `python -m researchos.cli selftest --model-settings /absolute/path/model_settings.yaml`.
 
-The `fallback` settings govern one connection only. `request_timeout_seconds` is the deadline for every normal research-model request; temporary timeouts and overloads then retry according to `max_attempts`, `initial_wait_seconds`, `max_wait_seconds`, and `retry_after_timeout`. Authentication failures and invalid URLs are reported immediately because retries cannot repair configuration. If recovery is exhausted, the runtime preserves the workspace and offers the normal retry/wait/pause decision instead of silently switching models. After all provider attempts finish, SDK/HTTP cleanup is allowed up to the smaller of 60 seconds and half the request deadline (60 seconds for the default 120-second call). This cleanup deadline is internal rather than a second setting: it is bounded solely to prevent a broken client transport from waiting forever.
+The `fallback` settings govern one connection only. `request_timeout_seconds` is the deadline for every normal research-model request. Short transient failures and overloads retry according to `max_attempts`, `initial_wait_seconds`, and `max_wait_seconds`; `retry_after_timeout` is `false` by default, so a full deadline does not silently repeat and turn a service outage into a long apparent workflow stall. After a timeout or exhausted recovery, the runtime preserves the workspace and offers the normal retry/wait/pause decision instead of silently switching models. Authentication failures and invalid URLs are reported immediately because retries cannot repair configuration. After all provider attempts finish, SDK/HTTP cleanup is allowed up to the smaller of 60 seconds and half the request deadline (60 seconds for the default 120-second call). This cleanup deadline is internal rather than a second setting: it is bounded solely to prevent a broken client transport from waiting forever.
 
 ## Context Capacity Fallback
 
