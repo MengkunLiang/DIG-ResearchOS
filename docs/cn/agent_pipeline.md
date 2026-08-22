@@ -27,8 +27,8 @@ HELLO 是一个独立的冒烟任务，并非主链起源。遗留的内部实�
 | T3 | 每篇保留的论文实际支持什么？ | 论文笔记/卡片、对比表格、阅读审计 | 访问/证据暂停 |
 | T3.5 | 涌现出哪些机制、张力、贡献空间与迁移？ | 综合/工作台、缺失领域审计 | 可选的 Survey 决策以及当前语料库 vs 定向检索偏好 |
 | T3.6 | 基于分类框架组织的领域综述是否必要且证据充分？ | 综述计划/状态/章节/审计/实际 PDF | 综述、大纲、语料库、编译恢复关卡 |
-| T4 | 哪个基于证据的 Research Idea 值得继续演化或选择？ | P0/P1/P2 Population、Evidence Index、评分、谱系、Portfolio、Pre-Novelty brief | 运行前确认；Gate1 directive、composition、rollback |
-| T4.5 研究方案审计与正式化 | 选中的 Pre-Novelty idea 经相似工作审计后，能否形成连贯、可证伪并通过质量门的研究包？ | 第一阶段 novelty/collision audit；第二阶段统一的 `research_blueprint.yaml`、`claim_registry.yaml`、正式 claims、Proposal 与实验计划；第三阶段按 orientation 审阅、定向修复和正式化通过回执 | 仅当 novelty audit 非通过时进入人工审阅；UTD/CCF-A/Hybrid 已由 T4 继承，不会重复询问 |
+| T4 | 哪个基于证据的 Research Idea 值得继续演化或选择？ | P0/P1/P2 Population、Evidence Index、评分、谱系、Portfolio，以及一条或多条 Pre-Novelty brief | 运行前确认；Gate1 directive、独立多 Proposal 选择、composition、rollback |
+| T4.5 研究方案审计与正式化 | 每个选中的 Pre-Novelty idea 经相似工作审计后，能否形成连贯、可证伪并通过质量门的研究包？ | 第一阶段 novelty/collision audit；第二阶段统一的 `research_blueprint.yaml`、`claim_registry.yaml`、正式 claims、Proposal 与实验计划；第三阶段按 orientation 审阅、定向修复和正式化通过回执；多 Proposal 时保留独立归档 | 仅当 novelty audit 非通过时进入人工审阅；若有多份通过的 Proposal，则在 T5 前必须选择一份；UTD/CCF-A/Hybrid 已由 T4 继承，不会重复询问 |
 | T5 | 外部执行器在不发明论文主张的情况下能实现什么，哪些资源可先自动获取和审查？ | 移交包、项目专属 Skill suite、Phase B 资源/来源报告、执行器选择与六件 Writer Handoff | 协议边界、可选本地材料与执行器关卡；不要求手工上传资源 |
 | T8 | 如何将来源/结果转化为与证据一致的论文？ | 风格、叙事线、章节、评审、修订、声明审计 | 风格/模板关卡 |
 | T9 | 提交包是否内部一致并真实编译？ | 打包、编译报告、PDF/源文件指纹 | 环境/恢复暂停 |
@@ -65,11 +65,11 @@ Evidence Index 会召回主线和 Bridge 的全文/部分全文笔记，也会�
 
 Generator、Scorer 和 Evolver 是彼此分离的角色。Generator 只负责按 Route 形成 Candidate，不给自己打分或做选择；Scorer 在看不到 Route 和亲子关系的条件下独立评分，不能生成或改写 Idea，并会区分当前成熟度与科学上行空间，必要时保留高上行 Wildcard 供人类比较；Evolver 会生成已经批准的 Mutation Child 或通过 Compatibility Check 的 Crossover Child，若强行生成只能得到措辞型改写，则记录明确的 no-improvement/incompatibility deferral。一张成熟的 Idea Card 会展示一句话核心、Overall Readiness、五个独立评分及解释、研究问题、贡献包、Draft Hypotheses、机制链、风险、Evidence Composition、系统建议以及对应的论文阅读笔记路径。provisional Seed 在具备独立评分、完整 LLM Final Card、可追溯 Core Thesis 和至少一条由 LLM 写出的可证伪草案假设时，也可以作为待审计方向进入 T4.5。其 Seed 成熟度、证据缺口和单条假设限制会随 Pre-Novelty brief 进入审计，而不是在确认后悄然退回 T4。缺少 Final Card、评分、核心命题或草案假设时仍会在确认前明确阻塞。
 
-Gate1 首先展示 1–3 个 Portfolio Candidates，但会保留 6–8 个 Active Candidates 和完整 Archive。用户可以选择完整 Candidate、继续一轮 Evolution、聚焦某个 Candidate 或 Idea Family、创建 Crossover、组合 Hypothesis/Contribution/Gene、并行保留多个完整方向、查看 Score/Evidence/Lineage、重跑一条 Route、rollback 或 pause。只读操作不会调用模型；每个会改变状态的操作都会说明是否会调用模型、预计做什么、当前版本是否保留、能否 rollback，以及会不会进入 T4.5。
+Gate1 首先展示 1–3 个 Portfolio Candidates，但会保留 6–8 个 Active Candidates 和完整 Archive。用户可以选择一个完整 Candidate，也可以选择 2–3 个完整 Candidate 分别撰写**独立 Proposal**；还可以继续一轮 Evolution、聚焦某个 Candidate 或 Idea Family、创建 Crossover、组合 Hypothesis/Contribution/Gene、查看 Score/Evidence/Lineage、重跑一条 Route、rollback 或 pause。多 Proposal 不是合并：每个 Candidate 都在隔离的 T4.5 上下文中依次完成，并归档至 `ideation/proposal_portfolio/tracks/`。若多份 Proposal 通过，`T4.5-PORTFOLIO-GATE` 会在进入 T5 前给出紧凑表格，研究者必须选择其中一份；只有一份时直接进入 T5。只读操作不会调用模型；每个会改变状态的操作都会说明是否会调用模型、预计做什么、当前版本是否保留、能否 rollback，以及会不会进入 T4.5。
 
 自然语言会先由可选的 LLM parser 解析为 `IdeaDirective`，再由本地规则核对 Candidate ID、组件引用、fingerprint 和确认要求。用户同时提到多个完整 Candidate 时，默认理解为 parallel，不会擅自合并。跨 Candidate 的 Hypothesis、Contribution 或 Gene 选择会先进行 Compatibility Check，给出 Gene Donor Map，等待第二次确认，再生成 Human-composed Candidate、执行 Independent Scoring，并写入新的 Population snapshot。系统不会把两段文字直接拼接成假设文件，也不会覆盖来源 Candidate。
 
-选择一个完整 Candidate 后，T4 只会生成 `ideation/hypothesis_brief.yaml`、lineage、T4.5 search targets 和 Pre-Novelty brief；这些文件用于查新，不是实验执行授权。随后直接进入 T4.5。查新在独立上下文中完成，只负责 collision 标签、必需 baseline 和 claim 边界；通过后才以新的上下文生成统一的 `research_blueprint.yaml`、`claim_registry.yaml`、正式 `hypotheses.md`、`exp_plan.yaml` 和覆盖七项研究功能的 Proposal。第三个独立的 orientation-aware review/repair 上下文按 UTD、CCF-A 或 Hybrid 的权重复核同一论证框架。七项功能用于保证论证覆盖，而非强制七个固定标题；相邻功能可在有利于连贯表达时自然合并。只有结构化来源、Proposal、claim–实验映射和审阅记录全部一致且通过时，T5 才会解锁。
+选择一个完整 Candidate 后，T4 只会生成 `ideation/hypothesis_brief.yaml`、lineage、T4.5 search targets 和 Pre-Novelty brief；这些文件用于查新，不是实验执行授权。随后直接进入 T4.5。查新在独立上下文中完成，只负责 collision 标签、必需 baseline 和 claim 边界；通过后才以新的上下文生成统一的 `research_blueprint.yaml`、`claim_registry.yaml`、正式 `hypotheses.md`、`exp_plan.yaml` 和覆盖七项研究功能的 Proposal。第三个独立的 orientation-aware review/repair 上下文按 UTD、CCF-A 或 Hybrid 的权重复核同一论证框架。若选择多条 Candidate，每份通过的研究包都会先作为独立 track 归档，再处理下一条；只有研究者在 T5 前选择的 track 会被 materialize 为 T5 的唯一输入。七项功能用于保证论证覆盖，而非强制七个固定标题；相邻功能可在有利于连贯表达时自然合并。只有结构化来源、Proposal、claim–实验映射和审阅记录全部一致且通过时，T5 才会解锁。
 
 ## T5 到 T8 外部证据路径
 

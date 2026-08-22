@@ -43,7 +43,7 @@ T3 / T3.5 / T3.6 的材料、用户种子和 Cross-domain catalog
                          │
       ┌──────────────────┼───────────────────┐
       ▼                  ▼                   ▼
-  选择进入 T4.5      再演化/聚焦         查看/比较/回滚/并行保留
+选择一个或多个独立 T4.5     再演化/聚焦         查看/比较/回滚
 ```
 
 P0、每一代 Population、Candidate 版本、评分、Plan、Child、Deferral、Interaction Graph、最终卡片和 Gate 指令都会落盘。`resume` 的目标是复用仍与输入和运行配置匹配的 checkpoint，而不是重复消耗模型调用或丢弃已有研究工作。
@@ -58,7 +58,7 @@ P0、每一代 Population、Candidate 版本、评分、Plan、Child、Deferral�
 | JSON/YAML/fence 解析、已知别名、枚举同义词、单字符串转单元素列表 | Recovery layer | 这些是表层表达问题，不应消耗研究者或扼杀有价值的模型输出 |
 | Evidence Permission、阅读等级、SourceRef、artifact 写入边界 | 原始 artifact + 确定性层 | 模型不能自行把摘要线索升级为已证实机制 |
 | Route 预算、并发、批大小、Population 目标、Family soft cap | 配置与 Controller | 这些约束探索成本和排程，不定义一个 Idea 是否“合法” |
-| 投稿取向、继续几轮、是否扩大资源窗口、是否进入 T4.5 | 研究者 | 这是研究策略与成本取舍，不能被系统静默决定 |
+| 投稿取向、继续几轮、是否扩大资源窗口，以及选择一份或多份 T4.5 Proposal | 研究者 | 这是研究策略与成本取舍，不能被系统静默决定 |
 
 ### 1.3 不能放松的 Hard Invariants
 
@@ -907,9 +907,11 @@ Pass2 只补充接地、风险与选择建议，不能隐藏 Candidate。尤其�
 
 选择后产生的是 pre-novelty material，如 `ideation/selected/selected_candidate.json`、`hypothesis_brief.yaml`、`hypothesis_lineage.json`、`t45_search_targets.json` 和 `pre_novelty_brief.md`。它们是 T4.5 检索与 collision audit 的输入，绝不是“已通过外部 novelty 审计”的宣告。
 
+Auto 模式会在启动时记录需要产出的 Proposal 数。`one` 是默认值，只推进 Portfolio lead；`top2` 会分别正式化前两条 Portfolio Candidate，但仍会在 T5 前暂停，由研究者选择实际投入实验资源的一份。Auto 可以按预授权数量启动 Proposal track，却不能替研究者决定哪一份进入实验。
+
 Gate1 是持续的研究对话，不是一行命令后就结束的菜单。研究者可以先输入“查看 D1”，继续追问评分原因或比较 D1 与 D3，再回到尚未确认的研究操作，而不会重新生成 T4。Enter 只是在当前轮加入新行。所有平台都可单独输入 `END` 提交；POSIX 终端也可用 Ctrl+D，Windows 控制台也可用 Ctrl+Z 后按 Enter。只输入 `D1` 被视为有歧义，系统必须追问是查看、推进还是优化。查看和比较是本地只读操作。推进、优化、组合或再探索会先被复述为操作计划，随后进入二次确认。
 
-确认后的状态路径取决于操作本身。选择一个已准备好的 Candidate 走 `T4 -> T4-GATE1 -> T4.5`，并写入 pre-novelty 选择回执，不会重新运行 T4。演化、聚焦优化、重跑 Route 或已批准的组合走 `T4 -> T4-GATE1 -> T4`，先创建独立的新版本，再返回 Gate1。只读操作仍停留在 Gate1。没有提交任何文本就发送 EOF 时，系统会保存 Gate 并暂停（POSIX 为 Ctrl+D；Windows 为 Ctrl+Z 后 Enter）。已有待确认操作计划时发送 EOF，只会保留草稿，绝不会执行。`resume` 会重新打开这个持久 Gate，不会重复已完成的 T4 模型调用。
+确认后的状态路径取决于操作本身。选择一个已准备好的 Candidate 走 `T4 -> T4-GATE1 -> T4.5`，并写入 pre-novelty 选择回执，不会重新运行 T4。选择 2–3 个已准备好的 Candidate 会创建 `proposal_portfolio`，并在隔离的 T4.5 上下文中依次处理每个 Candidate。每份通过的研究包都复制到 `ideation/proposal_portfolio/tracks/<candidate-id>/`；系统绝不合并它们的机制、claims、假设或实验计划。最后一条 track 通过后，`T4.5-PORTFOLIO-GATE` 会显示紧凑表格，研究者必须选择其中一份 Proposal 才能进入 T5；只选一条 Candidate 时则跳过该 Gate。演化、聚焦优化、重跑 Route 或已批准的组合走 `T4 -> T4-GATE1 -> T4`，先创建独立的新版本，再返回 Gate1。只读操作仍停留在 Gate1。没有提交任何文本就发送 EOF 时，系统会保存 Gate 并暂停（POSIX 为 Ctrl+D；Windows 为 Ctrl+Z 后 Enter）。已有待确认操作计划时发送 EOF，只会保留草稿，绝不会执行。`resume` 会重新打开这个持久 Gate，不会重复已完成的 T4 模型调用。
 
 ---
 

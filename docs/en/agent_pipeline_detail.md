@@ -30,9 +30,10 @@ T1 Project initialization
  -> T3.5 literature synthesis
  -> T3.6 optional survey-paper branch (runtime gate: write a survey or not)
  -> T4 Evidence Routing, Candidate Population formation, and Evolution
- -> T4-GATE1 researcher decision, composition, parallel-track, or rollback gate
- -> T4 selected Candidate Pre-Novelty brief
+ -> T4-GATE1 researcher decision, independent multi-Proposal selection, composition, or rollback gate
+ -> one or more selected Candidates' Pre-Novelty briefs
  -> T4.5 research-plan audit: novelty/collision review followed by source-consistent formalization on pass
+    -> multiple accepted Proposal tracks: T4.5-PORTFOLIO-GATE -> researcher selects one Proposal for T5
  -> T5-REBOOST-GATE research-reboost handoff compilation
  -> T5-SPECIALIZE-EXECUTOR-SKILLS project-Skill publication and validation
  -> T5-PROTOCOL-GATE separates automatically preparable resources/settings from research-boundary changes
@@ -82,9 +83,10 @@ T1
             -> T3.6-SEC-INTRO -> T3.6-SEC-CONCLUSION -> T3.6-SEC-ABSTRACT
             -> T3.6-ASSEMBLE -> T3.6-REVIEW -> T3.6-COMPILE -> T3.6-FEED -> T4
  -> T4
-    -> Population/Portfolio ready: T4-GATE1 -> user selects, continues Evolution, composes, keeps parallel, inspects, regenerates, rolls back, or pauses -> T4
+    -> Population/Portfolio ready: T4-GATE1 -> user selects one, or 2–3 independent Proposal tracks, continues Evolution, composes, inspects, regenerates, rolls back, or pauses -> T4
     -> complete Candidate selection: Pre-Novelty brief -> T4.5
-    -> passing novelty audit: T4.5-FORMALIZE -> T4.5-REVIEW -> T5-REBOOST-GATE
+    -> passing multi-track audit: each T4.5-FORMALIZE -> T4.5-REVIEW -> archive track -> next track; after the last track: T4.5-PORTFOLIO-GATE -> selected Proposal -> T5-REBOOST-GATE
+    -> passing single-track audit: T4.5-FORMALIZE -> T4.5-REVIEW -> T5-REBOOST-GATE
     -> reframe/drop/reject/collision: T4.5-HUMAN-REVIEW -> user chooses T5-REBOOST-GATE/T4/done
  -> T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS
  -> T5-EXECUTOR-GATE
@@ -309,8 +311,9 @@ Therefore, the resume semantics of ResearchOS are essentially:
 | `T3.6-GATE-SURVEY` | runtime gate | `survey_gate` | State-machine-level immediate gate; ask whether to write a taxonomy-driven survey; if no, go directly to T4 without launching the LLM | `drafts/survey/decision.json` |
 | `T3.6-PLAN` to `T3.6-FEED` | `SurveyWriterAgent` | survey series | Optional survey paper branch: taxonomy planning, human confirmation, per-section writing, assembly, survey-mode review, compilation, export T4 idea fuel | `drafts/survey/survey_plan.json`, `survey_state.json`, `sections/*.tex`, `survey.tex`, `survey_review.md`, `survey.pdf`, `ideation/survey_insights.json` |
 | `T4` | `IdeationAgent` + internal evolution controller | - | Pre-run confirmation, Evidence Routing, asymmetric P0, role-separated scoring, P0->P1 evolution, and Gate1-compatible projection; after a complete selection, compile Pre-Novelty material only | `evidence/`, `populations/P0.json`, `populations/P1.json`, `genomes/`, `families/`, `scoring/`, `evolution/`, `candidates/`, `archive/`, retained Pass1/Pass2/Gate1 projections, `hypothesis_brief.yaml`, `selected/t45_search_targets.json` |
-| `T4-GATE1` | runtime gate | - | State-machine-level decision panel for Portfolio selection, parallel tracks, continued Evolution, focus, Crossover, component composition, inspection, Route regeneration, rollback, and pause; source versions remain preserved | `ideation/human_directives/`, `human_compositions/`, `_gate1_user_selection.json` |
-| `T4.5` | `NoveltyAuditorAgent` + `ResearchFormalizerAgent` | audit → formalize → review | Audit the selected Pre-Novelty idea for novelty/collisions, then create and independently review a source-consistent research package; a non-pass audit verdict goes to the human gate | `novelty_audit.md`, blueprint, claim registry, hypotheses, Proposal, experiment plan, contribution/validation maps, kill criteria, orientation review, formalization manifest |
+| `T4-GATE1` | runtime gate | - | State-machine-level decision panel for one Candidate or 2–3 separate Proposal tracks, continued Evolution, focus, Crossover, component composition, inspection, Route regeneration, rollback, and pause; source versions remain preserved | `ideation/human_directives/`, `human_compositions/`, `_gate1_user_selection.json`, `proposal_portfolio/manifest.json` when multiple tracks are selected |
+| `T4.5` | `NoveltyAuditorAgent` + `ResearchFormalizerAgent` | audit → formalize → review | Audit each selected Pre-Novelty idea for novelty/collisions, then create and independently review a source-consistent research package; multiple accepted packages are copied as separate tracks and a non-pass audit verdict goes to the human gate | `novelty_audit.md`, blueprint, claim registry, hypotheses, Proposal, experiment plan, contribution/validation maps, kill criteria, orientation review, formalization manifest, `proposal_portfolio/tracks/` |
+| `T4.5-PORTFOLIO-GATE` | runtime gate | - | Appears only after multiple independent T4.5 packages pass; researcher selects exactly one canonical Proposal for T5 | `ideation/proposal_portfolio/selection.json` |
 | `T5-REBOOST-GATE` | deterministic reboost compiler | `reboost` | Compile and validate a source-bounded experiment handoff directly from accepted T4.5 artifacts; does not call an LLM to recreate the handoff, run experiments, choose an executor, publish the executor Skill Suite, or write executor-specific prompts | `external_executor/handoff_pack.json`, `external_executor/report/reboost_report.json`, `external_executor/report/reboost_validation_report.json`, `paper_card_evidence_index.json`, `expected_outputs_schema.json`, `allowed_paths.txt`, `AGENTS.md`, `CLAUDE.md` |
 | `T5-SPECIALIZE-EXECUTOR-SKILLS` | `ProjectSkillSpecializationAgent` | `build` | Run the repository project-specialization Skill, atomically publish the 13 complete project-specific executor Skill directories, independently validate them, and record the input fingerprint for resume | `project_skill_context.yaml`, `schemas/project_skill_context.schema.json`, `skills/`, `report/skill_specialization_report.json`, `report/skill_specialization_execution.json` |
 | `T5-HANDOFF` | `ExperimenterAgent` | `handoff` | Legacy-compatible protocol compiler; retains the same external-executor contract for an older workspace or explicit recovery path | `external_executor/handoff_pack.json` and the external-executor control files |

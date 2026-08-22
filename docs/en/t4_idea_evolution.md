@@ -46,7 +46,8 @@ Portfolio + LLM Final Card Compiler + Gate1 (D1, D2, D3, ...)
           +-------------------+-------------------+
           |                   |                   |
           v                   v                   v
-     select for T4.5    evolve / focus         inspect / compare / rollback / keep parallel
+ select one or several   evolve / focus         inspect / compare / rollback
+    independent T4.5
 ```
 
 P0, every population generation, candidate version, score, plan, child, deferral, interaction graph, final-card translation, and Gate directive is persisted. `resume` should reuse checkpoints whose input and run-config fingerprints still match. It should not repeat successful model calls or discard valid research work merely because another object failed.
@@ -61,7 +62,7 @@ P0, every population generation, candidate version, score, plan, child, deferral
 | JSON/YAML/fence parsing, known aliases, enum synonyms, list normalization | Recovery layer | Surface-form differences should not consume researcher attention or reject usable science. |
 | Reading level, SourceRef, Evidence Permission, artifact write boundary | Source artifacts plus deterministic layer | A model cannot promote an abstract or conjecture to verified evidence. |
 | Quotas, concurrency, batch size, population targets, family soft caps | Configuration and Controller | These control cost and scheduling, not whether an idea is legitimate. |
-| Publication orientation, extra rounds, recovery budget, T4.5 selection | Researcher | These are research strategy and cost choices. |
+| Publication orientation, extra rounds, recovery budget, and one-vs-multiple T4.5 Proposal selection | Researcher | These are research strategy and cost choices. |
 
 ### 1.3 Hard invariants
 
@@ -675,11 +676,13 @@ Pass2 adds grounding, risk, and selection guidance; it may not hide a candidate.
 
 Gate1 is a persistent research conversation, not a one-line command. A researcher can enter `inspect D1`, ask why a score was assigned, compare `D1` with `D3`, then return to a planned action without regenerating T4. Enter adds a line to the current turn. A standalone `END` submits on every platform; POSIX terminals also accept `Ctrl+D`, while Windows consoles accept `Ctrl+Z` followed by Enter. A bare `D1` is deliberately ambiguous and asks whether the researcher means inspect, proceed, or optimize. Inspection and comparison are local read-only actions. A proceed, optimization, composition, or re-exploration request is first restated as an operation plan and needs a second confirmation.
 
-The path depends on that confirmed action. Selecting one ready Candidate follows `T4 -> T4-GATE1 -> T4.5` and writes a pre-novelty selection receipt. It does not rerun T4. Evolution, focus, route regeneration, or an approved composition follows `T4 -> T4-GATE1 -> T4` and creates a new preserved version before returning to Gate1. A read-only action stays at Gate1. EOF with no submitted text pauses the workspace with its Gate intact. EOF while an operation plan awaits confirmation preserves that draft and never executes it. `resume` reopens the same durable Gate and does not repeat a completed T4 model run.
+The path depends on that confirmed action. Selecting one ready Candidate follows `T4 -> T4-GATE1 -> T4.5` and writes a pre-novelty selection receipt. Selecting two or three ready Candidates creates a `proposal_portfolio` and processes each Candidate sequentially in an isolated T4.5 context. Each accepted package is copied to `ideation/proposal_portfolio/tracks/<candidate-id>/`; the system never merges their mechanisms, claims, hypotheses, or experiment plans. After the last track passes, `T4.5-PORTFOLIO-GATE` renders a compact table and the researcher chooses exactly one Proposal for T5. With one selected Candidate this additional Gate is skipped. Evolution, focus, route regeneration, or an approved composition follows `T4 -> T4-GATE1 -> T4` and creates a new preserved version before returning to Gate1. A read-only action stays at Gate1. EOF with no submitted text pauses the workspace with its Gate intact. EOF while an operation plan awaits confirmation preserves that draft and never executes it. `resume` reopens the same durable Gate and does not repeat a completed T4 model run.
 
 ### 9.5 Selection Boundary for T4.5 Research-plan Audit and Formalization
 
 A candidate selected for T4.5 research-plan audit and formalization must be current, independently scored, traceable, and bound to a current selection fingerprint. It needs a complete LLM Final Card and at least one LLM-authored falsifiable draft hypothesis; a Seed satisfying those inputs is explicitly provisional, not mature by implication. T4.5 first receives a Pre-Novelty brief and search targets for its similarity-work audit; this is not a declaration that novelty has already passed external audit or that formalization is complete.
+
+Auto mode records the intended Proposal count at startup. `one` is the default and advances the lead Candidate; `top2` independently formalizes the first two portfolio Candidates, then still pauses for the researcher's T5-preselection. Auto may choose the preauthorized number of Proposal tracks but never chooses which accepted Proposal receives experiment resources.
 
 ### 9.6 Pass2 Visibility and Evidence-needing Candidates
 

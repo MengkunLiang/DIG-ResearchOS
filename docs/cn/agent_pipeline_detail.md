@@ -30,9 +30,10 @@ T1 项目初始化
  -> T3.5 文献综合
  -> T3.6 可选综述论文支线（runtime gate：是否撰写 survey）
  -> T4 Evidence Routing、Candidate Population 形成与 Evolution
- -> T4-GATE1 研究者选择、组合、并行推进或 rollback gate
- -> T4 已选 Candidate 的 Pre-Novelty brief
+ -> T4-GATE1 研究者选择、独立多 Proposal 推进、组合或 rollback gate
+ -> T4 一个或多个已选 Candidate 的 Pre-Novelty brief
  -> T4.5 研究方案审计：先做 novelty/collision review，通过后再做来源一致的 formalization
+    -> 多条通过的 Proposal track：T4.5-PORTFOLIO-GATE -> 研究者选择一份进入 T5
  -> T5-REBOOST-GATE 运行 research-reboost 并编译 handoff
  -> T5-SPECIALIZE-EXECUTOR-SKILLS 发布并校验项目专属 Skill Suite
  -> T5-PROTOCOL-GATE 区分可自动补齐的资源/运行设置与真正的研究边界变更
@@ -82,9 +83,10 @@ T1
             -> T3.6-SEC-INTRO -> T3.6-SEC-CONCLUSION -> T3.6-SEC-ABSTRACT
             -> T3.6-ASSEMBLE -> T3.6-REVIEW -> T3.6-COMPILE -> T3.6-FEED -> T4
  -> T4
-    -> Population/Portfolio ready: T4-GATE1 -> 用户选择、继续 Evolution、组合、并行保留、查看、重跑 Route、rollback 或 pause -> T4
+    -> Population/Portfolio ready: T4-GATE1 -> 用户选择一条，或选择 2–3 条独立 Proposal track，继续 Evolution、组合、查看、重跑 Route、rollback 或 pause -> T4
     -> complete Candidate selection: Pre-Novelty brief -> T4.5
-    -> novelty audit 明确通过: T4.5-FORMALIZE -> T4.5-REVIEW -> T5-REBOOST-GATE
+    -> 多 track novelty audit 明确通过: 每条 T4.5-FORMALIZE -> T4.5-REVIEW -> 归档 track -> 下一条；最后一条后 T4.5-PORTFOLIO-GATE -> 选择 Proposal -> T5-REBOOST-GATE
+    -> 单条 novelty audit 明确通过: T4.5-FORMALIZE -> T4.5-REVIEW -> T5-REBOOST-GATE
     -> reframe/drop/reject/collision: T4.5-HUMAN-REVIEW -> user chooses T5-REBOOST-GATE/T4/done
  -> T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS
  -> T5-EXECUTOR-GATE
@@ -309,8 +311,9 @@ ResearchOS 的核心设计是：**进度靠文件恢复，不靠模型记忆恢�
 | `T3.6-GATE-SURVEY` | runtime gate | `survey_gate` | 状态机级 immediate gate；询问是否撰写 taxonomy-driven survey；否直接进入 T4，不启动 LLM | `drafts/survey/decision.json` |
 | `T3.6-PLAN` 到 `T3.6-FEED` | `SurveyWriterAgent` | survey 系列 | 可选综述论文支线：taxonomy 规划、人工确认、逐 section 写作、拼装、综述模式 review、编译、导出 T4 idea fuel | `drafts/survey/survey_plan.json`, `survey_state.json`, `sections/*.tex`, `survey.tex`, `survey_review.md`, `survey.pdf`, `ideation/survey_insights.json` |
 | `T4` | `IdeationAgent` + 内部 evolution controller | - | pre-run confirmation、Evidence Routing、非对称 P0、职责分离的评分、P0->P1 Evolution 与 Gate1-compatible projection；选择完整 Candidate 后只编译 Pre-Novelty 材料 | `evidence/`、`populations/P0.json`、`populations/P1.json`、`genomes/`、`families/`、`scoring/`、`evolution/`、`candidates/`、`archive/`、保留的 Pass1/Pass2/Gate1 projection、`hypothesis_brief.yaml`、`selected/t45_search_targets.json` |
-| `T4-GATE1` | runtime gate | - | 状态机级决策面板：选择 Portfolio、保留并行方向、继续 Evolution、聚焦、Crossover、组件组合、查看详情、重跑 Route、rollback 或 pause；来源版本保持不变 | `ideation/human_directives/`、`human_compositions/`、`_gate1_user_selection.json` |
-| `T4.5` | `NoveltyAuditorAgent` + `ResearchFormalizerAgent` | audit → formalize → review | 对已选 Pre-Novelty idea 做 novelty/collision audit，再生成并独立审阅来源一致的研究包；非通过 audit verdict 进入人工决策 gate | `novelty_audit.md`、蓝图、claim registry、hypotheses、Proposal、实验计划、Contribution/Validation Map、Kill Criteria、orientation review、formalization manifest |
+| `T4-GATE1` | runtime gate | - | 状态机级决策面板：选择一条 Candidate 或 2–3 条独立 Proposal track，继续 Evolution、聚焦、Crossover、组件组合、查看详情、重跑 Route、rollback 或 pause；来源版本保持不变 | `ideation/human_directives/`、`human_compositions/`、`_gate1_user_selection.json`；多条时为 `proposal_portfolio/manifest.json` |
+| `T4.5` | `NoveltyAuditorAgent` + `ResearchFormalizerAgent` | audit → formalize → review | 对每条已选 Pre-Novelty idea 做 novelty/collision audit，再生成并独立审阅来源一致的研究包；多条通过的研究包分别归档，非通过 audit verdict 进入人工决策 gate | `novelty_audit.md`、蓝图、claim registry、hypotheses、Proposal、实验计划、Contribution/Validation Map、Kill Criteria、orientation review、formalization manifest、`proposal_portfolio/tracks/` |
+| `T4.5-PORTFOLIO-GATE` | runtime gate | - | 仅在多份独立 T4.5 研究包通过后出现；研究者选择一份 canonical Proposal 进入 T5 | `ideation/proposal_portfolio/selection.json` |
 | `T5-REBOOST-GATE` | 确定性 reboost compiler | `reboost` | 直接依据已通过的 T4.5 产物编译并校验受来源约束的实验 handoff；不调用 LLM 重写 handoff，不运行真实实验、不选择执行器、不发布 executor Skill Suite，也不写执行器专属 prompt | `external_executor/handoff_pack.json`、`external_executor/report/reboost_report.json`、`external_executor/report/reboost_validation_report.json`、`paper_card_evidence_index.json`、`expected_outputs_schema.json`、`allowed_paths.txt`、`AGENTS.md`、`CLAUDE.md` |
 | `T5-SPECIALIZE-EXECUTOR-SKILLS` | `ProjectSkillSpecializationAgent` | `build` | 运行仓库内的项目专属化 Skill，原子发布 13 个完整 executor Skill 目录，独立校验并记录可用于 resume 的输入 fingerprint | `project_skill_context.yaml`、`schemas/project_skill_context.schema.json`、`skills/`、`report/skill_specialization_report.json`、`report/skill_specialization_execution.json` |
 | `T5-HANDOFF` | `ExperimenterAgent` | `handoff` | legacy-compatible 协议编译入口；用于旧 workspace 或显式恢复路径，保持同一外部执行器契约 | `external_executor/handoff_pack.json` 与外部执行器控制文件 |
