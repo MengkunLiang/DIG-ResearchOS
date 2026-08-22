@@ -1425,6 +1425,13 @@ class CLIHumanInterface(HumanInterface):
         if gate_id == "t4_gate1_selection_gate":
             self._render_t4_action_options(options)
         elif gate_id in {
+            "t5_protocol_gate",
+            "t5_expr_material_gate",
+            "t5_executor_gate",
+            "t5_resource_executor_gate",
+        }:
+            self._render_t5_action_options(gate_id, options)
+        elif gate_id in {
             "t2_literature_param_gate",
             "t2_literature_param_confirm_gate",
             "t2_coverage_gate",
@@ -1609,6 +1616,76 @@ class CLIHumanInterface(HumanInterface):
             description = " ".join(str(option.get("description") or "").split())
             table.add_row(str(index), label, description)
         console.print(Panel(table, title="推荐操作", border_style="bright_yellow", expand=True))
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            print(rendered)
+
+    def _render_t5_action_options(self, gate_id: str, options: list[dict]) -> None:
+        """Render T5 choices as an ordinary next-step decision, not jargon."""
+
+        width = max(80, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        buffer = io.StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=not self._no_color,
+            color_system=None if self._no_color else "truecolor",
+            no_color=self._no_color,
+            width=width,
+            highlight=False,
+            _environ={"COLUMNS": str(width), "LINES": "42"},
+        )
+        purpose = {
+            "t5_protocol_gate": "你现在要决定怎样准备实验所需的资源，而不是授权系统立即运行实验。",
+            "t5_expr_material_gate": "这里只登记你已经有的材料；没有材料也可以返回上一页让系统准备公开资源。",
+            "t5_executor_gate": "研究方案和实验约束已经固定。请选择由谁执行后续实验；真实执行会消耗时间和算力。",
+            "t5_resource_executor_gate": "这一轮只允许准备和审查资源，不会实现方法、训练模型或生成实验结论。",
+        }.get(gate_id, "请选择下一步。")
+        table = lightweight_ruled_table(
+            expand=True,
+            header_style="bold bright_yellow",
+            border_style="bright_yellow",
+        )
+        table.add_column("#", width=4, justify="right")
+        table.add_column("你的选择", width=26, overflow="fold")
+        table.add_column("适合什么情况", ratio=2, overflow="fold")
+        table.add_column("系统接下来会做什么", ratio=2, overflow="fold")
+        copy = {
+            "auto_prepare_resources": (
+                "我还没有现成材料",
+                "推荐。也适合希望先核验公开数据、代码、许可或版本的情况。",
+                "受限执行器只检索、下载、审查和留痕资源，不运行实验。",
+            ),
+            "prepare_materials": (
+                "我已有部分材料",
+                "你手头已有数据、代码、权重或 benchmark，想先登记它们。",
+                "系统只盘点已有材料，之后再选择执行方式。",
+            ),
+            "protocol_ready": (
+                "我已改研究方案",
+                "仅当任务、机制、必需 baseline、benchmark 范围或主张边界已实际改变。",
+                "重新编译实验交接，不会丢失现有 Proposal。",
+            ),
+            "pause_protocol": ("我现在先停一下", "暂时不继续。", "保存全部状态；下次 resume 回到这里。"),
+            "pause_for_materials": ("我以后再登记材料", "材料还没准备好或暂时不想盘点。", "保存状态；下次仍从材料页继续。"),
+            "materials_ready": ("材料已登记，继续", "你已把现有材料放好，或确认无需再盘点。", "进入执行方式选择，不会自动运行实验。"),
+            "codex_cli": ("用 Codex CLI", "希望由 Codex 在受限协议下处理资源或执行实验。", "保存选择；真实实验前仍会明确二次确认。"),
+            "claude_code_window": ("用 Claude Code", "你将在 Claude Code 窗口中按交接协议继续。", "保存选择并生成对应执行说明。"),
+            "manual": ("我自己或用其它工具", "你希望在系统外按交接文件执行。", "保存人工执行记录和所需文件位置。"),
+            "mock_dry_run": ("只做流程联调", "你只想检查协议与文件链路，不把结果当作论文证据。", "运行 mock；结束后仍需选择真实执行方式。"),
+            "return_to_protocol": ("返回上一步", "想重新决定怎样准备资源。", "回到协议确认页，不删除任何材料。"),
+            "back_to_t4": ("回到研究设计", "研究问题或方法本身需要改变。", "返回 T4，并保留当前版本供对照。"),
+            "stop_project": ("结束本次项目", "确定不再继续。", "停止流程，不删除研究材料。"),
+            "revise_handoff": ("重新编译交接", "Proposal 或实验计划已改，需要刷新交接文件。", "返回 T5 重新编译并校验交接。"),
+        }
+        for index, option in enumerate(options, start=1):
+            option_id = str(option.get("id") or option.get("key") or "")
+            situation, when, next_step = copy.get(
+                option_id,
+                (str(option.get("label") or option_id), str(option.get("description") or "按当前研究方案继续。"), "保存选择并进入下一步。"),
+            )
+            table.add_row(str(index), situation, when, next_step)
+        note = Text("直接输入编号即可。若不确定且没有现成材料，通常选择“我还没有现成材料”。", style="dim", overflow="fold")
+        console.print(Panel(Group(Text(purpose, overflow="fold"), table, note), title="下一步怎么选", border_style="bright_yellow", expand=True))
         rendered = buffer.getvalue().rstrip()
         if rendered:
             print(rendered)
@@ -2920,6 +2997,11 @@ class CLIHumanInterface(HumanInterface):
             # artifacts; every other field is internal audit detail and must
             # not bury the actual research decision under JSON.
             return key == "protocol_readiness"
+        if gate_id in {"t5_expr_material_gate", "t5_executor_gate", "t5_resource_executor_gate"}:
+            # These gates have a purpose-built choice table below.  Raw
+            # handoff, path and Skill previews are durable audit materials,
+            # not an additional decision surface for a researcher.
+            return False
         return True
 
     async def _collect_t2_customization_line(self, options: list[dict]) -> dict[str, str]:

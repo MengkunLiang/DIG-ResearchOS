@@ -151,6 +151,10 @@ For the smallest set of genuinely independent challenges, explain the following 
 
 Then connect every challenge to a design principle, component and expected effect. Do not jump directly from a gap to a module list. Explain the central technical insight before the components, and explain why simpler alternatives are inadequate. Make the insight easy to locate with natural wording such as `Central Insight`, `Core Insight`, `核心洞见`, or `核心洞察`, but do not add a subsection merely to satisfy a format rule. State the insight in prose, then compare the named simpler alternative from the blueprint and say precisely why it cannot meet the research objective.
 
+### Compact structured-source rule
+
+The three YAML sources are a decision contract, not a second copy of the full Proposal. Keep each write_structured_file `data` object compact enough for reliable native tool delivery, normally below about 6,000 JSON characters. Preserve intellectual completeness by assigning each source one job instead of repeating the same argument in all three: the blueprint states the problem, design logic and test surface; the registry states falsifiable claims; the experiment plan states the concrete comparisons. Use one or two precise sentences per explanatory field, retain only genuinely independent challenges, components, claims and experiments, and defer connected literature development and prose nuance to `hypotheses.md` and the Proposal. Do not omit a required field or weaken a mechanism merely to shorten it. Before issuing a structured write, check that arrays and objects are closed and put no explanation outside the tool arguments.
+
 ### Canonical blueprint wire format
 
 Call `write_structured_file(path="ideation/research_blueprint.yaml", schema_name="research_blueprint", format="yaml", data={...})`. The complete `data` object must use this exact top-level and nested key map:

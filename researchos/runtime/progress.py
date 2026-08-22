@@ -1441,6 +1441,22 @@ def summarize_tool_result(
             required_path = data.get("required_path")
             if required_path:
                 required_schema = str(data.get("required_schema") or "")
+                if data.get("json_parse_failed"):
+                    raw_length = data.get("raw_arguments_length")
+                    structure = data.get("json_structure") if isinstance(data.get("json_structure"), dict) else {}
+                    imbalance = ""
+                    if structure:
+                        imbalance = (
+                            f"（对象括号 {structure.get('open_curly', 0)}/{structure.get('close_curly', 0)}，"
+                            f"数组括号 {structure.get('open_square', 0)}/{structure.get('close_square', 0)}）"
+                        )
+                    size = f"，约 {raw_length} 字符" if raw_length else ""
+                    return (
+                        "模型提交的结构化工具 JSON 不完整，文件尚未写入"
+                        f"{size}{imbalance}。系统会让模型仅重发同一份完整对象，不会把它当成研究内容错误。"
+                        f"目标文件：{required_path}（{required_schema}）。",
+                        str(required_path),
+                    )
                 if required_schema in {"research_blueprint", "claim_registry"}:
                     return (
                         "结构化文件未调用：path/data 等参数无效。"

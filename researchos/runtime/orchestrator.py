@@ -8026,16 +8026,37 @@ class AgentRunner:
                     f"本次 path={attempted_path!r}。"
                 )
                 if ctx.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"}:
+                    # A parse failure may still expose the exact intended
+                    # source.  Preserve that intent in diagnostics instead
+                    # of incorrectly telling the model to restart at the
+                    # blueprint after it was already writing the registry or
+                    # experiment plan.
+                    known_sources = {
+                        "ideation/research_blueprint.yaml": ("research_blueprint", "yaml"),
+                        "ideation/claim_registry.yaml": ("claim_registry", "yaml"),
+                        "ideation/exp_plan.yaml": ("exp_plan", "yaml"),
+                        "ideation/orientation_review.json": ("orientation_review", "json"),
+                    }
+                    required_path = str(attempted_path or "").strip()
+                    required_schema = str(attempted_schema or "").strip()
+                    required_format = ""
+                    expected = known_sources.get(required_path)
+                    if expected is not None:
+                        required_schema, required_format = expected
+                    else:
+                        required_path = "ideation/research_blueprint.yaml"
+                        required_schema, required_format = known_sources[required_path]
                     parameter_data.update(
                         {
-                            "required_path": "ideation/research_blueprint.yaml",
-                            "required_schema": "research_blueprint",
-                            "required_format": "yaml",
+                            "required_path": required_path,
+                            "required_schema": required_schema,
+                            "required_format": required_format,
                         }
                     )
                     parameter_content += (
-                        "T4.5 正式化必须先以结构化调用依次写入 research_blueprint、claim_registry 和 exp_plan。"
-                        "当前先修正 path/schema_name/format/data，尤其不要使用 null path 或改用 write_file。"
+                        "T4.5 的结构化来源必须按顺序建立或修复；"
+                        f"当前只重发 {required_path}（{required_schema}/{required_format}）。"
+                        "不要改用 write_file，也不要因此重写其它已通过来源。"
                     )
                     if raw_arguments and tool_arguments.get("__parse_error__"):
                         parameter_content += (
@@ -9331,7 +9352,14 @@ class AgentRunner:
             try:
                 arguments = json.loads(tool_call.function.arguments)
             except json.JSONDecodeError:
-                arguments = self._repair_trailing_json_delimiters(tool_call.function.arguments)
+                # Native function calls occasionally lose a closing ``]``
+                # immediately before an otherwise present object closer.  It
+                # is a transport-level typo, not an invitation for runtime
+                # code to edit a research artifact.  Recover only that
+                # uniquely determined delimiter before falling back to a
+                # model-authored retry.  In particular, never append missing
+                # content, infer a field value, or close a truncated object.
+                arguments = self._repair_lossless_native_tool_json(tool_call.function.arguments)
                 if arguments is None:
                     arguments = {
                         "__raw__": tool_call.function.arguments,
@@ -9350,23 +9378,104 @@ class AgentRunner:
         return Message.assistant(content=content, tool_calls=tool_calls, step=step)
 
     @staticmethod
-    def _repair_trailing_json_delimiters(raw: str) -> dict[str, object] | None:
-        """Recover one complete object followed only by redundant closers.
+    def _repair_lossless_native_tool_json(raw: str) -> dict[str, object] | None:
+        """Recover only lossless native-tool JSON delimiter defects.
 
         Some OpenAI-compatible endpoints occasionally append one extra `}` to
         an otherwise complete native tool argument.  `raw_decode` lets us
-        accept that lossless syntax repair.  Truncation, concatenated objects,
-        missing commas, or any non-delimiter suffix remain hard failures.
+        accept that lossless syntax repair.  A second observed endpoint defect
+        omits a `]` immediately before a matching `}` while emitting every
+        field value and every object closer.  The missing bracket is uniquely
+        determined by the delimiter stack, so inserting it changes no model
+        authored research content.  Truncation, missing commas, strings,
+        object closers, concatenated objects, and every ambiguous structure
+        remain hard failures for the model to repair.
         """
 
         try:
             value, end = json.JSONDecoder().raw_decode(str(raw or ""))
         except (TypeError, ValueError, json.JSONDecodeError):
+            value = None
+            end = 0
+        if isinstance(value, dict):
+            suffix = str(raw or "")[end:].strip()
+            if suffix and all(char in "}]" for char in suffix):
+                return value
+
+        repaired = AgentRunner._insert_unambiguous_array_closers(str(raw or ""))
+        if repaired is None or repaired == raw:
             return None
-        suffix = str(raw or "")[end:].strip()
-        if not isinstance(value, dict) or not suffix or any(char not in "}]" for char in suffix):
+        try:
+            parsed = json.loads(repaired)
+        except json.JSONDecodeError:
             return None
-        return value
+        return parsed if isinstance(parsed, dict) else None
+
+    @staticmethod
+    def _repair_trailing_json_delimiters(raw: str) -> dict[str, object] | None:
+        """Compatibility name for callers predating lossless array recovery."""
+
+        return AgentRunner._repair_lossless_native_tool_json(raw)
+
+    @staticmethod
+    def _insert_unambiguous_array_closers(raw: str) -> str | None:
+        """Insert a missing ``]`` only when an object closer proves its slot.
+
+        The scanner deliberately understands JSON strings and escapes.  It
+        refuses any end-of-input balancing, any missing object close, or a
+        conflicting ``]``.  Therefore it can repair ``[{...}}`` to
+        ``[{...}]}``, but cannot turn a genuinely truncated tool call into a
+        plausible-looking object.
+        """
+
+        if not raw:
+            return None
+        stack: list[str] = []
+        output: list[str] = []
+        in_string = False
+        escaped = False
+        inserted = False
+        for char in raw:
+            if in_string:
+                output.append(char)
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+                output.append(char)
+                continue
+            if char in "{[":
+                stack.append(char)
+                output.append(char)
+                continue
+            if char == "}":
+                # An array cannot be closed by ``}``.  If it is the immediate
+                # opener, exactly one missing `]` is the only syntactically
+                # valid repair at this position.
+                if stack and stack[-1] == "[":
+                    output.append("]")
+                    stack.pop()
+                    inserted = True
+                if not stack or stack[-1] != "{":
+                    return None
+                stack.pop()
+                output.append(char)
+                continue
+            if char == "]":
+                if not stack or stack[-1] != "[":
+                    return None
+                stack.pop()
+                output.append(char)
+                continue
+            output.append(char)
+        if in_string or stack or not inserted:
+            return None
+        return "".join(output)
 
     def _recover_textual_tool_calls(self, content: str) -> tuple[str | None, list[ToolCall]]:
         """从文本中恢复 DSML 风格的伪工具调用。"""

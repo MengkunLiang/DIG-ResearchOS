@@ -765,8 +765,8 @@ gates:
         description: "可选：已有数据、代码、benchmark 或权重时再选择；不要求手工补齐公开资源。"
         next: T5-EXPR-MATERIAL-GATE
       - id: protocol_ready
-        label: "我有意修改研究边界，重新编译"
-        description: "仅在研究任务、核心机制、必需 baseline、benchmark 范围或 claim/贡献边界确实改变时使用；重新编译 handoff 并独立校验。"
+        label: "研究方案已改，重新编译交接"
+        description: "仅在研究任务、核心机制、必需 baseline、benchmark 范围或主张/贡献边界确实改变时使用；重新编译 handoff 并独立校验。"
         next: T5-REBOOST-GATE
       - id: pause_protocol
         label: "暂停协议确认"
