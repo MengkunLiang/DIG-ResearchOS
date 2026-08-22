@@ -944,6 +944,12 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "required_inputs": ["project", "novelty_audit", "research_blueprint", "claim_registry", "hypotheses", "exp_plan", "research_proposal"],
         "schemas": {"orientation_review": "orientation_review"},
     },
+    "T4.5-PORTFOLIO-GATE": {
+        "inputs": {"proposal_portfolio": "ideation/proposal_portfolio/manifest.json"},
+        "outputs": {"proposal_portfolio_selection": "ideation/proposal_portfolio/selection.json"},
+        "required_inputs": ["proposal_portfolio"],
+        "schemas": {},
+    },
     "T4.5-HUMAN-REVIEW": {
         "inputs": {
             "project": "project.yaml",

@@ -97,6 +97,15 @@ from ..ideation.novelty_verdict import (
     normalize_final_gate_verdict,
 )
 from ..ideation.proposal import validate_t45_research_proposal
+from ..ideation.proposal_portfolio import (
+    active_candidate_id as active_proposal_track_candidate_id,
+    activate_next_track,
+    create_manifest as create_proposal_portfolio_manifest,
+    load_manifest as load_proposal_portfolio_manifest,
+    materialize_selected_track,
+    overview as proposal_portfolio_overview,
+    snapshot_active_track,
+)
 from ..ideation.state import T4ArtifactStore, build_t4_input_fingerprints, run_config_fingerprint
 
 
@@ -129,6 +138,13 @@ def _native_t4_action_description(directive: IdeaDirective) -> dict[str, str]:
             "version_policy": "当前 Population、Parent、Child 和 Archive 都会保留，之后仍可回到此 Gate。",
             "next_stage": "生成 Pre-Novelty brief，然后进入 T4.5。",
         },
+        "select_multiple": {
+            "title": "分别推进多个 Candidate 为独立 Proposal",
+            "what_happens": "系统会依次为每个完整 Candidate 生成独立的 Pre-Novelty brief、novelty 审计、研究蓝图和 Proposal。不会合并任何机制、假设、贡献或实验。",
+            "estimated_time": "每条 Candidate 都需独立完成 T4.5；完成后会在 T5 前请你从已通过的 Proposal 中选择一条。",
+            "version_policy": "当前 Population、全部 Candidate 与每条 Proposal 的归档都会保留。",
+            "next_stage": "开始第一条 T4.5 Proposal track；全部完成后进入 T5 前选择页。",
+        },
         "continue_evolution": {
             "title": "继续一轮 Evolution",
             "what_happens": "系统以当前 Active Population 为 Parent，按计划生成 Mutation / Crossover Child，对合并后的候选独立评分，并写入新的 Population 快照。",
@@ -158,11 +174,11 @@ def _native_t4_action_description(directive: IdeaDirective) -> dict[str, str]:
             "next_stage": "带着 Compatibility Report 回到 Gate1。",
         },
         "keep_parallel": {
-            "title": "并行保留多个方向",
-            "what_happens": "所选的完整 Candidate 会作为相互独立的研究方向记录；不会合并 mechanism、contribution 或 hypothesis。",
-            "estimated_time": "仅更新本地记录，不调用模型。",
-            "version_policy": "已选和未选 Candidate 都不会改变。",
-            "next_stage": "回到 Gate1；准备好后再选择一个方向生成 Pre-Novelty brief。",
+            "title": "分别推进多个 Candidate 为独立 Proposal",
+            "what_happens": "所选 Candidate 会逐条进入 T4.5，各自生成独立 Proposal；不会合并 mechanism、contribution 或 hypothesis。",
+            "estimated_time": "每条 Candidate 都需独立完成 T4.5；完成后在 T5 前进行选择。",
+            "version_policy": "已选和未选 Candidate 都不会改变，全部 Proposal 均会归档。",
+            "next_stage": "开始第一条 T4.5 Proposal track；全部完成后进入 T5 前选择页。",
         },
         "regenerate_route": {
             "title": "重新生成一条 Route",
@@ -2721,6 +2737,8 @@ class StateMachine:
             presentation["supplement_recommendation"] = _t36_supplement_recommendation(workspace_dir)
         elif node.task_id == "T5-PROTOCOL-GATE" and workspace_dir is not None:
             presentation["protocol_readiness"] = self._t5_protocol_gate_summary(workspace_dir)
+        elif node.task_id == "T4.5-PORTFOLIO-GATE" and workspace_dir is not None:
+            presentation["proposal_portfolio"] = self._t45_proposal_portfolio_summary(workspace_dir)
         if node.task_id == "T4-GATE1" and workspace_dir is not None:
             presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
             presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
@@ -4774,6 +4792,15 @@ class StateMachine:
             # look like a still-pending compile failure.
             state.task_context.pop("t36_compile_recovery", None)
 
+        if state.current_task == "T4.5-REVIEW" and workspace_dir is not None:
+            # A multi-Idea decision at T4 is intentionally sequential at
+            # T4.5: each Proposal gets an isolated formalization context and
+            # snapshot.  Do this before the ordinary T5 handoff so one track
+            # can never overwrite another or be accidentally merged with it.
+            portfolio_advance = self._advance_t45_proposal_portfolio(state, workspace_dir)
+            if portfolio_advance is not None:
+                return portfolio_advance
+
         runtime_recovery_directive = state.task_context.get("runtime_recovery")
         if (
             isinstance(runtime_recovery_directive, dict)
@@ -4834,6 +4861,8 @@ class StateMachine:
                 operation_result = _latest_native_t4_operation_result(workspace_dir)
                 if operation_result:
                     presentation["t4_directive_result"] = operation_result
+            if state.current_task == "T4.5-PORTFOLIO-GATE" and workspace_dir is not None:
+                presentation["proposal_portfolio"] = self._t45_proposal_portfolio_summary(workspace_dir)
             state.pending_gate = GateState(
                 gate_id=gate_id,
                 presented_at=_now_iso(),
@@ -5106,6 +5135,42 @@ class StateMachine:
                 return state
             if self._has_native_t4_population(workspace_dir):
                 return self._resolve_native_t4_gate1(state, gate_result, workspace_dir)
+        if node.task_id == "T4.5-PORTFOLIO-GATE" and workspace_dir is not None:
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "").strip()
+            captured = gate_result.get("captured") if isinstance(gate_result.get("captured"), dict) else {}
+            if option_id in {"pause", "pause_selection"}:
+                state.status = "PAUSED"
+                state.paused_at = _now_iso()
+                state.last_error = "Proposal portfolio selection was paused; completed independent Proposals remain archived."
+                return state
+            candidate_id = str(
+                captured.get("candidate_id")
+                or captured.get("proposal_id")
+                or captured.get("selection")
+                or ""
+            ).strip()
+            manifest = load_proposal_portfolio_manifest(workspace_dir)
+            if manifest is None:
+                raise ValueError("T4.5 proposal portfolio manifest is missing")
+            ready_tracks = [
+                str(item.get("candidate_id") or "")
+                for item in manifest.get("tracks", [])
+                if isinstance(item, dict) and item.get("status") == "ready_for_t5_selection"
+            ]
+            if len(ready_tracks) == 1 and not candidate_id:
+                candidate_id = ready_tracks[0]
+            if candidate_id not in ready_tracks:
+                state.pending_gate.presentation["portfolio_selection_error"] = (
+                    "请选择表格中一条已完成的 Proposal，例如 D1。可选：" + "、".join(ready_tracks)
+                )
+                state.status = "WAITING_HUMAN"
+                state.paused_at = _now_iso()
+                return state
+            materialize_selected_track(workspace_dir, manifest, candidate_id)
+            self._persist_immediate_gate_result(node, gate_result, "T5-REBOOST-GATE", workspace_dir)
+            state.pending_gate = None
+            state.last_error = None
+            return self._transition_to_next(state, "T5-REBOOST-GATE", workspace_dir=workspace_dir)
         if node.task_id == "T5-EXECUTOR-GATE" and workspace_dir is not None:
             readiness = self._t5_execution_readiness(workspace_dir)
             if readiness["status"] != "ready":
@@ -5439,7 +5504,7 @@ class StateMachine:
                     "advanced_operations": [
                         {"label": "构建跨候选新方案", "description": "先检查两个候选是否兼容，兼容后再生成新的独立候选。"},
                         {"label": "组合指定组件", "description": "从不同候选中选择假设、贡献或方法模块，构建新方案。"},
-                        {"label": "并行保留多个方向", "description": "将多个候选标记为独立研究方向，后续分别推进。"},
+                        {"label": "分别推进多个 Proposal", "description": "将 2–3 个候选分别完成 T4.5；全部通过后在 T5 前选择一个。"},
                         {"label": "查看完整候选池", "description": "查看未进入当前推荐列表的候选，不生成新内容。"},
                         {"label": "重新探索指定来源", "description": "重新运行某个 Idea 来源通道，并保留此前结果。"},
                         {"label": "调整投稿取向", "description": "按 UTD、CCF 或 Hybrid 取向重新评估适配度，不改变候选本身。"},
@@ -5710,7 +5775,7 @@ class StateMachine:
             return self._rollback_native_t4_population(state, workspace_dir, directive, directive_path)
         if directive.action == "select_candidate":
             return self._select_native_t4_candidate(state, workspace_dir, directive, directive_path)
-        if directive.action == "keep_parallel":
+        if directive.action in {"select_multiple", "keep_parallel"}:
             return self._stage_native_t4_parallel_selection(state, workspace_dir, directive, directive_path)
         if directive.action == "change_target_profile":
             return self._stage_native_t4_profile_revision(state, workspace_dir, directive, directive_path)
@@ -5940,33 +6005,98 @@ class StateMachine:
         directive: IdeaDirective,
         directive_path: str,
     ) -> StateYaml:
-        """Preserve parallel full-Candidate intent without treating it as a merge."""
+        """Start separate T4.5 Proposal tracks without treating them as a merge."""
 
         population, _dossiers = current_population_context(workspace_dir)
-        payload = {
-            "schema_version": "1.0.0",
-            "semantics": "t4_parallel_candidate_selection",
-            "candidate_ids": directive.target_candidate_ids,
-            "population_id": population.population_id,
-            "input_fingerprint": population.input_fingerprint,
-            "run_config_fingerprint": population.run_config_fingerprint,
-            "directive_path": directive_path,
-            "status": "staged_for_individual_pre_novelty_review",
-            "note": "The selected Candidates remain separate. No mechanism, hypothesis, or contribution has been merged.",
-            "created_at": _now_iso(),
-        }
-        T4ArtifactStore(workspace_dir).write_json("ideation/selected/parallel_selection.json", payload)
-        return self._reopen_native_t4_gate(
-            state,
+        candidate_ids = list(dict.fromkeys(directive.target_candidate_ids))
+        if len(candidate_ids) == 1:
+            return self._select_native_t4_candidate(state, workspace_dir, directive, directive_path)
+        if len(candidate_ids) > 3:
+            return self._reopen_native_t4_gate(
+                state,
+                workspace_dir,
+                result={
+                    "title": "请一次推进不超过三个 Proposal",
+                    "summary": "每个方向都会独立完成新颖性审计、正式化与质量复核。超过三个会显著拉长等待时间且不利于认真比较；请先选择最想推进的 2–3 个 Candidate。",
+                    "kind": "proposal_portfolio_limit",
+                    "candidate_ids": candidate_ids,
+                },
+            )
+        not_ready = []
+        for candidate_id in candidate_ids:
+            ready, error = candidate_selection_readiness(workspace_dir, candidate_id=candidate_id)
+            if not ready:
+                not_ready.append(f"{candidate_id}: {error or 'not ready'}")
+        if not_ready:
+            return self._reopen_native_t4_gate(
+                state,
+                workspace_dir,
+                result={
+                    "title": "部分 Candidate 还不能进入 Proposal",
+                    "summary": "；".join(not_ready),
+                    "kind": "proposal_portfolio_selection_not_ready",
+                    "candidate_ids": candidate_ids,
+                },
+            )
+        manifest = create_proposal_portfolio_manifest(
             workspace_dir,
-            result={
-                "title": "Parallel Ideas preserved",
-                "summary": "The requested complete Candidates are retained as separate directions. Their source versions remain unchanged; choose one when you are ready to create a Pre-Novelty brief, or request a Compatibility Check to build a new Candidate.",
-                "kind": "parallel_staged",
-                "candidate_ids": directive.target_candidate_ids,
-                "artifact": "ideation/selected/parallel_selection.json",
-            },
+            candidate_ids=candidate_ids,
+            population_id=population.population_id,
+            directive_path=directive_path,
+            source="auto" if directive.raw_user_input.startswith("[Auto]") else "copilot",
         )
+        # Reuse the single-Candidate selection compiler for the first track.
+        # It is the canonical boundary that builds all T4 -> T4.5 artifacts.
+        first_id = active_proposal_track_candidate_id(manifest)
+        assert first_id is not None
+        first_directive = directive.model_copy(update={
+            "action": "select_candidate",
+            "target_candidate_ids": [first_id],
+            "raw_user_input": f"推进 {first_id}（Proposal 组合包第 1 条）",
+        })
+        return self._select_native_t4_candidate(state, workspace_dir, first_directive, directive_path)
+
+    def _advance_t45_proposal_portfolio(self, state: StateYaml, workspace_dir: Path) -> StateYaml | None:
+        """Snapshot a passed T4.5 track and run the next one, if requested."""
+
+        manifest = load_proposal_portfolio_manifest(workspace_dir)
+        if manifest is None or str(manifest.get("status") or "") != "running":
+            return None
+        current_id = active_proposal_track_candidate_id(manifest)
+        if not current_id:
+            return None
+        try:
+            manifest = snapshot_active_track(workspace_dir, manifest)
+            next_id = activate_next_track(workspace_dir, manifest)
+        except (OSError, ValueError) as exc:
+            state.last_error = f"proposal portfolio archival failed: {exc}"
+            state.status = "PAUSED"
+            state.paused_at = _now_iso()
+            return state
+        if next_id is None:
+            return self._transition_to_next(state, "T4.5-PORTFOLIO-GATE", workspace_dir=workspace_dir)
+        population, _dossiers = current_population_context(workspace_dir)
+        directive = IdeaDirective(
+            directive_id=f"PORT-{uuid.uuid4().hex[:12]}",
+            action="select_candidate",
+            target_candidate_ids=[next_id],
+            raw_user_input=f"[Proposal portfolio] 推进 {next_id}",
+            confirmation_required=False,
+        )
+        directive_path = persist_idea_directive(workspace_dir, directive=directive, population=population)
+        return self._select_native_t4_candidate(state, workspace_dir, directive, directive_path)
+
+    def _t45_proposal_portfolio_summary(self, workspace_dir: Path) -> dict[str, Any]:
+        manifest = load_proposal_portfolio_manifest(workspace_dir)
+        if manifest is None:
+            return {"status": "missing", "tracks": []}
+        labels: dict[str, str] = {}
+        directions = self._read_json_dict(workspace_dir / "ideation" / "_candidate_directions.json") or {}
+        candidates = directions.get("candidates") if isinstance(directions.get("candidates"), list) else []
+        for item in candidates:
+            if isinstance(item, dict):
+                labels[str(item.get("candidate_id") or item.get("id") or "")] = str(item.get("title") or item.get("short_title") or "")
+        return proposal_portfolio_overview(manifest, labels)
 
     def _rollback_native_t4_population(
         self,

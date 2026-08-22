@@ -1089,6 +1089,22 @@ states:
     next_on_success: T5-REBOOST-GATE
     next_on_failure: failed
 
+  # Multiple T4 Candidates are formalized one at a time and archived under
+  # ideation/proposal_portfolio/tracks.  This Gate appears only when more
+  # than one independent Proposal has passed T4.5; T5 then receives one.
+  T4.5-PORTFOLIO-GATE:
+    agent: research_formalizer
+    mode: proposal_portfolio_selection
+    extra:
+      immediate_gate: true
+    inputs:
+      proposal_portfolio: ideation/proposal_portfolio/manifest.json
+    outputs:
+      proposal_portfolio_selection: ideation/proposal_portfolio/selection.json
+    gate: t45_proposal_portfolio_gate
+    next_on_success: T5-REBOOST-GATE
+    next_on_failure: failed
+
   # T4.5-HUMAN-REVIEW 状态：T4.5 非通过 verdict 的人工决策
   # 用途：Novelty Auditor 可提出 reframe/drop，但不能自动拒绝或自动回退，避免 T4.5-T4 死循环。
   T4.5-HUMAN-REVIEW:

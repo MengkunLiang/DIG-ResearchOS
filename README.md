@@ -116,6 +116,10 @@ T4.5 turns a promising Idea into a research plan. It has three checkpoints:
 
 The Proposal is organized for readers, while the blueprint and claim registry keep the downstream implementation precise. The three artifacts describe the same research plan; they are not three competing versions. UTD, CCF-A, and Hybrid use the same basic research logic but emphasize different contribution and writing priorities.
 
+At the T4 Gate, Copilot can advance one Candidate or choose 2–3 Candidates to **write separate Proposals**. The latter never splices Ideas together: each Candidate completes its own T4.5 path and is archived under `ideation/proposal_portfolio/tracks/`. With one Proposal, the workflow goes straight to T5. With multiple accepted Proposals, a short T5-preselection table asks you to choose one; T5 and later writing then read only that Proposal, while the others remain preserved for later review or a separate experiment.
+
+Auto setup offers `one` or `top2` Proposal tracks. `one` is the default and advances the lead Candidate. `top2` independently formalizes the two leading T4 Candidates and then requires your choice before T5. For example: `standard_research deep top2`. This does not merge the two directions or let Auto decide which Proposal receives experiment resources.
+
 T5 does **not** silently run an experiment. It compiles the accepted T4.5 plan into a constrained handoff, then asks you to choose or authorize the external executor. That executor may prepare public resources and run the approved work, but cannot silently change the research question, core mechanism, required baselines, benchmark scope, or claim boundary.
 
 If T4.5 says that a structured tool JSON payload is incomplete, one model function call to `write_structured_file` did not close correctly and no file was written. This is not a Proposal-content verdict and does not call for hand-editing YAML. The runtime recovers only a uniquely determined delimiter transport defect; every other case returns the exact target artifact and diagnostic to the model so it can resubmit that same source before the shared-contract check continues.

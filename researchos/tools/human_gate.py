@@ -1401,6 +1401,9 @@ class CLIHumanInterface(HumanInterface):
             if gate_id == "t5_protocol_gate" and key == "protocol_readiness":
                 self._render_t5_protocol_readiness(value)
                 continue
+            if gate_id == "t45_proposal_portfolio_gate" and key == "proposal_portfolio":
+                self._render_t45_proposal_portfolio(value)
+                continue
             if gate_id == "t4_gate1_selection_gate" and key == "candidate_overview":
                 self._render_section(_humanize_presentation_key(key))
                 self._render_t4_candidate_overview(value)
@@ -1431,6 +1434,8 @@ class CLIHumanInterface(HumanInterface):
             "t5_resource_executor_gate",
         }:
             self._render_t5_action_options(gate_id, options)
+        elif gate_id == "t45_proposal_portfolio_gate":
+            self._render_t45_proposal_portfolio_options(options)
         elif gate_id in {
             "t2_literature_param_gate",
             "t2_literature_param_confirm_gate",
@@ -1453,7 +1458,7 @@ class CLIHumanInterface(HumanInterface):
                 if option.get("description"):
                     print(f"    作用: {option['description']}")
         if gate_id == "t4_gate1_selection_gate":
-            print("直接输入即可：`推进 D1`、`优化 D2`、`再探索一轮`、`暂停`。也可以输入：`查看 D1`、`对比 D1 和 D3`、`更多操作`。只输入 `D1` 时系统会先追问，不会直接改变候选。")
+            print("直接输入即可：`推进 D1`、`分别推进 D1 和 D2`、`优化 D2`、`再探索一轮`、`暂停`。也可以输入：`查看 D1`、`对比 D1 和 D3`、`更多操作`。只输入 `D1` 时系统会先追问，不会直接改变候选。")
             print(
                 "这是持续对话：可输入多行研究说明；Enter 只换行，输入完成后"
                 + _terminal_eof_submit_instruction()
@@ -1689,6 +1694,41 @@ class CLIHumanInterface(HumanInterface):
         rendered = buffer.getvalue().rstrip()
         if rendered:
             print(rendered)
+
+    def _render_t45_proposal_portfolio(self, value: Any) -> None:
+        """Render independently completed Proposals as a small choice table."""
+
+        tracks = value.get("tracks") if isinstance(value, dict) else None
+        if not isinstance(tracks, list):
+            print("Proposal 组合包暂不可读取；请检查 ideation/proposal_portfolio/manifest.json。")
+            return
+        width = max(80, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        buffer = io.StringIO()
+        console = Console(file=buffer, force_terminal=not self._no_color, color_system=None if self._no_color else "truecolor", no_color=self._no_color, width=width, highlight=False)
+        table = lightweight_ruled_table(expand=True, header_style="bold bright_cyan", border_style="bright_cyan")
+        table.add_column("Candidate", width=12, style="bold")
+        table.add_column("独立 Proposal", ratio=3, overflow="fold")
+        table.add_column("状态", width=24, overflow="fold")
+        for track in tracks:
+            if not isinstance(track, dict):
+                continue
+            table.add_row(
+                str(track.get("candidate_id") or ""),
+                str(track.get("title") or track.get("candidate_id") or ""),
+                _proposal_track_status_label(str(track.get("status") or "")),
+            )
+        guide = Text("这些 Proposal 已分别经过 T4.5，不共享或拼接彼此的机制、claims 或实验。选择一条后，T5 只读取该条 Proposal；其他条目继续保留在归档中。", overflow="fold")
+        console.print(Panel(Group(guide, table), title="选择要深入推进的 Proposal", border_style="bright_cyan", expand=True))
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            print(rendered)
+
+    def _render_t45_proposal_portfolio_options(self, options: list[dict]) -> None:
+        print("输入 Candidate 编号即可，例如 `D1`；若暂时不选，输入 `2` 或“暂不选择”。")
+        for index, option in enumerate(options, start=1):
+            print(f"[{index}] {option.get('label') or option.get('id')}")
+            if option.get("description"):
+                print(f"    作用: {option['description']}")
 
     def _render_t2_parameter_overview(self, value: Any) -> None:
         """Present the choices this gate controls before any plan is committed."""
@@ -2997,6 +3037,8 @@ class CLIHumanInterface(HumanInterface):
             # artifacts; every other field is internal audit detail and must
             # not bury the actual research decision under JSON.
             return key == "protocol_readiness"
+        if gate_id == "t45_proposal_portfolio_gate":
+            return key in {"proposal_portfolio", "portfolio_selection_error"}
         if gate_id in {"t5_expr_material_gate", "t5_executor_gate", "t5_resource_executor_gate"}:
             # These gates have a purpose-built choice table below.  Raw
             # handoff, path and Skill previews are durable audit materials,
@@ -3286,6 +3328,12 @@ class CLIHumanInterface(HumanInterface):
             return CLIHumanInterface._parse_template_gate_text(gate_id, raw_answer, options)
         if gate_id == "t4_gate1_selection_gate":
             return CLIHumanInterface._parse_t4_gate1_text(raw_answer, options)
+        if gate_id == "t45_proposal_portfolio_gate":
+            cleaned = str(raw_answer or "").strip().upper()
+            if re.fullmatch(r"[DS]\d+", cleaned):
+                return {"option_id": "select_proposal", "captured": {"candidate_id": cleaned}}
+            if cleaned in {"暂停", "暂不选择", "PAUSE"}:
+                return {"option_id": "pause_selection", "captured": {}}
         if gate_id != "t2_literature_param_gate":
             return None
         captured = CLIHumanInterface._parse_t2_literature_param_text(raw_answer)
@@ -3834,7 +3882,8 @@ def _t4_action_public_label(action: str) -> str:
     return {
         "select_candidate": "推进候选进入 T4.5",
         "select_multiple": "多候选选择，需要进一步澄清",
-        "keep_parallel": "并行保留多个候选",
+        "keep_parallel": "分别推进多个 Proposal",
+        "select_multiple": "分别推进多个 Proposal",
         "compose_from_components": "组合指定组件",
         "continue_evolution": "再探索一轮",
         "focus_candidate": "定向优化候选",
@@ -3881,6 +3930,15 @@ def _path_summary_size(value: Any) -> int | None:
         except Exception:
             return None
     return None
+
+
+def _proposal_track_status_label(status: str) -> str:
+    return {
+        "ready_for_t5_selection": "已完成，可选择",
+        "active": "正在正式化",
+        "queued": "等待前一条完成",
+        "selected_for_t5": "已选入 T5",
+    }.get(status, status or "状态未知")
 
 
 def _strip_gate_truncation_marker(text: str) -> str:

@@ -3627,7 +3627,7 @@ class AgentRunner:
             "Auto 会在后续使用这组预设自动通过常规 Gate；T1 仍会完成种子、研究边界、"
             "项目草案和检索范围确认，不会跳过它们。失败恢复、研究范围变更、外部执行和新颖性失败仍必须人工处理。\n\n"
             f"当前推荐：{auto_execution_setup_summary(profile)}\n\n"
-            "## 你只需要决定两件事\n\n"
+            "## 你只需要决定三件事\n\n"
             "**第一，文献要读到什么范围。** 三个数字依次表示“保留候选 / 精读 / 摘要轻读”。\n\n"
             "- `standard_research`：适合写一篇研究论文。40 / 25 / 15，聚焦核心问题，速度最快。\n"
             "- `survey_balanced`：适合需要更完整文献脉络的综述或研究论文。80 / 40 / 40，覆盖与时间较均衡。\n"
@@ -3637,15 +3637,19 @@ class AgentRunner:
             "- `standard`：通常够用的比较与筛选。\n"
             "- `deep`：为复杂、竞争激烈或尚不清晰的问题做更充分的探索。\n"
             "- `auto`：让系统根据问题与证据质量自行选择；这正是当前推荐。\n\n"
+            "**第三，要产出几份独立 Proposal。**\n\n"
+            "- `one`：推荐。T4 选择一条最合适的 idea，完成一份 Proposal 后进入 T5。\n"
+            "- `top2`：将 T4 最靠前的两条 Candidate 分别完成 T4.5，随后在 T5 前由你选择一条深入推进。两条 Proposal 不会合并。\n\n"
             "## 怎么输入\n\n"
-            "如果接受当前推荐，直接输入 `确认`。若想调整，输入“文献档位 + T4 档位”，例如：\n\n"
+            "如果接受当前推荐，直接输入 `确认`。若想调整，输入“文献档位 + T4 档位 + Proposal 数量”，例如：\n\n"
             "- `standard_research deep`：保持研究论文规模，但让 T4 更充分地探索 idea。\n"
             "- `survey_balanced standard`：扩大文献覆盖，同时以常规力度探索 idea。\n"
-            "- `survey_exhaustive deep`：用于正式综述或高度陌生的领域，覆盖和探索都取最高档。"
+            "- `survey_exhaustive deep`：用于正式综述或高度陌生的领域，覆盖和探索都取最高档。\n"
+            "- `standard_research deep top2`：保持研究论文规模，充分探索 T4，并分别写两份候选 Proposal 后再选一条进入 T5。"
         )
         result = await tool.execute(
             question=setup_question,
-            suggestions=["确认", "standard_research deep", "survey_balanced standard"],
+            suggestions=["确认", "standard_research deep top2", "survey_balanced standard"],
         )
         if not result.ok:
             raise RecoverableRuntimePause(str(result.content or result.error or "未获得 Auto 启动配置"))
@@ -3654,18 +3658,20 @@ class AgentRunner:
             str(data.get("answer") or "").strip(),
             current_preset=str(settings.get("literature_preset") or "standard_research"),
             current_t4_mode=str(settings.get("t4_mode") or "auto"),
+            current_proposal_tracks=str(settings.get("proposal_tracks") or "one"),
         )
         if parsed_setup is None:
             raise RecoverableRuntimePause(
                 "未识别 Auto 启动配置。请在恢复后输入确认，或如 survey_balanced deep。"
             )
-        literature_preset, configured_t4_mode = parsed_setup
+        literature_preset, configured_t4_mode, configured_proposal_tracks = parsed_setup
         profile = configure_workflow_mode(
             ctx.workspace_dir,
             mode="auto",
             preset=str(profile.get("preset") or "research_ccf"),
             literature_preset=literature_preset,
             t4_mode=configured_t4_mode,
+            proposal_tracks=configured_proposal_tracks,
             startup_setup_confirmed=True,
             selection_source="t1_gate",
         )

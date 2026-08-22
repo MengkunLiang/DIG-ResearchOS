@@ -204,8 +204,8 @@ def validate_idea_directive(directive: IdeaDirective, *, candidate_ids: set[str]
         raise ValueError("compose_from_components requires components from at least two Candidates")
     if directive.action == "merge_candidates" and len(directive.target_candidate_ids) < 2:
         raise ValueError("merge_candidates requires at least two Candidates")
-    if len(directive.target_candidate_ids) > 1 and directive.action == "select_multiple":
-        raise ValueError("multiple selected Candidates are ambiguous; choose keep_parallel or compose_from_components")
+    if directive.action in {"select_multiple", "keep_parallel"} and len(directive.target_candidate_ids) < 2:
+        raise ValueError(f"{directive.action} requires at least two complete Candidates")
 
 
 def persist_idea_directive(
@@ -344,6 +344,7 @@ def _normalized_action(*, option_id: str, raw: str, proposed_action: str, target
         "select_candidate": "select_candidate",
         "proceed": "select_candidate",
         "proceed_candidate": "select_candidate",
+        "proceed_multiple": "select_multiple",
         "merge": "compose_from_components" if component_count else "merge_candidates",
         "create_crossover": "merge_candidates",
         "crossover": "merge_candidates",

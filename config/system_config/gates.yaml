@@ -407,7 +407,7 @@ gates:
 
   t4_gate1_selection_gate:
     title: "T4 · 研究方向决策"
-    description: "当前候选已经生成并完成初步评分。你现在只需要决定：推进一个方向，继续优化，还是暂时不做选择。其他候选和历史版本都会保留。"
+    description: "当前候选已经生成并完成初步评分。你可以推进一条方向，也可将 2–3 条分别写成独立 Proposal；还可以继续优化或暂不选择。其他候选和历史版本都会保留。"
     options:
       - id: proceed_candidate
         label: "推进一个候选"
@@ -420,6 +420,14 @@ gates:
           - directive
         input_prompts:
           directive: "要推进哪个候选？例如：D1 或 推进 D1"
+      - id: proceed_multiple
+        label: "分别写多个 Proposal"
+        description: "选择 2–3 个候选，各自完成 T4.5；它们不会被合并。全部完成后，系统会在进入 T5 前请你选择一个深入推进。"
+        next: T4.5
+        collect_input:
+          - directive
+        input_prompts:
+          directive: "要分别推进哪些候选？例如：D1,D2 或 分别推进 D1 和 D3"
       - id: focus_evolution
         label: "优化一个候选"
         description: "针对某个候选的主要问题生成改进版本，例如优化理论机制、假设、贡献或实验可行性。"
@@ -464,7 +472,7 @@ gates:
           - directive
       - id: keep_parallel
         label: "并行保留多个方向"
-        description: "将多个候选标记为独立研究方向，后续分别推进。"
+        description: "将多个候选作为独立 Proposal 分别推进到 T4.5；完成后在 T5 前选择一个。"
         advanced: true
         next: T4
         collect_input:
@@ -780,6 +788,24 @@ gates:
         label: "结束当前项目"
         description: "停止本次流程，不删除已保存的研究材料或 T5 交接。"
         next: done
+
+  t45_proposal_portfolio_gate:
+    title: "T4.5 · 选择深入推进的 Proposal"
+    description: "已选方向均已独立完成 T4.5。请从表格中选择一条进入 T5；系统只会将这一条 Proposal 作为实验和后续写作的唯一输入，不会混合不同 Idea。"
+    presentation: {}
+    options:
+      - id: select_proposal
+        label: "选择一条 Proposal 进入 T5"
+        description: "填写表格中的 Candidate 编号，例如 D1。选中后保留其他 Proposal 的完整归档。"
+        next: T5-REBOOST-GATE
+        collect_input:
+          - candidate_id
+        input_prompts:
+          candidate_id: "请输入要深入推进的 Candidate 编号，例如 D1"
+      - id: pause_selection
+        label: "暂不选择"
+        description: "保留全部独立 Proposal，稍后 resume 回到本页。"
+        next: T4.5-PORTFOLIO-GATE
 
   t5_resource_executor_gate:
     title: "T5 自动资源准备执行器"
