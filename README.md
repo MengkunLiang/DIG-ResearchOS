@@ -118,6 +118,10 @@ The Proposal is organized for readers, while the blueprint and claim registry ke
 
 T5 does **not** silently run an experiment. It compiles the accepted T4.5 plan into a constrained handoff, then asks you to choose or authorize the external executor. That executor may prepare public resources and run the approved work, but cannot silently change the research question, core mechanism, required baselines, benchmark scope, or claim boundary.
 
+If T4.5 says that a structured tool JSON payload is incomplete, one model function call to `write_structured_file` did not close correctly and no file was written. This is not a Proposal-content verdict and does not call for hand-editing YAML. The runtime recovers only a uniquely determined delimiter transport defect; every other case returns the exact target artifact and diagnostic to the model so it can resubmit that same source before the shared-contract check continues.
+
+T5 presents the next user decision rather than its internal handoff, Skill, and path records. If you have no local data or code, choose the option for automatic resource preparation: it only retrieves and audits public resources and does not run an experiment. The detailed records remain in the workspace for `--verbose`, `trace`, or troubleshooting.
+
 Only after T4.5's final orientation-aware review accepts the package, the terminal displays a Rich “research-plan audit and formalization complete” table with five researcher-facing entry points: the Proposal, hypotheses, design constraints (blueprint plus claim registry), experiment plan, and final review/novelty boundary. Contribution/validation maps, stopping criteria, manifests, and receipts remain saved for T5 and `--verbose`, but do not crowd the completion table. T5 consumes that accepted package; you do not need to find it from memory.
 
 When reviewing a T4.5 result yourself, read these files in this order. They are a plan and a falsification contract, not experimental findings.
