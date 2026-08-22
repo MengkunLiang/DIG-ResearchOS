@@ -988,7 +988,12 @@ class LLMIdeaEvolver(IdeaEvolverPort):
                 "Do not select parents, change a plan, score results, or overwrite a Parent. Preserve named genes, respect the Gene Donor Map, "
                 "and never elevate abstract-only evidence. Every `required_children` entry gives the exact new Candidate ID for its Plan; "
                 "use that ID consistently as the top-level, genome, and lineage ID. Never reuse a Parent ID. When exactly one supplied Plan cannot yield "
-                "a substantive, evidence-calibrated Child, return no Child and exactly one documented deferral for that Plan; do not make a cosmetic rewrite."
+                "a substantive, evidence-calibrated Child, return no Child and exactly one documented deferral for that Plan; do not make a cosmetic rewrite. "
+                "Each `children[]` item must itself be one complete CandidateDossier: include top-level `candidate_id`, integer `version`, `status`, `maturity`, "
+                "`genome`, `contributions`, `hypotheses`, `evidence_composition`, and `lineage`. For a new Child use `status=active`, `maturity=evolved`, "
+                "and `genome.maturity=evolved`. Put the Plan identity only in `lineage.evolution_plan_id` and Parent IDs only in `lineage.parent_ids`/`genome.parents`; "
+                "never put `plan_id`, `child_type`, `parent_ids`, `gene_donor_map`, `evidence_status`, `plan_refs`, or `context_boundary` at Child top level. "
+                "`creative_context.reading_or_validation_upgrades`, when present, must be an array of plain strings, not objects."
                 + repair_instruction
             ),
             payload=payload,
@@ -1028,7 +1033,11 @@ class LLMIdeaEvolver(IdeaEvolverPort):
                 "already intact, an absent CandidatePresentation is optional enrichment and must not reject the Child. You may retain or improve supplied "
                 "presentation wording only from the Child genes, Parent context, and existing Evidence Permission; do not change a Gene or add support. If a Child cannot be safely tied "
                 "to one Plan, leave it unresolved for deterministic validation instead of guessing. A documented deferral may be retained only for the one supplied "
-                "Plan and only when the attempted response already makes the inability to improve or incompatibility explicit. Return exactly one JSON object and no Markdown."
+                "Plan and only when the attempted response already makes the inability to improve or incompatibility explicit. Each repaired Child must be a complete "
+                "CandidateDossier with integer `version`, `status`, `maturity`, `genome`, `contributions`, `hypotheses`, `evidence_composition`, and `lineage`. "
+                "Remove Plan-envelope keys such as `plan_id`, `child_type`, `parent_ids`, `gene_donor_map`, `evidence_status`, `plan_refs`, and `context_boundary` "
+                "from the Child top level; preserve Plan/Parent identity only under `lineage.evolution_plan_id`, `lineage.parent_ids`, and `genome.parents`. "
+                "`creative_context.reading_or_validation_upgrades` must contain only strings. Return exactly one JSON object and no Markdown."
             ),
             payload={
                 "plans": [model_dump(plan, mode="json") for plan in plans],
@@ -1651,8 +1660,12 @@ def _evolver_parent(candidate: CandidateDossier) -> dict[str, Any]:
             "created_by": candidate.lineage.created_by,
         },
         "creative_context": _compact_creative_context(candidate, text_limit=380),
-        "evidence_status": _candidate_evidence_status(candidate),
-        "context_boundary": "Long parent-dossier prose is excerpted; preserve supplied genes and do not infer omitted details.",
+        # Keep every top-level parent field inside CandidateDossier's actual
+        # schema. Earlier context-only keys (for example `evidence_status`)
+        # were occasionally copied into a Child root by structured-output
+        # models, where they are invalid and caused needless repair loops.
+        "evidence_composition": dict(candidate.evidence_composition),
+        "warnings": [_compact_t4_text(item, 260) for item in candidate.warnings[:3]],
     }
 
 
