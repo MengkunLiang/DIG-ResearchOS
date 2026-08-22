@@ -3070,6 +3070,47 @@ def _normalize_candidate_dossier_payload(payload: dict[str, Any]) -> dict[str, A
 
     normalized = dict(payload)
 
+    # Evolution Plans and Candidate Dossiers intentionally have different
+    # top-level contracts.  Some function-calling models nevertheless copy a
+    # plan envelope beside an otherwise complete Child.  The four moves below
+    # are lossless placement corrections only: they do not create a version,
+    # contribution, hypothesis, gene, evidence reference, or scientific
+    # conclusion.  Anything not unambiguously owned by the Child remains for
+    # the dedicated LLM repair rather than being guessed by deterministic
+    # code.
+    envelope_plan_id = normalized.pop("plan_id", None)
+    envelope_parent_ids = normalized.pop("parent_ids", None)
+    envelope_gene_donor_map = normalized.pop("gene_donor_map", None)
+    envelope_evidence_status = normalized.pop("evidence_status", None)
+    normalized.pop("context_boundary", None)
+    lineage_seed = normalized.get("lineage")
+    if isinstance(lineage_seed, dict):
+        lineage_seed = dict(lineage_seed)
+        if envelope_plan_id and not lineage_seed.get("evolution_plan_id"):
+            lineage_seed["evolution_plan_id"] = str(envelope_plan_id)
+        if isinstance(envelope_parent_ids, list) and not lineage_seed.get("parent_ids"):
+            lineage_seed["parent_ids"] = [str(item) for item in envelope_parent_ids if str(item).strip()]
+        normalized["lineage"] = lineage_seed
+    genome_seed = normalized.get("genome")
+    if isinstance(genome_seed, dict) and isinstance(envelope_parent_ids, list) and not genome_seed.get("parents"):
+        normalized_genome_seed = dict(genome_seed)
+        normalized_genome_seed["parents"] = [str(item) for item in envelope_parent_ids if str(item).strip()]
+        normalized["genome"] = normalized_genome_seed
+    creative_seed = normalized.get("creative_context")
+    if isinstance(envelope_evidence_status, str):
+        canonical_status = envelope_evidence_status.strip().casefold()
+        if canonical_status in {"supported", "conjectural", "mixed"}:
+            context = dict(creative_seed) if isinstance(creative_seed, dict) else {}
+            context.setdefault("evidence_status", canonical_status)
+            normalized["creative_context"] = context
+    if envelope_gene_donor_map is not None:
+        existing_warnings = normalized.get("warnings")
+        warnings = [str(item) for item in existing_warnings] if isinstance(existing_warnings, list) else []
+        warnings.append(
+            "plan_envelope_gene_donor_map_omitted: donor assignment remains in the approved Evolution Plan; the Child keeps only its resulting genome and lineage."
+        )
+        normalized["warnings"] = list(dict.fromkeys(warnings))
+
     # Some providers habitually render a schema revision as ``"1.0.0"``
     # even when the typed Candidate contract deliberately uses an integer.
     # Converting only an integral dotted representation is lossless metadata
