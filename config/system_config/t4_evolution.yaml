@@ -69,9 +69,10 @@ crossover_structured_repair_attempts: 2
 route_max_concurrency: 2
 # Independent scoring uses exactly three formal dimensions. Rationale and all
 # evidence, validation, upside, and publication-orientation observations are
-# repairable diagnostics, not batch-level gates. Persist small batches so an
-# interrupted or malformed response only needs to repair that batch on resume.
-scoring_batch_size: 4
+# repairable diagnostics, not batch-level gates. Two dossiers per request keep
+# the typed scorer below ordinary provider latency limits even when candidates
+# retain rich archival reasoning; completed leaves are independently reusable.
+scoring_batch_size: 2
 bridge_policy_default: allow_abstract_with_upgrade
 scoring_rubric_path: config/system_config/idea_scoring_rubric.yaml
 evidence_permissions_path: config/system_config/idea_evidence_permissions.yaml

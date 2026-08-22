@@ -103,6 +103,8 @@ python -m researchos.cli init-workspace --workspace ./workspace/my-survey \
 | T8 写作 | 用已经核验的实验事实写作、审稿和修订。 | 选择写作风格或模板。 | `drafts/`、实验 claim/evidence 文件 |
 | T9 投稿 | 审阅、真实编译并生成提交包。 | 只在环境或编译恢复时处理问题。 | `submission/`、最终 PDF 与编译报告 |
 
+T4 如果在生成 Portfolio 之前遇到短暂模型服务中断，恢复页只会显示“继续剩余演化步骤”。这表示已保存的 Candidate、评分、路线和 Child 会被复用，而不是缺失或需要重做。`portfolio.json`、决策卡和 Gate1 在该时点本来尚未应当存在，因此不会显示为错误。系统会先做一次受限的延迟重试；仍未恢复时再安全暂停。使用 `resume --workspace <目录>`，不要编辑 `state.yaml` 或重新运行 `run`。
+
 ### 不用术语理解 T4.5 与 T5
 
 T4.5 的作用是把“有潜力的 Idea”变成“可执行、可证伪的研究方案”，依次经过三个检查点：

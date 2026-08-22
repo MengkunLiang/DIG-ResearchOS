@@ -31,12 +31,12 @@ budget_escalation:
 # may make one typed semantic repair and one fresh bounded retry, while provider outages pause after
 # a durable retry window instead of waiting on an in-memory prompt. Card
 # retries never re-run Candidate/Population evolution. Native T4 role calls
-# make one provider attempt before pausing from their durable checkpoint: a
-# second nested retry only repeats the same large structured prompt and can
-# make a transient provider stall look like a pipeline deadlock.
+# make one fresh delayed retry before pausing from their durable checkpoint.
+# T4 role payloads are bounded before transport, so this handles a transient
+# service stall without replaying an unbounded prompt or creating a retry loop.
 retry_policy:
   t4_final_card_compiler_attempts: 2
-  t4_provider_retry_batches: 1
+  t4_provider_retry_batches: 2
 
 agents:
   hello:

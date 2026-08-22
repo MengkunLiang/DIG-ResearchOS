@@ -104,6 +104,8 @@ Longer names such as `T5-REBOOST-GATE`, `T5-PROTOCOL-GATE`, and `T3.6-SEC-INTRO`
 | T8 writing | Write, review, and revise using verified experimental facts. | Choose a writing style or template. | `drafts/` and experiment claim/evidence files |
 | T9 submission | Review, genuinely compile, and package the submission. | Only when an environment or compilation recovery is needed. | `submission/`, final PDF, and compile report |
 
+If T4 encounters a transient model-service interruption before it has produced a Portfolio, its recovery page shows only “continue the remaining evolution.” Saved Candidates, scores, routes, and Children are reused; they are not missing and are not regenerated. At that point `portfolio.json`, decision cards, and Gate1 are not expected to exist, so they are not presented as errors. The system makes one bounded delayed retry before safely pausing. Use `resume --workspace <directory>` rather than editing `state.yaml` or starting `run` again.
+
 ### T4.5 And T5 Without The Jargon
 
 T4.5 turns a promising Idea into a research plan. It has three checkpoints:

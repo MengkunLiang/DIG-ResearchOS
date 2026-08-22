@@ -2933,40 +2933,71 @@ class StateMachine:
         recovery_stage = ""
         if workspace_dir is not None:
             operation = state.task_context.get("t4_operation_request")
+            portfolio_path = workspace_dir / "ideation" / "portfolio.json"
+            # A provider interruption before survival selection is a normal
+            # Evolution-resume boundary.  There cannot yet be a Portfolio or
+            # Final Card checkpoint, so running Card-only reconciliation here
+            # used to manufacture three alarming but irrelevant diagnostics:
+            # missing portfolio, missing card checkpoint, and an inapplicable
+            # compatibility migration.  Classify this durable phase boundary
+            # first.  Only a completed-survival workspace may enter the
+            # Portfolio/Card recovery path below.
+            preportfolio_resume = False
             try:
                 store = T4ArtifactStore(workspace_dir)
-                compatibility_migration = store.migrate_crossover_compatibility_records()
-                cards_ready, raw_card_error = validate_t4_portfolio_final_cards(workspace_dir)
-                card_error = str(raw_card_error or "")
-                if not cards_ready:
-                    # Older runs can complete survival and write Portfolio
-                    # before the durable pre-card receipt introduced later.
-                    # Reconstruct only that receipt after proving the native
-                    # Population, dossiers and independent scores agree.
-                    store.ensure_final_card_checkpoint_for_completed_population(
-                        operation=operation if isinstance(operation, dict) else None,
-                    )
-                repair_checkpoint, raw_checkpoint_error = store.current_final_card_repair_checkpoint(
-                    operation=operation if isinstance(operation, dict) else None,
+                internal = store.read_state()
+                phase_marker = (
+                    workspace_dir
+                    / "ideation"
+                    / "evolution"
+                    / "phases"
+                    / f"{internal.generation}_survival.json"
                 )
-                repair_checkpoint_error = str(raw_checkpoint_error or "")
+                preportfolio_resume = not portfolio_path.is_file() and not phase_marker.is_file()
             except (OSError, ValueError) as exc:
+                # A missing or unreadable internal state cannot prove a
+                # completed-survival boundary.  Preserve the existing
+                # evolution-resume behavior, whose controller performs the
+                # authoritative state validation before work resumes.
                 repair_checkpoint_error = str(exc)
-            portfolio_path = workspace_dir / "ideation" / "portfolio.json"
-            if repair_checkpoint is not None:
-                recovery_stage = "final_card"
-            elif portfolio_path.is_file():
-                # A Portfolio without cards is still a Card-only recovery
-                # only if its checkpoint can be recreated on the retry.  Keep
-                # the source error visible rather than calling an LLM here.
-                recovery_stage = "source_data_missing"
+                preportfolio_resume = not portfolio_path.is_file()
+
+            if preportfolio_resume:
+                recovery_stage = "evolution_resume"
             else:
                 try:
-                    internal = T4ArtifactStore(workspace_dir).read_state()
-                    phase_marker = workspace_dir / "ideation" / "evolution" / "phases" / f"{internal.generation}_survival.json"
-                    recovery_stage = "source_data_missing" if phase_marker.is_file() else "evolution_resume"
-                except (OSError, ValueError):
-                    recovery_stage = "evolution_resume"
+                    # These operations are meaningful only after Evolution
+                    # has reached its native Portfolio boundary.  They never
+                    # create Candidate content; they merely reconcile legacy
+                    # Card receipts and compatibility records.
+                    compatibility_migration = store.migrate_crossover_compatibility_records()
+                    cards_ready, raw_card_error = validate_t4_portfolio_final_cards(workspace_dir)
+                    card_error = str(raw_card_error or "")
+                    if not cards_ready:
+                        # Older runs can complete survival and write Portfolio
+                        # before the durable pre-card receipt introduced later.
+                        # Reconstruct only that receipt after proving the native
+                        # Population, dossiers and independent scores agree.
+                        store.ensure_final_card_checkpoint_for_completed_population(
+                            operation=operation if isinstance(operation, dict) else None,
+                        )
+                    repair_checkpoint, raw_checkpoint_error = store.current_final_card_repair_checkpoint(
+                        operation=operation if isinstance(operation, dict) else None,
+                    )
+                    repair_checkpoint_error = str(raw_checkpoint_error or "")
+                except (OSError, ValueError) as exc:
+                    repair_checkpoint_error = str(exc)
+
+                if repair_checkpoint is not None:
+                    recovery_stage = "final_card"
+                elif portfolio_path.is_file():
+                    # A Portfolio without cards is still a Card-only recovery
+                    # only if its checkpoint can be recreated on the retry.
+                    # Keep the source error visible rather than calling an LLM
+                    # here.
+                    recovery_stage = "source_data_missing"
+                else:
+                    recovery_stage = "source_data_missing"
         recovery = self._t4_recovery_presentation(
             error,
             has_final_card_checkpoint=repair_checkpoint is not None,
@@ -2990,41 +3021,51 @@ class StateMachine:
                     "description": "所有可见 Candidate 已有完整 LLM Final Card；仅打开决策面板，不调用模型。",
                 },
             )
+        presentation: dict[str, Any] = {
+            "_title": recovery["title"],
+            "_description": recovery["description"],
+            "_recovery_kind": recovery["kind"],
+            "_recovery_presentation_version": 3,
+            "error_summary": recovery["error_summary"],
+        }
+        if recovery_stage != "evolution_resume":
+            # Gate1 and final-card fields are intentionally absent before the
+            # first Portfolio exists.  False/null values are misleading in a
+            # human recovery page because they describe outputs that this T4
+            # run has not yet been expected to create.
+            presentation.update(
+                {
+                    "gate1_artifacts_ready": ready,
+                    "portfolio_final_cards_ready": cards_ready,
+                    "portfolio_final_cards_error": card_error[:1000],
+                    "final_card_repair_checkpoint": (
+                        {
+                            "population_id": repair_checkpoint.get("population_id"),
+                            "population_generation": repair_checkpoint.get("population_generation"),
+                            "operation_action": repair_checkpoint.get("operation_action"),
+                            "operation_directive_id": repair_checkpoint.get("operation_directive_id"),
+                            "status": repair_checkpoint.get("status"),
+                        }
+                        if repair_checkpoint is not None
+                        else None
+                    ),
+                    "final_card_repair_checkpoint_error": repair_checkpoint_error[:1000],
+                    "compatibility_record_migration": (
+                        {
+                            "status": compatibility_migration.get("status"),
+                            "migrated_decision_count": compatibility_migration.get("migrated_decision_count"),
+                            "unresolved_count": len(compatibility_migration.get("unresolved") or []),
+                            "receipt": "ideation/evolution/migrations/crossover_compatibility_v3.json",
+                        }
+                        if isinstance(compatibility_migration, dict)
+                        else None
+                    ),
+                }
+            )
         state.pending_gate = GateState(
             gate_id="t4_recovery_gate",
             presented_at=_now_iso(),
-            presentation={
-                "_title": recovery["title"],
-                "_description": recovery["description"],
-                "_recovery_kind": recovery["kind"],
-                "_recovery_presentation_version": 2,
-                "error_summary": recovery["error_summary"],
-                "gate1_artifacts_ready": ready,
-                "portfolio_final_cards_ready": cards_ready,
-                "portfolio_final_cards_error": card_error[:1000],
-                "final_card_repair_checkpoint": (
-                    {
-                        "population_id": repair_checkpoint.get("population_id"),
-                        "population_generation": repair_checkpoint.get("population_generation"),
-                        "operation_action": repair_checkpoint.get("operation_action"),
-                        "operation_directive_id": repair_checkpoint.get("operation_directive_id"),
-                        "status": repair_checkpoint.get("status"),
-                    }
-                    if repair_checkpoint is not None
-                    else None
-                ),
-                "final_card_repair_checkpoint_error": repair_checkpoint_error[:1000],
-                "compatibility_record_migration": (
-                    {
-                        "status": compatibility_migration.get("status"),
-                        "migrated_decision_count": compatibility_migration.get("migrated_decision_count"),
-                        "unresolved_count": len(compatibility_migration.get("unresolved") or []),
-                        "receipt": "ideation/evolution/migrations/crossover_compatibility_v3.json",
-                    }
-                    if isinstance(compatibility_migration, dict)
-                    else None
-                ),
-            },
+            presentation=presentation,
             options=options,
         )
         state.status = "WAITING_HUMAN"
@@ -4884,15 +4925,17 @@ class StateMachine:
                 # intentionally retained until a successful Gate1 transition;
                 # its checkpoint identity proves it was already consumed.
                 if workspace_dir is not None:
-                    operation = state.task_context.get("t4_operation_request")
-                    try:
-                        checkpoint, _checkpoint_error = T4ArtifactStore(
-                            workspace_dir
-                        ).current_final_card_repair_checkpoint(
-                            operation=operation if isinstance(operation, dict) else None,
-                        )
-                    except (OSError, ValueError):
-                        checkpoint = None
+                    checkpoint = None
+                    if recovery_kind != "evolution_resume":
+                        operation = state.task_context.get("t4_operation_request")
+                        try:
+                            checkpoint, _checkpoint_error = T4ArtifactStore(
+                                workspace_dir
+                            ).current_final_card_repair_checkpoint(
+                                operation=operation if isinstance(operation, dict) else None,
+                            )
+                        except (OSError, ValueError):
+                            checkpoint = None
                     if checkpoint is not None:
                         state.task_context["t4_final_card_repair"] = {
                             "checkpoint_path": "ideation/evolution/final_card_repair_state.json",

@@ -288,8 +288,13 @@ class IdeaEvolutionController:
         p0, p0_dossiers, route_results = await self._ensure_p0(run_config, input_fp, config_fp)
         if run_config.rounds == 0:
             await self._report(EvolutionPhase.SCORING, "started", {"population_id": p0.population_id, "candidate_count": len(p0_dossiers)})
-            scores = await self._score(p0_dossiers, "SB-P0", run_config=run_config)
-            self._write_scores("P0", scores)
+            scores = self._load_reusable_population_scores(p0, p0_dossiers, run_config=run_config)
+            if scores is None:
+                scores = await self._score(p0_dossiers, "SB-P0", run_config=run_config)
+                self._write_scores("P0", scores)
+                score_status = "completed"
+            else:
+                score_status = "reused"
             families = self._load_or_build_families(p0_dossiers, generation=0)
             await self._ensure_interaction_graph(
                 population=p0,
@@ -306,6 +311,11 @@ class IdeaEvolutionController:
             self.store.write_json("ideation/portfolio.json", model_dump(portfolio, mode="json"))
             state = self._set_waiting_state(p0, run_config, display_ids=_portfolio_ids(portfolio), completed_rounds=0)
             active_scores = _select_scores(scores, p0.active_candidate_ids)
+            await self._report(
+                EvolutionPhase.SCORING,
+                score_status,
+                {"population_id": p0.population_id, "candidate_count": len(scores)},
+            )
             await self._report(
                 EvolutionPhase.SURVIVAL,
                 "completed",
@@ -1737,8 +1747,13 @@ class IdeaEvolutionController:
             "started",
             {"round_number": round_number, "population_id": population.population_id, "candidate_count": len(dossiers)},
         )
-        scores_current = await self._score(dossiers, score_batch, run_config=run_config)
-        self._write_scores(population.population_id, scores_current)
+        scores_current = self._load_reusable_population_scores(population, dossiers, run_config=run_config)
+        if scores_current is None:
+            scores_current = await self._score(dossiers, score_batch, run_config=run_config)
+            self._write_scores(population.population_id, scores_current)
+            score_status = "completed"
+        else:
+            score_status = "reused"
         families_current = self._load_or_build_families(dossiers, generation=population.generation)
         interaction_graph = await self._ensure_interaction_graph(
             population=population,
@@ -1747,7 +1762,7 @@ class IdeaEvolutionController:
         )
         await self._report(
             EvolutionPhase.SCORING,
-            "completed",
+            score_status,
             {"round_number": round_number, "population_id": population.population_id, "candidate_count": len(scores_current)},
         )
         await self._report(
@@ -2594,6 +2609,35 @@ class IdeaEvolutionController:
         if isinstance(error, T4RoleResponseFormatError):
             payload["response_excerpt"] = error.response_excerpt
         self.store.write_json(f"ideation/evolution/diagnostics/{safe_plan}_offspring_attempt_{attempt}.json", payload)
+
+    def _load_reusable_population_scores(
+        self,
+        population: PopulationSnapshot,
+        candidates: list[CandidateDossier],
+        *,
+        run_config: T4RunConfig,
+    ) -> list[ScoreReport] | None:
+        """Reuse a complete, current Population score set across a resume.
+
+        Scoring is an independent scientific judgement, not a transport
+        artifact that should be regenerated merely because a later optional
+        reviewer timed out or a batch-size safeguard changed.  Candidate and
+        run-config fingerprints are already checked by the native Population
+        boundary; this helper additionally requires exact active coverage and
+        the normal score-contract validation.  It never fills a missing score
+        or accepts a malformed report.
+        """
+
+        try:
+            scores = self._load_scores(population.population_id, population.active_candidate_ids)
+            self._validate_score_reports(
+                reports=scores,
+                candidates=candidates,
+                run_config=run_config,
+            )
+        except ValueError:
+            return None
+        return scores
 
     async def _score(
         self,

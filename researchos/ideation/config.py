@@ -66,9 +66,10 @@ class T4EvolutionSettings(_ConfigModel):
     # separate from provider/network retries and never auto-approves a Child.
     crossover_structured_repair_attempts: int = Field(default=2, ge=1, le=8)
     route_max_concurrency: int = Field(default=2, ge=1, le=4)
-    # Score reports are evidence-dense. Small sequential batches keep a long
-    # population from truncating its later candidates at the provider boundary.
-    scoring_batch_size: int = Field(default=4, ge=1, le=6)
+    # Score reports are evidence-dense. Two-Candidate batches keep rich
+    # dossiers below ordinary provider latency limits while preserving an
+    # independent score and a reusable checkpoint for every leaf.
+    scoring_batch_size: int = Field(default=2, ge=1, le=6)
     bridge_policy_default: str = "allow_abstract_with_upgrade"
     scoring_rubric_path: str = "config/system_config/idea_scoring_rubric.yaml"
     evidence_permissions_path: str = "config/system_config/idea_evidence_permissions.yaml"

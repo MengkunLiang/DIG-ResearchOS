@@ -790,6 +790,15 @@ class LLMIdeaScorer(IdeaScoringPort):
             )
         if not pairs:
             return []
+        # The graph itself retains every deterministic relationship.  The LLM
+        # reviewer is an optional semantic explanation layer, so forwarding
+        # all O(n) pair contexts is neither necessary nor reliable.  In a
+        # real ten-Candidate Population, 30 full pair payloads produced a
+        # 65k-token request and timed out.  Review a balanced sample first:
+        # one relationship per source Candidate, then fill any remaining
+        # slots in stable shortlist order.  Unreviewed edges stay explicitly
+        # deterministic rather than being silently discarded or inferred.
+        pairs = _balanced_interaction_review_pairs(pairs, maximum=8)
         data = await self.invoker.invoke(
             prompt_name="idea_interaction_reviewer.j2",
             system_contract=(
@@ -800,7 +809,14 @@ class LLMIdeaScorer(IdeaScoringPort):
                 "similarity as evidence or claim that a crossover must occur. Preserve uncertainty and write researcher-facing explanations in Chinese "
                 "while following the shared Research-Facing Chinese Naming policy for canonical English titles and named constructs."
             ),
-            payload={"prompt_version": "1.0.0", "pairs": pairs},
+            payload={
+                "prompt_version": "1.1.0",
+                "pairs": pairs,
+                "review_scope": (
+                    "This is a balanced semantic sample from a larger deterministic interaction graph. "
+                    "Interpret only these supplied pairs; omitted pairs remain unreviewed and must not be inferred."
+                ),
+            },
         )
         raw = data.get("reviews") if isinstance(data.get("reviews"), list) else []
         reviews: list[dict[str, Any]] = []
@@ -823,7 +839,10 @@ class LLMIdeaScorer(IdeaScoringPort):
         payload = {
             "prompt_version": "1.1.0",
             "pairs": [
-                {"pair_id": f"{left}__{right}", "parents": [_blind_candidate(by_id[left]), _blind_candidate(by_id[right])]}
+                {
+                    "pair_id": f"{left}__{right}",
+                    "parents": [_crossover_candidate(by_id[left]), _crossover_candidate(by_id[right])],
+                }
                 for left, right in pairs if left in by_id and right in by_id
             ],
         }
@@ -1275,34 +1294,264 @@ class LLMFinalIdeaCardCompiler:
         )
 
 
+_CANDIDATE_GENOME_CONTEXT_FIELDS = (
+    "problem",
+    "opportunity",
+    "challenged_assumption",
+    "core_thesis",
+    "mechanism",
+    "design_or_artifact",
+    "contribution_package",
+    "hypothesis_bundle",
+    "validation_logic",
+    "boundary_conditions",
+    "risks",
+)
+
+
+def _compact_t4_text(value: object, limit: int) -> str:
+    """Keep both the claim opening and qualification tail of long prose.
+
+    A head-only truncation tends to discard the boundary condition or
+    falsification clause at the end of a research statement.  Preserving both
+    ends is a better semantic transport for roles that assess, compare, or
+    mutate a Candidate but do not need its complete archival narration.
+    """
+
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    limit = max(80, int(limit))
+    head = int(limit * 0.64)
+    tail = limit - head
+    return text[:head].rstrip() + " … [中间论述已压缩，完整内容见 Candidate dossier] … " + text[-tail:].lstrip()
+
+
+def _compact_source_refs(value: object, *, maximum: int = 4) -> list[dict[str, str]]:
+    """Retain traceable source identities without forwarding long note prose."""
+
+    if not isinstance(value, list):
+        return []
+    refs: list[dict[str, str]] = []
+    for raw in value[:maximum]:
+        item = raw if isinstance(raw, dict) else {}
+        reference = {
+            key: _compact_t4_text(item.get(key), 180)
+            for key in ("citation_key", "paper_id", "source_path", "locator")
+            if str(item.get(key) or "").strip()
+        }
+        if reference:
+            refs.append(reference)
+    return refs
+
+
+def _compact_candidate_genome(
+    candidate: CandidateDossier,
+    *,
+    value_limit: int,
+    include_route: bool,
+    source_ref_maximum: int = 3,
+) -> dict[str, Any]:
+    """Project a genome into role context while preserving evidence boundaries."""
+
+    genome: dict[str, Any] = {
+        "candidate_id": candidate.candidate_id,
+        "maturity": candidate.maturity.value,
+    }
+    if include_route:
+        genome["route"] = candidate.genome.route
+        genome["parents"] = list(candidate.genome.parents)
+    for name in _CANDIDATE_GENOME_CONTEXT_FIELDS:
+        gene = getattr(candidate.genome, name)
+        provenance = model_dump(gene.provenance, mode="json")
+        genome[name] = {
+            "value": _compact_t4_text(gene.value, value_limit),
+            "evidence_role": str(provenance.get("evidence_role") or ""),
+            "confidence": str(provenance.get("confidence") or ""),
+            "upgrade_required": bool(provenance.get("upgrade_required")),
+            "source_refs": _compact_source_refs(provenance.get("source_refs"), maximum=source_ref_maximum),
+        }
+    return genome
+
+
+def _compact_contribution(item: Any, *, text_limit: int, include_change_detail: bool = True) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "contribution_id": item.contribution_id,
+        "contribution_type": item.contribution_type,
+        "statement": _compact_t4_text(item.statement, text_limit),
+        "evidence_status": item.evidence_status,
+        "uncertainty": _compact_t4_text(item.uncertainty, max(220, text_limit // 2)),
+        "supporting_refs": list(item.supporting_refs[:6]),
+    }
+    if include_change_detail:
+        result["what_changes_if_true"] = _compact_t4_text(item.what_changes_if_true, text_limit)
+    return result
+
+
+def _compact_hypothesis(item: Any, *, text_limit: int, include_mechanism_detail: bool = True) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "hypothesis_id": item.hypothesis_id,
+        "statement": _compact_t4_text(item.statement, text_limit),
+        "observable_prediction": _compact_t4_text(item.observable_prediction, text_limit),
+        "discriminating_test": _compact_t4_text(item.discriminating_test, text_limit),
+        "evidence_status": item.evidence_status,
+        "uncertainty": _compact_t4_text(item.uncertainty, max(220, text_limit // 2)),
+        "supporting_refs": list(item.supporting_refs[:6]),
+    }
+    if include_mechanism_detail:
+        result["mechanism"] = _compact_t4_text(item.mechanism, text_limit)
+        result["what_changes_if_true"] = _compact_t4_text(item.what_changes_if_true, max(220, text_limit // 2))
+    return result
+
+
+def _compact_creative_context(candidate: CandidateDossier, *, text_limit: int) -> dict[str, Any]:
+    raw = model_dump(candidate.creative_context, mode="json")
+    result: dict[str, Any] = {}
+    for key, value in raw.items():
+        if isinstance(value, str):
+            result[key] = _compact_t4_text(value, text_limit)
+        elif isinstance(value, list):
+            result[key] = [_compact_t4_text(item, max(180, text_limit // 2)) for item in value[:4]]
+        else:
+            result[key] = value
+    return result
+
+
+def _candidate_evidence_status(candidate: CandidateDossier) -> dict[str, Any]:
+    """Expose status counts, never a new judgement about evidence quality."""
+
+    roles: dict[str, int] = {}
+    upgrades = 0
+    for name in _CANDIDATE_GENOME_CONTEXT_FIELDS:
+        provenance = getattr(candidate.genome, name).provenance
+        role = str(provenance.evidence_role or "unknown")
+        roles[role] = roles.get(role, 0) + 1
+        upgrades += int(bool(provenance.upgrade_required))
+    return {
+        "evidence_composition": dict(candidate.evidence_composition),
+        "gene_evidence_roles": roles,
+        "genes_requiring_upgrade": upgrades,
+    }
+
+
 def _blind_candidate(candidate: CandidateDossier) -> dict[str, Any]:
-    """Remove signals that bias independent scoring while retaining candidate identity."""
+    """Return a bounded, blind scientific view for independent scoring.
+
+    Candidate dossiers are deliberately rich archival objects: they retain
+    full reasoning, provenance notes, alternative explanations and proposed
+    tests for later T4.5 work.  Passing several complete dossiers to the
+    scorer, however, made a four-candidate batch exceed 150k input tokens in
+    real runs and caused avoidable provider timeouts.  Scoring needs the
+    scientific core and evidence status, not every verbatim elaboration.
+    This projection keeps those decision-relevant elements while making the
+    full dossier remain the canonical artifact.
+    """
 
     return {
         "candidate_id": candidate.candidate_id,
-        "genome": model_dump(candidate.genome, mode="json", exclude={"route", "parents", "generation_created"}),
-        "contributions": [model_dump(item, mode="json") for item in candidate.contributions],
-        "hypotheses": [model_dump(item, mode="json") for item in candidate.hypotheses],
+        "genome": _compact_candidate_genome(
+            candidate,
+            value_limit=420,
+            include_route=False,
+            source_ref_maximum=1,
+        ),
+        "contributions": [
+            _compact_contribution(item, text_limit=360, include_change_detail=False)
+            for item in candidate.contributions
+        ],
+        "hypotheses": [
+            _compact_hypothesis(item, text_limit=320, include_mechanism_detail=False)
+            for item in candidate.hypotheses
+        ],
         "evidence_composition": candidate.evidence_composition,
-        "creative_context": model_dump(candidate.creative_context, mode="json"),
-        "warnings": candidate.warnings,
+        "creative_context": _compact_creative_context(candidate, text_limit=300),
+        "warnings": [_compact_t4_text(item, 260) for item in candidate.warnings[:2]],
+        "context_boundary": "Long dossier prose is excerpted here; score only the supplied scientific core and evidence status.",
     }
 
 
 def _interaction_candidate(candidate: CandidateDossier) -> dict[str, Any]:
-    """Expose candidate content for pair interpretation, not for selection."""
+    """Expose a compact candidate core for pair interpretation, not selection."""
 
     return {
         "candidate_id": candidate.candidate_id,
-        "problem": candidate.genome.problem.value,
-        "core_thesis": candidate.genome.core_thesis.value,
-        "mechanism": candidate.genome.mechanism.value,
-        "contribution_package": candidate.genome.contribution_package.value,
-        "hypotheses": [item.statement for item in candidate.hypotheses],
-        "validation_logic": candidate.genome.validation_logic.value,
-        "boundary_conditions": candidate.genome.boundary_conditions.value,
-        "creative_context": model_dump(candidate.creative_context, mode="json"),
+        "problem": _compact_t4_text(candidate.genome.problem.value, 460),
+        "core_thesis": _compact_t4_text(candidate.genome.core_thesis.value, 520),
+        "mechanism": _compact_t4_text(candidate.genome.mechanism.value, 620),
+        "contribution_package": _compact_t4_text(candidate.genome.contribution_package.value, 520),
+        "hypotheses": [_compact_t4_text(item.statement, 360) for item in candidate.hypotheses],
+        "validation_logic": _compact_t4_text(candidate.genome.validation_logic.value, 460),
+        "boundary_conditions": _compact_t4_text(candidate.genome.boundary_conditions.value, 360),
+        "creative_context": _compact_creative_context(candidate, text_limit=340),
+        "evidence_status": _candidate_evidence_status(candidate),
+        "context_boundary": "Long dossier prose is excerpted; do not infer an omitted detail.",
     }
+
+
+def _crossover_candidate(candidate: CandidateDossier) -> dict[str, Any]:
+    """Return the compact scientific core needed to approve a parent pair.
+
+    Compatibility review asks whether two programmes form one coherent thesis;
+    it does not score every archival detail.  This representation avoids
+    repeating long dossiers for each candidate pair while retaining the
+    mechanism, contribution, hypothesis, boundary, and evidence signals a
+    reviewer needs to reject unsafe module stacking.
+    """
+
+    return {
+        "candidate_id": candidate.candidate_id,
+        "problem": _compact_t4_text(candidate.genome.problem.value, 360),
+        "core_thesis": _compact_t4_text(candidate.genome.core_thesis.value, 440),
+        "mechanism": _compact_t4_text(candidate.genome.mechanism.value, 500),
+        "design_or_artifact": _compact_t4_text(candidate.genome.design_or_artifact.value, 360),
+        "contribution_package": _compact_t4_text(candidate.genome.contribution_package.value, 400),
+        "validation_logic": _compact_t4_text(candidate.genome.validation_logic.value, 380),
+        "boundary_conditions": _compact_t4_text(candidate.genome.boundary_conditions.value, 300),
+        "risks": _compact_t4_text(candidate.genome.risks.value, 300),
+        "contributions": [
+            {
+                "contribution_id": item.contribution_id,
+                "contribution_type": item.contribution_type,
+                "statement": _compact_t4_text(item.statement, 320),
+                "evidence_status": item.evidence_status,
+            }
+            for item in candidate.contributions
+        ],
+        "hypotheses": [
+            {
+                "hypothesis_id": item.hypothesis_id,
+                "statement": _compact_t4_text(item.statement, 300),
+                "discriminating_test": _compact_t4_text(item.discriminating_test, 260),
+            }
+            for item in candidate.hypotheses
+        ],
+        "evidence_status": _candidate_evidence_status(candidate),
+        "context_boundary": "Long dossier prose is excerpted; reject the pair if the supplied core cannot establish coherence.",
+    }
+
+
+def _balanced_interaction_review_pairs(pairs: list[dict[str, Any]], *, maximum: int) -> list[dict[str, Any]]:
+    """Select a stable, source-balanced optional interaction-review sample."""
+
+    if len(pairs) <= maximum:
+        return pairs
+    selected: list[dict[str, Any]] = []
+    selected_indexes: set[int] = set()
+    seen_sources: set[str] = set()
+    for index, pair in enumerate(pairs):
+        source_id = str(pair.get("source_id") or "")
+        if source_id and source_id not in seen_sources:
+            selected.append(pair)
+            selected_indexes.add(index)
+            seen_sources.add(source_id)
+            if len(selected) >= maximum:
+                return selected
+    for index, pair in enumerate(pairs):
+        if index not in selected_indexes:
+            selected.append(pair)
+            if len(selected) >= maximum:
+                break
+    return selected
 
 
 def _normalize_interaction_review(item: dict[str, Any]) -> dict[str, Any] | None:
@@ -1378,13 +1627,32 @@ def _normalize_interaction_review(item: dict[str, Any]) -> dict[str, Any] | None
 
 
 def _evolver_parent(candidate: CandidateDossier) -> dict[str, Any]:
+    """Provide a bounded parent view for mutation/crossover generation.
+
+    The full parent remains in its immutable dossier.  A Child generator needs
+    the named genes, evidence permissions, contributions, hypotheses and
+    lineage, rather than repeated verbatim prose from every archival field.
+    """
+
     return {
         "candidate_id": candidate.candidate_id,
-        "genome": model_dump(candidate.genome, mode="json"),
-        "contributions": [model_dump(item, mode="json") for item in candidate.contributions],
-        "hypotheses": [model_dump(item, mode="json") for item in candidate.hypotheses],
-        "lineage": model_dump(candidate.lineage, mode="json"),
-        "creative_context": model_dump(candidate.creative_context, mode="json"),
+        "genome": _compact_candidate_genome(
+            candidate,
+            value_limit=560,
+            include_route=True,
+            source_ref_maximum=1,
+        ),
+        "contributions": [_compact_contribution(item, text_limit=460) for item in candidate.contributions],
+        "hypotheses": [_compact_hypothesis(item, text_limit=400) for item in candidate.hypotheses],
+        "lineage": {
+            "candidate_id": candidate.lineage.candidate_id,
+            "parent_ids": list(candidate.lineage.parent_ids),
+            "route": candidate.lineage.route,
+            "created_by": candidate.lineage.created_by,
+        },
+        "creative_context": _compact_creative_context(candidate, text_limit=380),
+        "evidence_status": _candidate_evidence_status(candidate),
+        "context_boundary": "Long parent-dossier prose is excerpted; preserve supplied genes and do not infer omitted details.",
     }
 
 
@@ -1925,15 +2193,15 @@ def _score_repair_candidate(candidate: CandidateDossier) -> dict[str, object]:
 
     return {
         "candidate_id": candidate.candidate_id,
-        "core_thesis": candidate.genome.core_thesis.value,
-        "mechanism": candidate.genome.mechanism.value,
-        "validation_logic": candidate.genome.validation_logic.value,
-        "boundary_conditions": candidate.genome.boundary_conditions.value,
-        "contributions": [item.statement for item in candidate.contributions],
-        "hypotheses": [item.statement for item in candidate.hypotheses],
+        "core_thesis": _compact_t4_text(candidate.genome.core_thesis.value, 700),
+        "mechanism": _compact_t4_text(candidate.genome.mechanism.value, 760),
+        "validation_logic": _compact_t4_text(candidate.genome.validation_logic.value, 620),
+        "boundary_conditions": _compact_t4_text(candidate.genome.boundary_conditions.value, 480),
+        "contributions": [_compact_t4_text(item.statement, 520) for item in candidate.contributions],
+        "hypotheses": [_compact_t4_text(item.statement, 520) for item in candidate.hypotheses],
         "evidence_composition": candidate.evidence_composition,
-        "creative_context": model_dump(candidate.creative_context, mode="json"),
-        "warnings": candidate.warnings,
+        "creative_context": _compact_creative_context(candidate, text_limit=420),
+        "warnings": [_compact_t4_text(item, 300) for item in candidate.warnings[:4]],
     }
 
 
