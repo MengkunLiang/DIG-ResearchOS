@@ -55,6 +55,7 @@ STRUCTURED_ONLY_WRITE_PATHS = {
     "ideation/exp_plan.yml": "exp_plan",
     "ideation/research_blueprint.yaml": "research_blueprint",
     "ideation/claim_registry.yaml": "claim_registry",
+    "ideation/t45_selection_isolation.json": "t45_selection_isolation",
     "ideation/orientation_review.json": "orientation_review",
     "ideation/idea_rationales.json": "idea_rationales",
     "ideation/idea_scorecard.yaml": "idea_scorecard",
@@ -87,6 +88,7 @@ T45_RUNTIME_DERIVED_ARTIFACTS = frozenset(
     {
         "ideation/proposal/proposal_manifest.json",
         "ideation/post_novelty_formalization.json",
+        "ideation/t45_selection_isolation.json",
         "ideation/research_dossier.json",
         "ideation/contribution_hypothesis_map.yaml",
         "ideation/validation_map.yaml",
