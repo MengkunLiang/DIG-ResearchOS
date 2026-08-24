@@ -433,6 +433,11 @@ def validate_t45_research_proposal(
         str(manifest.get("candidate_id") or "").strip(),
         expected_fingerprint=str(manifest.get("selection_fingerprint") or "").strip() or None,
         require_anchors=True,
+        # The final post-novelty receipt is published by
+        # write_post_novelty_formalization_manifest after this pre-publication
+        # Proposal check succeeds. Requiring it here made the validator
+        # circular and caused every otherwise valid T4.5 review to pause.
+        require_post_novelty_manifest=require_accepted_lineage,
         # During T4.5 review, the Proposal and source maps may be edited before
         # the final receipt is rewritten.  Immutable digest enforcement belongs
         # to the parallel-track snapshot/materialization boundary.

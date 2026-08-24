@@ -110,6 +110,7 @@ def track_identity_errors(
     *,
     expected_fingerprint: str | None = None,
     require_anchors: bool = False,
+    require_post_novelty_manifest: bool = True,
     verify_digests: bool = False,
 ) -> list[str]:
     """Check candidate and selection lineage on candidate-bound JSON anchors.
@@ -147,6 +148,16 @@ def track_identity_errors(
     for relative in _IDENTITY_ARTIFACTS:
         path = root / relative
         if not path.exists():
+            # During T4.5 review the Proposal and orientation record are
+            # validated before the runtime publishes the final receipt.  The
+            # receipt is the last derived artifact and cannot be required by
+            # the pre-publication validator without creating a circular
+            # failure: validate -> require receipt -> never publish receipt.
+            # T5 handoff and track snapshot callers keep the default strict
+            # behavior and therefore still fail closed when the receipt is
+            # genuinely missing.
+            if relative == "ideation/post_novelty_formalization.json" and not require_post_novelty_manifest:
+                continue
             if require_anchors:
                 errors.append(f"missing identity artifact: {relative}")
             continue

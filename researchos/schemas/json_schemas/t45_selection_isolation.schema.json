@@ -1,0 +1,42 @@
+{
+  "$id": "https://researchos.dev/schemas/t45_selection_isolation.schema.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {"type": "string", "minLength": 1},
+    "semantics": {"const": "t45_selection_isolation"},
+    "candidate_id": {"type": "string", "minLength": 1},
+    "selection_fingerprint": {"type": "string", "minLength": 1},
+    "status": {
+      "enum": [
+        "pending_novelty_audit",
+        "pending_formalization",
+        "accepted_for_t5"
+      ]
+    },
+    "reason": {"type": "string"},
+    "updated_at": {"type": "string", "minLength": 1},
+    "archive": {
+      "type": "object",
+      "properties": {
+        "root": {"type": "string", "minLength": 1},
+        "archived_paths": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "reason": {"type": "string", "minLength": 1}
+      },
+      "required": ["root", "archived_paths", "reason"],
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "schema_version",
+    "semantics",
+    "candidate_id",
+    "selection_fingerprint",
+    "status",
+    "reason",
+    "updated_at"
+  ],
+  "additionalProperties": true
+}

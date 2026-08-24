@@ -6869,13 +6869,24 @@ class AgentRunner:
 
         if ctx.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"}:
             repair_blocked, repair_block_reason = self._t45_quality_repair_window_blocked(ctx)
-            if repair_blocked:
-                raise RecoverableRuntimePause(
-                    "T45_REPAIR_WINDOW_PAUSED: "
-                    + repair_block_reason
-                    + "。为避免 resume 重复消耗额度，系统不会自动再次调用 Formalizer。"
-                    "请先修正该诊断关联的 source artifact，或从 T4 重新选择/重构研究方向后再 resume。"
-                )
+
+            def _raise_if_repair_window_blocked() -> None:
+                """Raise only after the deterministic pre-finalization fast path.
+
+                A prior repair ledger can describe an error that a newer
+                runtime has fixed.  Checking that ledger before
+                ``validate_outputs`` used to prevent the runtime from
+                publishing the now-valid final receipt, trapping a paused
+                workspace in an obsolete repair gate.
+                """
+
+                if repair_blocked:
+                    raise RecoverableRuntimePause(
+                        "T45_REPAIR_WINDOW_PAUSED: "
+                        + repair_block_reason
+                        + "。为避免 resume 重复消耗额度，系统不会自动再次调用 Formalizer。"
+                        "请先修正该诊断关联的 source artifact，或从 T4 重新选择/重构研究方向后再 resume。"
+                    )
             if ctx.task_id == "T4.5-FORMALIZE":
                 outputs = [
                     ctx.workspace_dir / "ideation" / "research_blueprint.yaml",
@@ -6902,6 +6913,7 @@ class AgentRunner:
                     ctx.workspace_dir / "ideation" / "proposal" / "research_proposal.md",
                 ]
             if any(not path.is_file() or path.stat().st_size <= 0 for path in outputs):
+                _raise_if_repair_window_blocked()
                 return False
             if not self._outputs_newer_than_inputs(
                 ctx,
@@ -6910,10 +6922,12 @@ class AgentRunner:
                 event="t45_formalization_resume_prefinalize_skipped",
                 reason="formalization_outputs_older_than_inputs",
             ):
+                _raise_if_repair_window_blocked()
                 return False
             ok, err = self.agent.validate_outputs(ctx)
             if not ok:
                 self.log.info("t45_formalization_resume_prefinalize_skipped", reason=err)
+                _raise_if_repair_window_blocked()
                 return False
             self.progress.emit(
                 "[Research Formalizer Agent] 已有研究正式化产物完整且校验通过，跳过重复 LLM 读取与确认。",
