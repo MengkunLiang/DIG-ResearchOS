@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 from researchos.ideation.formalization import reset_t45_artifacts_for_new_selection
@@ -189,6 +190,40 @@ def test_materialization_backfills_legacy_track_and_never_uses_active_projection
             assert json.loads((tmp_path / relative).read_text(encoding="utf-8"))["candidate_id"] == "C1"
         else:
             assert (tmp_path / relative).read_text(encoding="utf-8") == "C1 archive"
+
+
+def test_legacy_track_backfills_orientation_config_only_when_digest_matches(tmp_path: Path) -> None:
+    manifest = create_manifest(
+        tmp_path,
+        candidate_ids=["C1"],
+        population_id="P1",
+        directive_path="parallel.json",
+        source="copilot",
+    )
+    track_root = tmp_path / "ideation/proposal_portfolio/tracks/C1/artifacts"
+    for relative in TRACK_REQUIRED_ARTIFACTS:
+        _write_artifact(track_root, relative, "C1")
+    _write_identity_anchors(track_root, "C1", "fp-C1")
+    active_orientation = tmp_path / "ideation/orientation_config.yaml"
+    active_orientation.parent.mkdir(parents=True, exist_ok=True)
+    active_orientation.write_text("profile_type: utd\n", encoding="utf-8")
+    (track_root / "ideation/orientation_config.yaml").unlink()
+    (track_root / "ideation/post_novelty_formalization.json").write_text(
+        json.dumps(
+            {
+                "candidate_id": "C1",
+                "selection_fingerprint": "fp-C1",
+                "artifact_digests": {
+                    "ideation/orientation_config.yaml": hashlib.sha256(active_orientation.read_bytes()).hexdigest()
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest["tracks"][0]["status"] = "ready_for_t5_selection"
+    backfill_historical_track_artifacts(tmp_path, manifest)
+    assert (track_root / "ideation/orientation_config.yaml").read_text(encoding="utf-8") == "profile_type: utd\n"
+    assert ready_track_ids(manifest, workspace_dir=tmp_path) == ["C1"]
 
 
 def test_ready_tracks_have_stable_display_aliases_and_resolve_to_independent_ids(tmp_path: Path) -> None:

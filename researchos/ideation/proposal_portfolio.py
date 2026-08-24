@@ -26,6 +26,10 @@ TRACKS_REL_DIR = "ideation/proposal_portfolio/tracks"
 TRACK_ARTIFACTS = (
     "ideation/_gate1_user_selection.json",
     "ideation/hypothesis_brief.yaml",
+    # T5/T8 consume the selected orientation as part of the active package,
+    # and post_novelty_formalization records its digest. Keep one verified
+    # copy in every track so an archived Proposal is self-contained.
+    "ideation/orientation_config.yaml",
     "ideation/selected",
     "ideation/selected_idea_brief.md",
     "ideation/novelty_audit.md",
@@ -57,6 +61,7 @@ TRACK_ARTIFACTS = (
 TRACK_REQUIRED_ARTIFACTS = (
     "ideation/selected/selected_candidate.json",
     "ideation/hypothesis_brief.yaml",
+    "ideation/orientation_config.yaml",
     "ideation/selected_idea_brief.md",
     "ideation/novelty_audit.md",
     "ideation/research_blueprint.yaml",
@@ -261,6 +266,38 @@ def backfill_historical_track_artifacts(workspace_dir: Path, manifest: dict[str,
         if str(receipt.get("candidate_id") or "").strip() != str(track.get("candidate_id") or "").strip():
             # Never use an archive whose receipt belongs to another Candidate.
             continue
+
+        # A pre-fix portfolio snapshot could contain a valid post-novelty
+        # receipt whose digest list included the shared orientation config,
+        # while omitting that file from the copied track.  It is safe to
+        # recover this one shared artifact only when the active workspace
+        # bytes match the archived receipt exactly.  Never copy a
+        # candidate-bound artifact from the active projection, because that
+        # could silently import another Proposal's research package.
+        copied = list(track.get("copied_artifacts") or []) if isinstance(track.get("copied_artifacts"), list) else []
+        formalization_receipt = _read_json_object(destination_root / "ideation/post_novelty_formalization.json")
+        digests = {}
+        if isinstance(receipt.get("artifact_digests"), dict):
+            digests.update(receipt["artifact_digests"])
+        if isinstance(formalization_receipt.get("artifact_digests"), dict):
+            digests.update(formalization_receipt["artifact_digests"])
+        for relative in ("ideation/orientation_config.yaml",):
+            target = destination_root / relative
+            source = workspace / relative
+            expected_digest = str(digests.get(relative) or "").strip()
+            if target.exists() or not expected_digest or not source.is_file():
+                continue
+            actual_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            if actual_digest != expected_digest:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            if relative not in copied:
+                copied.append(relative)
+            changed = True
+        if copied != track.get("copied_artifacts"):
+            track["copied_artifacts"] = list(dict.fromkeys(copied))
+
         archive = receipt.get("archive") if isinstance(receipt, dict) else None
         archive_rel = str(archive.get("root") or "").strip() if isinstance(archive, dict) else ""
         archive_root = (workspace / archive_rel).resolve() if archive_rel else None
