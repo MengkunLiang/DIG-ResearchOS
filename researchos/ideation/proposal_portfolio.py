@@ -311,6 +311,76 @@ def load_manifest(workspace_dir: Path) -> dict[str, Any] | None:
     return payload if isinstance(tracks, list) else None
 
 
+def _refresh_formalization_receipt_digests(
+    artifact_root: Path,
+    receipt: dict[str, Any],
+) -> None:
+    """Refresh a legacy track receipt after deterministic derived repair."""
+
+    artifacts = dict(receipt.get("artifacts") or {}) if isinstance(receipt.get("artifacts"), dict) else {}
+    artifacts.setdefault("orientation_config", "ideation/orientation_config.yaml")
+    receipt["artifacts"] = artifacts
+    digest_paths = set(str(value) for value in artifacts.values() if str(value).strip())
+    digest_paths.update(
+        {
+            "ideation/selected/selected_candidate.json",
+            "ideation/t45_selection_isolation.json",
+            "ideation/novelty_audit.md",
+            "ideation/collision_cases.md",
+            "ideation/novelty_audit_fingerprints.json",
+        }
+    )
+    digests = dict(receipt.get("artifact_digests") or {}) if isinstance(receipt.get("artifact_digests"), dict) else {}
+    for relative in digest_paths:
+        path = artifact_root / relative
+        if path.is_file():
+            digests[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    receipt["artifact_digest_algorithm"] = "sha256"
+    receipt["artifact_digests"] = digests
+    (artifact_root / "ideation/post_novelty_formalization.json").write_text(
+        json.dumps(receipt, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _repair_track_derived_identity(
+    artifact_root: Path,
+    candidate_id: str,
+    receipt: dict[str, Any],
+) -> tuple[bool, str | None]:
+    """Recompile only deterministic T5 projections when a legacy track leaked one.
+
+    Parallel tracks created before the isolation boundary could carry a
+    dossier from the previous Candidate even though their blueprint,
+    registry, Proposal and selection receipt were already track-local.  The
+    dossier and three maps are deterministic projections of those sources,
+    so regenerating them inside the track is safe; candidate-bound Proposal
+    prose is never copied or rewritten here.
+    """
+
+    errors = track_identity_errors(
+        artifact_root,
+        candidate_id,
+        require_anchors=True,
+        verify_digests=False,
+    )
+    if not any("research_dossier.json" in item for item in errors):
+        return False, None
+    audit_path = artifact_root / "ideation/novelty_audit.md"
+    if not audit_path.is_file():
+        return False, "legacy derived artifact is inconsistent and novelty_audit.md is missing"
+    try:
+        from .formalization import compile_t45_derived_artifacts
+
+        ok, error = compile_t45_derived_artifacts(artifact_root, audit_path)
+    except (OSError, ValueError, TypeError, yaml.YAMLError) as exc:
+        return False, f"deterministic legacy derived-artifact repair failed: {exc}"
+    if not ok:
+        return False, error or "deterministic legacy derived-artifact repair did not pass source validation"
+    _refresh_formalization_receipt_digests(artifact_root, receipt)
+    return True, None
+
+
 def backfill_historical_track_artifacts(workspace_dir: Path, manifest: dict[str, Any]) -> dict[str, Any]:
     """Recover files omitted by the pre-isolation portfolio implementation.
 
@@ -408,6 +478,18 @@ def backfill_historical_track_artifacts(workspace_dir: Path, manifest: dict[str,
                 receipt_target.write_text(json.dumps(formalization_receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if copied != track.get("copied_artifacts"):
             track["copied_artifacts"] = list(dict.fromkeys(copied))
+
+        repaired, repair_error = _repair_track_derived_identity(
+            destination_root,
+            str(track.get("candidate_id") or ""),
+            formalization_receipt,
+        )
+        if repaired:
+            track["derived_artifact_repair"] = "deterministic_recompile"
+            changed = True
+        elif repair_error:
+            track["derived_artifact_repair_error"] = repair_error
+            changed = True
 
         archive = receipt.get("archive") if isinstance(receipt, dict) else None
         archive_rel = str(archive.get("root") or "").strip() if isinstance(archive, dict) else ""
