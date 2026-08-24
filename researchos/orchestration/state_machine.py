@@ -5180,7 +5180,7 @@ class StateMachine:
             if candidate_id not in ready_tracks:
                 presentation = dict(state.pending_gate.presentation or {}) if state.pending_gate else {}
                 presentation["portfolio_selection_error"] = (
-                    "请选择表格中一条已完成的 Proposal，例如 D1 或 D2。"
+                    "请选择表格中一条已完成的 Proposal，例如 D1、D2、第一条或第二条。"
                     + " 当前输入："
                     + (raw_candidate_id or "（空）")
                     + "；可选："

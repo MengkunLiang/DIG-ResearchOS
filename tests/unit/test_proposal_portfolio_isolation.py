@@ -4,6 +4,8 @@ import json
 import hashlib
 from pathlib import Path
 
+import yaml
+
 from researchos.ideation.formalization import reset_t45_artifacts_for_new_selection
 from researchos.orchestration.state_machine import StateMachine
 from researchos.schemas.state import StateYaml
@@ -15,6 +17,7 @@ from researchos.ideation.proposal_portfolio import (
     create_manifest,
     materialize_selected_track,
     overview,
+    proposal_selection_alias,
     ready_track_ids,
     resolve_ready_track_selection,
     snapshot_active_track,
@@ -226,6 +229,44 @@ def test_legacy_track_backfills_orientation_config_only_when_digest_matches(tmp_
     assert ready_track_ids(manifest, workspace_dir=tmp_path) == ["C1"]
 
 
+def test_legacy_track_without_orientation_digest_is_migrated_only_when_orientation_agrees(tmp_path: Path) -> None:
+    manifest = create_manifest(
+        tmp_path,
+        candidate_ids=["C1"],
+        population_id="P1",
+        directive_path="parallel.json",
+        source="copilot",
+    )
+    track_root = tmp_path / "ideation/proposal_portfolio/tracks/C1/artifacts"
+    for relative in TRACK_REQUIRED_ARTIFACTS:
+        _write_artifact(track_root, relative, "C1")
+    _write_identity_anchors(track_root, "C1", "fp-C1")
+    orientation = {
+        "profile_type": "utd",
+        "proposal_weights": {"problem_and_motivation": 1.0},
+    }
+    active_orientation = tmp_path / "ideation/orientation_config.yaml"
+    active_orientation.parent.mkdir(parents=True, exist_ok=True)
+    active_orientation.write_text(yaml.safe_dump(orientation), encoding="utf-8")
+    (track_root / "ideation/orientation_config.yaml").unlink()
+    (track_root / "ideation/research_blueprint.yaml").write_text(
+        yaml.safe_dump({"orientation": orientation}), encoding="utf-8"
+    )
+    (track_root / "ideation/orientation_review.json").write_text(
+        json.dumps({"orientation": "utd"}), encoding="utf-8"
+    )
+    (track_root / "ideation/post_novelty_formalization.json").write_text(
+        json.dumps({"candidate_id": "C1", "selection_fingerprint": "fp-C1"}),
+        encoding="utf-8",
+    )
+    manifest["tracks"][0]["status"] = "ready_for_t5_selection"
+    backfill_historical_track_artifacts(tmp_path, manifest)
+    assert (track_root / "ideation/orientation_config.yaml").is_file()
+    receipt = json.loads((track_root / "ideation/post_novelty_formalization.json").read_text(encoding="utf-8"))
+    assert "ideation/orientation_config.yaml" in receipt["artifact_digests"]
+    assert ready_track_ids(manifest, workspace_dir=tmp_path) == ["C1"]
+
+
 def test_ready_tracks_have_stable_display_aliases_and_resolve_to_independent_ids(tmp_path: Path) -> None:
     manifest = create_manifest(
         tmp_path,
@@ -244,6 +285,14 @@ def test_ready_tracks_have_stable_display_aliases_and_resolve_to_independent_ids
     assert resolve_ready_track_selection(manifest, "D1") == "EVO-EP1-C1-001"
     assert resolve_ready_track_selection(manifest, "d2") == "CSB-S1"
     assert resolve_ready_track_selection(manifest, "CSB-S1") == "CSB-S1"
+
+
+def test_proposal_selection_accepts_natural_ordinals() -> None:
+    assert proposal_selection_alias("第一个") == "D1"
+    assert proposal_selection_alias("第二条") == "D2"
+    assert proposal_selection_alias("选择第2个方案") == "D2"
+    assert proposal_selection_alias("proposal2") == "D2"
+    assert proposal_selection_alias("1") is None
 
 
 def test_parallel_track_with_cross_candidate_identity_is_quarantined(tmp_path: Path) -> None:

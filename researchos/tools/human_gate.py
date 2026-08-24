@@ -28,6 +28,7 @@ from rich.table import Table
 from rich.text import Text
 
 from ..latex_templates import ccf_template_ids, ccf_template_option_id, normalize_ccf_template_id
+from ..ideation.proposal_portfolio import proposal_selection_alias
 from ..ui.tables import lightweight_ruled_table
 from ..ui.candidate_cards import CandidateCardRenderer, CandidateViewModel
 
@@ -1752,7 +1753,7 @@ class CLIHumanInterface(HumanInterface):
             print(rendered)
 
     def _render_t45_proposal_portfolio_options(self, options: list[dict]) -> None:
-        print("请输入表格中的选择别名 D1、D2（或完整 Candidate ID）。若暂时不选，请输入“暂不选择”。")
+        print("请输入 D1/D2、完整 Candidate ID，或自然表达“第一个/第二个”“第一条/第二条”。若暂时不选，请输入“暂不选择”。")
         for index, option in enumerate(options, start=1):
             print(f"[{index}] {option.get('label') or option.get('id')}")
             if option.get("description"):
@@ -3362,8 +3363,9 @@ class CLIHumanInterface(HumanInterface):
             # full generated Candidate ID (for scripts and older screens),
             # while leaving numeric menu answers such as ``1`` and ``2`` to
             # the normal option parser.
-            if re.fullmatch(r"[DS]\d+", cleaned) or re.fullmatch(r"[A-Z][A-Z0-9]*(?:[-_][A-Z0-9]+)+", cleaned):
-                return {"option_id": "select_proposal", "captured": {"candidate_id": cleaned}}
+            ordinal_alias = proposal_selection_alias(raw_answer)
+            if ordinal_alias or re.fullmatch(r"[A-Z][A-Z0-9]*(?:[-_][A-Z0-9]+)+", cleaned):
+                return {"option_id": "select_proposal", "captured": {"candidate_id": ordinal_alias or cleaned}}
             if cleaned in {"暂停", "暂不选择", "PAUSE"}:
                 return {"option_id": "pause_selection", "captured": {}}
         if gate_id != "t2_literature_param_gate":

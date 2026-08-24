@@ -12,8 +12,11 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 from typing import Any
+
+import yaml
 
 
 MANIFEST_REL_PATH = "ideation/proposal_portfolio/manifest.json"
@@ -84,6 +87,77 @@ _IDENTITY_ARTIFACTS = (
     "ideation/proposal/proposal_manifest.json",
     "ideation/post_novelty_formalization.json",
 )
+
+_ORDINAL_NUMBER_WORDS = {
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+    "十": 10,
+}
+
+
+def proposal_selection_alias(raw_selection: str | None) -> str | None:
+    """Normalize human-facing ordinal wording to the stable ``D<n>`` alias.
+
+    This helper intentionally handles only selection expressions, not the
+    numeric Gate menu.  A bare ``1`` therefore remains available to choose
+    the menu action, while ``第一个``/``第一条`` can identify the first
+    completed Proposal in either the menu follow-up prompt or a scripted
+    input.  Candidate IDs and existing D/S aliases are returned unchanged in
+    canonical uppercase form.
+    """
+
+    value = re.sub(r"\s+", "", str(raw_selection or "").strip())
+    if not value:
+        return None
+    upper = value.upper()
+    if re.fullmatch(r"[DS]\d+", upper):
+        return upper
+
+    aliases = {
+        "首个": 1,
+        "首条": 1,
+        "首份": 1,
+        "第一": 1,
+        "第一个": 1,
+        "第一条": 1,
+        "第一项": 1,
+        "第一份": 1,
+        "第二": 2,
+        "第二个": 2,
+        "第二条": 2,
+        "第二项": 2,
+        "第二份": 2,
+        "第三": 3,
+        "第三个": 3,
+        "第三条": 3,
+        "第三项": 3,
+        "第三份": 3,
+    }
+    if value in aliases:
+        return f"D{aliases[value]}"
+
+    ordinal = re.fullmatch(r"(?:选择|选|推进)?第(\d+|[一二两三四五六七八九十])(?:个|条|项|份|号)?(?:proposal|方案|提案)?", value, re.IGNORECASE)
+    if ordinal:
+        token = ordinal.group(1)
+        number = int(token) if token.isdigit() else _ORDINAL_NUMBER_WORDS.get(token)
+        if number:
+            return f"D{number}"
+
+    named = re.fullmatch(r"(?:proposal|方案|提案)(?:第)?(\d+|[一二两三四五六七八九十])", value, re.IGNORECASE)
+    if named:
+        token = named.group(1)
+        number = int(token) if token.isdigit() else _ORDINAL_NUMBER_WORDS.get(token)
+        if number:
+            return f"D{number}"
+    return None
 
 
 def _validate_candidate_id(candidate_id: str) -> str:
@@ -285,16 +359,53 @@ def backfill_historical_track_artifacts(workspace_dir: Path, manifest: dict[str,
             target = destination_root / relative
             source = workspace / relative
             expected_digest = str(digests.get(relative) or "").strip()
-            if target.exists() or not expected_digest or not source.is_file():
+            if target.exists() or not source.is_file():
                 continue
-            actual_digest = hashlib.sha256(source.read_bytes()).hexdigest()
-            if actual_digest != expected_digest:
-                continue
+
+            # Newer receipts carry the exact digest.  Older receipts did not
+            # list this shared orientation file, so use the independent
+            # orientation fields in the archived blueprint/review as a
+            # compatibility proof before adding the current shared config.
+            if expected_digest:
+                actual_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+                if actual_digest != expected_digest:
+                    continue
+            else:
+                try:
+                    active_orientation = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
+                    blueprint = yaml.safe_load(
+                        (destination_root / "ideation/research_blueprint.yaml").read_text(encoding="utf-8")
+                    ) or {}
+                    review = _read_json_object(destination_root / "ideation/orientation_review.json")
+                except (OSError, ValueError, yaml.YAMLError):
+                    continue
+                active_profile = str(active_orientation.get("profile_type") or "").strip()
+                archived_orientation = blueprint.get("orientation") if isinstance(blueprint, dict) else {}
+                archived_profile = str(archived_orientation.get("profile_type") or "").strip()
+                review_profile = str(review.get("orientation") or "").strip()
+                active_weights = active_orientation.get("proposal_weights")
+                archived_weights = archived_orientation.get("proposal_weights") if isinstance(archived_orientation, dict) else None
+                if not (
+                    active_profile
+                    and active_profile == archived_profile == review_profile
+                    and isinstance(active_weights, dict)
+                    and active_weights == archived_weights
+                ):
+                    continue
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
             if relative not in copied:
                 copied.append(relative)
             changed = True
+
+            # Upgrade a legacy formalization receipt so the normal digest
+            # verifier can remain strict on the next render/resume.
+            if not expected_digest and formalization_receipt:
+                formalization_receipt.setdefault("artifacts", {})["orientation_config"] = relative
+                formalization_receipt.setdefault("artifact_digests", {})[relative] = hashlib.sha256(source.read_bytes()).hexdigest()
+                formalization_receipt["artifact_digest_algorithm"] = "sha256"
+                receipt_target = destination_root / "ideation/post_novelty_formalization.json"
+                receipt_target.write_text(json.dumps(formalization_receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if copied != track.get("copied_artifacts"):
             track["copied_artifacts"] = list(dict.fromkeys(copied))
 
@@ -621,9 +732,10 @@ def resolve_ready_track_selection(
     if not value:
         return None
     ready_ids = ready_track_ids(manifest, workspace_dir=workspace_dir)
-    normalized = value.upper()
+    normalized = proposal_selection_alias(value) or value.upper()
     aliases: dict[str, str] = {}
     for index, candidate_id in enumerate(ready_ids, start=1):
         aliases[f"D{index}"] = candidate_id
         aliases[f"S{index}"] = candidate_id
+        aliases[str(index)] = candidate_id
     return aliases.get(normalized, value)
