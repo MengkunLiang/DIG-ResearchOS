@@ -101,6 +101,9 @@ from ..ideation.proposal_portfolio import (
     active_candidate_id as active_proposal_track_candidate_id,
     activate_next_track,
     backfill_historical_track_artifacts,
+    bind_active_track_selection,
+    candidate_anchor,
+    candidate_relationships,
     create_manifest as create_proposal_portfolio_manifest,
     load_manifest as load_proposal_portfolio_manifest,
     materialize_selected_track,
@@ -6043,6 +6046,18 @@ class StateMachine:
             selection_fingerprint=selection_fingerprint,
             next_task="T4.5",
         )
+        portfolio_manifest = load_proposal_portfolio_manifest(workspace_dir)
+        if portfolio_manifest is not None and str(portfolio_manifest.get("status") or "") == "running":
+            selected_payload = self._read_json_dict(
+                workspace_dir / "ideation" / "selected" / "selected_candidate.json"
+            ) or {}
+            bind_active_track_selection(
+                workspace_dir,
+                portfolio_manifest,
+                candidate_id=selected_candidate_id,
+                selection_fingerprint=selection_fingerprint,
+                candidate_fingerprint=str(selected_payload.get("candidate_fingerprint") or "").strip(),
+            )
         state.pending_gate = None
         state.current_task = "T4.5"
         state.status = "RUNNING"
@@ -6096,6 +6111,10 @@ class StateMachine:
             population_id=population.population_id,
             directive_path=directive_path,
             source="auto" if directive.raw_user_input.startswith("[Auto]") else "copilot",
+            candidate_anchors=[candidate_anchor(_dossiers[candidate_id]) for candidate_id in candidate_ids],
+            relationships=candidate_relationships(
+                [candidate_anchor(_dossiers[candidate_id]) for candidate_id in candidate_ids]
+            ),
         )
         # Reuse the single-Candidate selection compiler for the first track.
         # It is the canonical boundary that builds all T4 -> T4.5 artifacts.

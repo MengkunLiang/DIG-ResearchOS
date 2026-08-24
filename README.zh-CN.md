@@ -115,11 +115,11 @@ T4.5 的作用是把“有潜力的 Idea”变成“可执行、可证伪的研�
 
 Proposal 是给研究者阅读的完整论证；蓝图和主张登记表则让后续实现保持精确。三者描述的是同一个研究方案，不是三份彼此竞争的版本。UTD、CCF-A 与 Hybrid 都遵循同一研究逻辑，只是在贡献和写作取向上权重不同。
 
-在 T4 Gate 中，Copilot 可以选择一条 Candidate 进入 Proposal，也可以选择 2–3 条“分别写多个 Proposal”。后者不会拼接 Idea：每条 Candidate 都各自完成 T4.5，并归档在 `ideation/proposal_portfolio/tracks/`。如果只有一条 Proposal，系统直接进入 T5；如果有多条已通过的 Proposal，T4.5 结束前会出现一个带有 `D1`、`D2` 等稳定别名的选择表。表格同时显示完整 Candidate ID、Proposal 文件路径和结构化产物完成度。输入 `D1`、`D2`、完整 Candidate ID，或自然表达“第一个/第二个”“第一条/第二条”均可选择；数字 `1`、`2` 在菜单中仍表示菜单项，在随后要求输入 Candidate 时也会按表格顺序解析。其余 Proposal 会保留，方便以后回看或另开实验。
+在 T4 Gate 中，Copilot 可以选择一条 Candidate 进入 Proposal，也可以选择 2–3 条“分别写多个 Proposal”。后者不会拼接 Idea：每条 Candidate 都各自完成 T4.5，并归档在 `ideation/proposal_portfolio/tracks/`。如果只有一条 Proposal，系统直接进入 T5；如果有多条已通过的 Proposal，T4.5 结束前会出现一个带有 `D1`、`D2` 等稳定别名的选择表。表格同时显示每条候选的核心问题、核心机制、父子/共享父方向关系、完整 Candidate ID、Proposal 文件路径和结构化产物完成度。父方向与其扩展方向可以分别推进，但系统会明确提示“扩展关系”，并要求扩展 Proposal 写出新增机制和新增判别实验；它们不会被当作互不相关的方向，也不会共享一份活动研究包。输入 `D1`、`D2`、完整 Candidate ID，或自然表达“第一个/第二个”“第一条/第二条”均可选择；数字 `1`、`2` 在菜单中仍表示菜单项，在随后要求输入 Candidate 时也会按表格顺序解析。其余 Proposal 会保留，方便以后回看或另开实验。
 
 并行正式化期间，`ideation/proposal/`、`hypotheses.md`、蓝图、主张、实验计划、验证/停止条件、研究 dossier 以及新颖性指纹等活动路径只表示“当前正在处理的那一条”。切换到下一条时，上一条的完整候选绑定产物会先复制到对应的 `tracks/<Candidate>/artifacts/`，再清理活动投影。因而根目录最后只看到最后一条是正常的活动投影，不代表前一条被覆盖。两条独立 Proposal 的唯一真源是 `ideation/proposal_portfolio/manifest.json` 及其 `tracks/` 子目录，而不是活动根目录。选择某条时，系统会从该条归档恢复全部候选绑定文件，避免不同 Proposal 串线；如果归档缺少必需文件，系统会回到同一个选择页并报告缺失项，不会从另一条 Proposal 借文件。
 
-每条归档还必须通过候选身份一致性检查。`selected_candidate.json`、隔离回执、研究 dossier、Proposal manifest 和正式化回执中的 `candidate_id` 与 `selection_fingerprint` 必须彼此相符。仅仅文件齐全或 YAML/JSON 能解析，并不代表归档可信。旧版本在等待 Gate 时可能已经保存了旧的 17 项文件表，或漏存共享的 `orientation_config.yaml`；resume 会依据该条归档自己的回执安全补齐缺失文件，并重新编译确定性的 dossier/映射，不会从另一条 Proposal 借用研究内容。若发现 dossier 来自另一条 Candidate、fingerprint 过期，或历史回执无法证明来源，表格会标记“归档溯源不一致”，不会分配 D1/D2 别名，也不会让 T5 读取这条结果。此时应从对应 Candidate 重新完成 T4.5，而不是手工把另一条 Proposal 的文件复制过来。
+每条归档还必须通过候选身份一致性检查。`selected_candidate.json`、隔离回执、研究 dossier、Proposal manifest 和正式化回执中的 `candidate_id` 与 `selection_fingerprint` 必须彼此相符；manifest 还保存 Candidate anchor、Candidate fingerprint 和活动轨迹上下文。仅仅文件齐全或 YAML/JSON 能解析，并不代表归档可信。旧版本在等待 Gate 时可能已经保存了旧的 17 项文件表，或漏存共享的 `orientation_config.yaml`；resume 会依据该条归档自己的回执安全补齐缺失文件，并重新编译确定性的 dossier/映射，不会从另一条 Proposal 借用研究内容。若发现 dossier 来自另一条 Candidate、fingerprint 过期、活动投影与当前轨迹不一致，或历史回执无法证明来源，Formalizer 会在模型调用前暂停，表格会标记“归档溯源不一致”，不会分配 D1/D2 别名，也不会让 T5 读取这条结果。系统还会拒绝两条轨迹之间的精确重复或高相似研究包。此时应从对应 Candidate 重新完成 T4.5，而不是手工把另一条 Proposal 的文件复制过来。
 
 正式化回执还会保存候选绑定文件的 SHA-256 摘要，并在交接前检查验证映射、贡献映射、研究 dossier、实验计划与 claim registry 的 ID 集合是否一致。这样即使旧文件仍能通过单文件 schema，也会在跨 Proposal 串线时被隔离。
 

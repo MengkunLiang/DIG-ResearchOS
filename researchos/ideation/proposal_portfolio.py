@@ -15,13 +15,30 @@ from pathlib import Path
 import re
 import shutil
 from typing import Any
+from difflib import SequenceMatcher
 
 import yaml
+
+from ..pydantic_compat import model_dump
+from .state import stable_fingerprint
 
 
 MANIFEST_REL_PATH = "ideation/proposal_portfolio/manifest.json"
 SELECTION_REL_PATH = "ideation/proposal_portfolio/selection.json"
 TRACKS_REL_DIR = "ideation/proposal_portfolio/tracks"
+ACTIVE_TRACK_CONTEXT_REL_PATH = "ideation/proposal_portfolio/active_track.json"
+
+# Research-facing sources must be different enough to justify two independent
+# Proposal tracks.  Candidate IDs and provenance receipts are checked
+# separately; these paths protect the scientific package from a stale/generic
+# copy that happens to carry the new ID.
+TRACK_DISTINCTNESS_ARTIFACTS = (
+    "ideation/research_blueprint.yaml",
+    "ideation/claim_registry.yaml",
+    "ideation/hypotheses.md",
+    "ideation/exp_plan.yaml",
+    "ideation/proposal/research_proposal.md",
+)
 
 # These are the candidate-bound artifacts that T4.5 and T5 consume.  Shared
 # T4 evidence, the Population, and all source literature intentionally remain
@@ -183,6 +200,210 @@ def _read_json_object(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _candidate_payload(candidate: Any) -> dict[str, Any]:
+    """Convert a CandidateDossier or mapping into a JSON-like mapping."""
+
+    if isinstance(candidate, dict):
+        return candidate
+    try:
+        value = model_dump(candidate, mode="json")
+    except (TypeError, ValueError, AttributeError):
+        value = {}
+    return value if isinstance(value, dict) else {}
+
+
+def candidate_anchor(candidate: Any) -> dict[str, Any]:
+    """Return the immutable research intent that a Proposal track must keep.
+
+    The anchor is deliberately compact and derived only from the T4 Candidate
+    dossier.  It is not a second score and never changes the Candidate.  Its
+    purpose is to make a parallel track's input explicit to the runtime and to
+    the Formalizer, so a parent Candidate and an evolved child cannot silently
+    share one active research package.
+    """
+
+    payload = _candidate_payload(candidate)
+    genome = payload.get("genome") if isinstance(payload.get("genome"), dict) else payload
+    lineage = payload.get("lineage") if isinstance(payload.get("lineage"), dict) else {}
+
+    def gene_value(name: str, *, limit: int, aliases: tuple[str, ...] = ()) -> str:
+        value = genome.get(name) if isinstance(genome, dict) else ""
+        if not value and isinstance(payload, dict):
+            for alias in aliases:
+                value = payload.get(alias)
+                if value:
+                    break
+        if isinstance(value, dict):
+            value = value.get("value") or value.get("statement") or value.get("text")
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
+
+    candidate_id = str(
+        payload.get("candidate_id")
+        or payload.get("id")
+        or payload.get("internal_id")
+        or genome.get("candidate_id")
+        or genome.get("id")
+        or ""
+    ).strip()
+    parents = lineage.get("parent_ids") or genome.get("parents") or []
+    if not isinstance(parents, list):
+        parents = [str(parents)] if str(parents).strip() else []
+    hypothesis_bundle = gene_value("hypothesis_bundle", limit=1200, aliases=("candidate_hypotheses", "hypotheses"))
+    return {
+        "candidate_id": candidate_id,
+        "candidate_fingerprint": stable_fingerprint(payload),
+        "route": str(lineage.get("route") or genome.get("route") or "").strip(),
+        "maturity": str(payload.get("maturity") or genome.get("maturity") or "").strip(),
+        "parent_ids": list(dict.fromkeys(str(item).strip() for item in parents if str(item).strip())),
+        "core_problem": gene_value("problem", limit=700, aliases=("target_problem", "problem_statement")),
+        "core_thesis": gene_value("core_thesis", limit=1000, aliases=("core_claim", "pitch")),
+        "mechanism": gene_value("mechanism", limit=1400),
+        "design_or_artifact": gene_value("design_or_artifact", limit=1200, aliases=("innovation", "contribution_character")),
+        "hypothesis_bundle": hypothesis_bundle,
+        "validation_logic": gene_value("validation_logic", limit=1200, aliases=("minimum_experiment", "prediction")),
+        "hypothesis_ids": [
+            str(item.get("hypothesis_id") or item.get("id") or "").strip()
+            for item in (payload.get("hypotheses") if isinstance(payload.get("hypotheses"), list) else [])
+            if isinstance(item, dict) and str(item.get("hypothesis_id") or item.get("id") or "").strip()
+        ],
+    }
+
+
+def candidate_relationships(anchors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Describe parent/child and shared-parent relations in a multi-selection.
+
+    This is a transparent warning for the researcher, not an automatic
+    rejection.  A child may still deserve its own Proposal, but Formalizer and
+    Portfolio Gate must know that it extends another selected direction.
+    """
+
+    by_id = {
+        str(item.get("candidate_id") or "").strip(): item
+        for item in anchors
+        if isinstance(item, dict) and str(item.get("candidate_id") or "").strip()
+    }
+    def selected_ancestors(candidate_id: str) -> set[str]:
+        """Follow only selected ancestors; unselected lineage stays context."""
+
+        ancestors: set[str] = set()
+        pending = list(by_id.get(candidate_id, {}).get("parent_ids") or [])
+        while pending:
+            parent_id = str(pending.pop()).strip()
+            if not parent_id or parent_id in ancestors:
+                continue
+            ancestors.add(parent_id)
+            parent = by_id.get(parent_id)
+            if parent:
+                pending.extend(parent.get("parent_ids") or [])
+        return ancestors
+
+    relationships: list[dict[str, Any]] = []
+    for left_id, left in by_id.items():
+        left_parents = selected_ancestors(left_id)
+        for right_id, right in by_id.items():
+            if left_id >= right_id:
+                continue
+            right_parents = selected_ancestors(right_id)
+            if left_id in right_parents or right_id in left_parents:
+                child, parent = (right_id, left_id) if left_id in right_parents else (left_id, right_id)
+                relationships.append({"left": left_id, "right": right_id, "kind": "parent_child", "parent": parent, "child": child})
+            elif left_parents & right_parents:
+                relationships.append({"left": left_id, "right": right_id, "kind": "shared_parent", "shared_parents": sorted(left_parents & right_parents)})
+    return relationships
+
+
+def _normalized_content(text: str) -> str:
+    """Normalize only formatting noise for cross-track duplicate detection."""
+
+    value = re.sub(r"\s+", " ", str(text or "").casefold()).strip()
+    return value
+
+
+def track_content_fingerprints(artifact_root: Path) -> dict[str, str]:
+    """Hash candidate-bound research sources under one track."""
+
+    root = Path(artifact_root)
+    fingerprints: dict[str, str] = {}
+    for relative in TRACK_DISTINCTNESS_ARTIFACTS:
+        path = root / relative
+        if path.is_file():
+            fingerprints[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return fingerprints
+
+
+def cross_track_content_errors(
+    workspace_dir: Path,
+    manifest: dict[str, Any],
+    candidate_id: str,
+    *,
+    active_root: Path | None = None,
+) -> list[str]:
+    """Reject exact or near-identical scientific packages across tracks.
+
+    Identity checks prevent a Candidate-ID swap; this check prevents a valid
+    new ID from being attached to the prior track's generic Proposal.  It is
+    intentionally conservative: exact equality is always an error, while a
+    very high normalized similarity is reported only when both Proposal bodies
+    and at least one structured source agree.  Parent/child tracks normally
+    share concepts but should still differ in their research argument.
+    """
+
+    workspace = Path(workspace_dir)
+    current_root = Path(active_root) if active_root is not None else workspace
+    current_paths = {
+        relative: current_root / relative
+        for relative in TRACK_DISTINCTNESS_ARTIFACTS
+        if (current_root / relative).is_file()
+    }
+    if not current_paths:
+        return []
+    errors: list[str] = []
+    for track in manifest.get("tracks", []):
+        if not isinstance(track, dict) or str(track.get("candidate_id") or "").strip() in {"", candidate_id}:
+            continue
+        if str(track.get("status") or "") not in {"ready_for_t5_selection", "active"}:
+            continue
+        other_root = workspace / str(track.get("artifact_root") or "")
+        if not other_root.is_dir():
+            continue
+        exact_matches: list[str] = []
+        for relative, current_path in current_paths.items():
+            other_path = other_root / relative
+            if other_path.is_file() and hashlib.sha256(current_path.read_bytes()).hexdigest() == hashlib.sha256(other_path.read_bytes()).hexdigest():
+                exact_matches.append(relative)
+        if exact_matches:
+            errors.append(
+                f"track {candidate_id} duplicates candidate-bound source content from "
+                f"{track.get('candidate_id')}: {', '.join(exact_matches[:4])}"
+            )
+            continue
+        proposal = current_paths.get("ideation/proposal/research_proposal.md")
+        other_proposal = other_root / "ideation/proposal/research_proposal.md"
+        if proposal and other_proposal.is_file():
+            similarity = SequenceMatcher(
+                None,
+                _normalized_content(proposal.read_text(encoding="utf-8", errors="replace")),
+                _normalized_content(other_proposal.read_text(encoding="utf-8", errors="replace")),
+            ).ratio()
+            shared_structured = sum(
+                1
+                for relative in TRACK_DISTINCTNESS_ARTIFACTS[:2]
+                if (current_paths.get(relative) and (other_root / relative).is_file()
+                    and SequenceMatcher(
+                        None,
+                        _normalized_content(current_paths[relative].read_text(encoding="utf-8", errors="replace")),
+                        _normalized_content((other_root / relative).read_text(encoding="utf-8", errors="replace")),
+                    ).ratio() >= 0.94)
+            )
+            if similarity >= 0.94 and shared_structured:
+                errors.append(
+                    f"track {candidate_id} is near-duplicate of {track.get('candidate_id')} "
+                    f"(Proposal similarity={similarity:.3f}; structured sources={shared_structured})"
+                )
+    return errors
+
+
 def track_identity_errors(
     artifact_root: Path,
     candidate_id: str,
@@ -284,12 +505,20 @@ def ready_track_ids(manifest: dict[str, Any], workspace_dir: Path | None = None)
             continue
         errors: list[str] = []
         if workspace_dir is not None:
+            track_root = Path(workspace_dir) / str(track.get("artifact_root") or "")
             errors = track_identity_errors(
-                Path(workspace_dir) / str(track.get("artifact_root") or ""),
+                track_root,
                 candidate_id,
                 require_anchors=True,
                 verify_digests=True,
             )
+            if not errors:
+                errors = cross_track_content_errors(
+                    Path(workspace_dir),
+                    manifest,
+                    candidate_id,
+                    active_root=track_root,
+                )
         if not errors:
             ready.append(candidate_id)
     return ready
@@ -540,10 +769,17 @@ def create_manifest(
     population_id: str,
     directive_path: str,
     source: str,
+    candidate_anchors: list[dict[str, Any]] | None = None,
+    relationships: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     unique_ids = list(dict.fromkeys(_validate_candidate_id(str(item)) for item in candidate_ids if str(item).strip()))
     if not unique_ids:
         raise ValueError("proposal portfolio needs at least one Candidate")
+    anchors_by_id = {
+        str(item.get("candidate_id") or "").strip(): item
+        for item in (candidate_anchors or [])
+        if isinstance(item, dict) and str(item.get("candidate_id") or "").strip()
+    }
     payload: dict[str, Any] = {
         "schema_version": "1.0.0",
         "semantics": "t45_proposal_portfolio",
@@ -559,6 +795,12 @@ def create_manifest(
                 "started_at": now_iso() if index == 0 else None,
                 "completed_at": None,
                 "artifact_root": f"{TRACKS_REL_DIR}/{candidate_id}/artifacts",
+                "candidate_anchor": anchors_by_id.get(candidate_id, {}),
+                "candidate_anchor_fingerprint": str(
+                    anchors_by_id.get(candidate_id, {}).get("candidate_fingerprint") or ""
+                ).strip(),
+                "selection_fingerprint": None,
+                "selected_candidate_fingerprint": None,
             }
             for index, candidate_id in enumerate(unique_ids)
         ],
@@ -569,6 +811,7 @@ def create_manifest(
             "t5_requires_single_selection": True,
             "note": "Tracks are formalized separately; no claims, mechanisms, or experiments are merged.",
         },
+        "selection_relationships": list(relationships or []),
     }
     write_manifest(workspace_dir, payload)
     return payload
@@ -589,6 +832,148 @@ def active_candidate_id(manifest: dict[str, Any]) -> str | None:
     return candidate_id or None
 
 
+def bind_active_track_selection(
+    workspace_dir: Path,
+    manifest: dict[str, Any],
+    *,
+    candidate_id: str,
+    selection_fingerprint: str,
+    candidate_fingerprint: str,
+) -> dict[str, Any]:
+    """Bind the freshly compiled T4 selection to its manifest track.
+
+    This is called immediately after Gate1 compilation, before any model task
+    starts.  Keeping the binding in the manifest and a small active-context
+    file gives every later T4.5 process a durable expected identity, including
+    the first track (which otherwise had no activation transition to write it).
+    """
+
+    candidate_id = _validate_candidate_id(candidate_id)
+    fingerprint = str(selection_fingerprint or "").strip()
+    dossier_fingerprint = str(candidate_fingerprint or "").strip()
+    if not fingerprint or not dossier_fingerprint:
+        raise ValueError("cannot bind a Proposal track without selection and Candidate fingerprints")
+    target = next(
+        (
+            item
+            for item in manifest.get("tracks", [])
+            if isinstance(item, dict) and str(item.get("candidate_id") or "") == candidate_id
+        ),
+        None,
+    )
+    if target is None:
+        raise ValueError(f"proposal portfolio has no track for Candidate {candidate_id}")
+    target["selection_fingerprint"] = fingerprint
+    target["selected_candidate_fingerprint"] = dossier_fingerprint
+    context = {
+        "schema_version": "1.0.0",
+        "semantics": "t45_active_proposal_track",
+        "candidate_id": candidate_id,
+        "candidate_fingerprint": dossier_fingerprint,
+        "candidate_anchor_fingerprint": str(target.get("candidate_anchor_fingerprint") or "").strip(),
+        "selection_fingerprint": fingerprint,
+        "candidate_anchor": target.get("candidate_anchor") if isinstance(target.get("candidate_anchor"), dict) else {},
+        "activated_at": now_iso(),
+    }
+    path = Path(workspace_dir) / ACTIVE_TRACK_CONTEXT_REL_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(context, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_manifest(workspace_dir, manifest)
+    return context
+
+
+def active_track_formalization_context(workspace_dir: Path) -> dict[str, Any]:
+    """Return the active track scope, or a precise pre-write integrity error.
+
+    T4.5 still uses the canonical active ``ideation/`` projection so existing
+    agents and T5 have one stable path.  This helper makes that projection
+    safe for parallel operation: when a portfolio is active, its manifest,
+    selected Candidate and track anchor must all agree before an Agent can
+    reason over or write the shared paths.
+    """
+
+    workspace = Path(workspace_dir)
+    manifest = load_manifest(workspace)
+    if manifest is None or str(manifest.get("status") or "") not in {"running", "awaiting_t5_selection"}:
+        return {"portfolio_active": False, "binding_error": "", "candidate_anchor": {}, "completed_tracks": []}
+    active_id = active_candidate_id(manifest)
+    if not active_id:
+        # After all tracks are archived there is no T4.5 agent to constrain.
+        return {"portfolio_active": False, "binding_error": "", "candidate_anchor": {}, "completed_tracks": []}
+    track = next(
+        (
+            item
+            for item in manifest.get("tracks", [])
+            if isinstance(item, dict) and str(item.get("candidate_id") or "") == active_id
+        ),
+        None,
+    )
+    if track is None:
+        return {"portfolio_active": True, "binding_error": f"manifest has no active track record for {active_id}", "candidate_anchor": {}, "completed_tracks": []}
+    selected = _read_json_object(workspace / "ideation/selected/selected_candidate.json")
+    candidate = selected.get("candidate") if isinstance(selected.get("candidate"), dict) else {}
+    selected_id = str(selected.get("candidate_id") or candidate.get("id") or "").strip()
+    selected_fp = str(selected.get("selection_fingerprint") or "").strip()
+    candidate_fp = str(selected.get("candidate_fingerprint") or "").strip()
+    errors: list[str] = []
+    if selected_id != active_id:
+        errors.append(f"selected Candidate is {selected_id or 'missing'}, active Proposal track is {active_id}")
+    expected_fp = str(track.get("selection_fingerprint") or "").strip()
+    if expected_fp and expected_fp != selected_fp:
+        errors.append("selected Candidate fingerprint differs from the active Proposal track")
+    expected_candidate_fp = str(
+        track.get("selected_candidate_fingerprint") or track.get("candidate_fingerprint") or ""
+    ).strip()
+    if expected_candidate_fp and candidate_fp and expected_candidate_fp != candidate_fp:
+        errors.append("selected Candidate dossier fingerprint differs from the active Proposal track anchor")
+    anchor = _track_candidate_anchor(workspace, track)
+    if not anchor and candidate:
+        # Legacy workspaces did not persist a track anchor.  Derive an
+        # in-memory view from the current selected Candidate without mutating
+        # historical research artifacts. New tracks always persist it.
+        anchor = candidate_anchor(candidate)
+    completed_tracks: list[dict[str, str]] = []
+    for item in manifest.get("tracks", []):
+        if not isinstance(item, dict) or str(item.get("candidate_id") or "") == active_id:
+            continue
+        if str(item.get("status") or "") != "ready_for_t5_selection":
+            continue
+        sibling_anchor = _track_candidate_anchor(workspace, item)
+        completed_tracks.append(
+            {
+                "candidate_id": str(item.get("candidate_id") or ""),
+                "core_thesis": str(sibling_anchor.get("core_thesis") or ""),
+                "mechanism": str(sibling_anchor.get("mechanism") or ""),
+            }
+        )
+    return {
+        "portfolio_active": True,
+        "binding_error": "; ".join(errors),
+        "candidate_id": active_id,
+        "selection_fingerprint": selected_fp,
+        "candidate_fingerprint": candidate_fp,
+        "candidate_anchor": anchor,
+        "completed_tracks": completed_tracks,
+        "relationships": [
+            item
+            for item in (manifest.get("selection_relationships") or [])
+            if isinstance(item, dict) and active_id in {str(item.get("left") or ""), str(item.get("right") or "")}
+        ],
+    }
+
+
+def _track_candidate_anchor(workspace_dir: Path, track: dict[str, Any]) -> dict[str, Any]:
+    """Read a persisted anchor or derive a non-mutating legacy display view."""
+
+    anchor = track.get("candidate_anchor") if isinstance(track.get("candidate_anchor"), dict) else {}
+    if anchor:
+        return anchor
+    root = Path(workspace_dir) / str(track.get("artifact_root") or "")
+    selected = _read_json_object(root / "ideation/selected/selected_candidate.json")
+    candidate = selected.get("candidate") if isinstance(selected.get("candidate"), dict) else {}
+    return candidate_anchor(candidate) if candidate else {}
+
+
 def snapshot_active_track(workspace_dir: Path, manifest: dict[str, Any]) -> dict[str, Any]:
     """Copy a passed active T4.5 package into its immutable proposal track."""
 
@@ -603,6 +988,37 @@ def snapshot_active_track(workspace_dir: Path, manifest: dict[str, Any]) -> dict
             "cannot snapshot a Proposal track before all candidate-bound T4.5 artifacts exist: "
             + ", ".join(missing)
         )
+    active_selected = _read_json_object(workspace / "ideation/selected/selected_candidate.json")
+    active_candidate = active_selected.get("candidate") if isinstance(active_selected.get("candidate"), dict) else {}
+    selected_id = str(active_selected.get("candidate_id") or active_candidate.get("id") or "").strip()
+    selected_fingerprint = str(active_selected.get("selection_fingerprint") or "").strip()
+    if selected_id != candidate_id or not selected_fingerprint:
+        raise ValueError(
+            "active T4.5 projection belongs to a different Candidate: "
+            f"selected={selected_id or 'missing'}, expected={candidate_id}"
+        )
+    track_record = next(
+        (
+            item
+            for item in manifest.get("tracks", [])
+            if isinstance(item, dict) and str(item.get("candidate_id") or "") == candidate_id
+        ),
+        None,
+    )
+    if track_record is None:
+        raise ValueError(f"proposal portfolio has no manifest track for active Candidate {candidate_id}")
+    expected_fp = str(track_record.get("selection_fingerprint") or "").strip()
+    if expected_fp and expected_fp != selected_fingerprint:
+        raise ValueError("active T4.5 selection fingerprint does not match its Proposal track")
+    expected_candidate_fp = str(
+        track_record.get("selected_candidate_fingerprint") or track_record.get("candidate_fingerprint") or ""
+    ).strip()
+    actual_candidate_fp = str(active_selected.get("candidate_fingerprint") or "").strip()
+    if expected_candidate_fp and actual_candidate_fp and expected_candidate_fp != actual_candidate_fp:
+        raise ValueError("active T4.5 Candidate dossier does not match its Proposal track anchor")
+    cross_errors = cross_track_content_errors(workspace, manifest, candidate_id)
+    if cross_errors:
+        raise ValueError("parallel Proposal content is not independent: " + "; ".join(cross_errors[:4]))
     identity_errors = track_identity_errors(workspace, candidate_id, require_anchors=True, verify_digests=True)
     if identity_errors:
         raise ValueError("candidate-bound T4.5 identity is inconsistent: " + "; ".join(identity_errors[:8]))
@@ -630,8 +1046,12 @@ def snapshot_active_track(workspace_dir: Path, manifest: dict[str, Any]) -> dict
             track["status"] = "ready_for_t5_selection"
             track["completed_at"] = now_iso()
             track["copied_artifacts"] = copied
+            track["selection_fingerprint"] = selected_fingerprint
+            track["content_fingerprints"] = track_content_fingerprints(destination)
+            track["content_contract"] = "candidate_bound_v1"
             break
     manifest["active_candidate_id"] = None
+    (workspace / ACTIVE_TRACK_CONTEXT_REL_PATH).unlink(missing_ok=True)
     write_manifest(workspace_dir, manifest)
     return manifest
 
@@ -647,6 +1067,19 @@ def activate_next_track(workspace_dir: Path, manifest: dict[str, Any]) -> str | 
             track["started_at"] = now_iso()
             manifest["active_candidate_id"] = candidate_id
             manifest["status"] = "running"
+            active_context = {
+                "schema_version": "1.0.0",
+                "semantics": "t45_active_proposal_track",
+                "candidate_id": candidate_id,
+                "candidate_anchor_fingerprint": str(track.get("candidate_anchor_fingerprint") or "").strip(),
+                "selected_candidate_fingerprint": str(track.get("selected_candidate_fingerprint") or "").strip(),
+                "selection_fingerprint": str(track.get("selection_fingerprint") or "").strip(),
+                "candidate_anchor": track.get("candidate_anchor") if isinstance(track.get("candidate_anchor"), dict) else {},
+                "activated_at": now_iso(),
+            }
+            context_path = Path(workspace_dir) / ACTIVE_TRACK_CONTEXT_REL_PATH
+            context_path.parent.mkdir(parents=True, exist_ok=True)
+            context_path.write_text(json.dumps(active_context, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             write_manifest(workspace_dir, manifest)
             return candidate_id
     manifest["active_candidate_id"] = None
@@ -669,6 +1102,9 @@ def clear_active_track_artifacts(workspace_dir: Path) -> None:
             shutil.rmtree(path)
         else:
             path.unlink(missing_ok=True)
+    # This runtime-owned pointer is not researcher-facing evidence.  It must
+    # never survive a projection clear and describe the prior Candidate.
+    (Path(workspace_dir) / ACTIVE_TRACK_CONTEXT_REL_PATH).unlink(missing_ok=True)
 
 
 def materialize_selected_track(
@@ -751,6 +1187,9 @@ def overview(
         if not isinstance(track, dict):
             continue
         candidate_id = str(track.get("candidate_id") or "")
+        display_anchor = _track_candidate_anchor(Path(workspace_dir), track) if workspace_dir is not None else (
+            track.get("candidate_anchor") if isinstance(track.get("candidate_anchor"), dict) else {}
+        )
         integrity_errors: list[str] = []
         status_ready = str(track.get("status") or "") == "ready_for_t5_selection"
         if workspace_dir is not None and status_ready:
@@ -760,6 +1199,13 @@ def overview(
                 require_anchors=True,
                 verify_digests=True,
             )
+            if not integrity_errors:
+                integrity_errors = cross_track_content_errors(
+                    Path(workspace_dir),
+                    manifest,
+                    candidate_id,
+                    active_root=Path(workspace_dir) / str(track.get("artifact_root") or ""),
+                )
         is_ready = status_ready and not integrity_errors
         if is_ready:
             ready_index += 1
@@ -791,9 +1237,30 @@ def overview(
                 "required_artifacts": f"{required_present}/{required_count}",
                 "integrity": "valid" if not integrity_errors else "invalid",
                 "integrity_errors": integrity_errors[:8],
+                "core_problem": str(
+                    display_anchor.get("core_problem") if isinstance(display_anchor, dict) else ""
+                ),
+                "core_thesis": str(
+                    display_anchor.get("core_thesis") if isinstance(display_anchor, dict) else ""
+                ),
+                "mechanism": str(
+                    display_anchor.get("mechanism") if isinstance(display_anchor, dict) else ""
+                ),
+                "parent_ids": list(
+                    display_anchor.get("parent_ids")
+                    if isinstance(display_anchor, dict)
+                    and isinstance(display_anchor.get("parent_ids"), list)
+                    else []
+                ),
             }
         )
-    return {"tracks": tracks, "status": str(manifest.get("status") or "unknown")}
+    return {
+        "tracks": tracks,
+        "status": str(manifest.get("status") or "unknown"),
+        "selection_relationships": [
+            item for item in (manifest.get("selection_relationships") or []) if isinstance(item, dict)
+        ],
+    }
 
 
 def resolve_ready_track_selection(

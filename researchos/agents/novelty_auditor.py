@@ -33,6 +33,7 @@ from ..runtime.prompts import render_prompt
 from ..literature_identity import is_paper_note_file
 from ..schemas.validator import validate_record
 from ..ideation.novelty_verdict import extract_final_gate_verdict, is_passing_final_gate_verdict
+from ..ideation.proposal_portfolio import active_track_formalization_context
 from ._common import (
     prepend_resume_prefix,
     load_project,
@@ -86,6 +87,9 @@ class NoveltyAuditorAgent(Agent):
         """渲染system prompt，传入项目信息、假设和文献综述。"""
         project = load_project(ctx)
         ws = ctx.workspace_dir
+        portfolio_context = active_track_formalization_context(ws)
+        if portfolio_context.get("binding_error"):
+            raise ValueError("active T4.5 Proposal track binding failed: " + str(portfolio_context["binding_error"]))
 
         brief, brief_text, anchors = _load_pre_novelty_brief(ws)
         synthesis = read_text_file(ws / "literature" / "synthesis.md", default="")
@@ -122,6 +126,7 @@ class NoveltyAuditorAgent(Agent):
             ] if isinstance(brief.get("selection_warnings"), list) else [],
             temperature=self.spec.temperature,
             agent_guidance=load_agent_guidance("novelty-audit"),
+            portfolio_context=portfolio_context,
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:

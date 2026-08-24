@@ -2618,6 +2618,14 @@ researchos run-task T4 --workspace ./workspace/local-test2
 
 T4.5 是由三个独立上下文组成的研究方案阶段，不只是新颖性检查。第一阶段审计相似工作、撞车边界和必需 baseline；审计通过后，第二阶段将已选 Candidate 正式化为统一蓝图、主张、假设、实验计划和 Proposal；第三阶段按从 T4 继承的 UTD、CCF-A 或 Hybrid 取向独立审阅该研究包。三阶段均通过并写入正式化回执后，T5 才能消费该研究包。
 
+### 多 Proposal 轨迹的隔离规则
+
+Gate1 可以一次推进两到三个 Candidate，目标是分别写出多份 Proposal，而不是合并 Idea。系统会按顺序为每条轨迹建立 Pre-Novelty brief、执行独立审计、正式化与质量审阅，将通过的完整包归档到 `ideation/proposal_portfolio/tracks/<Candidate>/artifacts/`，再清理只属于当前 Candidate 的活动 `ideation/` 投影并激活下一条。全部通过后进入 `T4.5-PORTFOLIO-GATE`，研究者只选择一条进入 T5；T5 只物化该条归档。
+
+每条新轨迹都会保存不可变 Candidate anchor：T4 Candidate fingerprint、核心问题、核心论题、机制、设计物、草案假设束、验证逻辑与选中父方向关系。Novelty Auditor 和 Formalizer 获得模型上下文前，runtime 会先把这个 anchor 与 `selected_candidate.json`、当前 Candidate ID 和 Gate1 selection fingerprint 对齐；不一致会在模型调用前暂停，不会让恢复后的错误活动投影写出混合 Proposal。anchor 会作为内部范围约束注入 prompt，不会出现在研究者可读正文中。
+
+系统还会在归档和 T5 选择前检查跨轨迹内容：Candidate 身份和 lineage 是不可覆盖的硬门，同时精确重复的候选绑定文件、以及 Proposal 与结构化来源的极高相似包都会被拒绝。父方向与演化子方向可以分别推进，但 Portfolio 表会明确标出关系，子方向必须写出新增机制和能区分它的判别实验；它们不会被伪装成互不相关的 Proposal，也不会共享一份活动研究包。
+
 ### 第一阶段：NoveltyAuditorAgent
 
 ### 角色

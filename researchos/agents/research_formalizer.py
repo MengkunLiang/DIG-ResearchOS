@@ -25,6 +25,7 @@ from ..ideation.formalization import (
     write_post_novelty_formalization_manifest,
 )
 from ..ideation.proposal import repair_t45_proposal_manifest, validate_t45_research_proposal
+from ..ideation.proposal_portfolio import active_track_formalization_context
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
@@ -92,6 +93,12 @@ class ResearchFormalizerAgent(Agent):
         # under an older runtime. Isolate any old formalization package before
         # it can appear in this fresh Formalizer context as reusable source.
         ensure_current_t45_selection_isolation(workspace)
+        portfolio_context = active_track_formalization_context(workspace)
+        if portfolio_context.get("binding_error"):
+            # Fail before constructing a model context. A Proposal written
+            # against the wrong active projection cannot be repaired reliably
+            # after the fact and must return to the runtime recovery gate.
+            raise ValueError("active T4.5 Proposal track binding failed: " + str(portfolio_context["binding_error"]))
         canonicalize_research_blueprint_file(workspace)
         orientation = persist_orientation_configuration(workspace)
         pre_novelty_brief_available = (workspace / "ideation" / "selected" / "pre_novelty_brief.md").is_file()
@@ -119,6 +126,7 @@ class ResearchFormalizerAgent(Agent):
             formalization_error=formalization_error or "",
             quality_diagnostics=quality_diagnostics,
             pre_novelty_brief_available=pre_novelty_brief_available,
+            portfolio_context=portfolio_context,
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:

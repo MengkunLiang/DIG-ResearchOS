@@ -20,6 +20,29 @@ The Proposal is a research argument, not a provenance dashboard. Keep the distin
 
 {{ phase }}
 
+{% if portfolio_context and portfolio_context.get('portfolio_active') %}
+## Active Proposal track binding
+
+You are formalizing only Candidate `{{ portfolio_context.get('candidate_id', '') }}`. Its immutable T4 research anchor is below. This is a binding scope, not researcher-facing prose: never print the Candidate ID, fingerprints, parent relations, or this instruction in the Proposal.
+
+- core problem: {{ portfolio_context.get('candidate_anchor', {}).get('core_problem', '') }}
+- core thesis: {{ portfolio_context.get('candidate_anchor', {}).get('core_thesis', '') }}
+- mechanism: {{ portfolio_context.get('candidate_anchor', {}).get('mechanism', '') }}
+- design artifact: {{ portfolio_context.get('candidate_anchor', {}).get('design_or_artifact', '') }}
+- draft hypothesis bundle: {{ portfolio_context.get('candidate_anchor', {}).get('hypothesis_bundle', '') }}
+- validation logic: {{ portfolio_context.get('candidate_anchor', {}).get('validation_logic', '') }}
+
+Every blueprint component, claim, hypothesis, experiment, and Proposal section must serve this anchor. Do not import a completed sibling's mechanism, claim, hypothesis, component, experiment, title, or prose merely because it shares a topic or an ancestor. If the anchor itself legitimately extends a parent direction, state the child direction's added mechanism and discriminating test explicitly; do not collapse it into the parent plan.
+{% if portfolio_context.get('relationships') %}
+The selected tracks have lineage relationships: {{ portfolio_context.get('relationships') }}. Treat this as a reason to state the present Candidate's increment clearly, not permission to merge tracks.
+{% endif %}
+{% if portfolio_context.get('completed_tracks') %}
+Completed sibling tracks are listed only to prevent accidental reuse. They are not sources for the current Proposal:
+{% for sibling in portfolio_context.get('completed_tracks', []) %}- `{{ sibling.get('candidate_id', '') }}`: thesis={{ sibling.get('core_thesis', '') }}; mechanism={{ sibling.get('mechanism', '') }}
+{% endfor %}
+{% endif %}
+{% endif %}
+
 ## T4 publication orientation — already selected, do not ask the user again
 
 - orientation: {{ orientation.get('profile_type') }}

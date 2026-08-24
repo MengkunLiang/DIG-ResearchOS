@@ -18,6 +18,20 @@ Start with `query_research_evidence(purpose="novelty")` using the candidate prob
 - keywords: {{ project.get('keywords', []) | join(', ') if project.get('keywords') else 'not specified' }}
 - selected draft hypothesis IDs: {{ hypothesis_anchors | join(', ') }}
 
+{% if portfolio_context and portfolio_context.get('portfolio_active') %}
+## Active Proposal track binding
+
+- current Candidate: `{{ portfolio_context.get('candidate_id', '') }}`
+- selection fingerprint: `{{ portfolio_context.get('selection_fingerprint', '') }}`
+- Candidate research anchor: {{ portfolio_context.get('candidate_anchor', {}) }}
+{% if portfolio_context.get('relationships') %}- selected-track relationship notes: {{ portfolio_context.get('relationships') }}{% endif %}
+{% if portfolio_context.get('completed_tracks') %}
+Other completed tracks are comparison context only. Do not copy their problem framing, mechanism, claims, hypotheses, experiments, or Proposal prose. The current audit must remain about the current Candidate anchor above.
+{% for sibling in portfolio_context.get('completed_tracks', []) %}- completed sibling `{{ sibling.get('candidate_id', '') }}`: thesis={{ sibling.get('core_thesis', '') }}; mechanism={{ sibling.get('mechanism', '') }}
+{% endfor %}
+{% endif %}
+{% endif %}
+
 ### Pre-novelty brief
 
 {{ hypotheses_preview }}

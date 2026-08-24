@@ -2616,6 +2616,14 @@ researchos run-task T4 --workspace ./workspace/local-test2
 
 T4.5 is a three-context research-plan stage, not a novelty check alone. Phase 1 audits similar work, collision boundaries, and required baselines. A passing audit starts Phase 2, which formalizes the selected Candidate into a shared blueprint, claims, hypotheses, experiment plan, and Proposal. Phase 3 independently reviews that package under the inherited UTD, CCF-A, or Hybrid orientation. T5 can consume the package only after all three phases pass and the formalization receipt is written.
 
+### Parallel Proposal tracks
+
+Gate1 may advance two or three Candidates as separate Proposal tracks. This is sequential execution, not a merge: for every Candidate, ResearchOS compiles a fresh Pre-Novelty brief, runs a separate audit, formalizes and reviews one package, archives it under `ideation/proposal_portfolio/tracks/<Candidate>/artifacts/`, then clears only the active candidate-bound projection before activating the next Candidate. After all accepted tracks are archived, `T4.5-PORTFOLIO-GATE` asks the researcher to choose exactly one track for T5; T5 materializes only that archive.
+
+Each new track stores an immutable Candidate anchor: the T4 Candidate fingerprint, core problem, core thesis, mechanism, design artifact, draft hypothesis bundle, validation logic, and selected-parent relationships. Before either the Novelty Auditor or Formalizer gets a model context, the runtime compares that anchor with `selected_candidate.json`, the active Candidate ID, and the Gate1 selection fingerprint. A disagreement stops before model invocation, rather than letting a resumed active `ideation/` projection write a mixed Proposal. The anchor is injected into the agent prompt as an internal scope boundary and never appears as runtime metadata in researcher-facing prose.
+
+The system also compares completed packages before snapshotting or exposing `D1`/`D2` to T5. Candidate identity provenance remains a hard requirement; in addition, exact duplicate candidate-bound sources and very-high-similarity Proposal/structured-source packages are rejected. A parent Candidate and an evolved child are allowed as separate research directions, but their relationship is made explicit in the Portfolio table and the child must state its added mechanism and discriminating experiment. This prevents the misleading presentation of a parent and its extension as unrelated Proposals, while retaining the researcher's option to compare both.
+
 ### Phase 1: NoveltyAuditorAgent
 
 ### Role

@@ -1710,6 +1710,8 @@ class CLIHumanInterface(HumanInterface):
         table.add_column("选择", width=6, style="bold bright_yellow")
         table.add_column("Candidate", width=22, style="bold")
         table.add_column("独立 Proposal", ratio=3, overflow="fold")
+        table.add_column("研究核心 / 机制", ratio=4, overflow="fold")
+        table.add_column("关系", width=18, overflow="fold")
         table.add_column("产物", width=8, overflow="fold")
         table.add_column("Proposal 文件", ratio=2, overflow="fold")
         table.add_column("状态", width=24, overflow="fold")
@@ -1733,10 +1735,18 @@ class CLIHumanInterface(HumanInterface):
                 integrity_errors = track.get("integrity_errors")
                 if isinstance(integrity_errors, list) and integrity_errors:
                     status_label += "\n" + str(integrity_errors[0])
+            core_problem = str(track.get("core_problem") or "").strip()
+            core_thesis = str(track.get("core_thesis") or "").strip()
+            mechanism = str(track.get("mechanism") or "").strip()
+            research_core = "；".join(item for item in (core_problem, core_thesis, mechanism) if item)
+            parent_ids = track.get("parent_ids") if isinstance(track.get("parent_ids"), list) else []
+            relation = "扩展：" + ", ".join(str(item) for item in parent_ids if str(item).strip()) if parent_ids else "独立/未标注"
             table.add_row(
                 display_id,
                 candidate_id,
                 str(track.get("title") or track.get("candidate_id") or ""),
+                research_core or "候选锚点未提供",
+                relation,
                 artifact_status,
                 compact_path,
                 status_label,
@@ -1744,7 +1754,7 @@ class CLIHumanInterface(HumanInterface):
         guide = Text(
             "每一行都是一份独立 Proposal，D1/D2 是本页稳定的选择别名。"
             "完整文件保存在各自的 tracks/<Candidate>/artifacts/ 目录；活动路径 ideation/ 只表示当前选中的一条。"
-            "选择后 T5 只读取该行，其他行不会被覆盖或拼接。",
+            "选择后 T5 只读取该行，其他行不会被覆盖或拼接。若两行存在“扩展”关系，比较的是扩展方向的新增机制与新增检验，不是把两行合并。",
             overflow="fold",
         )
         console.print(Panel(Group(guide, table), title="选择要深入推进的 Proposal", border_style="bright_cyan", expand=True))
