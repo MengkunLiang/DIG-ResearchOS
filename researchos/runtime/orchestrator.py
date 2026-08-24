@@ -2071,7 +2071,12 @@ class AgentRunner:
                                 diagnostics
                                 if failure_kind == "schema_validation_failed"
                                 else {
-                                    "raw_length": len(raw_arguments),
+                                    # Do not include raw length here. Providers
+                                    # often truncate the same call at slightly
+                                    # different byte offsets; using the length
+                                    # as identity defeated the circuit breaker
+                                    # and allowed an effectively infinite loop.
+                                    "json_parse_failed": bool(tool_call.arguments.get("__parse_error__")),
                                     "open_curly": raw_arguments.count("{"),
                                     "close_curly": raw_arguments.count("}"),
                                     "open_square": raw_arguments.count("["),
@@ -2103,9 +2108,15 @@ class AgentRunner:
                                     "schema_name": schema,
                                     "schema_errors": diagnostics,
                                     "repeated_identical_failure_count": repeated_count,
+                                    "json_structure": {
+                                        "open_curly": raw_arguments.count("{"),
+                                        "close_curly": raw_arguments.count("}"),
+                                        "open_square": raw_arguments.count("["),
+                                        "close_square": raw_arguments.count("]"),
+                                    },
                                 }
                                 pause_reason = (
-                                    f"{path} 连续两次产生相同的 {failure_label}，runtime 已暂停以避免继续重复生成和消耗额度。"
+                                    f"{path} 连续两次产生相同的 {failure_label}（相同结构，累计 {repeated_count} 次），runtime 已暂停以避免继续重复生成和消耗额度。"
                                     "已保存此前工具结果；resume 后应依据列出的精确字段结构修复同一文件。"
                                 )
                         elif path and schema:
@@ -8111,8 +8122,10 @@ class AgentRunner:
                             " "
                             + parse_detail
                             + "Do not try to repair this artifact in prose or by a text patch. "
-                            "Reissue one complete, compact model-authored write_structured_file call for the same source; "
-                            "include all closing JSON delimiters and no explanatory text in the tool arguments."
+                            "Do not copy the malformed raw arguments. Regenerate one complete, compact "
+                            "model-authored write_structured_file call for the same source, keeping required fields "
+                            "and concise descriptions, with every closing JSON delimiter and no explanatory text "
+                            "inside the tool arguments."
                         )
             tool_msg = Message.tool(
                 tool_call_id=tc.id,
@@ -9541,6 +9554,18 @@ class AgentRunner:
                 return value
 
         repaired = AgentRunner._insert_unambiguous_array_closers(str(raw or ""))
+        if repaired is None:
+            # A few OpenAI-compatible endpoints emit the complete argument
+            # value but omit the final object closer.  When the scanner proves
+            # that the remaining stack contains only object openers and the
+            # input does not end after a comma, colon, or opener, appending
+            # those closers is a lossless syntax repair.  It does not infer a
+            # field or fabricate research content.
+            repaired = AgentRunner._append_unambiguous_object_closers(str(raw or ""))
+        elif repaired != raw:
+            # Array recovery can leave one or more enclosing object closers
+            # absent. Complete those only under the same conservative rule.
+            repaired = AgentRunner._append_unambiguous_object_closers(repaired) or repaired
         if repaired is None or repaired == raw:
             return None
         try:
@@ -9548,6 +9573,58 @@ class AgentRunner:
         except json.JSONDecodeError:
             return None
         return parsed if isinstance(parsed, dict) else None
+
+    @staticmethod
+    def _append_unambiguous_object_closers(raw: str) -> str | None:
+        """Close only complete JSON objects whose final ``}`` was omitted.
+
+        This deliberately refuses an unfinished string, array, property,
+        comma, or colon.  The helper is therefore limited to a transport
+        delimiter defect such as ``{"path":"x","data":{"n":1}`` and
+        cannot turn a genuinely truncated value into a plausible artifact.
+        """
+
+        if not raw:
+            return None
+        stack: list[str] = []
+        in_string = False
+        escaped = False
+        last_significant = ""
+        for char in raw:
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+                last_significant = char
+                continue
+            if char.isspace():
+                continue
+            last_significant = char
+            if char in "{[":
+                stack.append(char)
+            elif char == "}":
+                if not stack or stack[-1] != "{":
+                    return None
+                stack.pop()
+            elif char == "]":
+                if not stack or stack[-1] != "[":
+                    return None
+                stack.pop()
+        # A single omitted outer object closer is the only repair we can
+        # establish without guessing whether the provider also omitted a
+        # field value or nested object. Multiple missing object closers remain
+        # a model-authored repair, not a transport repair.
+        if in_string or len(stack) != 1 or stack[0] != "{":
+            return None
+        if last_significant in {"", ",", ":", "{", "["}:
+            return None
+        return raw + ("}" * len(stack))
 
     @staticmethod
     def _repair_trailing_json_delimiters(raw: str) -> dict[str, object] | None:
