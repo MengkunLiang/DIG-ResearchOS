@@ -117,6 +117,8 @@ Proposal 是给研究者阅读的完整论证；蓝图和主张登记表则让�
 
 在 T4 Gate 中，Copilot 可以选择一条 Candidate 进入 Proposal，也可以选择 2–3 条“分别写多个 Proposal”。后者不会拼接 Idea：每条 Candidate 都各自完成 T4.5，并归档在 `ideation/proposal_portfolio/tracks/`。如果只有一条 Proposal，系统直接进入 T5；如果有多条已通过的 Proposal，T5 前会出现一个简短的选择表，你选择其中一条后，T5 和后续写作只读取这一条。其余 Proposal 会保留，方便以后回看或另开实验。
 
+并行正式化期间，`ideation/proposal/`、`hypotheses.md`、蓝图、主张、实验计划、验证/停止条件、研究 dossier 以及新颖性指纹等活动路径只表示“当前正在处理的那一条”。切换到下一条时，上一条的完整候选绑定产物会先复制到对应的 `tracks/<Candidate>/artifacts/`，再清理活动投影。因而根目录最后只看到最后一条是正常的活动投影，不代表前一条被覆盖；在 T5 选择某条时，系统会从该条归档恢复全部候选绑定文件，避免不同 Proposal 串线。
+
 Auto 在启动设置中可以选 `one` 或 `top2`。`one` 是默认值，按排序推进一条；`top2` 会把 T4 最靠前的两条 Candidate 分别正式化，再在 T5 前请求你选择。示例：`standard_research deep top2`。这不是自动合并两个方向，也不会自动替你决定要投入实验资源的 Proposal。
 
 T5 **不会**静默替你跑实验。它先把已通过的 T4.5 方案编译为受约束的交接，再让你选择或授权外部执行器。执行器可以准备公开资源并完成已批准的工作，但不能静默修改研究问题、核心机制、必需 baseline、benchmark 范围或 claim 边界。

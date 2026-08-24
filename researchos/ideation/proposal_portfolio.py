@@ -29,8 +29,17 @@ TRACK_ARTIFACTS = (
     "ideation/selected_idea_brief.md",
     "ideation/novelty_audit.md",
     "ideation/collision_cases.md",
+    "ideation/novelty_audit_fingerprints.json",
     "ideation/_mechanism_tuples",
     "ideation/_design_rationale_tuples",
+    # These compiled planning artifacts are required by T5 and are
+    # candidate-bound even though they are derived deterministically from the
+    # blueprint.  They must be copied before the active projection is cleared
+    # for the next Proposal track.
+    "ideation/research_dossier.json",
+    "ideation/contribution_hypothesis_map.yaml",
+    "ideation/validation_map.yaml",
+    "ideation/kill_criteria.yaml",
     "ideation/research_blueprint.yaml",
     "ideation/claim_registry.yaml",
     "ideation/hypotheses.md",
@@ -39,6 +48,29 @@ TRACK_ARTIFACTS = (
     "ideation/orientation_review.json",
     "ideation/t45_selection_isolation.json",
     "ideation/post_novelty_formalization.json",
+)
+
+# A passed track must contain these files before it can become the single T5
+# input. Optional collision material is copied when present, but a missing
+# formalization source is never silently filled from another active track.
+TRACK_REQUIRED_ARTIFACTS = (
+    "ideation/selected/selected_candidate.json",
+    "ideation/hypothesis_brief.yaml",
+    "ideation/selected_idea_brief.md",
+    "ideation/novelty_audit.md",
+    "ideation/research_blueprint.yaml",
+    "ideation/claim_registry.yaml",
+    "ideation/hypotheses.md",
+    "ideation/research_dossier.json",
+    "ideation/exp_plan.yaml",
+    "ideation/contribution_hypothesis_map.yaml",
+    "ideation/validation_map.yaml",
+    "ideation/kill_criteria.yaml",
+    "ideation/proposal/research_proposal.md",
+    "ideation/proposal/proposal_manifest.json",
+    "ideation/orientation_review.json",
+    "ideation/post_novelty_formalization.json",
+    "ideation/t45_selection_isolation.json",
 )
 
 
@@ -56,6 +88,66 @@ def load_manifest(workspace_dir: Path) -> dict[str, Any] | None:
         return None
     tracks = payload.get("tracks")
     return payload if isinstance(tracks, list) else None
+
+
+def backfill_historical_track_artifacts(workspace_dir: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+    """Recover files omitted by the pre-isolation portfolio implementation.
+
+    Older parallel runs copied the main Proposal files into a track but left
+    a few derived formalization files only in the selection-supersession
+    archive. The track's own isolation receipt identifies that archive, so it
+    is safe to restore only those exact files. If the receipt or source is
+    absent, materialization fails closed instead of borrowing another track.
+    """
+
+    workspace = Path(workspace_dir).resolve()
+    changed = False
+    for track in manifest.get("tracks", []):
+        if not isinstance(track, dict):
+            continue
+        artifact_root = str(track.get("artifact_root") or "").strip()
+        if not artifact_root:
+            continue
+        destination_root = (workspace / artifact_root).resolve()
+        if workspace not in destination_root.parents:
+            continue
+        receipt_path = destination_root / "ideation/t45_selection_isolation.json"
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            receipt = {}
+        if str(receipt.get("candidate_id") or "").strip() != str(track.get("candidate_id") or "").strip():
+            # Never use an archive whose receipt belongs to another Candidate.
+            continue
+        archive = receipt.get("archive") if isinstance(receipt, dict) else None
+        archive_rel = str(archive.get("root") or "").strip() if isinstance(archive, dict) else ""
+        archive_root = (workspace / archive_rel).resolve() if archive_rel else None
+        if archive_root is None or workspace not in archive_root.parents:
+            continue
+        copied = list(track.get("copied_artifacts") or []) if isinstance(track.get("copied_artifacts"), list) else []
+        for relative in TRACK_ARTIFACTS:
+            target = destination_root / relative
+            if target.exists():
+                if relative not in copied:
+                    copied.append(relative)
+                continue
+            source = archive_root / relative
+            if not source.exists():
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if source.is_dir():
+                shutil.copytree(source, target)
+            else:
+                shutil.copy2(source, target)
+            copied.append(relative)
+            changed = True
+        if copied != track.get("copied_artifacts"):
+            track["copied_artifacts"] = list(dict.fromkeys(copied))
+            track["archive_backfill"] = "selection_history_receipt"
+            changed = True
+    if changed:
+        write_manifest(workspace, manifest)
+    return manifest
 
 
 def create_manifest(
@@ -187,6 +279,7 @@ def materialize_selected_track(workspace_dir: Path, manifest: dict[str, Any], ca
     """Make a selected independent Proposal the canonical single T5 input."""
 
     candidate_id = str(candidate_id or "").strip()
+    manifest = backfill_historical_track_artifacts(workspace_dir, manifest)
     ready = {
         str(track.get("candidate_id")): track
         for track in manifest.get("tracks", [])
@@ -197,6 +290,12 @@ def materialize_selected_track(workspace_dir: Path, manifest: dict[str, Any], ca
     source_root = Path(workspace_dir) / str(ready[candidate_id].get("artifact_root") or "")
     if not source_root.is_dir():
         raise ValueError("the chosen Proposal archive is missing")
+    missing = [relative for relative in TRACK_REQUIRED_ARTIFACTS if not (source_root / relative).exists()]
+    if missing:
+        raise ValueError(
+            "the chosen Proposal archive is incomplete; refusing to mix another track's active files: "
+            + ", ".join(missing)
+        )
     clear_active_track_artifacts(workspace_dir)
     copied: list[str] = []
     for rel in TRACK_ARTIFACTS:

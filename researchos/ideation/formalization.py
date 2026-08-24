@@ -52,6 +52,11 @@ T45_STRUCTURED_SOURCE_PATHS = (
 _T45_FULL_SELECTION_RESET_PATHS = (
     "ideation/novelty_audit.md",
     "ideation/collision_cases.md",
+    # The novelty audit receipt is candidate-bound.  It must travel with the
+    # Proposal and be archived before the next parallel track starts; leaving
+    # it at the shared active path lets a later track silently validate an
+    # earlier track (or vice versa).
+    "ideation/novelty_audit_fingerprints.json",
     "ideation/_mechanism_tuples",
     "ideation/_design_rationale_tuples",
     BLUEPRINT_REL_PATH,
