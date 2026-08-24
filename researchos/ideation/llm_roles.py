@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from ..pydantic_compat import model_dump, model_validate
 from ..runtime.llm_client import LLMClient
+from ..runtime.model_settings import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from ..runtime.prompts import get_prompt_env
 from .evolution_controller import IdeaEnricherPort, IdeaEvolverPort, IdeaGeneratorPort, IdeaScoringPort, RouteGenerationPayload
 from .errors import T4RoleResponseFormatError
@@ -79,7 +80,7 @@ class T4RoleCallConfig:
     model_override: str | None = None
     endpoint_override: str | None = None
     max_context_override: int | None = None
-    timeout: int = 120
+    timeout: int = DEFAULT_REQUEST_TIMEOUT_SECONDS
     max_retries_per_model: int | None = None
     retry_base_delay: float | None = None
     # Typed T4 roles need a concise final JSON object. Low reasoning preserves

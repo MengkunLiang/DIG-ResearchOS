@@ -24,7 +24,12 @@ DEFAULT_MODEL_SETTINGS_PATH = REPO_ROOT / "config" / "model_settings.yaml"
 LEGACY_USER_SETTINGS_PATH = REPO_ROOT / "config" / "user_settings.yaml"
 DEFAULT_CONTEXT_WINDOW_FALLBACK = 262_144
 MAX_CONTEXT_WINDOW_TOKENS = 100_000_000
-DEFAULT_REQUEST_TIMEOUT_SECONDS = 120
+# ResearchOS handles long, evidence-dense structured research calls.  A
+# two-minute deadline was too aggressive for necessary T4/T4.5 requests and
+# confused provider latency with a semantic failure.  This remains a per-call
+# hard deadline; recoverable provider failures still enter the durable retry /
+# pause boundary rather than waiting indefinitely.
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 300
 DEFAULT_TRUNCATION = {
     "trigger_ratio": 0.90,
     "target_ratio": 0.72,

@@ -1295,7 +1295,7 @@ def _render_llm_manual_edit_instructions(
     details.add_row("安全模板", str(template_path))
     details.add_row("最小必填字段", "provider、api_key、model；仅 openai_compatible 还必须填写 api_base")
     details.add_row("上下文/输入字段", "日常只维护 context_window_fallback；truncation.max_input_tokens 仅是可选 gateway 兼容覆盖")
-    details.add_row("请求 deadline", "fallback.request_timeout_seconds 与同块的重试参数共同控制正式科研模型请求；默认 120 秒")
+    details.add_row("请求 deadline", "fallback.request_timeout_seconds 与同块的重试参数共同控制正式科研模型请求；默认 300 秒")
     details.add_row("本地限流字段", "rate_limit 默认关闭；它不等于模型容量，只有明确知道 provider 配额时才启用")
     details.add_row("创建方式", f"cp {template_path} {target_path}")
     details.add_row("保存后校验", f"python -m researchos.cli selftest --model-settings {target_path}")

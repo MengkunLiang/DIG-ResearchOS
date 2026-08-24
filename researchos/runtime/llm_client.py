@@ -924,7 +924,7 @@ class LLMClient:
         model_override: str | None = None,
         endpoint_override: str | None = None,
         max_context_override: int | None = None,
-        timeout: int = 120,
+        timeout: int = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         max_retries_per_model: int | None = None,
         retry_base_delay: float | None = None,
         reasoning_effort: str | None = None,
@@ -1140,8 +1140,8 @@ class LLMClient:
     def _cleanup_timeout_for_request(request_timeout: int | float) -> float:
         """Derive cleanup patience from the existing request timeout.
 
-        No second user setting is required: a normal 120-second provider
-        deadline grants cleanup up to 60 seconds, while short explicit calls
+        No second user setting is required: a normal provider deadline grants
+        cleanup up to 60 seconds, while short explicit calls
         keep a proportional but non-zero cleanup window.
         """
 

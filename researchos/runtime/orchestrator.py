@@ -547,7 +547,7 @@ class AgentRunner:
             batches = 1
         # Historically ``0`` meant "do not auto-pause". A provider recovery
         # batch may itself contain the configured connection retries, so more
-        # than one unattended batch compounds a 120-second timeout into an
+        # than one unattended batch compounds a long request deadline into an
         # opaque multi-minute wait without adding research information. Keep
         # the default to one; the visible Gate still offers retry and delay.
         if batches <= 0:
@@ -616,7 +616,11 @@ class AgentRunner:
                 return max(1, int(configured))
         except (TypeError, ValueError):
             pass
-        return 120
+        # Legacy endpoint/profile configurations do not carry the compact
+        # model-settings fallback block. Keep them aligned with the public
+        # research-request default instead of silently reverting to an old
+        # shorter deadline.
+        return 300
 
     @staticmethod
     def _provider_error_category(exc: LLMProviderError) -> str:
@@ -845,7 +849,7 @@ class AgentRunner:
         if failure_category == "timeout":
             failure_explanation = (
                 f"本次模型请求在配置的 {self._llm_request_timeout_seconds()} 秒内没有返回。"
-                "这不表示已检测到上下文或校验错误。"
+                "这不表示已检测到上下文或校验错误；必要的大请求可以在服务恢复后继续等待或 resume。"
             )
         elif failure_category == "rate_limit":
             failure_explanation = "模型服务当前触发频率或配额限制。"
@@ -1579,7 +1583,7 @@ class AgentRunner:
                 # guard only when that eviction actually happened; otherwise
                 # repeated reads of the same 100KB+ index would be injected
                 # into every subsequent request and can turn a healthy
-                # provider call into a 120s timeout.
+                # provider call into a deadline timeout.
                 if len(messages) < len(messages_before_truncation):
                     ctx.extra.pop("_t35_large_read_seen", None)
                 messages = self._repair_openai_tool_message_sequence(messages)

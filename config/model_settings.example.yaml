@@ -77,7 +77,7 @@ rate_limit:
 # research-model request and belongs here with retry behaviour, not in
 # system_config.
 fallback:
-  request_timeout_seconds: 120
+  request_timeout_seconds: 300
   max_attempts: 3
   initial_wait_seconds: 3
   max_wait_seconds: 20

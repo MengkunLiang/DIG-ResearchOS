@@ -31,7 +31,7 @@ T1 项目初始化
  -> T3.6 可选综述论文支线（runtime gate：是否撰写 survey）
  -> T4 Evidence Routing、Candidate Population 形成与 Evolution
  -> T4-GATE1 研究者选择、独立多 Proposal 推进、组合或 rollback gate
- -> T4 一个或多个已选 Candidate 的 Pre-Novelty brief
+    已选 Candidate track：一个或多个 Pre-Novelty brief
  -> T4.5 研究方案审计：先做 novelty/collision review，通过后再做来源一致的 formalization
     -> 多条通过的 Proposal track：T4.5-PORTFOLIO-GATE -> 研究者选择一份进入 T5
  -> T5-REBOOST-GATE 运行 research-reboost 并编译 handoff

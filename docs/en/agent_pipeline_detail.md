@@ -31,7 +31,7 @@ T1 Project initialization
  -> T3.6 optional survey-paper branch (runtime gate: write a survey or not)
  -> T4 Evidence Routing, Candidate Population formation, and Evolution
  -> T4-GATE1 researcher decision, independent multi-Proposal selection, composition, or rollback gate
- -> one or more selected Candidates' Pre-Novelty briefs
+    selected Candidate track(s): one or more Pre-Novelty briefs
  -> T4.5 research-plan audit: novelty/collision review followed by source-consistent formalization on pass
     -> multiple accepted Proposal tracks: T4.5-PORTFOLIO-GATE -> researcher selects one Proposal for T5
  -> T5-REBOOST-GATE research-reboost handoff compilation

@@ -14,6 +14,7 @@ from typing import Any
 
 from ..runtime.errors import LLMProviderError
 from ..runtime.llm_client import LLMResponse, ModelBinding
+from ..runtime.model_settings import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from ..tools.human_gate import HumanInterface
 
 
@@ -120,7 +121,7 @@ class MockLLMClient:
         model_override: str | None = None,
         endpoint_override: str | None = None,
         max_context_override: int | None = None,
-        timeout: int = 120,
+        timeout: int = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         max_retries_per_model: int = 2,
         retry_base_delay: float = 2.0,
         reasoning_effort: str | None = None,
