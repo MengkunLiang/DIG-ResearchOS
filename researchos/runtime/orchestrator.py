@@ -9538,9 +9538,10 @@ class AgentRunner:
         omits a `]` immediately before a matching `}` while emitting every
         field value and every object closer.  The missing bracket is uniquely
         determined by the delimiter stack, so inserting it changes no model
-        authored research content.  Truncation, missing commas, strings,
-        object closers, concatenated objects, and every ambiguous structure
-        remain hard failures for the model to repair.
+        authored research content.  Truncation, missing commas, unfinished
+        strings or values, multiple missing object closers, concatenated
+        objects, and every ambiguous structure remain hard failures for the
+        model to repair.
         """
 
         try:
