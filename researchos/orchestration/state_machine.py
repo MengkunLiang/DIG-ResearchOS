@@ -7910,6 +7910,16 @@ class StateMachine:
             # and incorrect here.
             logger.debug("iteration_deadlock_bypassed", task_id=task_id, reason="t45_source_aware_recovery")
             return
+        if task_id == "T4" and workspace_dir is not None and self._t4_gate1_ready_without_selection(workspace_dir):
+            # The deadlock guard is an autonomous retry circuit breaker, not a
+            # correctness gate.  T4 can already have a complete, validated
+            # candidate pool and Portfolio after a prior interrupted run. In
+            # that state the deterministic pre-finalization path should hand
+            # control to Gate1 before the historical attempt counter is
+            # consulted; otherwise a stale three-attempt record blocks a
+            # usable result and forces an unnecessary new evolution run.
+            logger.debug("iteration_deadlock_bypassed", task_id=task_id, reason="gate1_artifacts_ready")
+            return
         task_history = state.iteration_history.get(task_id, [])
 
         if not task_history:
