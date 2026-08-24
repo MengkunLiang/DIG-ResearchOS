@@ -868,7 +868,7 @@ class AgentRunner:
                 presentation={
                     "_title": "模型服务暂时不可用",
                     "_description": (
-                        f"{failure_explanation} 已完成 {failed_batches} 轮受限请求，当前任务尚未改变任何产物。"
+                        f"{failure_explanation} 当前请求批次已尝试 {failed_batches} 次，尚未改变任何产物。"
                         "项目进度已经安全保留，请选择下一步。"
                     ),
                     "task_id": ctx.task_id,
@@ -923,8 +923,10 @@ class AgentRunner:
 
         wait_seconds = max(0.0, seconds)
         if wait_seconds:
+            automatic_retry_limit = max(1, retry_batches - 1)
             self.progress.emit(
-                f"[Runtime] 将在 {wait_seconds:g} 秒后重新提交当前并发模型请求（请求级第 {attempt} 次自动重试；同一 T4 阶段的其它候选可能各自独立重试）。",
+                f"[Runtime] 当前模型请求暂时失败，将在 {wait_seconds:g} 秒后自动重试"
+                f"（当前请求第 {attempt} 次，最多 {automatic_retry_limit} 次；不是 T4 全局轮次）。",
                 important=True,
             )
             self._record_skill_progress(
