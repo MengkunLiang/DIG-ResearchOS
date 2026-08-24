@@ -115,9 +115,9 @@ T4.5 的作用是把“有潜力的 Idea”变成“可执行、可证伪的研�
 
 Proposal 是给研究者阅读的完整论证；蓝图和主张登记表则让后续实现保持精确。三者描述的是同一个研究方案，不是三份彼此竞争的版本。UTD、CCF-A 与 Hybrid 都遵循同一研究逻辑，只是在贡献和写作取向上权重不同。
 
-在 T4 Gate 中，Copilot 可以选择一条 Candidate 进入 Proposal，也可以选择 2–3 条“分别写多个 Proposal”。后者不会拼接 Idea：每条 Candidate 都各自完成 T4.5，并归档在 `ideation/proposal_portfolio/tracks/`。如果只有一条 Proposal，系统直接进入 T5；如果有多条已通过的 Proposal，T5 前会出现一个简短的选择表，你选择其中一条后，T5 和后续写作只读取这一条。其余 Proposal 会保留，方便以后回看或另开实验。
+在 T4 Gate 中，Copilot 可以选择一条 Candidate 进入 Proposal，也可以选择 2–3 条“分别写多个 Proposal”。后者不会拼接 Idea：每条 Candidate 都各自完成 T4.5，并归档在 `ideation/proposal_portfolio/tracks/`。如果只有一条 Proposal，系统直接进入 T5；如果有多条已通过的 Proposal，T4.5 结束前会出现一个带有 `D1`、`D2` 等稳定别名的选择表。表格同时显示完整 Candidate ID、Proposal 文件路径和结构化产物完成度。输入 `D1`、`D2` 或完整 Candidate ID 选择其中一条后，T5 和后续写作只读取这一条。其余 Proposal 会保留，方便以后回看或另开实验。
 
-并行正式化期间，`ideation/proposal/`、`hypotheses.md`、蓝图、主张、实验计划、验证/停止条件、研究 dossier 以及新颖性指纹等活动路径只表示“当前正在处理的那一条”。切换到下一条时，上一条的完整候选绑定产物会先复制到对应的 `tracks/<Candidate>/artifacts/`，再清理活动投影。因而根目录最后只看到最后一条是正常的活动投影，不代表前一条被覆盖；在 T5 选择某条时，系统会从该条归档恢复全部候选绑定文件，避免不同 Proposal 串线。
+并行正式化期间，`ideation/proposal/`、`hypotheses.md`、蓝图、主张、实验计划、验证/停止条件、研究 dossier 以及新颖性指纹等活动路径只表示“当前正在处理的那一条”。切换到下一条时，上一条的完整候选绑定产物会先复制到对应的 `tracks/<Candidate>/artifacts/`，再清理活动投影。因而根目录最后只看到最后一条是正常的活动投影，不代表前一条被覆盖。两条独立 Proposal 的唯一真源是 `ideation/proposal_portfolio/manifest.json` 及其 `tracks/` 子目录，而不是活动根目录。选择某条时，系统会从该条归档恢复全部候选绑定文件，避免不同 Proposal 串线；如果归档缺少必需文件，系统会回到同一个选择页并报告缺失项，不会从另一条 Proposal 借文件。
 
 Auto 在启动设置中可以选 `one` 或 `top2`。`one` 是默认值，按排序推进一条；`top2` 会把 T4 最靠前的两条 Candidate 分别正式化，再在 T5 前请求你选择。示例：`standard_research deep top2`。这不是自动合并两个方向，也不会自动替你决定要投入实验资源的 Proposal。
 

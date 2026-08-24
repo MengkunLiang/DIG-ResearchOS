@@ -1706,25 +1706,47 @@ class CLIHumanInterface(HumanInterface):
         buffer = io.StringIO()
         console = Console(file=buffer, force_terminal=not self._no_color, color_system=None if self._no_color else "truecolor", no_color=self._no_color, width=width, highlight=False)
         table = lightweight_ruled_table(expand=True, header_style="bold bright_cyan", border_style="bright_cyan")
-        table.add_column("Candidate", width=12, style="bold")
+        table.add_column("选择", width=6, style="bold bright_yellow")
+        table.add_column("Candidate", width=22, style="bold")
         table.add_column("独立 Proposal", ratio=3, overflow="fold")
+        table.add_column("产物", width=8, overflow="fold")
+        table.add_column("Proposal 文件", ratio=2, overflow="fold")
         table.add_column("状态", width=24, overflow="fold")
         for track in tracks:
             if not isinstance(track, dict):
                 continue
+            display_id = str(track.get("display_id") or "—")
+            candidate_id = str(track.get("candidate_id") or "")
+            proposal_path = str(track.get("proposal_path") or "")
+            artifact_status = str(track.get("required_artifacts") or "")
+            # The full path remains in manifest.json.  The table uses a
+            # compact equivalent so a long Candidate ID does not turn one
+            # row into a page of wrapped path fragments.
+            compact_path = proposal_path
+            if "/tracks/" in compact_path:
+                compact_path = compact_path.split("/tracks/", 1)[1]
+            compact_path = compact_path.replace("/ideation/proposal/", "/…/proposal/")
             table.add_row(
-                str(track.get("candidate_id") or ""),
+                display_id,
+                candidate_id,
                 str(track.get("title") or track.get("candidate_id") or ""),
+                artifact_status,
+                compact_path,
                 _proposal_track_status_label(str(track.get("status") or "")),
             )
-        guide = Text("这些 Proposal 已分别经过 T4.5，不共享或拼接彼此的机制、claims 或实验。选择一条后，T5 只读取该条 Proposal；其他条目继续保留在归档中。", overflow="fold")
+        guide = Text(
+            "每一行都是一份独立 Proposal，D1/D2 是本页稳定的选择别名。"
+            "完整文件保存在各自的 tracks/<Candidate>/artifacts/ 目录；活动路径 ideation/ 只表示当前选中的一条。"
+            "选择后 T5 只读取该行，其他行不会被覆盖或拼接。",
+            overflow="fold",
+        )
         console.print(Panel(Group(guide, table), title="选择要深入推进的 Proposal", border_style="bright_cyan", expand=True))
         rendered = buffer.getvalue().rstrip()
         if rendered:
             print(rendered)
 
     def _render_t45_proposal_portfolio_options(self, options: list[dict]) -> None:
-        print("输入 Candidate 编号即可，例如 `D1`；若暂时不选，输入 `2` 或“暂不选择”。")
+        print("请输入表格中的选择别名 D1、D2（或完整 Candidate ID）。若暂时不选，请输入“暂不选择”。")
         for index, option in enumerate(options, start=1):
             print(f"[{index}] {option.get('label') or option.get('id')}")
             if option.get("description"):
@@ -3330,7 +3352,11 @@ class CLIHumanInterface(HumanInterface):
             return CLIHumanInterface._parse_t4_gate1_text(raw_answer, options)
         if gate_id == "t45_proposal_portfolio_gate":
             cleaned = str(raw_answer or "").strip().upper()
-            if re.fullmatch(r"[DS]\d+", cleaned):
+            # D1/D2 are the stable researcher-facing aliases.  Also accept a
+            # full generated Candidate ID (for scripts and older screens),
+            # while leaving numeric menu answers such as ``1`` and ``2`` to
+            # the normal option parser.
+            if re.fullmatch(r"[DS]\d+", cleaned) or re.fullmatch(r"[A-Z][A-Z0-9]*(?:[-_][A-Z0-9]+)+", cleaned):
                 return {"option_id": "select_proposal", "captured": {"candidate_id": cleaned}}
             if cleaned in {"暂停", "暂不选择", "PAUSE"}:
                 return {"option_id": "pause_selection", "captured": {}}

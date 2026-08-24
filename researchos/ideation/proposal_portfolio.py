@@ -74,6 +74,21 @@ TRACK_REQUIRED_ARTIFACTS = (
 )
 
 
+def _validate_candidate_id(candidate_id: str) -> str:
+    """Return a safe candidate component for an on-disk track directory.
+
+    Candidate identifiers are generated upstream, but they are also persisted
+    in a manifest and later used as path components.  Failing closed here
+    prevents a malformed or hand-edited manifest from escaping the portfolio
+    directory or silently colliding with another track.
+    """
+
+    value = str(candidate_id or "").strip()
+    if not value or value in {".", ".."} or "/" in value or "\\" in value:
+        raise ValueError(f"invalid Proposal Candidate identifier: {value!r}")
+    return value
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -158,7 +173,7 @@ def create_manifest(
     directive_path: str,
     source: str,
 ) -> dict[str, Any]:
-    unique_ids = list(dict.fromkeys(str(item).strip() for item in candidate_ids if str(item).strip()))
+    unique_ids = list(dict.fromkeys(_validate_candidate_id(str(item)) for item in candidate_ids if str(item).strip()))
     if not unique_ids:
         raise ValueError("proposal portfolio needs at least one Candidate")
     payload: dict[str, Any] = {
@@ -212,23 +227,33 @@ def snapshot_active_track(workspace_dir: Path, manifest: dict[str, Any]) -> dict
     candidate_id = active_candidate_id(manifest)
     if candidate_id is None:
         raise ValueError("proposal portfolio has no active Candidate")
+    candidate_id = _validate_candidate_id(candidate_id)
+    workspace = Path(workspace_dir)
+    missing = [relative for relative in TRACK_REQUIRED_ARTIFACTS if not (workspace / relative).exists()]
+    if missing:
+        raise ValueError(
+            "cannot snapshot a Proposal track before all candidate-bound T4.5 artifacts exist: "
+            + ", ".join(missing)
+        )
     destination = Path(workspace_dir) / TRACKS_REL_DIR / candidate_id / "artifacts"
     if destination.exists():
         shutil.rmtree(destination)
     copied: list[str] = []
-    for rel in TRACK_ARTIFACTS:
-        source = Path(workspace_dir) / rel
-        if not source.exists():
-            continue
-        target = destination / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if source.is_dir():
-            shutil.copytree(source, target)
-        else:
-            shutil.copy2(source, target)
-        copied.append(rel)
-    if not (destination / "ideation" / "proposal" / "research_proposal.md").is_file():
-        raise ValueError("cannot snapshot a proposal track before its formal Proposal exists")
+    try:
+        for rel in TRACK_ARTIFACTS:
+            source = Path(workspace_dir) / rel
+            if not source.exists():
+                continue
+            target = destination / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if source.is_dir():
+                shutil.copytree(source, target)
+            else:
+                shutil.copy2(source, target)
+            copied.append(rel)
+    except (OSError, shutil.Error):
+        shutil.rmtree(destination, ignore_errors=True)
+        raise
     for track in manifest["tracks"]:
         if isinstance(track, dict) and track.get("candidate_id") == candidate_id:
             track["status"] = "ready_for_t5_selection"
@@ -275,10 +300,16 @@ def clear_active_track_artifacts(workspace_dir: Path) -> None:
             path.unlink(missing_ok=True)
 
 
-def materialize_selected_track(workspace_dir: Path, manifest: dict[str, Any], candidate_id: str) -> dict[str, Any]:
+def materialize_selected_track(
+    workspace_dir: Path,
+    manifest: dict[str, Any],
+    candidate_id: str,
+    *,
+    selection_reason: str | None = None,
+) -> dict[str, Any]:
     """Make a selected independent Proposal the canonical single T5 input."""
 
-    candidate_id = str(candidate_id or "").strip()
+    candidate_id = _validate_candidate_id(candidate_id)
     manifest = backfill_historical_track_artifacts(workspace_dir, manifest)
     ready = {
         str(track.get("candidate_id")): track
@@ -318,6 +349,8 @@ def materialize_selected_track(workspace_dir: Path, manifest: dict[str, Any], ca
         "decided_at": now_iso(),
         "note": "T5 receives exactly one independently formalized Proposal.",
     }
+    if selection_reason:
+        selection["selection_reason"] = str(selection_reason)
     selection_path = Path(workspace_dir) / SELECTION_REL_PATH
     selection_path.parent.mkdir(parents=True, exist_ok=True)
     selection_path.write_text(json.dumps(selection, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -327,19 +360,72 @@ def materialize_selected_track(workspace_dir: Path, manifest: dict[str, Any], ca
     return selection
 
 
-def overview(manifest: dict[str, Any], candidate_labels: dict[str, str] | None = None) -> dict[str, Any]:
+def overview(
+    manifest: dict[str, Any],
+    candidate_labels: dict[str, str] | None = None,
+    workspace_dir: Path | None = None,
+) -> dict[str, Any]:
     labels = candidate_labels or {}
     tracks = []
+    ready_index = 0
     for track in manifest.get("tracks", []):
         if not isinstance(track, dict):
             continue
         candidate_id = str(track.get("candidate_id") or "")
+        is_ready = str(track.get("status") or "") == "ready_for_t5_selection"
+        if is_ready:
+            ready_index += 1
+        display_id = f"D{ready_index}" if is_ready else ""
+        copied = {str(item).rstrip("/") for item in (track.get("copied_artifacts") or [])}
+        required_count = len(TRACK_REQUIRED_ARTIFACTS)
+        if workspace_dir is not None:
+            root = Path(workspace_dir) / str(track.get("artifact_root") or "")
+            required_present = sum(1 for item in TRACK_REQUIRED_ARTIFACTS if (root / item).exists())
+        else:
+            # Older snapshots record directory roots such as
+            # ``ideation/selected`` and ``ideation/proposal`` rather than
+            # every child file.  Treat those roots as covering their required
+            # descendants when no workspace is available for an exact check.
+            required_present = sum(
+                1
+                for item in TRACK_REQUIRED_ARTIFACTS
+                if item in copied or any(item.startswith(root + "/") for root in copied)
+            )
         tracks.append(
             {
+                "display_id": display_id,
                 "candidate_id": candidate_id,
                 "title": labels.get(candidate_id, candidate_id),
                 "status": str(track.get("status") or "unknown"),
+                "track_root": str(track.get("artifact_root") or ""),
                 "proposal_path": f"{track.get('artifact_root')}/ideation/proposal/research_proposal.md",
+                "artifact_count": len(copied),
+                "required_artifacts": f"{required_present}/{required_count}",
             }
         )
     return {"tracks": tracks, "status": str(manifest.get("status") or "unknown")}
+
+
+def resolve_ready_track_selection(manifest: dict[str, Any], raw_selection: str | None) -> str | None:
+    """Resolve the human-facing D1/D2 alias to one completed track.
+
+    The alias is derived from the same ordered ready-track list used by
+    :func:`overview`, so the table and the resolver cannot drift apart.  Full
+    Candidate IDs remain accepted for scripted or older runs; ``S1`` aliases
+    are retained as a backwards-compatible spelling from early builds.
+    """
+
+    value = str(raw_selection or "").strip()
+    if not value:
+        return None
+    ready_ids = [
+        str(item.get("candidate_id") or "")
+        for item in manifest.get("tracks", [])
+        if isinstance(item, dict) and item.get("status") == "ready_for_t5_selection" and str(item.get("candidate_id") or "").strip()
+    ]
+    normalized = value.upper()
+    aliases: dict[str, str] = {}
+    for index, candidate_id in enumerate(ready_ids, start=1):
+        aliases[f"D{index}"] = candidate_id
+        aliases[f"S{index}"] = candidate_id
+    return aliases.get(normalized, value)

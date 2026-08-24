@@ -100,10 +100,12 @@ from ..ideation.proposal import validate_t45_research_proposal
 from ..ideation.proposal_portfolio import (
     active_candidate_id as active_proposal_track_candidate_id,
     activate_next_track,
+    backfill_historical_track_artifacts,
     create_manifest as create_proposal_portfolio_manifest,
     load_manifest as load_proposal_portfolio_manifest,
     materialize_selected_track,
     overview as proposal_portfolio_overview,
+    resolve_ready_track_selection,
     snapshot_active_track,
 )
 from ..ideation.state import T4ArtifactStore, build_t4_input_fingerprints, run_config_fingerprint
@@ -5152,6 +5154,8 @@ class StateMachine:
             manifest = load_proposal_portfolio_manifest(workspace_dir)
             if manifest is None:
                 raise ValueError("T4.5 proposal portfolio manifest is missing")
+            raw_candidate_id = candidate_id
+            candidate_id = resolve_ready_track_selection(manifest, candidate_id) or ""
             ready_tracks = [
                 str(item.get("candidate_id") or "")
                 for item in manifest.get("tracks", [])
@@ -5160,13 +5164,36 @@ class StateMachine:
             if len(ready_tracks) == 1 and not candidate_id:
                 candidate_id = ready_tracks[0]
             if candidate_id not in ready_tracks:
-                state.pending_gate.presentation["portfolio_selection_error"] = (
-                    "请选择表格中一条已完成的 Proposal，例如 D1。可选：" + "、".join(ready_tracks)
+                presentation = dict(state.pending_gate.presentation or {}) if state.pending_gate else {}
+                presentation["portfolio_selection_error"] = (
+                    "请选择表格中一条已完成的 Proposal，例如 D1 或 D2。"
+                    + " 当前输入："
+                    + (raw_candidate_id or "（空）")
+                    + "；可选："
+                    + "、".join(f"D{index + 1}={item}" for index, item in enumerate(ready_tracks))
                 )
+                if state.pending_gate is not None:
+                    state.pending_gate.presentation = presentation
                 state.status = "WAITING_HUMAN"
                 state.paused_at = _now_iso()
                 return state
-            materialize_selected_track(workspace_dir, manifest, candidate_id)
+            try:
+                materialize_selected_track(workspace_dir, manifest, candidate_id)
+            except (OSError, ValueError) as exc:
+                # A broken archive must return to the same human Gate with a
+                # precise diagnosis.  Letting the exception escape here used
+                # to route it through generic runtime recovery, which looked
+                # like a second Proposal had overwritten the first one.
+                presentation = dict(state.pending_gate.presentation or {}) if state.pending_gate else {}
+                presentation["portfolio_selection_error"] = (
+                    f"Proposal {raw_candidate_id or candidate_id} 尚未形成可独立交接的完整归档：{exc}"
+                )
+                if state.pending_gate is not None:
+                    state.pending_gate.presentation = presentation
+                state.status = "WAITING_HUMAN"
+                state.paused_at = _now_iso()
+                state.last_error = str(exc)
+                return state
             self._persist_immediate_gate_result(node, gate_result, "T5-REBOOST-GATE", workspace_dir)
             state.pending_gate = None
             state.last_error = None
@@ -6074,6 +6101,38 @@ class StateMachine:
             state.paused_at = _now_iso()
             return state
         if next_id is None:
+            completed_ids = [
+                str(item.get("candidate_id") or "")
+                for item in manifest.get("tracks", [])
+                if isinstance(item, dict)
+                and item.get("status") == "ready_for_t5_selection"
+                and str(item.get("candidate_id") or "").strip()
+            ]
+            # A single Proposal has no meaningful human choice.  Materialize
+            # it immediately and continue to T5; the portfolio Gate is only
+            # a decision boundary when two or more independent Proposals are
+            # ready.  The selection receipt records this automatic, lossless
+            # choice for audit and resume.
+            if len(completed_ids) == 1:
+                try:
+                    materialize_selected_track(
+                        workspace_dir,
+                        manifest,
+                        completed_ids[0],
+                        selection_reason="single_completed_track_auto_selected",
+                    )
+                except (OSError, ValueError) as exc:
+                    state.current_task = "T4.5-PORTFOLIO-GATE"
+                    state.status = "RUNNING"
+                    state.paused_at = None
+                    state.last_error = f"single Proposal could not be materialized for T5: {exc}"
+                    return self.pause_for_immediate_gate(state, workspace_dir=workspace_dir)
+                state.task_context["t45_portfolio_auto_selected"] = {
+                    "candidate_id": completed_ids[0],
+                    "reason": "single_completed_track_auto_selected",
+                    "selected_at": _now_iso(),
+                }
+                return self._transition_to_next(state, "T5-REBOOST-GATE", workspace_dir=workspace_dir)
             return self._transition_to_next(state, "T4.5-PORTFOLIO-GATE", workspace_dir=workspace_dir)
         population, _dossiers = current_population_context(workspace_dir)
         directive = IdeaDirective(
@@ -6090,13 +6149,22 @@ class StateMachine:
         manifest = load_proposal_portfolio_manifest(workspace_dir)
         if manifest is None:
             return {"status": "missing", "tracks": []}
+        # Older runs created valid independent Proposals before the complete
+        # T5 handoff package was added to the track snapshot.  Restore only
+        # files identified by that track's own isolation receipt before
+        # rendering the table, so the UI reports the same package that the
+        # selector will actually materialize.
+        manifest = backfill_historical_track_artifacts(workspace_dir, manifest)
         labels: dict[str, str] = {}
         directions = self._read_json_dict(workspace_dir / "ideation" / "_candidate_directions.json") or {}
         candidates = directions.get("candidates") if isinstance(directions.get("candidates"), list) else []
         for item in candidates:
             if isinstance(item, dict):
-                labels[str(item.get("candidate_id") or item.get("id") or "")] = str(item.get("title") or item.get("short_title") or "")
-        return proposal_portfolio_overview(manifest, labels)
+                label = str(item.get("short_title") or item.get("title") or "").strip()
+                if len(label) > 64:
+                    label = label[:61].rstrip() + "…"
+                labels[str(item.get("candidate_id") or item.get("id") or "")] = label
+        return proposal_portfolio_overview(manifest, labels, workspace_dir=workspace_dir)
 
     def _rollback_native_t4_population(
         self,
