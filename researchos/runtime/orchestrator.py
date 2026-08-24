@@ -1572,7 +1572,16 @@ class AgentRunner:
 
                 # 如果上下文太长，这里会按“完整 tool call group”为单位裁掉旧消息，
                 # 同时插入一条 runtime note，提醒模型去读 artifact 而不是假装记得历史。
+                messages_before_truncation = messages
                 messages = self._maybe_truncate(messages, primary_binding, task_id=ctx.task_id)
+                # A long synthesis run may legitimately need to reread a file
+                # after history was evicted.  Clear the same-run large-read
+                # guard only when that eviction actually happened; otherwise
+                # repeated reads of the same 100KB+ index would be injected
+                # into every subsequent request and can turn a healthy
+                # provider call into a 120s timeout.
+                if len(messages) < len(messages_before_truncation):
+                    ctx.extra.pop("_t35_large_read_seen", None)
                 messages = self._repair_openai_tool_message_sequence(messages)
 
                 provider_retry_batches, provider_cooldown, provider_long_cooldown = self._llm_provider_recovery_policy()
@@ -8094,6 +8103,61 @@ class AgentRunner:
                 )
             return tool_msg
 
+        # T3.5 receives a compact synthesis index precisely to avoid replaying
+        # the full workbench and bridge catalogs on every turn.  Some models
+        # nevertheless issue the same read_file call repeatedly after already
+        # receiving the complete result.  Return a small, truthful reuse note
+        # for those calls.  This preserves all information on disk, keeps the
+        # first read lossless, and permits a fresh read after runtime history
+        # truncation (the guard is cleared above).
+        if tc.name == "read_file" and ctx.task_id == "T3.5":
+            read_path = str(tool_arguments.get("path") or "").replace("\\", "/").strip()
+            large_index_paths = {
+                "literature/synthesis_context.json",
+                "literature/synthesis_workbench.json",
+                "literature/cross_domain_catalogs/index.json",
+            }
+            is_bridge_catalog = read_path.startswith("literature/cross_domain_catalogs/") and read_path.endswith(
+                ("/paper_catalog.json", "/bridge_context.json")
+            )
+            if read_path in large_index_paths or is_bridge_catalog:
+                seen = ctx.extra.setdefault("_t35_large_read_seen", {})
+                if isinstance(seen, dict) and read_path in seen:
+                    first_step = seen.get(read_path)
+                    reuse_data = {
+                        "path": read_path,
+                        "deduplicated": True,
+                        "first_read_step": first_step,
+                        "reason": "same_run_read_already_returned; use the existing tool result",
+                    }
+                    reuse_content = (
+                        f"已在本次 T3.5 运行第 {first_step} 步完整返回 `{read_path}`。"
+                        "不要重复读取；请直接使用已有内容。若运行时提示较早上下文已被省略，"
+                        "再重新调用 read_file 以恢复完整内容。"
+                    )
+                    tool_msg = Message.tool(
+                        tool_call_id=tc.id,
+                        name=tc.name,
+                        content=reuse_content,
+                        is_error=False,
+                        step=step,
+                        duration_ms=int((time.time() - started) * 1000),
+                        metadata={"data": reuse_data, "error": None},
+                    )
+                    if run_logger is not None:
+                        run_logger.tool_result(
+                            tc.name,
+                            model_dump(parsed),
+                            ok=True,
+                            content=reuse_content,
+                            data=reuse_data,
+                            error=None,
+                            duration_ms=tool_msg.duration_ms,
+                            metadata=tool_msg.metadata,
+                            step=step,
+                        )
+                    return tool_msg
+
         failure_cache_key = self._tool_failure_cache_key(tc.name, model_dump(parsed))
         if failure_cache_key and tool_failure_cache is not None and failure_cache_key in tool_failure_cache:
             cached = tool_failure_cache[failure_cache_key]
@@ -8238,6 +8302,25 @@ class AgentRunner:
                     step=step,
                 )
             return tool_msg
+
+        # Record only a successful full read.  A transient filesystem/tool
+        # error must remain retryable rather than poisoning the reuse guard.
+        if tc.name == "read_file" and ctx.task_id == "T3.5":
+            read_path = str(tool_arguments.get("path") or "").replace("\\", "/").strip()
+            if (
+                read_path in {
+                    "literature/synthesis_context.json",
+                    "literature/synthesis_workbench.json",
+                    "literature/cross_domain_catalogs/index.json",
+                }
+                or (
+                    read_path.startswith("literature/cross_domain_catalogs/")
+                    and read_path.endswith(("/paper_catalog.json", "/bridge_context.json"))
+                )
+            ) and result.ok:
+                seen = ctx.extra.setdefault("_t35_large_read_seen", {})
+                if isinstance(seen, dict):
+                    seen[read_path] = step
 
         auto_persist_metadata = await self._maybe_auto_persist_t2_search_result(
             ctx=ctx,
