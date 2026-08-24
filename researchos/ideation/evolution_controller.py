@@ -1150,6 +1150,14 @@ class IdeaEvolutionController:
             ), retained
         try:
             result, candidates = await invoke(requested=requested, repair=False)
+        except RecoverableRuntimePause:
+            # A provider timeout/outage is an operational boundary, not a
+            # malformed scientific response.  Do not turn it into a semantic
+            # ``repair=True`` call: that resubmits the same expensive request,
+            # can repeat the provider retry batch, and makes a single Route
+            # look as though it failed multiple content-repair rounds.  The
+            # durable T4 checkpoint/recovery path owns the next attempt.
+            raise
         except Exception as exc:
             # A malformed role response and a transient provider exception are
             # both Route-local failures. Give this Route one bounded retry,
@@ -1654,7 +1662,21 @@ class IdeaEvolutionController:
         falsifiable proposals until a later evidence upgrade.
         """
 
-        compatible = [route for route, quota in run_config.route_quotas.items() if quota > 0]
+        # If the Opportunity Planner is unavailable, there is no evidence
+        # basis for activating every optional lens.  Keep the two quality
+        # preserving core Routes alive and let an explicit Bridge Plan still
+        # opt its Bridge Route in at selection time.  Listing all Routes here
+        # used to fan out every optional request after a planner timeout,
+        # which compounded provider latency without improving the evidence
+        # basis of those ideas.
+        compatible = [
+            route
+            for route in ("evidence_routed_literature", "informed_brainstorm")
+            if run_config.route_quotas.get(route, 0) > 0
+        ]
+        if not compatible:
+            configured = [route for route, quota in run_config.route_quotas.items() if quota > 0]
+            compatible = configured[:1]
         return [
             OpportunityQuery(
                 opportunity_id="O-RECOVERY-PLANNER",
@@ -3607,9 +3629,6 @@ class IdeaEvolutionController:
         bridge_plan = self._bridge_plan_context()
         if bridge_plan.get("bridge_domains") and "cross_domain_bridge" in configured:
             selected_set.add("cross_domain_bridge")
-        # A degraded fallback Opportunity intentionally lists all Routes. It
-        # retains the previous broad recovery behavior when the planner itself
-        # was unavailable, rather than guessing which lens would have helped.
         selected = [route for route in configured if route in selected_set]
         if not selected and configured:
             selected = configured[:1]

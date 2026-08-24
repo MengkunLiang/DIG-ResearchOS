@@ -8116,6 +8116,13 @@ class AgentRunner:
         # truncation (the guard is cleared above).
         if tc.name == "read_file" and ctx.task_id == "T3.5":
             read_path = str(tool_arguments.get("path") or "").replace("\\", "/").strip()
+            try:
+                read_offset = max(0, int(tool_arguments.get("offset") or 0))
+            except (TypeError, ValueError):
+                read_offset = 0
+            requested_page = tool_arguments.get("max_chars")
+            page_key = str(requested_page).strip() if requested_page is not None else "default"
+            read_key = f"{read_path}#offset={read_offset}&max_chars={page_key}"
             large_index_paths = {
                 "literature/synthesis_context.json",
                 "literature/synthesis_workbench.json",
@@ -8126,18 +8133,20 @@ class AgentRunner:
             )
             if read_path in large_index_paths or is_bridge_catalog:
                 seen = ctx.extra.setdefault("_t35_large_read_seen", {})
-                if isinstance(seen, dict) and read_path in seen:
-                    first_step = seen.get(read_path)
+                if isinstance(seen, dict) and read_key in seen:
+                    first_step = seen.get(read_key)
                     reuse_data = {
                         "path": read_path,
+                        "offset": read_offset,
+                        "max_chars": requested_page,
                         "deduplicated": True,
                         "first_read_step": first_step,
-                        "reason": "same_run_read_already_returned; use the existing tool result",
+                        "reason": "same_run_page_already_returned; use the existing tool result",
                     }
                     reuse_content = (
-                        f"已在本次 T3.5 运行第 {first_step} 步完整返回 `{read_path}`。"
-                        "不要重复读取；请直接使用已有内容。若运行时提示较早上下文已被省略，"
-                        "再重新调用 read_file 以恢复完整内容。"
+                        f"已在本次 T3.5 运行第 {first_step} 步返回 `{read_path}` 的 offset={read_offset} 页面。"
+                        "不要重复读取同一页面；请直接使用已有内容。若需要后续内容，请使用更大的 offset 分页。"
+                        "若运行时提示较早上下文已被省略，再重新调用该页面以恢复完整内容。"
                     )
                     tool_msg = Message.tool(
                         tool_call_id=tc.id,
@@ -8324,7 +8333,14 @@ class AgentRunner:
             ) and result.ok:
                 seen = ctx.extra.setdefault("_t35_large_read_seen", {})
                 if isinstance(seen, dict):
-                    seen[read_path] = step
+                    try:
+                        read_offset = max(0, int(tool_arguments.get("offset") or 0))
+                    except (TypeError, ValueError):
+                        read_offset = 0
+                    requested_page = tool_arguments.get("max_chars")
+                    page_key = str(requested_page).strip() if requested_page is not None else "default"
+                    read_key = f"{read_path}#offset={read_offset}&max_chars={page_key}"
+                    seen[read_key] = step
 
         auto_persist_metadata = await self._maybe_auto_persist_t2_search_result(
             ctx=ctx,

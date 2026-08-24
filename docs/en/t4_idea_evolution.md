@@ -249,7 +249,7 @@ It then builds a bounded `workspace_research_context` from the project, synthesi
 
 `idea_opportunity_planner.j2` emits distinct `OpportunityQuery` objects rather than candidates or rankings. It can use tensions, hidden assumptions, failure boundaries, evaluation blind spots, user constraints, and structural bridge opportunities.
 
-If the planner is unavailable or structurally irreparable, T4 records `ideation/evolution/diagnostics/opportunity_planner_recovery.json` and continues with an explicitly provisional fallback opportunity set. The fallback is an operational receipt, not a domain claim. Planner failure must not pause all route generation.
+If the planner is unavailable or structurally irreparable, T4 records `ideation/evolution/diagnostics/opportunity_planner_recovery.json` and continues with an explicitly provisional fallback opportunity set. The fallback is an operational receipt, not a domain claim. It keeps the two evidence-preserving core Routes active; a user-confirmed Bridge Plan may still activate the Bridge Route, while optional lenses are deferred rather than fanned out without an evidence-specific opportunity. Planner failure must not pause all core route generation.
 
 ### 4.4 P0 multi-route formation
 
@@ -550,8 +550,9 @@ Hard failures preserve the failing object, the error, and all unaffected checkpo
 
 | Condition | Correct behavior |
 | --- | --- |
-| Opportunity Planner failure | Provisional fallback plus diagnostic; routes continue |
-| One route response fails | One bounded replacement call, then a partial/unsupported receipt; other routes continue |
+| Opportunity Planner failure | Provisional fallback plus diagnostic for the core Routes; confirmed Bridge may continue and optional lenses are deferred |
+| One route provider pause | Preserve the Route checkpoint and use T4 recovery/resume; do not reinterpret an outage as semantic repair |
+| One route response has a schema/content error | One bounded replacement call, then a partial/unsupported receipt; other routes continue |
 | One route returns fewer distinct Candidates than its ceiling | Keep them without an automatic completion call; explicit Route regeneration remains available |
 | Seed enrichment is not needed | Score the original seed; do not issue a duplicate call |
 | Targeted enrichment provider pauses | Preserve the original seed unchanged; retry from its checkpoint on resume |

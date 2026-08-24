@@ -281,7 +281,7 @@ ideation/evidence/evidence_index_summary.json
 ideation/evolution/diagnostics/opportunity_planner_recovery.json
 ```
 
-并以明确标注的 provisional fallback opportunity 继续 Route Formation。该 fallback 不是对研究领域的断言，只是“在 Planner 暂不可用时，所有后续问题必须保持可证伪和待验证”的运行收据。Planner 的局部失败不应暂停整个 T4。
+并以明确标注的 provisional fallback opportunity 继续 Route Formation。该 fallback 不是对研究领域的断言，只是“在 Planner 暂不可用时，后续问题必须保持可证伪和待验证”的运行收据。此时只保留证据路由与 informed brainstorm 两条核心 Route；已经由用户确认且有 Bridge Plan 的 Bridge Route 仍可加入，其他可选 Route 延后，不凭空扩大并发请求。Planner 的局部失败不应暂停整个 T4。
 
 ### 4.4 P0 多 Route 形成
 
@@ -743,8 +743,9 @@ deterministic normalization
 
 | 情况 | 正确结果 |
 | --- | --- |
-| Opportunity Planner 失败 | fallback opportunity + diagnostic，Route 继续 |
-| 一个 Route provider / schema 失败 | 一次 repair 后 `unsupported` / `partial` receipt，其它 Route 继续 |
+| Opportunity Planner 失败 | 核心 Route 使用 provisional fallback + diagnostic；已确认的 Bridge 可继续，其他可选 Route 延后 |
+| 一个 Route 返回 provider 暂停 | 保留检查点并交给 T4 recovery/resume，不把服务故障误当语义 repair |
+| 一个 Route 返回结构错误 | 一次针对该响应的 repair 后 `unsupported` / `partial` receipt，其它 Route 继续 |
 | Route underfill | 保留非重复 Candidate；不制造 filler |
 | Seed 不需要深化 | 直接评分原始 Seed，不重复调用模型 |
 | 定向 Enricher 的 provider 暂停 | 原 Seed 保持不变，resume 时从 checkpoint 重试 |
