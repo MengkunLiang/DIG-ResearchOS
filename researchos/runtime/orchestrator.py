@@ -3660,7 +3660,9 @@ class AgentRunner:
             "- `standard_research deep`：保持研究论文规模，但让 T4 更充分地探索 idea。\n"
             "- `survey_balanced standard`：扩大文献覆盖，同时以常规力度探索 idea。\n"
             "- `survey_exhaustive deep`：用于正式综述或高度陌生的领域，覆盖和探索都取最高档。\n"
-            "- `standard_research deep top2`：保持研究论文规模，充分探索 T4，并分别写两份候选 Proposal 后再选一条进入 T5。"
+            "- `standard_research deep top2`：保持研究论文规模，充分探索 T4，并分别写两份候选 Proposal 后再选一条进入 T5。\n\n"
+            "如果界面把参考回答显示为编号，也可以直接输入编号：1=确认默认设置，"
+            "2=standard_research deep top2，3=survey_balanced standard。"
         )
         setup_suggestions = ["确认", "standard_research deep top2", "survey_balanced standard"]
         result = await tool.execute(

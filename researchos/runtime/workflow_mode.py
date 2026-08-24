@@ -246,7 +246,28 @@ def parse_auto_execution_setup_answer(
         )
     if effort not in {"auto", "quick", "standard", "deep"}:
         return None
-    proposal_tracks = "top2" if any(token in normalized for token in ("top2", "two", "2份", "两个", "两份")) else current_proposal_tracks
+    proposal_tracks = (
+        "top2"
+        if any(
+            token in normalized
+            for token in (
+                "top2",
+                "two",
+                "two proposals",
+                "2 proposals",
+                "multiple",
+                "multi",
+                "2份",
+                "两个",
+                "两份",
+                "两条",
+                "多个",
+                "多份",
+                "多条",
+            )
+        )
+        else current_proposal_tracks
+    )
     if proposal_tracks not in {"one", "top2"}:
         return None
     return literature_preset, effort, proposal_tracks
