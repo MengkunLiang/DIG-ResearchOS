@@ -14,6 +14,7 @@ from researchos.ideation.proposal_portfolio import (
     create_manifest,
     materialize_selected_track,
     overview,
+    ready_track_ids,
     resolve_ready_track_selection,
     snapshot_active_track,
 )
@@ -35,6 +36,18 @@ def _write_artifact(workspace: Path, relative: str, content: str = "artifact") -
     path.write_text(content, encoding="utf-8")
 
 
+def _write_identity_anchors(workspace: Path, candidate_id: str, fingerprint: str) -> None:
+    payload = {"candidate_id": candidate_id, "selection_fingerprint": fingerprint}
+    for relative in (
+        "ideation/selected/selected_candidate.json",
+        "ideation/research_dossier.json",
+        "ideation/proposal/proposal_manifest.json",
+        "ideation/post_novelty_formalization.json",
+        "ideation/t45_selection_isolation.json",
+    ):
+        _write_artifact(workspace, relative, json.dumps(payload))
+
+
 def test_parallel_track_snapshot_contains_all_candidate_bound_t45_artifacts(tmp_path: Path) -> None:
     for relative in TRACK_ARTIFACTS:
         if relative.endswith(("/selected", "/_mechanism_tuples", "/_design_rationale_tuples", "/proposal")):
@@ -42,8 +55,7 @@ def test_parallel_track_snapshot_contains_all_candidate_bound_t45_artifacts(tmp_
         else:
             _write_artifact(tmp_path, relative)
     _write_artifact(tmp_path, "ideation/proposal/research_proposal.md", "proposal")
-    _write_artifact(tmp_path, "ideation/selected/selected_candidate.json", '{"candidate_id":"C1"}')
-    _write_artifact(tmp_path, "ideation/proposal/proposal_manifest.json", '{"candidate_id":"C1"}')
+    _write_identity_anchors(tmp_path, "C1", "fp-C1")
     manifest = create_manifest(
         tmp_path,
         candidate_ids=["C1", "C2"],
@@ -96,6 +108,7 @@ def test_materialization_backfills_legacy_track_and_never_uses_active_projection
     first_root = tmp_path / "ideation/proposal_portfolio/tracks/C1/artifacts"
     for relative in TRACK_REQUIRED_ARTIFACTS:
         _write_artifact(first_root, relative, "C1")
+    _write_identity_anchors(first_root, "C1", "fp-C1")
     # Emulate a pre-fix track: the four derived files existed only in the
     # selection archive, while the active projection contains C2 content.
     archive_root = tmp_path / "ideation/t45_selection_history/legacy_C1"
@@ -105,15 +118,29 @@ def test_materialization_backfills_legacy_track_and_never_uses_active_projection
         "ideation/validation_map.yaml",
         "ideation/kill_criteria.yaml",
     ):
-        _write_artifact(archive_root, relative, "C1 archive")
+        if relative == "ideation/research_dossier.json":
+            _write_artifact(
+                archive_root,
+                relative,
+                json.dumps({"candidate_id": "C1", "selection_fingerprint": "fp-C1"}),
+            )
+        else:
+            _write_artifact(archive_root, relative, "C1 archive")
         (first_root / relative).unlink()
     isolation = first_root / "ideation/t45_selection_isolation.json"
     isolation.write_text(
-        json.dumps({"candidate_id": "C1", "archive": {"root": "ideation/t45_selection_history/legacy_C1"}}),
+        json.dumps(
+            {
+                "candidate_id": "C1",
+                "selection_fingerprint": "fp-C1",
+                "archive": {"root": "ideation/t45_selection_history/legacy_C1"},
+            }
+        ),
         encoding="utf-8",
     )
     for relative in TRACK_ARTIFACTS:
         if relative in {
+            "ideation/selected/selected_candidate.json",
             "ideation/research_dossier.json",
             "ideation/contribution_hypothesis_map.yaml",
             "ideation/validation_map.yaml",
@@ -136,20 +163,32 @@ def test_materialization_backfills_legacy_track_and_never_uses_active_projection
     )
     assert selection["selection_reason"] == "single_completed_track_auto_selected"
     for relative in TRACK_REQUIRED_ARTIFACTS:
-            assert (tmp_path / relative).read_text(encoding="utf-8") == "C1" or relative in {
-                "ideation/research_dossier.json",
-                "ideation/contribution_hypothesis_map.yaml",
-                "ideation/validation_map.yaml",
-                "ideation/kill_criteria.yaml",
-                "ideation/t45_selection_isolation.json",
-            }
+        if relative in {
+            "ideation/selected/selected_candidate.json",
+            "ideation/research_dossier.json",
+            "ideation/t45_selection_isolation.json",
+            "ideation/proposal/proposal_manifest.json",
+            "ideation/post_novelty_formalization.json",
+            "ideation/contribution_hypothesis_map.yaml",
+            "ideation/validation_map.yaml",
+            "ideation/kill_criteria.yaml",
+        }:
+            if relative.endswith(".json"):
+                assert json.loads((tmp_path / relative).read_text(encoding="utf-8"))["candidate_id"] == "C1"
+            else:
+                assert (tmp_path / relative).read_text(encoding="utf-8") == "C1 archive"
+        else:
+            assert (tmp_path / relative).read_text(encoding="utf-8") == "C1"
     for relative in (
         "ideation/research_dossier.json",
         "ideation/contribution_hypothesis_map.yaml",
         "ideation/validation_map.yaml",
         "ideation/kill_criteria.yaml",
     ):
-        assert (tmp_path / relative).read_text(encoding="utf-8") == "C1 archive"
+        if relative == "ideation/research_dossier.json":
+            assert json.loads((tmp_path / relative).read_text(encoding="utf-8"))["candidate_id"] == "C1"
+        else:
+            assert (tmp_path / relative).read_text(encoding="utf-8") == "C1 archive"
 
 
 def test_ready_tracks_have_stable_display_aliases_and_resolve_to_independent_ids(tmp_path: Path) -> None:
@@ -170,6 +209,66 @@ def test_ready_tracks_have_stable_display_aliases_and_resolve_to_independent_ids
     assert resolve_ready_track_selection(manifest, "D1") == "EVO-EP1-C1-001"
     assert resolve_ready_track_selection(manifest, "d2") == "CSB-S1"
     assert resolve_ready_track_selection(manifest, "CSB-S1") == "CSB-S1"
+
+
+def test_parallel_track_with_cross_candidate_identity_is_quarantined(tmp_path: Path) -> None:
+    manifest = create_manifest(
+        tmp_path,
+        candidate_ids=["C1", "C2"],
+        population_id="P1",
+        directive_path="parallel.json",
+        source="copilot",
+    )
+    track_root = tmp_path / "ideation/proposal_portfolio/tracks/C1/artifacts"
+    for relative in TRACK_REQUIRED_ARTIFACTS:
+        _write_artifact(track_root, relative, "C1")
+    _write_identity_anchors(track_root, "C1", "fp-C1")
+    _write_artifact(
+        track_root,
+        "ideation/research_dossier.json",
+        json.dumps({"candidate_id": "C2", "selection_fingerprint": "fp-C2"}),
+    )
+    manifest["tracks"][0]["status"] = "ready_for_t5_selection"
+    rendered = overview(manifest, workspace_dir=tmp_path)
+    track = rendered["tracks"][0]
+    assert track["integrity"] == "invalid"
+    assert track["display_id"] == ""
+    assert ready_track_ids(manifest, workspace_dir=tmp_path) == []
+    try:
+        materialize_selected_track(tmp_path, manifest, "C1")
+    except ValueError as exc:
+        assert "completed T4.5 track" in str(exc)
+    else:
+        raise AssertionError("a cross-candidate package must not be materialized")
+
+
+def test_track_digest_receipt_detects_silent_derived_artifact_replacement(tmp_path: Path) -> None:
+    manifest = create_manifest(
+        tmp_path,
+        candidate_ids=["C1"],
+        population_id="P1",
+        directive_path="parallel.json",
+        source="copilot",
+    )
+    track_root = tmp_path / "ideation/proposal_portfolio/tracks/C1/artifacts"
+    for relative in TRACK_REQUIRED_ARTIFACTS:
+        _write_artifact(track_root, relative, "C1")
+    _write_identity_anchors(track_root, "C1", "fp-C1")
+    _write_artifact(
+        track_root,
+        "ideation/post_novelty_formalization.json",
+        json.dumps(
+            {
+                "candidate_id": "C1",
+                "selection_fingerprint": "fp-C1",
+                "artifact_digests": {"ideation/research_dossier.json": "not-the-real-digest"},
+            }
+        ),
+    )
+    manifest["tracks"][0]["status"] = "ready_for_t5_selection"
+    rendered = overview(manifest, workspace_dir=tmp_path)
+    assert rendered["tracks"][0]["integrity"] == "invalid"
+    assert any("digest mismatch" in error for error in rendered["tracks"][0]["integrity_errors"])
 
 
 def test_snapshot_fails_before_deleting_active_projection_when_required_artifact_is_missing(tmp_path: Path) -> None:
@@ -205,8 +304,7 @@ def test_state_machine_skips_portfolio_gate_for_one_completed_track(tmp_path: Pa
             path.mkdir(parents=True, exist_ok=True)
         else:
             _write_artifact(tmp_path, relative)
-    _write_artifact(tmp_path, "ideation/selected/selected_candidate.json", '{"candidate_id":"C1"}')
-    _write_artifact(tmp_path, "ideation/proposal/proposal_manifest.json", '{"candidate_id":"C1"}')
+    _write_identity_anchors(tmp_path, "C1", "fp-C1")
     _write_artifact(tmp_path, "ideation/proposal/research_proposal.md", "C1 proposal")
     manifest = create_manifest(
         tmp_path,

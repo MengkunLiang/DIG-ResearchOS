@@ -9,6 +9,7 @@ different Ideas.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -73,6 +74,12 @@ TRACK_REQUIRED_ARTIFACTS = (
     "ideation/t45_selection_isolation.json",
 )
 
+_IDENTITY_ARTIFACTS = (
+    "ideation/research_dossier.json",
+    "ideation/proposal/proposal_manifest.json",
+    "ideation/post_novelty_formalization.json",
+)
+
 
 def _validate_candidate_id(candidate_id: str) -> str:
     """Return a safe candidate component for an on-disk track directory.
@@ -87,6 +94,115 @@ def _validate_candidate_id(candidate_id: str) -> str:
     if not value or value in {".", ".."} or "/" in value or "\\" in value:
         raise ValueError(f"invalid Proposal Candidate identifier: {value!r}")
     return value
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def track_identity_errors(
+    artifact_root: Path,
+    candidate_id: str,
+    *,
+    expected_fingerprint: str | None = None,
+    require_anchors: bool = False,
+    verify_digests: bool = False,
+) -> list[str]:
+    """Check candidate and selection lineage on candidate-bound JSON anchors.
+
+    Schema validation alone cannot detect a valid dossier copied from another
+    parallel Proposal.  The selected Candidate and isolation receipt establish
+    the expected identity; every identity-bearing downstream artifact must
+    echo both values.  A historical archive may not contain the selected file,
+    so ``require_anchors`` is only used for an active or ready track.
+    """
+
+    root = Path(artifact_root)
+    candidate = _validate_candidate_id(candidate_id)
+    selected = _read_json_object(root / "ideation/selected/selected_candidate.json")
+    isolation = _read_json_object(root / "ideation/t45_selection_isolation.json")
+    selected_candidate = selected.get("candidate") if isinstance(selected.get("candidate"), dict) else {}
+    selected_id = str(selected.get("candidate_id") or selected_candidate.get("id") or "").strip()
+    selected_fp = str(selected.get("selection_fingerprint") or "").strip()
+    isolation_id = str(isolation.get("candidate_id") or "").strip()
+    isolation_fp = str(isolation.get("selection_fingerprint") or "").strip()
+    expected = str(expected_fingerprint or selected_fp or isolation_fp).strip()
+    errors: list[str] = []
+    if require_anchors and not selected_id:
+        errors.append("selected_candidate.json has no candidate_id")
+    if require_anchors and not selected_fp:
+        errors.append("selected_candidate.json has no selection_fingerprint")
+    if selected_id and selected_id != candidate:
+        errors.append(f"selected_candidate.json candidate_id={selected_id}, expected {candidate}")
+    if isolation_id and isolation_id != candidate:
+        errors.append(f"t45_selection_isolation.json candidate_id={isolation_id}, expected {candidate}")
+    if expected and selected_fp and selected_fp != expected:
+        errors.append("selected_candidate.json selection_fingerprint does not match the track lineage")
+    if expected and isolation_fp and isolation_fp != expected:
+        errors.append("t45_selection_isolation.json selection_fingerprint does not match the track lineage")
+    for relative in _IDENTITY_ARTIFACTS:
+        path = root / relative
+        if not path.exists():
+            if require_anchors:
+                errors.append(f"missing identity artifact: {relative}")
+            continue
+        payload = _read_json_object(path)
+        if not payload:
+            errors.append(f"identity artifact is not a JSON object: {relative}")
+            continue
+        actual_id = str(payload.get("candidate_id") or "").strip()
+        actual_fp = str(payload.get("selection_fingerprint") or "").strip()
+        if require_anchors and not actual_id:
+            errors.append(f"{relative} has no candidate_id")
+        if require_anchors and not actual_fp:
+            errors.append(f"{relative} has no selection_fingerprint")
+        if actual_id and actual_id != candidate:
+            errors.append(f"{relative} candidate_id={actual_id}, expected {candidate}")
+        if expected and actual_fp and actual_fp != expected:
+            errors.append(f"{relative} selection_fingerprint does not match the track lineage")
+        if relative == "ideation/post_novelty_formalization.json" and verify_digests:
+            digests = payload.get("artifact_digests")
+            if isinstance(digests, dict):
+                for digest_path, expected_digest in digests.items():
+                    relative_digest_path = str(digest_path or "").strip()
+                    if not relative_digest_path or Path(relative_digest_path).is_absolute() or ".." in Path(relative_digest_path).parts:
+                        errors.append("post_novelty_formalization.json contains an unsafe artifact digest path")
+                        continue
+                    digest_file = root / relative_digest_path
+                    if not digest_file.is_file():
+                        errors.append(f"artifact digest target is missing: {relative_digest_path}")
+                        continue
+                    actual_digest = hashlib.sha256(digest_file.read_bytes()).hexdigest()
+                    if actual_digest != str(expected_digest or "").strip():
+                        errors.append(f"artifact digest mismatch: {relative_digest_path}")
+    return errors
+
+
+def ready_track_ids(manifest: dict[str, Any], workspace_dir: Path | None = None) -> list[str]:
+    """Return only completed tracks whose candidate lineage is coherent."""
+
+    ready: list[str] = []
+    for track in manifest.get("tracks", []):
+        if not isinstance(track, dict) or track.get("status") != "ready_for_t5_selection":
+            continue
+        candidate_id = str(track.get("candidate_id") or "").strip()
+        if not candidate_id:
+            continue
+        errors: list[str] = []
+        if workspace_dir is not None:
+            errors = track_identity_errors(
+                Path(workspace_dir) / str(track.get("artifact_root") or ""),
+                candidate_id,
+                require_anchors=True,
+                verify_digests=True,
+            )
+        if not errors:
+            ready.append(candidate_id)
+    return ready
 
 
 def now_iso() -> str:
@@ -138,6 +254,17 @@ def backfill_historical_track_artifacts(workspace_dir: Path, manifest: dict[str,
         archive_rel = str(archive.get("root") or "").strip() if isinstance(archive, dict) else ""
         archive_root = (workspace / archive_rel).resolve() if archive_rel else None
         if archive_root is None or workspace not in archive_root.parents:
+            continue
+        archive_errors = track_identity_errors(
+            archive_root,
+            str(track.get("candidate_id") or ""),
+            expected_fingerprint=str(receipt.get("selection_fingerprint") or "").strip() or None,
+            require_anchors=False,
+            verify_digests=True,
+        )
+        if archive_errors:
+            track["archive_backfill_error"] = "; ".join(archive_errors[:8])
+            changed = True
             continue
         copied = list(track.get("copied_artifacts") or []) if isinstance(track.get("copied_artifacts"), list) else []
         for relative in TRACK_ARTIFACTS:
@@ -235,6 +362,9 @@ def snapshot_active_track(workspace_dir: Path, manifest: dict[str, Any]) -> dict
             "cannot snapshot a Proposal track before all candidate-bound T4.5 artifacts exist: "
             + ", ".join(missing)
         )
+    identity_errors = track_identity_errors(workspace, candidate_id, require_anchors=True, verify_digests=True)
+    if identity_errors:
+        raise ValueError("candidate-bound T4.5 identity is inconsistent: " + "; ".join(identity_errors[:8]))
     destination = Path(workspace_dir) / TRACKS_REL_DIR / candidate_id / "artifacts"
     if destination.exists():
         shutil.rmtree(destination)
@@ -311,16 +441,24 @@ def materialize_selected_track(
 
     candidate_id = _validate_candidate_id(candidate_id)
     manifest = backfill_historical_track_artifacts(workspace_dir, manifest)
+    ready_ids = set(ready_track_ids(manifest, workspace_dir=Path(workspace_dir)))
     ready = {
         str(track.get("candidate_id")): track
         for track in manifest.get("tracks", [])
-        if isinstance(track, dict) and track.get("status") == "ready_for_t5_selection"
+        if isinstance(track, dict)
+        and str(track.get("candidate_id") or "") in ready_ids
     }
     if candidate_id not in ready:
         raise ValueError("the chosen Proposal is not a completed T4.5 track")
     source_root = Path(workspace_dir) / str(ready[candidate_id].get("artifact_root") or "")
     if not source_root.is_dir():
         raise ValueError("the chosen Proposal archive is missing")
+    identity_errors = track_identity_errors(source_root, candidate_id, require_anchors=True, verify_digests=True)
+    if identity_errors:
+        raise ValueError(
+            "the chosen Proposal archive has inconsistent candidate provenance: "
+            + "; ".join(identity_errors[:8])
+        )
     missing = [relative for relative in TRACK_REQUIRED_ARTIFACTS if not (source_root / relative).exists()]
     if missing:
         raise ValueError(
@@ -372,7 +510,16 @@ def overview(
         if not isinstance(track, dict):
             continue
         candidate_id = str(track.get("candidate_id") or "")
-        is_ready = str(track.get("status") or "") == "ready_for_t5_selection"
+        integrity_errors: list[str] = []
+        status_ready = str(track.get("status") or "") == "ready_for_t5_selection"
+        if workspace_dir is not None and status_ready:
+            integrity_errors = track_identity_errors(
+                Path(workspace_dir) / str(track.get("artifact_root") or ""),
+                candidate_id,
+                require_anchors=True,
+                verify_digests=True,
+            )
+        is_ready = status_ready and not integrity_errors
         if is_ready:
             ready_index += 1
         display_id = f"D{ready_index}" if is_ready else ""
@@ -401,12 +548,19 @@ def overview(
                 "proposal_path": f"{track.get('artifact_root')}/ideation/proposal/research_proposal.md",
                 "artifact_count": len(copied),
                 "required_artifacts": f"{required_present}/{required_count}",
+                "integrity": "valid" if not integrity_errors else "invalid",
+                "integrity_errors": integrity_errors[:8],
             }
         )
     return {"tracks": tracks, "status": str(manifest.get("status") or "unknown")}
 
 
-def resolve_ready_track_selection(manifest: dict[str, Any], raw_selection: str | None) -> str | None:
+def resolve_ready_track_selection(
+    manifest: dict[str, Any],
+    raw_selection: str | None,
+    *,
+    workspace_dir: Path | None = None,
+) -> str | None:
     """Resolve the human-facing D1/D2 alias to one completed track.
 
     The alias is derived from the same ordered ready-track list used by
@@ -418,11 +572,7 @@ def resolve_ready_track_selection(manifest: dict[str, Any], raw_selection: str |
     value = str(raw_selection or "").strip()
     if not value:
         return None
-    ready_ids = [
-        str(item.get("candidate_id") or "")
-        for item in manifest.get("tracks", [])
-        if isinstance(item, dict) and item.get("status") == "ready_for_t5_selection" and str(item.get("candidate_id") or "").strip()
-    ]
+    ready_ids = ready_track_ids(manifest, workspace_dir=workspace_dir)
     normalized = value.upper()
     aliases: dict[str, str] = {}
     for index, candidate_id in enumerate(ready_ids, start=1):

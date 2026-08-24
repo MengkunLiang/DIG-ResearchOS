@@ -14,6 +14,7 @@ from collections import Counter
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+import hashlib
 from pathlib import Path
 import re
 import shutil
@@ -1570,6 +1571,19 @@ def write_post_novelty_formalization_manifest(workspace: Path) -> None:
         "proposal_manifest": "ideation/proposal/proposal_manifest.json",
         "orientation_review": ORIENTATION_REVIEW_REL_PATH,
     }
+    digest_paths = [
+        *artifacts.values(),
+        "ideation/selected/selected_candidate.json",
+        T45_SELECTION_ISOLATION_REL_PATH,
+        "ideation/novelty_audit.md",
+        "ideation/collision_cases.md",
+        "ideation/novelty_audit_fingerprints.json",
+    ]
+    artifact_digests: dict[str, str] = {}
+    for relative in dict.fromkeys(digest_paths):
+        path = workspace / relative
+        if path.is_file():
+            artifact_digests[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
     _write_json(
         workspace / FORMALIZATION_MANIFEST_REL_PATH,
         {
@@ -1579,6 +1593,8 @@ def write_post_novelty_formalization_manifest(workspace: Path) -> None:
             "selection_fingerprint": selection_fingerprint,
             "selection_isolation": T45_SELECTION_ISOLATION_REL_PATH,
             "artifacts": artifacts,
+            "artifact_digest_algorithm": "sha256",
+            "artifact_digests": artifact_digests,
             "quality_gate": "blueprint_claims_proposal_orientation_review",
         },
     )

@@ -105,8 +105,10 @@ from ..ideation.proposal_portfolio import (
     load_manifest as load_proposal_portfolio_manifest,
     materialize_selected_track,
     overview as proposal_portfolio_overview,
+    ready_track_ids,
     resolve_ready_track_selection,
     snapshot_active_track,
+    track_identity_errors,
 )
 from ..ideation.state import T4ArtifactStore, build_t4_input_fingerprints, run_config_fingerprint
 
@@ -2279,6 +2281,18 @@ def _validate_t45_post_novelty_formalization(workspace_dir: Path, audit_path: Pa
     isolation_ok, isolation_error = validate_t45_selection_isolation(workspace_dir, require_accepted=True)
     if not isolation_ok:
         return False, isolation_error
+    identity_errors = track_identity_errors(
+        workspace_dir,
+        expected_candidate_id,
+        expected_fingerprint=expected_selection_fingerprint,
+        require_anchors=True,
+        # The formalizer may still rewrite source prose before publishing a
+        # fresh receipt. Parallel Proposal tracks enforce digests at snapshot
+        # and T5 materialization boundaries.
+        verify_digests=False,
+    )
+    if identity_errors:
+        return False, "candidate-bound T4.5 artifacts have inconsistent provenance: " + "; ".join(identity_errors[:8])
     missing = [name for name, path in required.items() if not path.exists() or path.stat().st_size <= 0]
     if missing:
         return False, "post-novelty formalization is missing: " + ", ".join(missing)
@@ -5155,12 +5169,12 @@ class StateMachine:
             if manifest is None:
                 raise ValueError("T4.5 proposal portfolio manifest is missing")
             raw_candidate_id = candidate_id
-            candidate_id = resolve_ready_track_selection(manifest, candidate_id) or ""
-            ready_tracks = [
-                str(item.get("candidate_id") or "")
-                for item in manifest.get("tracks", [])
-                if isinstance(item, dict) and item.get("status") == "ready_for_t5_selection"
-            ]
+            candidate_id = resolve_ready_track_selection(
+                manifest,
+                candidate_id,
+                workspace_dir=workspace_dir,
+            ) or ""
+            ready_tracks = ready_track_ids(manifest, workspace_dir=workspace_dir)
             if len(ready_tracks) == 1 and not candidate_id:
                 candidate_id = ready_tracks[0]
             if candidate_id not in ready_tracks:
@@ -6101,13 +6115,7 @@ class StateMachine:
             state.paused_at = _now_iso()
             return state
         if next_id is None:
-            completed_ids = [
-                str(item.get("candidate_id") or "")
-                for item in manifest.get("tracks", [])
-                if isinstance(item, dict)
-                and item.get("status") == "ready_for_t5_selection"
-                and str(item.get("candidate_id") or "").strip()
-            ]
+            completed_ids = ready_track_ids(manifest, workspace_dir=workspace_dir)
             # A single Proposal has no meaningful human choice.  Materialize
             # it immediately and continue to T5; the portfolio Gate is only
             # a decision boundary when two or more independent Proposals are

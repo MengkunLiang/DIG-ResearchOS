@@ -119,6 +119,10 @@ Proposal 是给研究者阅读的完整论证；蓝图和主张登记表则让�
 
 并行正式化期间，`ideation/proposal/`、`hypotheses.md`、蓝图、主张、实验计划、验证/停止条件、研究 dossier 以及新颖性指纹等活动路径只表示“当前正在处理的那一条”。切换到下一条时，上一条的完整候选绑定产物会先复制到对应的 `tracks/<Candidate>/artifacts/`，再清理活动投影。因而根目录最后只看到最后一条是正常的活动投影，不代表前一条被覆盖。两条独立 Proposal 的唯一真源是 `ideation/proposal_portfolio/manifest.json` 及其 `tracks/` 子目录，而不是活动根目录。选择某条时，系统会从该条归档恢复全部候选绑定文件，避免不同 Proposal 串线；如果归档缺少必需文件，系统会回到同一个选择页并报告缺失项，不会从另一条 Proposal 借文件。
 
+每条归档还必须通过候选身份一致性检查。`selected_candidate.json`、隔离回执、研究 dossier、Proposal manifest 和正式化回执中的 `candidate_id` 与 `selection_fingerprint` 必须彼此相符。仅仅文件齐全或 YAML/JSON 能解析，并不代表归档可信。若发现 dossier 来自另一条 Candidate、fingerprint 过期，或历史回执无法证明来源，表格会标记“归档溯源不一致”，不会分配 D1/D2 别名，也不会让 T5 读取这条结果。此时应从对应 Candidate 重新完成 T4.5，而不是手工把另一条 Proposal 的文件复制过来。
+
+正式化回执还会保存候选绑定文件的 SHA-256 摘要，并在交接前检查验证映射、贡献映射、研究 dossier、实验计划与 claim registry 的 ID 集合是否一致。这样即使旧文件仍能通过单文件 schema，也会在跨 Proposal 串线时被隔离。
+
 Auto 在启动设置中可以选 `one` 或 `top2`。`one` 是默认值，按排序推进一条；`top2` 会把 T4 最靠前的两条 Candidate 分别正式化，再在 T5 前请求你选择。示例：`standard_research deep top2`。这不是自动合并两个方向，也不会自动替你决定要投入实验资源的 Proposal。
 
 T5 **不会**静默替你跑实验。它先把已通过的 T4.5 方案编译为受约束的交接，再让你选择或授权外部执行器。执行器可以准备公开资源并完成已批准的工作，但不能静默修改研究问题、核心机制、必需 baseline、benchmark 范围或 claim 边界。

@@ -1726,13 +1726,19 @@ class CLIHumanInterface(HumanInterface):
             if "/tracks/" in compact_path:
                 compact_path = compact_path.split("/tracks/", 1)[1]
             compact_path = compact_path.replace("/ideation/proposal/", "/…/proposal/")
+            status_label = _proposal_track_status_label(str(track.get("status") or ""))
+            if str(track.get("integrity") or "") == "invalid":
+                status_label = "归档溯源不一致，需重新正式化"
+                integrity_errors = track.get("integrity_errors")
+                if isinstance(integrity_errors, list) and integrity_errors:
+                    status_label += "\n" + str(integrity_errors[0])
             table.add_row(
                 display_id,
                 candidate_id,
                 str(track.get("title") or track.get("candidate_id") or ""),
                 artifact_status,
                 compact_path,
-                _proposal_track_status_label(str(track.get("status") or "")),
+                status_label,
             )
         guide = Text(
             "每一行都是一份独立 Proposal，D1/D2 是本页稳定的选择别名。"

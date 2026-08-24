@@ -33,6 +33,7 @@ from .novelty_verdict import (
     extract_final_gate_verdict,
     normalize_final_gate_verdict,
 )
+from .proposal_portfolio import track_identity_errors
 from .t45_semantic_adjudication import accepted_t45_semantic_errors
 
 
@@ -116,6 +117,71 @@ def _selected_candidate_field(selected: dict[str, Any], *keys: str) -> str:
             if str(value or "").strip():
                 return str(value).strip()
     return ""
+
+
+def _derived_artifact_consistency_error(workspace: Path, registry: dict[str, Any]) -> str | None:
+    """Check deterministic T5 maps against the current claim/experiment sources.
+
+    A valid YAML file can still be a projection from a different Proposal.  The
+    compiler normally prevents this, but old parallel runs may have restored a
+    stale map from a selection-history directory.  Compare the identifiers at
+    the contract boundary so semantic cross-track mixing fails closed.
+    """
+
+    registry_claims = registry.get("claims") if isinstance(registry.get("claims"), list) else []
+    claim_ids = [str(item.get("id") or "").strip() for item in registry_claims if isinstance(item, dict) and str(item.get("id") or "").strip()]
+    expected_claim_ids = set(claim_ids)
+    try:
+        validation_map = yaml.safe_load((workspace / "ideation" / "validation_map.yaml").read_text(encoding="utf-8")) or {}
+        contribution_map = yaml.safe_load((workspace / "ideation" / "contribution_hypothesis_map.yaml").read_text(encoding="utf-8")) or {}
+        exp_plan = yaml.safe_load((workspace / "ideation" / "exp_plan.yaml").read_text(encoding="utf-8")) or {}
+        dossier = _json_object(workspace / "ideation" / "research_dossier.json")
+    except (OSError, yaml.YAMLError):
+        return "candidate-bound derived artifacts cannot be parsed for consistency checking"
+    if not all(isinstance(item, dict) for item in (validation_map, contribution_map, exp_plan, dossier)):
+        return "candidate-bound derived artifacts must all contain objects"
+    validation_ids = {
+        str(item.get("claim_id") or "").strip()
+        for item in (validation_map.get("claims") if isinstance(validation_map.get("claims"), list) else [])
+        if isinstance(item, dict) and str(item.get("claim_id") or "").strip()
+    }
+    contribution_ids = {
+        str(item.get("id") or "").strip()
+        for item in (contribution_map.get("claims") if isinstance(contribution_map.get("claims"), list) else [])
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+    dossier_ids = {
+        str(item.get("id") or "").strip()
+        for item in (dossier.get("hypotheses") if isinstance(dossier.get("hypotheses"), list) else [])
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+    for label, actual in (("validation_map", validation_ids), ("contribution_hypothesis_map", contribution_ids), ("research_dossier", dossier_ids)):
+        if actual != expected_claim_ids:
+            return f"{label} claim IDs do not match claim_registry.yaml ({sorted(actual)} != {sorted(expected_claim_ids)})"
+    experiments = exp_plan.get("experiments") if isinstance(exp_plan.get("experiments"), list) else []
+    experiment_ids = {
+        str(item.get("id") or "").strip()
+        for item in experiments
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+    for experiment in experiments:
+        if not isinstance(experiment, dict):
+            continue
+        refs = experiment.get("claim_refs") if isinstance(experiment.get("claim_refs"), list) else []
+        unknown = {str(ref).strip() for ref in refs if str(ref).strip()} - expected_claim_ids
+        if unknown:
+            return f"exp_plan.yaml references unknown claim IDs: {sorted(unknown)}"
+    for item in (validation_map.get("claims") if isinstance(validation_map.get("claims"), list) else []):
+        if not isinstance(item, dict):
+            continue
+        unknown = {
+            str(ref).strip()
+            for ref in (item.get("experiment_ids") if isinstance(item.get("experiment_ids"), list) else [])
+            if str(ref).strip()
+        } - experiment_ids
+        if unknown:
+            return f"validation_map.yaml references unknown experiment IDs: {sorted(unknown)}"
+    return None
 
 
 def repair_t45_proposal_manifest(workspace: Path, audit_path: Path) -> tuple[bool, str | None]:
@@ -362,6 +428,29 @@ def validate_t45_research_proposal(
         and str(manifest.get("selection_fingerprint")).strip() != expected_selection_fingerprint
     ):
         return False, "proposal_manifest.json selection_fingerprint does not match the current selected Candidate"
+    identity_errors = track_identity_errors(
+        workspace,
+        str(manifest.get("candidate_id") or "").strip(),
+        expected_fingerprint=str(manifest.get("selection_fingerprint") or "").strip() or None,
+        require_anchors=True,
+        # During T4.5 review, the Proposal and source maps may be edited before
+        # the final receipt is rewritten.  Immutable digest enforcement belongs
+        # to the parallel-track snapshot/materialization boundary.
+        verify_digests=False,
+    )
+    if identity_errors:
+        return False, "candidate-bound T4.5 artifacts have inconsistent provenance: " + "; ".join(identity_errors[:8])
+    try:
+        registry_for_consistency = yaml.safe_load(
+            (workspace / CLAIM_REGISTRY_REL_PATH).read_text(encoding="utf-8")
+        ) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        return False, f"claim_registry.yaml cannot be read for derived-artifact consistency: {exc}"
+    if not isinstance(registry_for_consistency, dict):
+        return False, "claim_registry.yaml must contain an object for derived-artifact consistency"
+    consistency_error = _derived_artifact_consistency_error(workspace, registry_for_consistency)
+    if consistency_error:
+        return False, consistency_error
     manifest_verdict = str(manifest.get("novelty_audit_verdict") or "").strip()
     if not manifest_verdict:
         return False, "proposal_manifest.json is missing novelty_audit_verdict"
