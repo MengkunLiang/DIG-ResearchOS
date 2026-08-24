@@ -1705,18 +1705,24 @@ def _research_text_length(text: str) -> int:
 
 
 def _markdown_block_for_heading(text: str, heading: str) -> str:
-    """Return a claim section without mistaking its field headings for claims.
+    """Return a claim section without overfitting to one heading wording.
 
     Claim blocks use a level-two or level-three heading (for example
-    ``## DP1``), followed by field headings such as ``### Rationale`` or
-    ``### 理由``.  The previous implementation ended the block at *any*
-    level-two/three heading, which reduced every level-two claim with
-    level-three fields to its title alone.  A Markdown section ends only at a
-    heading of the same or a higher level.
+    ``## DP1`` or ``## 主张 DP1``), followed by field headings such as
+    ``### Rationale`` or ``### 理由``.  Claim identity is therefore matched
+    as an exact token in the heading title rather than requiring the ID to be
+    the first word after ``##``.  This accepts natural researcher-facing
+    headings while still rejecting near-matches such as ``TC10``.  A Markdown
+    section ends only at a heading of the same or a higher level.
     """
 
-    match = re.search(rf"(?im)^(?P<marks>###?)\s+{re.escape(heading)}\b.*$", text)
-    if not match:
+    token_pattern = re.compile(rf"(?<![\w-]){re.escape(heading)}(?![\w-])", re.IGNORECASE)
+    match = None
+    for candidate in re.finditer(r"(?im)^(?P<marks>###?)\s+(?P<title>[^\n]*)$", text):
+        if token_pattern.search(candidate.group("title")):
+            match = candidate
+            break
+    if match is None:
         return ""
     tail = text[match.end() :]
     level = len(match.group("marks"))
