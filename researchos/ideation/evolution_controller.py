@@ -17,6 +17,7 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from ..pydantic_compat import model_dump, model_validate
 from ..runtime.bridge_catalog import load_bridge_catalog_summaries
+from ..runtime.errors import RecoverableRuntimePause
 from .config import T4EvolutionSettings
 from .errors import T4RoleResponseFormatError
 from .evidence import build_idea_evidence_index
@@ -3791,6 +3792,15 @@ class IdeaEvolutionController:
                         "error": str(exc)[:1200],
                     },
                 )
+                # A provider outage/timeout is an operational pause, not a
+                # malformed enrichment payload.  Retrying the ``repair=True``
+                # semantic pass here would submit the same expensive request
+                # again, multiplying provider retries (and producing many
+                # misleading "第 1 轮" notices when candidates run in
+                # parallel).  Preserve the Seed and let the normal durable
+                # T4 recovery boundary handle a later resume instead.
+                if isinstance(exc, RecoverableRuntimePause):
+                    break
 
         reason = str(last_error or "enrichment returned no usable candidate")
         degraded = self._mark_enrichment_degraded(candidate, reason)

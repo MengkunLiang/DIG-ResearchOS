@@ -920,7 +920,7 @@ class AgentRunner:
         wait_seconds = max(0.0, seconds)
         if wait_seconds:
             self.progress.emit(
-                f"[Runtime] 将在 {wait_seconds:g} 秒后重新提交模型请求（第 {attempt} 轮受限请求）。",
+                f"[Runtime] 将在 {wait_seconds:g} 秒后重新提交当前并发模型请求（请求级第 {attempt} 次自动重试；同一 T4 阶段的其它候选可能各自独立重试）。",
                 important=True,
             )
             self._record_skill_progress(
