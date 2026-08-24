@@ -1029,7 +1029,13 @@ def _claims_markdown_errors(
             "rationale": ("rationale", "理由", "依据", "理论推理", "机制", "设计推理"),
             "mechanism": ("mechanism", "机制", "设计推理"),
             "expected observation": ("expected observation", "预期观察", "预期观测", "可观察"),
-            "evaluation": ("evaluation", "评测", "检验方法"),
+            # Chinese academic prose commonly uses 评价/评估 for the same
+            # research function as 评测.  Treating only 评测 as valid made
+            # otherwise complete claims fail during legacy track recovery,
+            # even when the block explicitly described comparisons and
+            # falsification tests.  Keep the semantic requirement, broaden
+            # only the equivalent labels.
+            "evaluation": ("evaluation", "评测", "评价", "评估", "检验方法", "assessment"),
             "competing explanation": ("competing explanation", "竞争解释", "替代解释"),
             "falsification": ("falsification", "证伪", "失败条件"),
         }

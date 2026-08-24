@@ -5168,6 +5168,17 @@ class StateMachine:
             manifest = load_proposal_portfolio_manifest(workspace_dir)
             if manifest is None:
                 raise ValueError("T4.5 proposal portfolio manifest is missing")
+            # The pending Gate presentation is durable state and may have
+            # been rendered by a pre-isolation version before a restart.  Do
+            # not trust that snapshot for either display or selection.  Run
+            # the receipt-scoped migration, then replace the presentation
+            # with the current overview before resolving D1/D2/ordinal input.
+            manifest = backfill_historical_track_artifacts(workspace_dir, manifest)
+            if state.pending_gate is not None:
+                refreshed_presentation = dict(state.pending_gate.presentation or {})
+                refreshed_presentation["proposal_portfolio"] = self._t45_proposal_portfolio_summary(workspace_dir)
+                refreshed_presentation.pop("portfolio_selection_error", None)
+                state.pending_gate.presentation = refreshed_presentation
             raw_candidate_id = candidate_id
             candidate_id = resolve_ready_track_selection(
                 manifest,

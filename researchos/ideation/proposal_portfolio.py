@@ -813,6 +813,12 @@ def resolve_ready_track_selection(
     value = str(raw_selection or "").strip()
     if not value:
         return None
+    # A Gate can survive a process restart with a presentation rendered from
+    # an older portfolio contract.  Run the same safe, receipt-scoped
+    # migration used by the renderer before resolving the answer so a stale
+    # table can never make a valid D1/D2 selection look unavailable.
+    if workspace_dir is not None:
+        backfill_historical_track_artifacts(Path(workspace_dir), manifest)
     ready_ids = ready_track_ids(manifest, workspace_dir=workspace_dir)
     normalized = proposal_selection_alias(value) or value.upper()
     aliases: dict[str, str] = {}
