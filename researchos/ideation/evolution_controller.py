@@ -1024,11 +1024,14 @@ class IdeaEvolutionController:
         route_results = [result for result, _candidates in ordered]
         dossiers = [candidate for _result, candidates in ordered for candidate in candidates]
         # The route counter has reached 7/7 (or the configured equivalent),
-        # but P0 is not ready for scoring yet.  Candidate enrichment,
-        # deduplication and Family construction can each involve durable work
-        # and provider calls.  Announce this public phase before the first
-        # enrichment request so the UI never leaves a researcher staring at a
-        # completed route counter while it is actually doing post-route work.
+        # but P0 is not ready for scoring yet.  Deduplication and Family
+        # construction are durable local work.  Initial Route generation
+        # already supplies a valid IdeaSeed, so do not automatically issue a
+        # second LLM request for every Seed before scoring.  That historical
+        # enrichment fan-out added one large request per candidate, doubled
+        # provider exposure, and made a transient provider stall look like a
+        # T4-wide failure.  Targeted enrichment remains available through the
+        # selected-candidate / later refinement path.
         await self._report(
             EvolutionPhase.GENOME_FAMILY,
             "started",
@@ -1037,11 +1040,6 @@ class IdeaEvolutionController:
                 "route_count": len(route_results),
                 "completed_routes": len(requested_routes),
             },
-        )
-        dossiers = await self._enrich_initial_seed_candidates(
-            dossiers,
-            run_config=run_config,
-            evidence_summary=planner_context,
         )
         self._write_t4_information_utilization(
             opportunities=opportunities,
@@ -3547,14 +3545,16 @@ class IdeaEvolutionController:
         run_config: T4RunConfig,
         evidence_summary: dict[str, Any],
     ) -> list[CandidateDossier]:
-        """Attempt one LLM enrichment per minimal Seed without blocking P0.
+        """Run explicitly requested LLM enrichment for minimal Seeds.
 
         Route generation deliberately admits concise Seed objects. This pass
         gives an independent Enricher the narrower task of expanding a Seed's
         scientific expression while preserving its identity and core proposal.
-        A timeout, malformed enrichment, or incomplete expansion is stored as
-        a Candidate-local degradation. The original Seed remains available to
-        scoring, later targeted mutation, and the Human Gate.
+        A provider pause is stored as a retryable checkpoint and leaves the
+        original Seed unchanged. A received but malformed or incomplete
+        expansion is a Candidate-local content diagnostic. The original Seed
+        remains available to scoring, later targeted mutation, and the Human
+        Gate.
         """
 
         if self.enricher is None:
@@ -3753,8 +3753,15 @@ class IdeaEvolutionController:
                     candidate,
                     str(checkpoint.get("reason") or "previous enrichment remained incomplete"),
                 )
+            # A provider pause is operationally different from a malformed
+            # enrichment.  Keep the original Seed usable for this run, but
+            # let a later durable resume retry the enrichment once the model
+            # service is available again.
+            # ``retryable_provider`` deliberately falls through to the call
+            # loop instead of being treated as a terminal degraded checkpoint.
 
         last_error: Exception | None = None
+        retryable_provider_failure = False
         for repair in (False, True):
             try:
                 proposal = await self.enricher.enrich_candidate(
@@ -3780,13 +3787,20 @@ class IdeaEvolutionController:
                 return enriched
             except Exception as exc:
                 last_error = exc
+                if isinstance(exc, RecoverableRuntimePause):
+                    retryable_provider_failure = True
                 self.store.write_json(
                     f"ideation/evolution/diagnostics/enrichment_{safe_id}_attempt_{2 if repair else 1}.json",
                     {
                         "schema_version": "1.0.0",
                         "semantics": "t4_candidate_enrichment_diagnostic",
                         "candidate_id": candidate.candidate_id,
-                        "status": "repairing" if not repair else "degraded",
+                        "status": (
+                            "retryable_provider"
+                            if isinstance(exc, RecoverableRuntimePause)
+                            else ("repairing" if not repair else "degraded")
+                        ),
+                        "retryable": isinstance(exc, RecoverableRuntimePause),
                         "attempt": 2 if repair else 1,
                         "error_type": type(exc).__name__,
                         "error": str(exc)[:1200],
@@ -3803,6 +3817,28 @@ class IdeaEvolutionController:
                     break
 
         reason = str(last_error or "enrichment returned no usable candidate")
+        # A provider pause did not produce a candidate payload.  Preserve the
+        # original Seed exactly and mark the checkpoint as retryable; do not
+        # attach a semantic degradation warning that would make a transient
+        # outage look like a scientific/content failure.  A later resume can
+        # retry this same enrichment input without re-running Route formation.
+        if retryable_provider_failure:
+            self.store.write_json(
+                relative_path,
+                {
+                    "schema_version": "1.0.0",
+                    "semantics": "t4_candidate_enrichment",
+                    "candidate_id": candidate.candidate_id,
+                    "input_fingerprint": input_fingerprint,
+                    "status": "retryable_provider",
+                    "retryable": True,
+                    "attempts": 1,
+                    "candidate": model_dump(candidate, mode="json"),
+                    "reason": reason[:1200],
+                },
+            )
+            return candidate
+
         degraded = self._mark_enrichment_degraded(candidate, reason)
         self.store.write_json(
             relative_path,
@@ -3812,6 +3848,7 @@ class IdeaEvolutionController:
                 "candidate_id": candidate.candidate_id,
                 "input_fingerprint": input_fingerprint,
                 "status": "degraded",
+                "retryable": False,
                 "attempts": 2,
                 "reason": reason[:1200],
             },

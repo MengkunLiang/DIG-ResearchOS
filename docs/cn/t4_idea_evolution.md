@@ -30,7 +30,7 @@ T3 / T3.5 / T3.6 的材料、用户种子和 Cross-domain catalog
  Evidence Index + Opportunity Map + 多 Route Idea Seed
                          │
                          ▼
-   Candidate Enricher → 独立三维评分 → Family / Interaction Graph
+   独立三维评分 → Family / Interaction Graph
                          │
                          ▼
  Mutation Plan + Crossover Compatibility Review + Child / Deferral
@@ -39,7 +39,7 @@ T3 / T3.5 / T3.6 的材料、用户种子和 Cross-domain catalog
  Union 评分 + Contract / Delta / Complexity 诊断 + Family-aware Survival
                          │
                          ▼
- Portfolio + LLM Final Card Compiler + Gate1（D1、D2、D3…）
+ Portfolio + 按需 Candidate Enricher + LLM Final Card Compiler + Gate1（D1、D2、D3…）
                          │
       ┌──────────────────┼───────────────────┐
       ▼                  ▼                   ▼
@@ -248,8 +248,8 @@ Pre-run inspection / 研究者确认
   → Evidence Index + workspace research context
   → Opportunity Map
   → P0：独立多 Route Seed formation
-  → Candidate Enrichment（逐 Candidate，可降级）
   → Independent Scoring（逐 batch，必要时逐 Candidate 隔离）
+  → Candidate Enrichment（仅对选中或确有缺口的 Candidate 定向调用）
   → Idea Family + Population Interaction Graph
   → Parent selection + Mutation plan
   → Crossover compatibility review（仅在允许时）
@@ -329,9 +329,9 @@ Candidate Enrichment 同样按 Seed 独立 checkpoint。契约会把 `methodolog
 
 若模型已输出完整 `CandidateDossier`，系统会接收；若只输出最小 Seed，则 Controller 把它投影为可追溯、显式 `seed` 成熟度的 dossier。投影不发明引用、实验、评分或科研解释。一个结构可用但展示字段未成熟的初始 Candidate 会被标为 Seed，而不是让整个 Route 失败。
 
-### 4.6 Candidate Enricher：将表达深度从 Generator 契约中拆开
+### 4.6 Candidate Enricher：只对确有需要的候选做定向深化
 
-每个 Seed 可单独调用 `LLMCandidateEnricher`。它的任务是把一个已经被保留的概念扩展为更完整、可比较的研究方案，包括：
+`LLMCandidateEnricher` 是定向深化能力，而不是每个 Route 完成后对所有 Seed 自动扇出调用。初始 Route 已经能生成可追溯的最小 `IdeaSeed`，因此 T4 会先直接评分，不会为每个候选再次发送一份大上下文请求。这样避免重复计算，也避免单个服务波动被放大成整个 T4 的停滞。对于被选中的候选，或确实缺少关键机制、验证信息的候选，系统仍可调用 Enricher 扩展为更完整、可比较的研究方案，包括：
 
 - 更清楚的机制链和竞争解释；
 - 一至四条真正独立的 provisional hypotheses；
@@ -348,7 +348,7 @@ ideation/evolution/enrichment/<candidate-id>.json
 ideation/evolution/diagnostics/enrichment_<candidate-id>_attempt_<n>.json
 ```
 
-每个 Candidate 有一次普通尝试和一次结构修复尝试。两次仍不可用时，原始 Seed 留在 Population，追加 `enrichment_degraded` 警告；之后可通过 Focused Evolution、阅读升级或研究者选择继续深化。Enricher 失败绝不能删除 Seed 或停止 P0。
+定向调用收到格式错误时最多做一次结构修复。若是 provider 超时，则没有可修复的语义内容，系统保留原始 Seed 不变，写入可重试 checkpoint，并在 resume 时重试。只有模型已经返回内容但内容仍然不完整时，才记录 `enrichment_degraded`。Enricher 失败不能删除 Seed，也不能阻止已经有效的 P0。
 
 原生 T4 不会在 LLM Client 和 Controller 两层对同一大结构化请求叠加重试。每个已有 checkpoint 的 role 只发起一次有界 Provider 请求；临时服务异常会进入恢复 Gate，而不是在后台重复等待相同 prompt。之后 `resume` 会复用已完成 Route 与 Candidate checkpoint，因此该限制减少延迟，不减少探索广度或科学质量审查。
 
@@ -502,7 +502,7 @@ Card compiler 或 renderer 的局部失败不应把完整 Population 改写为�
 | `idea_opportunity_semantic_repair.j2` | Planner 修复 | 规范化已有机会的字段与证据边界 | 产生新 score / source / novelty claim | 有界修复；失败仍可 fallback |
 | `idea_generator.j2` | Route Generator，`seeds` / candidate dossier / `unsupported` | 形成最小、跳跃但可证伪的 Idea Seed | 要求一开始就是终稿、伪造来源或把类比当事实 | Route-local repair / partial / unsupported receipt |
 | `idea_route_semantic_repair.j2` | Generator 输出修复 | 重新组织已有内容、降级不安全 provenance、补充受上下文约束的短展示字段 | 评分、选优、删除 Candidate、虚构引用 | 失败只影响该 Route |
-| `idea_candidate_enricher.j2` | Candidate Enricher，`candidate` | 扩展一个已接纳 Seed 的机制、假设、贡献、验证、风险和中文解释 | 改 ID、Route、Parents、问题、thesis、来源权限，或做选择 | Candidate-local degraded Seed |
+| `idea_candidate_enricher.j2` | Candidate Enricher，`candidate` | 按需扩展已选中或确有缺口的 Seed | 改 ID、Route、Parents、问题、thesis、来源权限，或做选择 | provider 暂停：原 Seed 不变并写入可重试 checkpoint；内容不完整：局部诊断 |
 | `idea_scorer.j2` | Independent Scorer，`scores` | 匿名给出三维科学评分和可选诊断 | 改写、排序、合并、淘汰 Candidate；输出旧 compatibility grid | batch repair → isolate → unscored receipt |
 | `idea_score_semantic_repair.j2` | Score schema 修复 | 正规化可解析 score 的字段、别名和三维结构 | 伪造评分理由、改变 Candidate | 有界修复后拆 batch |
 | `idea_score_rationale_repair.j2` | Score rationale 修复 | 让已有诊断更清楚、与 Candidate 对齐 | 把诊断变为硬 Gate 或产生新事实 | 诊断缺失保持可见，不阻断分数 |
@@ -746,7 +746,9 @@ deterministic normalization
 | Opportunity Planner 失败 | fallback opportunity + diagnostic，Route 继续 |
 | 一个 Route provider / schema 失败 | 一次 repair 后 `unsupported` / `partial` receipt，其它 Route 继续 |
 | Route underfill | 保留非重复 Candidate；不制造 filler |
-| 一个 Seed Enricher 失败 | 原 Seed 保留为 `enrichment_degraded` |
+| Seed 不需要深化 | 直接评分原始 Seed，不重复调用模型 |
+| 定向 Enricher 的 provider 暂停 | 原 Seed 保持不变，resume 时从 checkpoint 重试 |
+| 定向 Enricher 返回不完整内容 | 保留 Seed，并记录明确的 `enrichment_degraded` 诊断 |
 | 一个评分 batch 失败 | repair → isolation；最终 Candidate `unscored` 但可见 |
 | 一个 Mutation Child 失败 | archive 该 Plan；Parent 保留 |
 | 无实质 Mutation | `no_improvement` deferral；Parent 保留 |
@@ -1064,7 +1066,7 @@ python -m researchos.cli validate-config --no-banner
 
 1. `auto` 当前是可配置的 0–3 轮预算模式，不是会自主判定“再跑一轮还是停止”的 LLM 研究策略器；这种自动决策若加入，应有独立 artifact、可解释理由和人类 override。
 2. Interaction Graph 的确定性层只做 shortlist；它必须始终被当作可解释的召回启发式，而非学术关系或分数。
-3. Candidate Enricher 和 Interaction Reviewer 是可选的高价值 LLM 扩展；它们局部不可用时系统应透明降级，不能编造内容补洞。Final Card Compiler 对 Population 存续仍是可恢复的展示扩展，但对当前 Portfolio 的可选择 Gate1 是必经的 LLM 解释层：失败必须走定向修复与 Human Recovery，不能用旧字段替代。
+3. Candidate Enricher 和 Interaction Reviewer 是按需调用的高价值 LLM 扩展；初始 Seed 不会因缺少可选深化而重复发送大请求。Enricher provider 暂停时保留原 Seed 和可重试 checkpoint，收到但语义不完整的内容才记录局部降级，不能编造内容补洞。Final Card Compiler 对 Population 存续仍是可恢复的展示扩展，但对当前 Portfolio 的可选择 Gate1 是必经的 LLM 解释层：失败必须走定向修复与 Human Recovery，不能用旧字段替代。
 4. Legacy Gate1 文件仍被保留以兼容旧 workflow，但它们不拥有 Candidate 真相。新增 UI 字段应优先从 typed native dossier / score / card 读取。
 5. Cross-domain catalog 的迁移是 non-destructive；对旧目录的读取回退必须一直避免重复注入同一 bridge record。
 6. 每次改 Prompt、Schema、Validator、State Machine 或 Renderer 时都应运行本章测试矩阵；T4 的历史问题多来自层间语义不同步，而不是单个模型“能力不足”。

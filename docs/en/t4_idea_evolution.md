@@ -32,7 +32,7 @@ T3 / T3.5 / T3.6 materials, user seeds, and cross-domain catalogs
 Evidence Index + Opportunity Map + multi-route Idea Seed formation
                               |
                               v
-Candidate Enricher -> independent three-dimension scoring -> Family / Interaction Graph
+Independent three-dimension scoring -> Family / Interaction Graph
                               |
                               v
 Mutation plans + Crossover compatibility review + Child / explicit deferral
@@ -41,7 +41,7 @@ Mutation plans + Crossover compatibility review + Child / explicit deferral
 Union scoring + contract / delta / complexity diagnostics + family-aware survival
                               |
                               v
-Portfolio + LLM Final Card Compiler + Gate1 (D1, D2, D3, ...)
+Portfolio + targeted Candidate Enricher (only when needed) + LLM Final Card Compiler + Gate1 (D1, D2, D3, ...)
                               |
           +-------------------+-------------------+
           |                   |                   |
@@ -227,7 +227,7 @@ Catalog context and actual Bridge notes are not only T4 inputs. They can also su
 
 ```text
 Pre-run -> Evidence Index -> Opportunity Map -> P0 multi-route formation
-  -> candidate enrichment -> independent scoring -> Family / Interaction Graph
+  -> independent scoring -> Family / Interaction Graph
   -> mutation/crossover plans -> child or explicit deferral -> survival
   -> portfolio/card projection -> Gate1
 ```
@@ -287,7 +287,7 @@ A complete `CandidateDossier` is also accepted when available. A minimal seed is
 
 ### 4.6 Candidate Enricher
 
-`LLMCandidateEnricher` gives each admitted seed one opportunity to deepen its scientific expression: mechanism chain, competing explanations, one to four genuinely distinct hypotheses and contributions, validation logic, boundaries, risks, kill criteria, and researcher-readable presentation. It does not add fields merely to reach a preferred count.
+`LLMCandidateEnricher` is a targeted refinement capability, not an automatic fan-out after every Route. Initial Route generation already produces a valid, traceable `IdeaSeed`, so T4 first scores those seeds instead of issuing a second large request for every candidate. This avoids duplicate context processing and prevents a provider stall from being amplified across the whole T4 phase. Targeted enrichment may still deepen a selected or materially incomplete candidate with a mechanism chain, competing explanations, one to four genuinely distinct hypotheses and contributions, validation logic, boundaries, risks, kill criteria, and researcher-readable presentation. It does not add fields merely to reach a preferred count.
 
 It may not change the candidate ID, route, parent lineage, problem reframing, core thesis, existing conceptual leap, SourceRef, or Evidence Permission. It cannot score, select, reject, merge, or replace the seed.
 
@@ -298,7 +298,7 @@ ideation/evolution/enrichment/<candidate-id>.json
 ideation/evolution/diagnostics/enrichment_<candidate-id>_attempt_<n>.json
 ```
 
-After one normal attempt and one structural repair attempt, an unavailable enrichment leaves the original seed active with an `enrichment_degraded` warning. Later focused evolution, a reading upgrade, or human-directed refinement can deepen it. Enrichment failure never removes the seed or stops P0.
+For a targeted call, a malformed response receives one structural repair attempt. A provider timeout is not a semantic error: the original seed is preserved unchanged with a retryable checkpoint and is retried on resume. Only a response that was received but remains semantically incomplete is marked `enrichment_degraded`. Enrichment failure never removes the seed or stops an already valid P0.
 
 ### 4.7 Genome, Creative Context, and Family
 
@@ -386,7 +386,7 @@ Portfolio selection aims for a quality-diverse Lead/Alternative/High-upside view
 | `idea_opportunity_semantic_repair.j2` | Opportunity repair | Normalize existing opportunity structure/boundaries | Create scores, sources, or novelty claims | Bounded repair; fallback remains possible |
 | `idea_generator.j2` | Route Generator, `seeds` / dossier / `unsupported` | Form bold but falsifiable minimal seeds | Require final-paper completeness or fabricate support | Route-local repair/partial/unsupported receipt |
 | `idea_route_semantic_repair.j2` | Generator repair | Reorganize supplied material and safely downgrade provenance | Score, select, delete candidates, or invent citations | Local route degradation only |
-| `idea_candidate_enricher.j2` | Candidate Enricher, `candidate` | Deepen a retained seed | Change identity, route, parents, core problem/thesis, source permissions, or selection | Candidate-local degraded seed |
+| `idea_candidate_enricher.j2` | Candidate Enricher, `candidate` | Deepen a selected or materially incomplete seed | Change identity, route, parents, core problem/thesis, source permissions, or selection | Provider pause: unchanged seed + retryable checkpoint; incomplete response: local diagnostic |
 | `idea_scorer.j2` | Blind Scorer, `scores` | Assess exactly three formal dimensions and optional diagnostics | Rewrite, rank, merge, or archive candidates | Repair, isolation, then unscored receipt |
 | `idea_score_semantic_repair.j2` | Score schema repair | Normalize a parseable score structure | Invent scientific rationale or alter candidate | Bounded repair then isolate batch |
 | `idea_score_rationale_repair.j2` | Rationale repair | Clarify existing score explanation | Turn diagnostics into hard gates | Missing diagnostic stays visible |
@@ -553,7 +553,9 @@ Hard failures preserve the failing object, the error, and all unaffected checkpo
 | Opportunity Planner failure | Provisional fallback plus diagnostic; routes continue |
 | One route response fails | One bounded replacement call, then a partial/unsupported receipt; other routes continue |
 | One route returns fewer distinct Candidates than its ceiling | Keep them without an automatic completion call; explicit Route regeneration remains available |
-| Seed enrichment fails | Original seed survives with `enrichment_degraded` |
+| Seed enrichment is not needed | Score the original seed; do not issue a duplicate call |
+| Targeted enrichment provider pauses | Preserve the original seed unchanged; retry from its checkpoint on resume |
+| Targeted enrichment returns incomplete content | Keep the seed with an explicit `enrichment_degraded` diagnostic |
 | Score batch fails | Repair, isolate, then retain an unscored candidate |
 | Mutation fails/no improvement | Archive/defer that plan; preserve parent |
 | Crossover rejected/uncertain/parallel | No child; preserve both parents |
@@ -792,7 +794,7 @@ Use a small non-sensitive workspace, record provider/recovery outcomes without k
 
 `auto` is currently a configurable 0-3 round budget mode, not an LLM policy that independently decides whether another round is worthwhile. Any future automatic round decision should write an explicit, reviewable artifact and preserve researcher override.
 
-The deterministic Interaction Graph remains a shortlist heuristic, never a semantic verdict or score. Candidate Enricher, Interaction Reviewer, and Final Card Compiler are high-value LLM enrichments whose failures must remain local and visible. Legacy projection remains compatibility-only. Cross-domain catalog migration remains non-destructive and must keep canonical/legacy records from being injected twice.
+The deterministic Interaction Graph remains a shortlist heuristic, never a semantic verdict or score. Candidate Enricher and Interaction Reviewer are on-demand LLM enrichments; initial Seeds are not sent through a duplicate large request merely because they are Seeds. A provider pause preserves the original Seed and its retryable checkpoint, while a received but incomplete response may remain a visible local degradation. Final Card Compiler remains a required presentation layer for the current Gate1 Portfolio, with Human Recovery when needed. Legacy projection remains compatibility-only. Cross-domain catalog migration remains non-destructive and must keep canonical/legacy records from being injected twice.
 
 ### 13.1 Contract postmortem: why a legacy flow could run while the native path exposed defects
 
