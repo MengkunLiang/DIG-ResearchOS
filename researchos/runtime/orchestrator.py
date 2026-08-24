@@ -3662,15 +3662,26 @@ class AgentRunner:
             "- `survey_exhaustive deep`：用于正式综述或高度陌生的领域，覆盖和探索都取最高档。\n"
             "- `standard_research deep top2`：保持研究论文规模，充分探索 T4，并分别写两份候选 Proposal 后再选一条进入 T5。"
         )
+        setup_suggestions = ["确认", "standard_research deep top2", "survey_balanced standard"]
         result = await tool.execute(
             question=setup_question,
-            suggestions=["确认", "standard_research deep top2", "survey_balanced standard"],
+            suggestions=setup_suggestions,
         )
         if not result.ok:
             raise RecoverableRuntimePause(str(result.content or result.error or "未获得 Auto 启动配置"))
         data = result.data if isinstance(result.data, dict) else {}
+        raw_setup_answer = str(data.get("answer") or "").strip()
+        # ``ask_human`` may return the 1-based suggestion number rather than
+        # the suggestion text.  Without this normalization, selecting the
+        # second displayed example (``standard_research deep top2``) was
+        # silently treated as an unrecognized free-form answer and the
+        # default ``one`` Proposal track setting survived.
+        if raw_setup_answer.isdigit():
+            suggestion_index = int(raw_setup_answer) - 1
+            if 0 <= suggestion_index < len(setup_suggestions):
+                raw_setup_answer = setup_suggestions[suggestion_index]
         parsed_setup = parse_auto_execution_setup_answer(
-            str(data.get("answer") or "").strip(),
+            raw_setup_answer,
             current_preset=str(settings.get("literature_preset") or "standard_research"),
             current_t4_mode=str(settings.get("t4_mode") or "auto"),
             current_proposal_tracks=str(settings.get("proposal_tracks") or "one"),
