@@ -6334,7 +6334,17 @@ class AgentRunner:
             budget.add_tokens(response.tokens_in, response.tokens_out, response.cost_usd)
             ctx.extra["t4_evolution_last_model"] = response.model_used
             ctx.extra["t4_evolution_last_endpoint"] = response.endpoint_used
-            message = response.raw.choices[0].message
+            raw_response = getattr(response, "raw", None)
+            choices = getattr(raw_response, "choices", None)
+            if choices is None and isinstance(raw_response, dict):
+                choices = raw_response.get("choices")
+            first_choice = choices[0] if isinstance(choices, (list, tuple)) and choices else None
+            if first_choice is None:
+                message = None
+            elif isinstance(first_choice, dict):
+                message = first_choice.get("message")
+            else:
+                message = getattr(first_choice, "message", None)
             content = self._t4_response_content(message)
             if not content:
                 empty_content_attempts += 1
@@ -6344,6 +6354,7 @@ class AgentRunner:
                     "phase": str(ctx.extra.get("t4_heartbeat_phase_key") or "t4_role"),
                     "attempt": empty_content_attempts,
                     "automatic_retry_limit": 1,
+                    "has_choices": bool(choices),
                     "has_tool_calls": bool(getattr(message, "tool_calls", None) or (message.get("tool_calls") if isinstance(message, dict) else None)),
                     "has_refusal": bool(getattr(message, "refusal", None) or (message.get("refusal") if isinstance(message, dict) else None)),
                     "has_reasoning_content": bool(getattr(message, "reasoning_content", None) or (message.get("reasoning_content") if isinstance(message, dict) else None)),
