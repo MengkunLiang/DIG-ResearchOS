@@ -1879,18 +1879,6 @@ def _detect_literature_profile_hint(workspace_dir: Path) -> str:
     return "research_article"
 
 
-def _file_newer_than_existing_inputs(output: Path, inputs: list[Path]) -> bool:
-    """Return true when an output can safely route against existing inputs."""
-
-    if not output.exists() or output.stat().st_size <= 0:
-        return False
-    output_mtime = output.stat().st_mtime
-    for path in inputs:
-        if path.exists() and path.stat().st_size > 0 and path.stat().st_mtime > output_mtime:
-            return False
-    return True
-
-
 def _normalized_tags(value: Any) -> set[str]:
     if value is None:
         return set()
@@ -7331,20 +7319,6 @@ class StateMachine:
         human_review = "T4.5-HUMAN-REVIEW" if "T4.5-HUMAN-REVIEW" in self.nodes else "failed"
         audit_path = workspace_dir / "ideation" / "novelty_audit.md"
         if not audit_path.exists():
-            return human_review
-        if not _file_newer_than_existing_inputs(
-            audit_path,
-            [
-                workspace_dir / "ideation" / "hypothesis_brief.yaml",
-                workspace_dir / "ideation" / "selected" / "selected_candidate.json",
-                workspace_dir / "ideation" / "selected" / "t45_search_targets.json",
-                workspace_dir / "ideation" / "idea_scorecard.yaml",
-                workspace_dir / "ideation" / "gate_decisions.json",
-                workspace_dir / "literature" / "synthesis.md",
-                workspace_dir / "literature" / "synthesis_workbench.json",
-                workspace_dir / "literature" / "comparison_table.csv",
-            ],
-        ):
             return human_review
         ok, _err = validate_t45_fingerprint_report(workspace_dir)
         if not ok:
