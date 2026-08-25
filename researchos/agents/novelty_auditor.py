@@ -57,6 +57,7 @@ class NoveltyAuditorAgent(Agent):
                         "write_file",
                         "write_structured_file",
                         "list_files",
+                        "grep_search",
                         "query_research_evidence",
                         "targeted_literature_supplement",
                         "extract_mechanism_tuple",

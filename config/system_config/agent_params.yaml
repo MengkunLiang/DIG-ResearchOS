@@ -266,6 +266,7 @@ agents:
       - write_file
       - append_file
       - list_files
+      - grep_search
       - lookup_paper_record
       - fetch_paper_pdf
       - extract_paper_sections
@@ -440,6 +441,7 @@ agents:
       - write_file
       - write_structured_file
       - list_files
+      - grep_search
       - query_research_evidence
       - targeted_literature_supplement
       - extract_mechanism_tuple
@@ -476,6 +478,7 @@ agents:
       - read_file
       - write_file
       - write_structured_file
+      - grep_search
       - validate_t45_formalization_sources
       - validate_t45_research_package
       - query_research_evidence
@@ -509,6 +512,7 @@ agents:
           - read_file
           - write_file
           - write_structured_file
+          - grep_search
           - validate_t45_formalization_sources
           - validate_t45_research_package
           - finish_task

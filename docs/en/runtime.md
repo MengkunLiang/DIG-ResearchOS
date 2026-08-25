@@ -142,6 +142,8 @@ This check covers workspace-relative paths. A special-purpose tool that works wi
 
 The public catalog uses declared capability profiles instead of giving every Skill a minimal, divergent tool list. All public Skills receive `workspace_navigation` (`list_files`, `glob_files`, `grep_search`) under their own read policy. Appropriate workflows additionally receive narrowly grouped literature discovery, paper acquisition/curation, corpus processing, structured artifact, ideation, review, manuscript, Survey, TeX, or executor-handoff tools. Use the catalog to inspect the resolved surface before a demo or run:
 
+Built-in research Agents treat `grep_search` as a read-only workspace-navigation primitive as well. Whenever an Agent can read workspace files, the configuration loader and runtime add it to the effective tool surface even when an older workspace-local `agent_params.yaml` or mode override omitted the entry. The Agent's `WorkspaceAccessPolicy` remains authoritative, so this compatibility normalization never broadens readable paths. Deterministic modes that expose no file-reading capability (for example a single compile, ingest, or gate action) intentionally retain their minimal tool surface.
+
 ```bash
 python -m researchos.cli describe-skill paper-comparison \
   --workspace ./workspace/project-a

@@ -144,6 +144,8 @@ drafts/survey/figures/fig_taxonomy_overview.pdf
 
 公开目录使用声明的能力配置文件，而不是为每个技能提供最小、发散的工具列表。所有公开技能在其自身的读取策略下接收 `workspace_navigation`（`list_files`、`glob_files`、`grep_search`）。适当的工作流还会额外接收按组分的文献发现、论文获取/策展、语料处理、结构化制品、构思、审查、手稿、调查、TeX 或执行器切换工具。使用目录在演示或运行前检查解析的工具表面：
 
+内置研究 Agent 也把 `grep_search` 视为工作区只读导航的基础能力。只要 Agent 能读取工作区文件，配置加载器和运行时都会把它补入最终工具表，即使旧 workspace 的 `agent_params.yaml` 或某个 mode 覆盖遗漏了该项；搜索仍严格经过该 Agent 的 `WorkspaceAccessPolicy`，不会扩大可读路径。纯确定性阶段（例如只执行一个编译、摄取或 Gate 工具的 mode）没有文件读取能力，因此继续保留最小工具面。
+
 ```bash
 python -m researchos.cli describe-skill paper-comparison \
   --workspace ./workspace/project-a

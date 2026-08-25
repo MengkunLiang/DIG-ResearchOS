@@ -46,6 +46,7 @@ class ResearchFormalizerAgent(Agent):
                         "read_file",
                         "write_file",
                         "write_structured_file",
+                        "grep_search",
                         "query_research_evidence",
                         "targeted_literature_supplement",
                         "validate_t45_formalization_sources",

@@ -354,9 +354,22 @@ class AgentRunner:
         self._t4_durable_recap_keys: set[str] = set()
 
     def _resolve_run_tool_names(self, eff: EffectiveConfig) -> list[str]:
-        """Resolve runtime-added tools without overriding an Agent's write contract."""
+        """Resolve runtime-added tools without overriding an Agent's write contract.
+
+        ``grep_search`` is a read-only workspace navigation primitive.  It is
+        intentionally available to every Agent that can read workspace files,
+        including legacy mode overrides whose static tool list predates the
+        capability.  The workspace policy remains authoritative, so this does
+        not broaden a task's readable paths or grant write/execute access.
+        """
 
         tool_names = list(eff.tool_names)
+        if (
+            "grep_search" not in tool_names
+            and any(name in tool_names for name in ("read_file", "list_files", "glob_files"))
+            and self.tool_registry.has("grep_search")
+        ):
+            tool_names.append("grep_search")
         dynamic_tool_names = self.tool_registry.dynamic_tool_names_for(self.agent.spec.name)
         if dynamic_tool_names:
             # MCP tools are configured by the workspace owner at startup. They

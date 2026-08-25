@@ -143,6 +143,26 @@ def _as_list(value: Any, *, fallback: list[Any]) -> list[Any]:
     raise TypeError(f"Expected list value, got: {type(value).__name__}")
 
 
+def _ensure_workspace_search_tool(tool_names: list[str]) -> list[str]:
+    """Keep the read-only workspace search capability on reading Agents.
+
+    ``grep_search`` is registered by the builtin tool registry and is bounded
+    by the same ``WorkspaceAccessPolicy`` as ``read_file``.  Older project
+    configurations sometimes declared ``read_file``/``list_files`` without
+    declaring the search companion, even though their prompts instructed the
+    model to use it.  Normalize that omission while preserving narrow
+    write/execute capabilities and the declared tool order.
+    """
+
+    resolved = list(tool_names)
+    if (
+        "grep_search" not in resolved
+        and any(name in resolved for name in ("read_file", "list_files", "glob_files"))
+    ):
+        resolved.append("grep_search")
+    return resolved
+
+
 def _as_mapping(value: Any, *, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
     if value is None:
         return deepcopy(fallback or {})
@@ -238,9 +258,11 @@ def build_agent_spec(
     return AgentSpec(
         name=str(_pick_first(params.get("name"), defaults.get("name"), agent_name)),
         model_tier=model_tier,
-        tool_names=_as_list(
-            params.get("tool_names"),
-            fallback=defaults.get("tool_names", []),
+        tool_names=_ensure_workspace_search_tool(
+            _as_list(
+                params.get("tool_names"),
+                fallback=defaults.get("tool_names", []),
+            )
         ),
         max_steps=int(_pick_first(params.get("max_steps"), defaults.get("max_steps"), 30)),
         max_tokens_total=int(
