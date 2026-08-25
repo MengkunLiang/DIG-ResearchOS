@@ -2255,7 +2255,14 @@ class AssembleSurveyTool(Tool):
         return ToolResult(
             ok=not missing,
             content=f"Assembled survey.tex with {len(included)} sections." + (f" Missing: {missing}" if missing else ""),
-            data={"included_sections": included, "missing_sections": missing, "output_path": params.output_path},
+            data={
+                "included_sections": included,
+                "missing_sections": missing,
+                "output_path": params.output_path,
+                "audit_path": "drafts/survey/survey_audit.json",
+                "audit_markdown_path": "drafts/survey/survey_audit.md",
+                "references_path": "drafts/survey/references.bib",
+            },
             error="missing_sections" if missing else None,
         )
 
@@ -2720,7 +2727,18 @@ class ExportSurveyForIdeationTool(Tool):
             "",
         ]
         summary_path.write_text("\n".join(summary), encoding="utf-8")
-        return ToolResult(ok=True, content="Exported survey insights for T4.", data={"insights_output_path": params.insights_output_path})
+        return ToolResult(
+            ok=True,
+            content="Exported survey insights for T4.",
+            data={
+                "insights_output_path": params.insights_output_path,
+                "summary_output_path": params.summary_output_path,
+                "survey_tex_path": params.survey_tex_path,
+                "survey_pdf_path": "drafts/survey/survey.pdf",
+                "survey_audit_path": params.survey_audit_path,
+                "compile_report_path": "drafts/survey/survey_compile_report.json",
+            },
+        )
 
 
 class BindSurveyReviewTool(Tool):

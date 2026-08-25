@@ -423,17 +423,25 @@ BibTeX 只保存可发表引用元数据：title、author、year、journal/bookt
 
 路径：`{{ survey_supplement_upgrade_queue_path }}`
 
-这是一个严格限定的补读任务。只读取上述补读队列声明的论文、对应的本地 PDF 和需要写入的 literature note；不要搜索或读取 `_runtime/logs/`、trace、源码、其他任务目录或主 `deep_read_queue`。不要为了排查工具问题调用 `grep_search`；如果某个可选路径不存在，记录边界并继续处理队列。运行时日志不是研究证据，权限拒绝也不需要通过放宽任务权限来解决。
+这是一个严格限定的补读任务。只读取上述补读队列声明的论文、对应的本地 PDF 和需要写入的 literature note；不要搜索或读取 `_runtime/logs/`、trace、源码、其他任务目录或主 `deep_read_queue`。`grep_search` 可以使用，但只能搜索当前允许的 `literature/` 文件，并且只用于定位具体 note/PDF 线索；如果某个可选路径不存在，记录边界并继续处理队列。运行时日志不是研究证据，权限拒绝不应通过放宽任务权限解决。
 
 {% if survey_supplement_upgrade_queue %}
-队列中每篇论文都已经有本地可解析 PDF，但可得性不等于已读。对每条记录：
+队列中每篇论文都已经有本地可解析 PDF，但可得性不等于已读。下面是本轮必须逐条处置的清单；`queue_rank` 是 `save_paper_note` 唯一可靠的保存定位，回执中的 `paper_id` 可以使用该行的 `id`、`paper_id`、`normalized_id` 或 DOI，不能凭空改写成不一致的新 ID。
+
+| queue_rank | stable key | title | target sections | queue reason |
+|---:|---|---|---|---|
+{% for item in survey_supplement_upgrade_queue %}
+| {{ loop.index }} | {{ item.paper_id or item.normalized_id or item.id or item.canonical_id or item.doi or 'unknown' }} | {{ item.title or 'untitled' }} | {{ item.target_sections or 'not specified' }} | {{ item.queue_reason or 'not specified' }} |
+{% endfor %}
+
+对每条记录：
 
 - 先读取该条记录并确认 `survey_supplement_upgrade.target_sections` 与 `queue_reason`。如果论文无法回答该命名缺口，记录边界并跳过，不要凭标题强行升级。
 - 只读取回答该缺口所需的 PDF 页，并诚实标为 FULL-TEXT 或 PARTIAL-TEXT；没有页码覆盖的 PDF 不能被升级成强证据。
 - 写作时融合论文内容、已有综述方向和你的学术判断，但论文的机制、结果、比较性事实必须可回到实际页/段落。
 - 用 `save_paper_note(queue_rank=<rank>, queue_path="{{ survey_supplement_upgrade_queue_path }}", content=...)` 保存。它会写入 canonical `deep_read_notes`，因此后续 T3.6/T4/T8 会自动优先使用升级后的 note，而不再把同一篇仅视作 abstract lead。
 - 不要执行 `targeted_literature_supplement`、不要读取或重跑主 `deep_read_queue`、不要把所有补检记录都升级。完成队列中真正有材料价值的论文后直接 `finish_task`。
-- 无论升级还是跳过，都要在 `literature/survey_supplement/reading_upgrade_receipt.json` 写入简短对象：`{"decisions":[{"paper_id":"...","decision":"upgraded 或 skipped","rationale":"说明该论文实际如何回答命名缺口，或为何不能回答"}]}`。这不是评价分数或额外写作任务，只是让后续模块知道补检是否真的被利用。每个队列论文都要有一条决定。
+- 无论升级还是跳过，都要在 `literature/survey_supplement/reading_upgrade_receipt.json` 写入简短对象：`{"decisions":[{"paper_id":"...","decision":"upgraded 或 skipped","rationale":"说明该论文实际如何回答命名缺口，或为何不能回答"}]}`。这不是评价分数或额外写作任务，只是让后续模块知道补检是否真的被利用。每个队列论文都要有且只有一条当前可匹配的决定；不要用“本轮读到的几篇”覆盖历史回执。完成 `finish_task` 时 runtime 会对账并为遗漏项写入 evidence-bounded 的 skipped 记录，但你仍应先主动写出准确原因。
 {% else %}
 没有本地可解析且尚未有强证据 note 的补检论文。不要触发新的检索，也不要把 abstract note 冒充全文阅读；直接调用 `finish_task`。
 {% endif %}

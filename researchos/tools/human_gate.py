@@ -3268,6 +3268,12 @@ class CLIHumanInterface(HumanInterface):
             rendered = _format_t2_coverage_gate_field(key, value)
             if rendered is not None:
                 return rendered
+        if gate_id == "t36_post_survey_gate" and key in {
+            "survey_summary",
+            "survey_compile_report",
+            "survey_insights",
+        }:
+            return _format_t36_post_survey_artifact(key, value)
         if gate_id == "t36_survey_gate":
             rendered = _format_t36_survey_gate_field(key, value)
             if rendered is not None:
@@ -3295,7 +3301,7 @@ class CLIHumanInterface(HumanInterface):
             if size_chars not in (None, ""):
                 header.append(f"字符数: {size_chars}")
             if summary:
-                return "\n".join(header + ["摘要:", summary])
+                return "\n".join(header + ["摘要:", _compact_text(summary, 900)])
             return "\n".join(header)
         if key in {"candidate_pool_fingerprints", "input_fingerprints"} and isinstance(value, dict):
             if not CLIHumanInterface._show_machine_gate_field(gate_id, key):
@@ -3419,7 +3425,10 @@ class CLIHumanInterface(HumanInterface):
             target = "drafts/survey/writing_template.json" if gate_id == "t36_template_gate" else "drafts/writing_style.json"
             if gate_id == "t36_ccf_template_gate":
                 target = "drafts/survey/writing_template.json"
-            lines.append(f"将写入：{target}")
+            if gate_id in {"t36_template_gate", "t8_style_template_gate"} and option_id == "ccf":
+                lines.append("这是第一层方向选择；下一步会打开具体会议模板清单，当前不会写入最终 template_id。")
+            else:
+                lines.append(f"将写入：{target}")
         return "\n".join(lines)
 
     @staticmethod
@@ -4035,6 +4044,69 @@ def _path_summary_size(value: Any) -> int | None:
         except Exception:
             return None
     return None
+
+
+def _format_t36_post_survey_artifact(key: str, value: Any) -> str:
+    """Render the post-Survey handoff as a small artifact index.
+
+    The old generic ``path_summary`` renderer printed the beginning of a
+    6--30KB Markdown/JSON artifact verbatim.  That obscured the only facts a
+    researcher needs at this Gate: where the files are, whether compilation
+    passed, and what each file is for.  Full content remains available at the
+    displayed path.
+    """
+
+    defaults = {
+        "survey_summary": "drafts/survey/survey_summary.md",
+        "survey_compile_report": "drafts/survey/survey_compile_report.json",
+        "survey_insights": "ideation/survey_insights.json",
+    }
+    path, raw = _path_summary_text(value, default_path=defaults.get(key, ""))
+    size = _path_summary_size(value)
+    lines = [f"文件: {path}"]
+    if size is not None:
+        lines.append(f"大小: {size} 字符")
+    if key == "survey_summary":
+        lines.append("用途: 综述的可读摘要和挑战/未来方向提示（完整内容见文件）。")
+        bullets = [
+            line.strip()[2:].strip()
+            for line in raw.splitlines()
+            if line.strip().startswith("-")
+        ]
+        for bullet in bullets[:3]:
+            if bullet:
+                lines.append(f"- {_compact_text(bullet, 180)}")
+        if len(bullets) > 3:
+            lines.append(f"- 另有 {len(bullets) - 3} 条摘要要点，未在 Gate 展开。")
+    elif key == "survey_compile_report":
+        lines.append("用途: LaTeX 编译、PDF、log 和依赖指纹的机器可读报告。")
+        report = value if isinstance(value, dict) else {}
+        if report.get("parse_error"):
+            lines.append(f"编译报告格式: 无法解析（{_compact_text(report['parse_error'], 160)}）")
+        lines.append(f"编译结果: {'通过' if report.get('success') is True else '需检查'}")
+        if report.get("selected_backend"):
+            lines.append(f"后端: {report.get('selected_backend')}")
+        if report.get("engine"):
+            lines.append(f"引擎: {report.get('engine')}")
+        lines.append(
+            "TeX: drafts/survey/survey.tex；PDF: " + str(report.get("pdf_path") or "drafts/survey/survey.pdf")
+            + "；日志: " + str(report.get("log_path") or "drafts/survey/survey.log")
+        )
+    else:
+        lines.append("用途: 将已通过审计的 taxonomy/challenge/future 素材传给 T4，作为可选 idea fuel。")
+        insights = value if isinstance(value, dict) else {}
+        if insights.get("parse_error"):
+            lines.append(f"T4 素材格式: 无法解析（{_compact_text(insights['parse_error'], 160)}）")
+        if insights.get("taxonomy_dimension"):
+            lines.append(f"Taxonomy: {_compact_text(insights['taxonomy_dimension'], 180)}")
+        lines.append(f"Audit: {'通过' if insights.get('audit_passed') is True else '需检查'}")
+        lines.append(
+            "T4 素材: challenge " + str(insights.get("challenge_hint_count") or 0)
+            + " 项；future " + str(insights.get("future_direction_hint_count") or 0)
+            + " 项；resource upgrades " + str(insights.get("resource_upgrade_need_count") or 0) + " 项。"
+        )
+    lines.append("完整内容不会在 Gate 展开；请按上方路径打开。")
+    return "\n".join(lines)
 
 
 def _proposal_track_status_label(status: str) -> str:

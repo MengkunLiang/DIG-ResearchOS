@@ -2216,6 +2216,39 @@ class AgentRunner:
                     # requested coverage target.
                     if ctx.task_id == "T3":
                         ctx.extra["_t3_pending_abstract_sweep"] = True
+                    if ctx.task_id == "T3.6-SUPPLEMENT-READ":
+                        # The receipt is an auditable projection of this small
+                        # queue. Reconcile only at an explicit finish request:
+                        # a missing skipped row then cannot cause a
+                        # validation-only LLM loop. This helper never invents
+                        # an upgrade: that outcome still requires a validated
+                        # FULL/PARTIAL reading note.
+                        try:
+                            from ..agents._common import load_jsonl
+                            from ..agents.reader import ReaderAgent
+
+                            queue_path = (
+                                ctx.workspace_dir
+                                / "literature"
+                                / "survey_supplement"
+                                / "reading_upgrade_queue.jsonl"
+                            )
+                            queue = load_jsonl(queue_path) if queue_path.exists() else []
+                            reconciled = ReaderAgent._reconcile_supplement_receipt(
+                                ctx.workspace_dir,
+                                queue,
+                            )
+                            if reconciled:
+                                self.progress.emit(
+                                    "[Reader Agent] 补读回执已由 runtime 对账补齐 "
+                                    f"{reconciled} 条遗漏处置；未形成 FULL/PARTIAL note 的论文已明确记录为 skipped。",
+                                    important=True,
+                                )
+                        except (OSError, ValueError, TypeError) as exc:
+                            # Keep the normal validator authoritative: a real
+                            # parse or filesystem fault must remain visible and
+                            # cannot become a false successful completion.
+                            self.log.warning("t36_supplement_receipt_reconcile_failed", error=str(exc))
                     try:
                         ok, err = self.agent.validate_outputs(ctx)
                     finally:

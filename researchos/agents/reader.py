@@ -8,6 +8,7 @@ T3.5 (synthesize模式): 综合所有笔记，产出synthesis.md
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import math
 from pathlib import Path
@@ -119,8 +120,9 @@ class ReaderAgent(Agent):
                         "write_file",
                         "append_file",
                         "list_files",
-                        "lookup_paper_record",
-                        "fetch_paper_pdf",
+                    "lookup_paper_record",
+                    "grep_search",
+                    "fetch_paper_pdf",
                         "extract_paper_sections",
                         "extract_pdf_text",
                         "save_paper_note",
@@ -147,6 +149,7 @@ class ReaderAgent(Agent):
             self.spec.tool_names = [
                 "read_file",
                 "write_file",
+                "grep_search",
                 "lookup_paper_record",
                 "fetch_paper_pdf",
                 "extract_paper_sections",
@@ -432,6 +435,7 @@ class ReaderAgent(Agent):
         decisions = receipt.get("decisions") if isinstance(receipt, dict) else None
         if not isinstance(decisions, list) or not decisions:
             return False, "reading_upgrade_receipt.json 必须包含至少一条 decisions 记录"
+        validated_note_aliases = self._validated_supplement_note_aliases(ctx.workspace_dir)
         for item in decisions:
             if not isinstance(item, dict):
                 return False, "reading_upgrade_receipt.json 的 decisions 必须是对象数组"
@@ -439,6 +443,13 @@ class ReaderAgent(Agent):
             rationale = str(item.get("rationale") or "").strip()
             if decision not in {"upgraded", "skipped"} or len(rationale) < 12:
                 return False, "每条补检升级决定必须有 decision=upgraded/skipped 和具体 rationale"
+            if decision == "upgraded":
+                decision_keys = self._supplement_identity_keys(item)
+                if not decision_keys or not any(decision_keys & aliases for aliases in validated_note_aliases):
+                    return False, (
+                        "reading_upgrade_receipt.json 将论文标为 upgraded，但没有对应的已校验 "
+                        "FULL-TEXT/PARTIAL-TEXT note；请保存 note 或将该条改为 skipped"
+                    )
         # Queue records and model receipts use different names for the same
         # scholarly identity (often queue ``id`` versus receipt ``paper_id``).
         # Compare the complete conservative alias sets rather than one chosen
@@ -457,6 +468,108 @@ class ReaderAgent(Agent):
             suffix = " …" if len(unmatched) > 3 else ""
             return False, f"reading_upgrade_receipt.json 未说明当前队列论文的升级或跳过决定：{preview}{suffix}"
         return True, None
+
+    @classmethod
+    def _reconcile_supplement_receipt(cls, workspace_dir: Path, queue: list[dict]) -> int:
+        """Append deterministic decisions for queue rows omitted by the Agent.
+
+        This runs at the finish boundary, after ``save_paper_note`` has already
+        performed per-note validation.  It is intentionally conservative: it
+        never upgrades a paper from metadata or an abstract-only note, and it
+        never changes an existing decision supplied by the researcher/model.
+        """
+
+        receipt_path = workspace_dir / "literature" / "survey_supplement" / "reading_upgrade_receipt.json"
+        existing: dict = {}
+        if receipt_path.is_file():
+            try:
+                loaded = json.loads(receipt_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    existing = loaded
+            except (OSError, ValueError, json.JSONDecodeError):
+                # Preserve malformed content so the normal validator reports a
+                # repairable diagnostic instead of hiding a user-visible error.
+                return 0
+        decisions = existing.get("decisions")
+        if decisions is None:
+            decisions = []
+        if not isinstance(decisions, list):
+            return 0
+
+        alias_sets = [cls._supplement_identity_keys(item) for item in decisions if isinstance(item, dict)]
+        note_alias_sets = cls._validated_supplement_note_aliases(workspace_dir)
+        changed = False
+        appended_count = 0
+        for item in queue:
+            item_keys = cls._supplement_identity_keys(item)
+            if not item_keys or any(item_keys & aliases for aliases in alias_sets):
+                continue
+            if any(item_keys & aliases for aliases in note_alias_sets):
+                decision = "upgraded"
+                rationale = (
+                    "A validated FULL-TEXT or PARTIAL-TEXT note was saved for this queued paper; "
+                    "the note records the page coverage and evidence boundary."
+                )
+            else:
+                decision = "skipped"
+                rationale = (
+                    "No validated FULL-TEXT or PARTIAL-TEXT note was saved for this queue item in "
+                    "the current supplement pass; it remains an abstract/resource lead rather than "
+                    "claim-usable evidence."
+                )
+            decisions.append(
+                {
+                    "paper_id": str(
+                        item.get("paper_id")
+                        or item.get("normalized_id")
+                        or item.get("id")
+                        or item.get("canonical_id")
+                        or item.get("doi")
+                        or item.get("title")
+                        or "unknown"
+                    ),
+                    "decision": decision,
+                    "rationale": rationale,
+                    "source": "runtime_queue_reconciliation",
+                }
+            )
+            alias_sets.append(item_keys)
+            changed = True
+            appended_count += 1
+        if not changed:
+            return 0
+        receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = dict(existing)
+        payload.setdefault("semantics", "t36_survey_supplement_reading_upgrade_receipt")
+        payload["decisions"] = decisions
+        payload["reconciled_at"] = datetime.now(timezone.utc).isoformat()
+        receipt_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return appended_count
+
+    @classmethod
+    def _validated_supplement_note_aliases(cls, workspace_dir: Path) -> list[set[str]]:
+        """Return aliases for structurally valid FULL/PARTIAL supplement notes."""
+
+        aliases: list[set[str]] = []
+        literature_dir = workspace_dir / "literature"
+        candidate_paths = list((literature_dir / "deep_read_notes").glob("**/*.md")) if (literature_dir / "deep_read_notes").exists() else []
+        if (literature_dir / "bridge_notes").exists():
+            candidate_paths.extend((literature_dir / "bridge_notes").glob("**/*.md"))
+        for path in candidate_paths:
+            if not is_paper_note_file(path):
+                continue
+            try:
+                status = _note_status_from_path(path)
+                if status not in {"FULL-TEXT", "PARTIAL-TEXT"}:
+                    continue
+                ok, _ = _validate_note_structure(path)
+                if ok:
+                    keys = paper_note_match_keys(path)
+                    if keys:
+                        aliases.append(keys)
+            except (OSError, UnicodeError):
+                continue
+        return aliases
 
     @staticmethod
     def _supplement_identity_keys(record: dict) -> set[str]:
@@ -1064,6 +1177,17 @@ def _validate_note_structure(
             return False, err
 
     return True, None
+
+
+def _note_status_from_path(note_path: Path) -> str:
+    """Return the declared evidence status without treating unread prose as proof."""
+
+    try:
+        content = note_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    match = re.search(r"(?im)^-\s+\*\*Status\*\*:\s*\[?([^\]\r\n]+)\]?", content)
+    return str(match.group(1) if match else "").strip().upper()
 
 
 def _validate_current_note_extensions(note_path: Path, content: str) -> tuple[bool, str | None]:

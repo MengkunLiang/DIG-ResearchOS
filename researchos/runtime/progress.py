@@ -1444,6 +1444,22 @@ def summarize_tool_result(
                     detail = _compact_text(content or "待补齐 schema 字段", 180)
                 return f"结构化文件正在自动补齐（{schema_name}）：{detail}", path
             return "正在自动修补当前产物。", path
+        if tool_name == "audit_survey_coverage" and error == "survey_audit_failed":
+            failed = [
+                item for item in data.get("checks", [])
+                if isinstance(item, dict) and item.get("passed") is False and item.get("level") != "WARN"
+            ]
+            details = []
+            for item in failed[:3]:
+                name = str(item.get("name") or "check")
+                detail = _compact_text(item.get("detail") or "未提供细节", 180)
+                details.append(f"{name}: {detail}")
+            if details:
+                return (
+                    "Survey 覆盖审计未通过：" + "；".join(details)
+                    + "。请查看 drafts/survey/survey_audit.md/json，并只修复被点名的来源。",
+                    "drafts/survey/survey_audit.json",
+                )
         if tool_name == "save_paper_note" and data:
             progress = str(data.get("progress") or "").strip()
             summary = summarize_reader_note_progress(data, progress=progress)

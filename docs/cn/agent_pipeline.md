@@ -52,8 +52,10 @@ T3.5 Survey 关卡首先询问是跳过 Survey、使用当前语料库撰写，�
 - 该图编码显式的分类法标签和直接解析的笔记卡片链接。它从不编码性能、相对增益、基线、来源分数或推断的证据强度。
 - `latex_compile` 需要真正的后端。在恢复之前修复 TeX/Docker 环境错误，而不是花费更多撰写重试。
 - 每个 `T3.6-SEC-*` 工作器被沙箱化到其声明的一个章节加上匹配的共享状态条目。有效的被中断章节在恢复时会经过验证器检查并推进，而不是被静默重写。
-- `T3.6-SUPPLEMENT-READ` 使用保守的身份别名交集（`id`、`paper_id`、normalized ID、DOI/arXiv、external IDs 和标题）校验补读回执；因此保留上一次运行的回执记录不会再造成“当前队列论文缺决定”的假循环。Reader 仍禁止读取 `_runtime/logs/` 与 trace；探索性权限未命中保留在 trace 中，但不是研究失败。
+- `T3.6-SUPPLEMENT-READ` 使用保守的身份别名交集（`id`、`paper_id`、normalized ID、DOI/arXiv、external IDs 和标题）校验补读回执；在 `finish_task` 校验前 runtime 会把当前队列与已校验 FULL/PARTIAL note 做确定性对账，漏写项补为明确的 `skipped`，没有对应 note 的 `upgraded` 仍然失败，因此不会再因模型漏写一条决定而陷入验证循环。Reader 仍禁止读取 `_runtime/logs/` 与 trace；`grep_search` 可用于允许的 `literature/` 定位，探索性权限未命中保留在 trace 中，但不是研究失败。
+- T3.6 的 CCF 模板选择是两级 Gate：先选 CCF/CS 方向，再在 `T3.6-CCF-TEMPLATE-GATE` 选择具体会议 `template_id`；UTD 直接选择 `utd/informs`。T3.6 选择只作为 T4 的透明建议，T4 仍单独确认 publication orientation。
 - `T3.6-ASSEMBLE` 首先创建 `survey.tex`，然后运行确定性审计。在进行具体修复后使用 `audit-survey --workspace <workspace>` 重新生成 `survey_audit.md/json`，无需联系提供程序。引用利用审计会区分范围内可追溯文献与正文实际使用的来源，并列出未使用候选，但不设置固定覆盖百分比。引用存在性、论断语义对齐、provenance 和证据等级仍是硬检查。随总引用量缩放的集中度保护只用于发现对单一来源的机械依赖，不会要求加入无关替代文献。
+- T3.6 完成后的核心入口固定为：`drafts/survey/survey.tex`（可编辑的 Survey TeX）、`drafts/survey/survey.pdf`（真实编译 PDF）、`drafts/survey/survey_audit.md/json`（覆盖与引用审计）、`drafts/survey/survey_compile_report.json`（编译后端、哈希和日志指纹）以及 `ideation/survey_insights.json`（传给 T4 的可选 idea fuel）。Gate 只展示这些路径、状态和用途，不展开整份 Markdown/JSON；`survey_state.json` 是 runtime-owned 状态，只能通过 `update_survey_section_state` 更新。
 - `T3.6-REVIEW` 将 `survey.tex` 视为派生文件。它仅审查和修补源章节，然后使用 `assemble_survey` 重新生成包装器，并使用 `audit_survey_coverage` 刷新证据检查。在此阶段，对 `survey.tex` 的普通全文件写入会被拒绝，因为部分上下文读取可能会破坏组装好的文档。审查驱动的组装刻意使先前的 PDF/报告过时；然后 T3.6-COMPILE 执行一次真正的编译。
 
 ## T4 候选治理

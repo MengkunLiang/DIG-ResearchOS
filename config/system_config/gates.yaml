@@ -326,14 +326,13 @@ gates:
       survey_summary:
         from_file: drafts/survey/survey_summary.md
         mode: path_summary
-        summary_chars: 2200
+        summary_chars: 1200
       survey_compile_report:
         from_file: drafts/survey/survey_compile_report.json
-        max_chars: 2000
+        mode: survey_compile_summary
       survey_insights:
         from_file: ideation/survey_insights.json
-        mode: path_summary
-        summary_chars: 1800
+        mode: survey_insights_summary
       how_to_choose:
         literal: |
           选择建议：

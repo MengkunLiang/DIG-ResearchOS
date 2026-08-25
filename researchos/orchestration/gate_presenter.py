@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-
+import json
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,8 @@ def build_presentation(
     - `literal` / `value`：直接写死文本或对象
     - `from_file`：读取 workspace 内单个文件
       - `mode: path_summary`：只展示文件路径、大小和少量摘要，不把大文件塞进 state.yaml
+      - `mode: survey_compile_summary`：展示 Survey LaTeX/PDF 编译状态和路径
+      - `mode: survey_insights_summary`：展示传给 T4 的摘要统计，不展开原始 JSON
     - `from_dir`：列出目录文件
     - `from_state`：从 state.yaml 中按点路径取值
     可选字段：
@@ -60,6 +62,10 @@ def _resolve_rule(
         if not path.exists():
             return f"[file not found: {rule['from_file']}]"
         text = path.read_text(encoding="utf-8", errors="replace")
+        if rule.get("mode") == "survey_compile_summary":
+            return _survey_compile_summary(str(rule["from_file"]), text)
+        if rule.get("mode") == "survey_insights_summary":
+            return _survey_insights_summary(str(rule["from_file"]), text)
         if rule.get("mode") == "path_summary":
             rel = str(rule["from_file"])
             limit = int(rule.get("summary_chars") or rule.get("max_chars") or 1200)
@@ -118,3 +124,59 @@ def _lookup_dotted(data: dict[str, Any], dotted_path: str) -> Any:
             return None
         current = current[part]
     return current
+
+
+def _survey_compile_summary(path: str, text: str) -> dict[str, Any]:
+    """Return only researcher-facing compile facts for the post-Survey Gate."""
+
+    parse_error = ""
+    try:
+        report = json.loads(text)
+    except json.JSONDecodeError as exc:
+        report = {}
+        parse_error = f"JSON parse failed: {exc.msg}"
+    report = report if isinstance(report, dict) else {}
+    # Keep presentation compatible with older report writers that nested
+    # artifact paths. This does not change the validator's canonical contract.
+    artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
+    pdf_path = report.get("pdf_path") or artifacts.get("pdf_path") or "drafts/survey/survey.pdf"
+    log_path = report.get("log_path") or artifacts.get("log_path") or "drafts/survey/survey.log"
+    return {
+        "path": path,
+        "size_chars": len(text),
+        "success": report.get("success") if "success" in report else None,
+        "engine": report.get("engine") or report.get("requested_engine"),
+        "selected_backend": report.get("selected_backend") or report.get("requested_backend"),
+        "pdf_path": pdf_path,
+        "log_path": log_path,
+        **({"parse_error": parse_error} if parse_error else {}),
+    }
+
+
+def _survey_insights_summary(path: str, text: str) -> dict[str, Any]:
+    """Extract the compact T4 handoff facts without presenting raw JSON."""
+
+    parse_error = ""
+    try:
+        insights = json.loads(text)
+    except json.JSONDecodeError as exc:
+        insights = {}
+        parse_error = f"JSON parse failed: {exc.msg}"
+    insights = insights if isinstance(insights, dict) else {}
+    taxonomy = insights.get("taxonomy") if isinstance(insights.get("taxonomy"), dict) else {}
+    audit = insights.get("audit_summary") if isinstance(insights.get("audit_summary"), dict) else {}
+    def _count_list(value: Any) -> int:
+        return len(value) if isinstance(value, list) else 0
+
+    summary = {
+        "path": path,
+        "size_chars": len(text),
+        "taxonomy_dimension": taxonomy.get("dimension"),
+        "audit_passed": audit.get("passed"),
+        "challenge_hint_count": _count_list(insights.get("challenge_hints")),
+        "future_direction_hint_count": _count_list(insights.get("future_direction_hints")),
+        "resource_upgrade_need_count": _count_list(insights.get("resource_upgrade_needs")),
+    }
+    if parse_error:
+        summary["parse_error"] = parse_error
+    return summary

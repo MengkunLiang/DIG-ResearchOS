@@ -80,6 +80,7 @@ def suggest_target_profile(workspace_dir: Path) -> TargetProfile:
     workspace = Path(workspace_dir)
     project = _read_yaml_mapping(workspace / "project.yaml")
     writing_style = _read_json_mapping(workspace / "drafts" / "writing_style.json")
+    survey_template = _read_json_mapping(workspace / "drafts" / "survey" / "writing_template.json")
     raw_orientation = _first_text(
         project,
         "research_orientation",
@@ -95,12 +96,28 @@ def suggest_target_profile(workspace_dir: Path) -> TargetProfile:
     profile_type = _profile_type_from_text(raw_orientation)
     if raw_orientation:
         inferred_from.append("project.yaml research orientation")
-    if profile_type is None:
+    if profile_type is None and (venue or writing_style):
         resolved = resolve_venue_writing_profile(venue, writing_style)
         style = str(resolved.get("venue_style") or "").strip().casefold()
         profile_type = {"is": "utd_is", "ccf_a": "ccf_cs", "both": "hybrid"}.get(style)
         if profile_type is not None:
             inferred_from.append(str(resolved.get("resolved_from") or "workspace publication setting"))
+    # T3.6 occurs before T4.  A human-confirmed survey template is therefore
+    # useful evidence of the researcher's current venue orientation, but it is
+    # not permission to silently lock the main-study profile.  Offer it as a
+    # transparent T4 suggestion; the T4 pre-run gate remains the final
+    # confirmation point for the research Proposal and later experiment plan.
+    if profile_type is None:
+        template_family = str(survey_template.get("template_family") or survey_template.get("template_type") or "").strip().casefold()
+        template_id = str(survey_template.get("template_id") or "").strip()
+        if template_family == "utd":
+            profile_type = "utd_is"
+            inferred_from.append("T3.6 human survey template selection (UTD/INFORMS)")
+        elif template_family == "ccf" and template_id and template_id.casefold() != "auto":
+            profile_type = "ccf_cs"
+            inferred_from.append(f"T3.6 human survey conference template selection ({template_id})")
+        if profile_type is not None and not venue and template_id:
+            venue = template_id
     if profile_type is None:
         profile_type = "hybrid"
         inferred_from.append("system default")

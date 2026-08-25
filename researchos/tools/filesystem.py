@@ -64,6 +64,12 @@ STRUCTURED_ONLY_WRITE_PATHS = {
     "pilot/pilot_results.json": "pilot_results",
 }
 
+# Survey state is a runtime-owned JSON projection.  It must be changed through
+# ``update_survey_section_state`` so section status, fingerprints, and the
+# revision log stay synchronized.  Treating it as ordinary prose is what made
+# model ``edit_file`` calls fail on non-unique JSON fragments.
+SURVEY_RUNTIME_STATE_PATH = "drafts/survey/survey_state.json"
+
 
 T45_EDITABLE_SOURCE_ARTIFACTS = (
     "ideation/research_blueprint.yaml",
@@ -567,6 +573,22 @@ class WriteFileTool(Tool):
         path = kwargs["path"]
         content = kwargs["content"]
         normalized_path = path.strip().lstrip("./")
+        if self.policy.task_id.startswith("T3.6") and normalized_path == SURVEY_RUNTIME_STATE_PATH:
+            return ToolResult(
+                ok=False,
+                content=(
+                    "不能直接写入 drafts/survey/survey_state.json：这是 Survey 的 runtime 状态文件，"
+                    "文本替换会破坏 section fingerprints/revision_log。请调用 "
+                    "update_survey_section_state(section_id=..., status=written|revised|skipped, "
+                    "section_path=..., note=...) 更新单个章节。"
+                ),
+                data={
+                    "path": normalized_path,
+                    "required_tool": "update_survey_section_state",
+                    "display_disposition": "validation_failed",
+                },
+                error="survey_state_runtime_owned",
+            )
         if self.policy.task_id in {"T4.5-FORMALIZE", "T4.5-REVIEW"} and normalized_path in T45_RUNTIME_DERIVED_ARTIFACTS:
             return ToolResult(
                 ok=False,
@@ -961,6 +983,23 @@ class EditFileTool(Tool):
                     "old_text（或 old_string）和 new_text（或 new_string）。"
                 ),
                 error="invalid_edit_request",
+            )
+
+        normalized_path = path.strip().lstrip("./")
+        if self.policy.task_id.startswith("T3.6") and normalized_path == SURVEY_RUNTIME_STATE_PATH:
+            return ToolResult(
+                ok=False,
+                content=(
+                    "不能用 edit_file 修改 drafts/survey/survey_state.json：这是 runtime 状态文件，"
+                    "不是可做文本 patch 的正文。请调用 update_survey_section_state 更新单个 section；"
+                    "该工具会同时维护 status、section fingerprints 和 revision_log。"
+                ),
+                data={
+                    "path": normalized_path,
+                    "required_tool": "update_survey_section_state",
+                    "display_disposition": "validation_failed",
+                },
+                error="survey_state_runtime_owned",
             )
 
         content = kwargs.get("content")

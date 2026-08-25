@@ -141,6 +141,11 @@ class SurveyWriterAgent(Agent):
         elif mode == "survey_state":
             self.spec.tool_names = ["build_survey_state", "finish_task"]
         elif mode == "survey_assemble":
+            # `survey_state.json` is a runtime-owned projection. The generic
+            # write_file -> edit_file compatibility alias encourages ambiguous
+            # textual patches to repeated JSON fragments here; the explicit
+            # update_survey_section_state tool is the sole state API.
+            self.spec.allow_edit_file_compatibility = False
             self.spec.tool_names = [
                 "read_file",
                 "write_file",

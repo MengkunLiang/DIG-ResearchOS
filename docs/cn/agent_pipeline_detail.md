@@ -2092,7 +2092,11 @@ Agent 调用 `expand_corpus_for_survey`。这个工具读取 `survey_plan.json`�
 
 #### `T3.6-SUPPLEMENT-READ`
 
-complete 模式不会把每条新检索命中假装成已经利用。`T3.6-EXPAND` 只会将本地可解析、能够补强不同命名 taxonomy、发展脉络或比较缺口、且尚无强证据笔记的 PDF 写入 `literature/survey_supplement/reading_upgrade_queue.jsonl`。Reader 对该队列执行一次窄范围阅读，只有当正文确实能回答命名缺口时才保存 FULL/PARTIAL canonical note。它会为每条选中记录在 `reading_upgrade_receipt.json` 中写明 `upgraded` 或 `skipped` 及具体原因。空队列是正常结果，不会触发额外检索。这样补检可以从 discovery material 进入可支持论断的证据层，又不会退化成第二轮全量 T3。
+complete 模式不会把每条新检索命中假装成已经利用。`T3.6-EXPAND` 只会将本地可解析、能够补强不同命名 taxonomy、发展脉络或比较缺口、且尚无强证据笔记的 PDF 写入 `literature/survey_supplement/reading_upgrade_queue.jsonl`。Reader 对该队列执行一次窄范围阅读，只有当正文确实能回答命名缺口时才保存 FULL/PARTIAL canonical note。它会为每条选中记录在 `reading_upgrade_receipt.json` 中写明 `upgraded` 或 `skipped` 及具体原因。runtime 在 Agent 明确请求 `finish_task` 后，会用队列与已通过结构校验的 FULL/PARTIAL note 做一次确定性对账：漏写的当前队列项补为 evidence-bounded `skipped`，已有的模型决定不覆盖；若模型把没有对应 note 的条目标成 `upgraded`，仍会被硬校验拒绝。空队列是正常结果，不会触发额外检索。这样补检可以从 discovery material 进入可支持论断的证据层，又不会退化成第二轮全量 T3。
+
+#### `T3.6-TEMPLATE-GATE` 与 `T3.6-CCF-TEMPLATE-GATE`
+
+综述模板选择是两级交互，不是隐式默认：第一层选择正文语言/取向（Basic English、Basic Chinese、UTD/INFORMS 或 CCF/CS）；只有选择 CCF/CS 时，状态机会先进入第二层 `T3.6-CCF-TEMPLATE-GATE`，再从本地实际可用的会议模板中选择 `NeurIPS`、`KDD` 等具体 `template_id`。第一层 CCF 选择只记录方向，不写最终 `writing_template.json`；第二层选择后才写入 `template_family=ccf`、具体 `template_id` 和 `writing_language=en`。UTD 选择直接写入 `template_family=utd`、`template_id=informs`、`writing_language=en`。该文件是综述排版选择，不会替代 T4 的 publication orientation 确认；T3.6 的人工选择只作为 T4 建议来源，T4 Gate 仍会明确询问并确认主研究取向。
 
 #### `T3.6-STATE`
 
@@ -2149,6 +2153,8 @@ audit_survey_coverage(...)
 ```
 
 `assemble_survey` 机械拼接 `survey_state.write_order` 中的 section 文件，写 `drafts/survey/survey.tex`，并把 `literature/related_work.bib` 复制为 `drafts/survey/references.bib`，保证 `\bibliography{references}` 可编译。
+
+`drafts/survey/survey_state.json` 是 runtime-owned projection，记录 section 状态、输入 fingerprint 和 revision log。不要用 `edit_file`/`write_file` 做文本替换，否则重复的 `status` 或 fingerprint 片段可能触发 `edit_target_not_unique`，也可能使状态与章节内容失配；需要更新状态时调用 `update_survey_section_state`。
 
 `audit_survey_coverage` 做确定性检查：
 
@@ -3604,7 +3610,7 @@ researchos run-task T9 --workspace ./workspace/local-test2
 
 ### 11.1 T3.6-ASSEMBLE：先看真实失败检查，再决定是否改文稿
 
-`T3.6-ASSEMBLE` 的正确序列是 `assemble_survey -> audit_survey_coverage -> finish_task`。审计失败时，工具会把失败检查和精确原因写入 `drafts/survey/survey_audit.md/json` 并返回给 Agent；Agent 只能改动该检查实际依赖的 section、BibTeX、plan 或 state 输入，不能为了“试试看”重写无关章节。没有相关输入变化时重复 assemble/audit 没有信息增益，应该留下 `survey_assemble_repair_plan.md` 并暂停等待证据或人工修复。
+`T3.6-ASSEMBLE` 的正确序列是 `assemble_survey -> audit_survey_coverage -> finish_task`。审计失败时，工具会把失败检查和精确原因写入 `drafts/survey/survey_audit.md/json` 并返回给 Agent；CLI/Rich 也会直接展示前几条阻塞检查和诊断路径，而不只显示 `survey_audit_failed`。Agent 只能改动该检查实际依赖的 section、BibTeX、plan 或 state 输入，不能为了“试试看”重写无关章节。没有相关输入变化时重复 assemble/audit 没有信息增益，应该留下 `survey_assemble_repair_plan.md` 并暂停等待证据或人工修复。
 
 可在不启动 provider 的情况下重跑审计：
 

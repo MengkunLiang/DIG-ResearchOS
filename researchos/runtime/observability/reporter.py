@@ -285,6 +285,23 @@ class StageReporter:
                     "fallback_available": payload.get("fallback_available"),
                 },
             )
+            # Coverage audit returns a complete structured failure report.
+            # Render its named checks here instead of letting the generic
+            # failure line collapse the diagnosis to `survey_audit_failed`.
+            if tool_name == "audit_survey_coverage" and error == "survey_audit_failed":
+                summary = _tool_calculation_summary(task_id, tool_name, payload)
+                if summary is not None and not self.quiet and self.verbosity != "concise":
+                    rows = [(str(key), str(value)) for key, value in summary.get("rows", [])]
+                    if rows:
+                        self._render(
+                            Panel(
+                                self._rows_table(rows),
+                                title=str(summary.get("title") or "Survey 覆盖审计"),
+                                border_style="red",
+                                expand=False,
+                            )
+                        )
+                        return True
             return False
         if task_id == "T3" and tool_name == "save_paper_note" and self.verbosity != "detailed":
             # T3 can save many notes.  Retain the per-paper event in the
@@ -559,6 +576,19 @@ class StageReporter:
                 for key, path in outputs.items()
                 if statuses.get(key) in {"created", "updated", "reused"}
             ]
+            if task_id == "T3.6-FEED":
+                # FEED writes only the T4 projection, but the researcher needs
+                # the canonical Survey artifacts alongside it to find the
+                # actual paper. Include existing paths without changing the
+                # task contract or marking them as newly written.
+                for relative in (
+                    "drafts/survey/survey.tex",
+                    "drafts/survey/survey.pdf",
+                    "drafts/survey/survey_audit.json",
+                    "drafts/survey/survey_compile_report.json",
+                ):
+                    if (self.workspace / relative).is_file() and relative not in ready_paths:
+                        ready_paths.append(relative)
             label = stage_display_name(task_id)
             receipt_label = (
                 f"综述章节 · {_t36_section_label(task_id)}"
@@ -566,8 +596,21 @@ class StageReporter:
                 else label if label.startswith("T3.6") else f"T3.6 · {label}"
             )
             if ready_paths:
-                self._render(Text(f"✓ {receipt_label} 完成 · 已生成：{'、'.join(ready_paths[:2])}", style="green", overflow="fold"))
-                remaining = len(ready_paths) - 2
+                visible_paths = ready_paths[:5]
+                # The FEED and COMPILE outputs are the user-facing handoff;
+                # show their exact paths instead of hiding them behind a
+                # generic "N more artifacts" line.
+                if task_id in {"T3.6-FEED", "T3.6-COMPILE"}:
+                    self._render(
+                        Text(
+                            f"✓ {receipt_label} 完成 · 核心产物：{'、'.join(visible_paths)}",
+                            style="green",
+                            overflow="fold",
+                        )
+                    )
+                else:
+                    self._render(Text(f"✓ {receipt_label} 完成 · 已生成：{'、'.join(visible_paths)}", style="green", overflow="fold"))
+                remaining = len(ready_paths) - len(visible_paths)
                 if remaining > 0:
                     self._render(Text(f"  另有 {remaining} 项结果已保存。", style="dim"))
             else:
@@ -1509,7 +1552,44 @@ def _tool_calculation_summary(task_id: str, tool_name: str, data: dict[str, Any]
             if phase.get(key) not in (None, ""):
                 rows.append((label, phase[key]))
         return {"title": f"{stage_display_name(task_id)} · Integrated Skill Workflow", "rows": rows} if rows else None
-    if tool_name in {"build_synthesis_workbench", "build_survey_state", "build_survey_figures", "assemble_survey", "audit_survey_coverage"}:
+    if tool_name == "assemble_survey":
+        rows = _selected_scalar_rows(
+            data,
+            ("output_path", "references_path", "audit_markdown_path", "audit_path"),
+        )
+        return {"title": f"{stage_display_name(task_id)} · {_tool_label(tool_name)}", "rows": rows} if rows else None
+    if tool_name == "audit_survey_coverage":
+        failed = [
+            item
+            for item in data.get("checks", [])
+            if isinstance(item, dict) and item.get("passed") is False and item.get("level") != "WARN"
+        ]
+        rows = [("审计状态", "通过" if not failed else f"未通过：{len(failed)} 项")]
+        rows.extend(
+            (
+                str(item.get("name") or "check"),
+                _compact_cli_text(item.get("detail") or "未提供细节", 160),
+            )
+            for item in failed[:3]
+        )
+        rows.append(("完整诊断", "drafts/survey/survey_audit.md / survey_audit.json"))
+        return {"title": f"{stage_display_name(task_id)} · {_tool_label(tool_name)}", "rows": rows}
+    if tool_name == "export_survey_for_ideation":
+        rows = _selected_scalar_rows(
+            data,
+            ("survey_tex_path", "survey_pdf_path", "survey_audit_path", "compile_report_path", "summary_output_path", "insights_output_path"),
+        )
+        labels = {
+            "survey_tex_path": "TeX",
+            "survey_pdf_path": "PDF",
+            "survey_audit_path": "审计",
+            "compile_report_path": "编译报告",
+            "summary_output_path": "综述摘要",
+            "insights_output_path": "T4 素材",
+        }
+        rows = [(labels.get(label, label), value) for label, value in rows]
+        return {"title": f"{stage_display_name(task_id)} · Survey 核心产物", "rows": rows} if rows else None
+    if tool_name in {"build_synthesis_workbench", "build_survey_state", "build_survey_figures"}:
         rows = _selected_scalar_rows(
             data,
             ("status", "section_count", "figure_count", "table_count", "coverage", "issues", "output_path", "path"),

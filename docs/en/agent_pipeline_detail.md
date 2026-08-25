@@ -2090,7 +2090,11 @@ This tool has its own long-operation window and does not inherit the ordinary 60
 
 #### `T3.6-SUPPLEMENT-READ`
 
-Complete mode does not pretend that every new search result has been used. `T3.6-EXPAND` writes `literature/survey_supplement/reading_upgrade_queue.jsonl` only for locally parseable PDFs that can strengthen distinct named taxonomy, historical, or comparative gaps and that do not already have a strong note. The Reader performs one narrow pass over that queue, saving a FULL/PARTIAL canonical note only when the text actually answers the named gap. It writes `reading_upgrade_receipt.json` for every selected record with `upgraded` or `skipped` and a concrete reason. An empty queue is valid and does not trigger more retrieval. This preserves a usable path from supplementary discovery to claim-capable evidence without turning a survey supplement into another full T3 run.
+Complete mode does not pretend that every new search result has been used. `T3.6-EXPAND` writes `literature/survey_supplement/reading_upgrade_queue.jsonl` only for locally parseable PDFs that can strengthen distinct named taxonomy, historical, or comparative gaps and that do not already have a strong note. The Reader performs one narrow pass over that queue, saving a FULL/PARTIAL canonical note only when the text actually answers the named gap. It writes `reading_upgrade_receipt.json` for every selected record with `upgraded` or `skipped` and a concrete reason. After the Agent explicitly requests `finish_task`, the runtime deterministically reconciles the queue against structurally validated FULL/PARTIAL notes: omitted current rows receive an evidence-bounded `skipped` decision, existing model decisions are preserved, and an `upgraded` decision without a matching validated note remains a hard failure. An empty queue is valid and does not trigger more retrieval. This preserves a usable path from supplementary discovery to claim-capable evidence without turning a survey supplement into another full T3 run.
+
+#### `T3.6-TEMPLATE-GATE` and `T3.6-CCF-TEMPLATE-GATE`
+
+Survey template selection is an explicit two-level interaction, not an implicit default. The first level chooses the language/orientation family (Basic English, Basic Chinese, UTD/INFORMS, or CCF/CS). Choosing CCF/CS routes to `T3.6-CCF-TEMPLATE-GATE`, which lists the locally available conference templates such as `NeurIPS` and `KDD` and records the concrete `template_id`. The first-level CCF answer records direction only and does not write the final `writing_template.json`; the second-level choice writes `template_family=ccf`, the concrete `template_id`, and `writing_language=en`. UTD writes `template_family=utd`, `template_id=informs`, and `writing_language=en` directly. This survey layout choice is not a silent authorization of T4 publication orientation: T3.6 becomes a transparent suggestion source, while the T4 pre-run Gate still explicitly confirms the main research orientation.
 
 #### `T3.6-STATE`
 
@@ -2147,6 +2151,8 @@ audit_survey_coverage(...)
 ```
 
 `assemble_survey` mechanically concatenates section files in `survey_state.write_order`, writes `drafts/survey/survey.tex`, and copies `literature/related_work.bib` to `drafts/survey/references.bib`, ensuring `\bibliography{references}` compiles.
+
+`drafts/survey/survey_state.json` is a runtime-owned projection containing section statuses, input fingerprints, and the revision log. Do not patch it with `edit_file`/`write_file`: repeated `status` or fingerprint fragments are inherently ambiguous and can cause `edit_target_not_unique` or desynchronize state from section content. Use `update_survey_section_state` for state changes.
 
 `audit_survey_coverage` performs deterministic checks:
 
@@ -3594,7 +3600,7 @@ This section records high-impact behaviors that are prone to appear in demonstra
 
 ### 11.1 T3.6-ASSEMBLE: First Check the Real Failure, Then Decide Whether to Modify the Draft
 
-The correct sequence for `T3.6-ASSEMBLE` is `assemble_survey -> audit_survey_coverage -> finish_task`. When the audit fails, the tool writes the failure check and precise reason into `drafts/survey/survey_audit.md/json` and returns it to the Agent; the Agent can only modify the sections, BibTeX, plan, or state inputs that the check actually depends on, and must not rewrite unrelated sections just to "try it". When there is no relevant input change, repeated assemble/audit cycles provide no information gain; instead, it should leave `survey_assemble_repair_plan.md` and pause, waiting for evidence or human repair.
+The correct sequence for `T3.6-ASSEMBLE` is `assemble_survey -> audit_survey_coverage -> finish_task`. When the audit fails, the tool writes the failure check and precise reason into `drafts/survey/survey_audit.md/json` and returns it to the Agent; CLI/Rich also shows the first blocking checks and durable diagnostic paths instead of reducing the event to `survey_audit_failed`. The Agent can only modify the sections, BibTeX, plan, or state inputs that the check actually depends on, and must not rewrite unrelated sections just to "try it". When there is no relevant input change, repeated assemble/audit cycles provide no information gain; instead, it should leave `survey_assemble_repair_plan.md` and pause, waiting for evidence or human repair.
 
 You can re-run the audit without starting the provider:
 
