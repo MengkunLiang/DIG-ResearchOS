@@ -423,6 +423,8 @@ BibTeX 只保存可发表引用元数据：title、author、year、journal/bookt
 
 路径：`{{ survey_supplement_upgrade_queue_path }}`
 
+这是一个严格限定的补读任务。只读取上述补读队列声明的论文、对应的本地 PDF 和需要写入的 literature note；不要搜索或读取 `_runtime/logs/`、trace、源码、其他任务目录或主 `deep_read_queue`。不要为了排查工具问题调用 `grep_search`；如果某个可选路径不存在，记录边界并继续处理队列。运行时日志不是研究证据，权限拒绝也不需要通过放宽任务权限来解决。
+
 {% if survey_supplement_upgrade_queue %}
 队列中每篇论文都已经有本地可解析 PDF，但可得性不等于已读。对每条记录：
 

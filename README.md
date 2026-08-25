@@ -57,7 +57,7 @@ python -m researchos.cli init-workspace --workspace ./workspace/my-survey \
 | `survey_ccf` / `survey_utd` | Field Survey | 80 candidates, 40 deep reads, 40 abstract reads. |
 | `survey_exhaustive_utd` | Broad UTD/IS Survey | 90 candidates, 40 deep reads, 50 abstract reads. |
 
-Copilot is the better choice when you want to see and adjust these settings during the run.
+Copilot is the better choice when you want to see and adjust these settings during the run. It is a control mode, not a CCF/CS publication preset: Copilot leaves publication orientation unset until the T4 pre-run Gate asks for CCF/CS, UTD/IS, Hybrid, or a custom direction.
 
 ### If You Only Remember Three Commands
 

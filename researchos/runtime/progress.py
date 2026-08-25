@@ -132,6 +132,8 @@ def classify_tool_outcome(
     payload = data if isinstance(data, dict) else {}
     disposition = str(payload.get("display_disposition") or "").casefold()
     failure_class = str(payload.get("failure_class") or error or "").casefold()
+    if "access denied" in failure_class or "read access denied" in failure_class:
+        failure_class = "access_denied"
     if disposition == "initialization_required":
         return ToolOutcome("INITIALIZING", "cyan", False)
     if disposition == "semantic_adjudication_required":

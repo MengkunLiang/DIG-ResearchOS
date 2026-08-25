@@ -3609,7 +3609,9 @@ class AgentRunner:
                 "这只决定哪些已预设的流程 Gate 可自动通过，不会替你决定研究问题、文献范围、"
                 "关键假设、外部实验或失败恢复。\n\n"
                 "## Copilot\n\n"
-                "所有关键 Gate 都由你确认。适合希望逐步调整检索规模、阅读、T4 候选与写作方向的项目。\n\n"
+                "所有关键 Gate 都由你确认。Copilot 不预选 CCF/CS、UTD/IS 或任何投稿取向；"
+                "进入 T4 前会单独询问论文取向（CCF/CS、UTD/IS、Hybrid 或自定义说明）。"
+                "适合希望逐步调整检索规模、阅读、T4 候选与写作方向的项目。\n\n"
                 "## Auto · CCF/AI 研究\n\n"
                 "采用标准研究型文献规模、自动 T4 运行、CCF/AI 写作取向，默认跳过独立综述论文支线。\n\n"
                 "## Auto · UTD/IS 研究\n\n"
@@ -3645,7 +3647,11 @@ class AgentRunner:
                 startup_setup_confirmed=(mode != "auto"),
                 selection_source="t1_gate",
             )
-            summary = f"已确认 {profile['mode']} 模式，预设={profile['preset']}。"
+            summary = (
+                "已确认 Copilot 模式；T4 前将单独确认投稿取向。"
+                if profile["mode"] == "copilot"
+                else f"已确认 Auto 模式，预设={profile['preset']}。"
+            )
             note = Message.user(f"【T1 工作模式已确认】\n{summary}", step=0)
             messages.append(note)
             trace.write_message(note)

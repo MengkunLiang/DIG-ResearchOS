@@ -432,14 +432,6 @@ class ReaderAgent(Agent):
         decisions = receipt.get("decisions") if isinstance(receipt, dict) else None
         if not isinstance(decisions, list) or not decisions:
             return False, "reading_upgrade_receipt.json 必须包含至少一条 decisions 记录"
-        queue_ids = {normalize_text_key(str(item.get("paper_id") or item.get("title") or "")) for item in queue}
-        recorded_ids = {
-            normalize_text_key(str(item.get("paper_id") or item.get("title") or ""))
-            for item in decisions
-            if isinstance(item, dict)
-        }
-        if not queue_ids <= recorded_ids:
-            return False, "reading_upgrade_receipt.json 未说明所有选中补检论文的升级或跳过决定"
         for item in decisions:
             if not isinstance(item, dict):
                 return False, "reading_upgrade_receipt.json 的 decisions 必须是对象数组"
@@ -447,7 +439,42 @@ class ReaderAgent(Agent):
             rationale = str(item.get("rationale") or "").strip()
             if decision not in {"upgraded", "skipped"} or len(rationale) < 12:
                 return False, "每条补检升级决定必须有 decision=upgraded/skipped 和具体 rationale"
+        # Queue records and model receipts use different names for the same
+        # scholarly identity (often queue ``id`` versus receipt ``paper_id``).
+        # Compare the complete conservative alias sets rather than one chosen
+        # field.  Receipts may retain decisions from an earlier run; extra
+        # historical records are informative and must not make resume loop.
+        receipt_aliases = [self._supplement_identity_keys(item) for item in decisions]
+        unmatched: list[str] = []
+        for queue_item in queue:
+            queue_keys = self._supplement_identity_keys(queue_item)
+            if not queue_keys or not any(queue_keys & aliases for aliases in receipt_aliases):
+                unmatched.append(
+                    str(queue_item.get("paper_id") or queue_item.get("id") or queue_item.get("title") or "(unknown)")
+                )
+        if unmatched:
+            preview = ", ".join(unmatched[:3])
+            suffix = " …" if len(unmatched) > 3 else ""
+            return False, f"reading_upgrade_receipt.json 未说明当前队列论文的升级或跳过决定：{preview}{suffix}"
         return True, None
+
+    @staticmethod
+    def _supplement_identity_keys(record: dict) -> set[str]:
+        """Return stable aliases for queue/receipt records across resume runs."""
+
+        if not isinstance(record, dict):
+            return set()
+        keys = set(paper_record_match_keys(record))
+        for field in ("paper_id", "normalized_id", "id", "canonical_id", "doi", "arxiv_id", "title"):
+            value = record.get(field)
+            if value:
+                keys.add(normalize_text_key(str(value)))
+        external_ids = record.get("externalIds")
+        if isinstance(external_ids, dict):
+            for value in external_ids.values():
+                if value:
+                    keys.add(normalize_text_key(str(value)))
+        return {key for key in keys if key}
 
     def _validate_read_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
         """校验T3 read模式的输出。"""

@@ -1374,6 +1374,11 @@ def _is_exploratory_probe_miss(
 
     payload = data if isinstance(data, dict) else {}
     failure = str(payload.get("failure_class") or error or "").casefold()
+    # A few older tool adapters returned the human-readable access-denied
+    # message as ``error`` instead of the structured code.  Keep the
+    # researcher-facing classification stable without hiding the raw trace.
+    if "access denied" in failure or "read access denied" in failure:
+        failure = "access_denied"
     return str(tool_name or "").casefold() in {"read_file", "list_files", "glob_files", "grep_search"} and failure in {
         "access_denied",
         "not_found",

@@ -59,6 +59,25 @@ _LITERATURE_PRESET_SUMMARIES = {
     "survey_exhaustive": "综述强覆盖：90 篇候选，40 篇精读，50 篇摘要轻读",
 }
 
+# Copilot is a control mode, not a publication profile.  It may retain the
+# selected literature coverage family for resume compatibility, but it must
+# never carry a hidden CCF/CS or UTD/IS answer into the T4 pre-run Gate.
+_COPILOT_PENDING_ORIENTATION = "pending_user"
+_COPILOT_PRESET = "copilot"
+
+
+def _copilot_settings() -> dict[str, str]:
+    """Return the non-authorizing defaults for researcher-controlled mode."""
+
+    return {
+        "literature_preset": "standard_research",
+        "t4_mode": "auto",
+        "publication_orientation": _COPILOT_PENDING_ORIENTATION,
+        "survey_policy": "ask",
+        "writing_style": _COPILOT_PENDING_ORIENTATION,
+        "proposal_tracks": "one",
+    }
+
 
 def configure_workflow_mode(
     workspace: Path,
@@ -75,12 +94,26 @@ def configure_workflow_mode(
     if normalized_mode not in {"auto", "copilot"}:
         raise ValueError("workflow mode must be auto or copilot")
     existing = load_workflow_mode(workspace) if (workspace / WORKFLOW_MODE_PATH).is_file() else _fallback_profile()
-    selected_preset = str(preset or existing.get("preset") or "research_ccf")
-    if selected_preset not in AUTO_PRESETS:
-        raise ValueError(f"unknown automation preset: {selected_preset}")
-    settings = dict(AUTO_PRESETS[selected_preset])
-    # A mode-only run/resume switch must not silently replace an existing
-    # publication profile or its explicitly selected T4 effort.
+    if normalized_mode == "copilot":
+        # ``preset`` remains a compatibility field for the prior literature
+        # coverage family.  It is *not* a publication authorization in this
+        # mode: the settings below explicitly retain ``pending_user``.
+        selected_preset = str(preset or existing.get("preset") or "research_ccf")
+        if selected_preset not in AUTO_PRESETS:
+            selected_preset = "research_ccf"
+        settings = _copilot_settings()
+        # Explicit preset flags still control coverage/effort.  They do not
+        # authorize the preset's publication orientation or writing style.
+        preset_defaults = AUTO_PRESETS[selected_preset]
+        settings["literature_preset"] = preset_defaults["literature_preset"]
+        settings["t4_mode"] = preset_defaults["t4_mode"]
+    else:
+        selected_preset = str(preset or existing.get("preset") or "research_ccf")
+        if selected_preset not in AUTO_PRESETS:
+            selected_preset = "research_ccf"
+        settings = dict(AUTO_PRESETS[selected_preset])
+    # A mode-only run/resume switch preserves execution scale, but never a
+    # publication orientation when switching to Copilot.
     if preset is None:
         existing_settings = existing.get("settings") if isinstance(existing.get("settings"), dict) else {}
         existing_t4_mode = str(existing_settings.get("t4_mode") or "")
@@ -282,7 +315,7 @@ def auto_execution_setup_summary(profile: dict[str, Any]) -> str:
         f"文献覆盖：{_LITERATURE_PRESET_SUMMARIES.get(literature, literature)}；"
         f"T4 探索：{settings.get('t4_mode') or 'auto'}；"
         f"Proposal：{'前两条独立 Proposal' if settings.get('proposal_tracks') == 'top2' else '一条 Proposal'}；"
-        f"写作取向：{settings.get('writing_style') or 'ccf_a'}。"
+        f"写作取向：{settings.get('writing_style') or 'pending_user'}。"
     )
 
 
@@ -298,17 +331,23 @@ def load_workflow_mode(workspace: Path) -> dict[str, Any]:
         return _fallback_profile("workflow_mode.json must contain an object")
 
     mode = str(payload.get("mode") or "").strip().casefold()
-    preset = str(payload.get("preset") or "research_ccf").strip()
+    persisted_preset = str(payload.get("preset") or "research_ccf").strip()
     if mode not in {"auto", "copilot"}:
         return _fallback_profile("workflow mode is invalid")
-    if preset not in AUTO_PRESETS:
+    if mode == "auto" and persisted_preset not in AUTO_PRESETS:
         return _fallback_profile("workflow preset is invalid")
+    if mode == "copilot" and persisted_preset not in AUTO_PRESETS:
+        # Keep the legacy coverage selector valid even when an old or edited
+        # profile contains an unknown compatibility value.  Copilot's actual
+        # authorization fields remain pending_user below.
+        persisted_preset = "research_ccf"
     settings = payload.get("settings")
     if settings is None:
-        settings = dict(AUTO_PRESETS[preset])
+        settings = _copilot_settings() if mode == "copilot" else dict(AUTO_PRESETS[persisted_preset])
     if not isinstance(settings, dict):
         return _fallback_profile("workflow settings must contain an object")
-    normalized_settings = dict(AUTO_PRESETS[preset])
+    preset = persisted_preset if mode == "copilot" and persisted_preset in AUTO_PRESETS else persisted_preset
+    normalized_settings = _copilot_settings() if mode == "copilot" else dict(AUTO_PRESETS[preset])
     configured_literature_preset = str(settings.get("literature_preset") or normalized_settings["literature_preset"])
     if configured_literature_preset not in _LITERATURE_PRESET_SUMMARIES:
         return _fallback_profile("workflow literature preset is invalid")
@@ -331,8 +370,8 @@ def load_workflow_mode(workspace: Path) -> dict[str, Any]:
 def _fallback_profile(reason: str | None = None) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "mode": "copilot",
-        "preset": "research_ccf",
-        "settings": dict(AUTO_PRESETS["research_ccf"]),
+        "preset": _COPILOT_PRESET,
+        "settings": _copilot_settings(),
     }
     if reason:
         payload["load_warning"] = reason

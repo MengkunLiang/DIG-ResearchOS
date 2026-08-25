@@ -1143,52 +1143,113 @@ class CLIHumanInterface(HumanInterface):
         if not lines:
             table.add_row("—", "（本组暂无候选）", "—", "—")
             return table
-        body = "\n".join(lines[1:]).strip()
-        # Current T1 prompts use bold candidate labels (``**core1 · …**``),
-        # whereas an older template used ``###`` headings.  Parse both forms
-        # so the presentation layer does not depend on the model's harmless
-        # Markdown choice.
-        candidate_pattern = re.compile(
-            r"(?m)^(?:###\s+(?P<h3>.+?)|\*\*(?P<bold>(?:core|adj|b)\d+\s*·\s*.+?)\*\*|"
-            r"(?P<plain>(?:core|adj|b)\d+\s*·\s*.+?))\s*$"
-        )
-        matches = list(candidate_pattern.finditer(body))
-        if not matches:
+        records = CLIHumanInterface._scope_candidate_records(section)
+        if not records:
+            body = "\n".join(lines[1:]).strip()
             table.add_row("—", body or "（本组暂无候选）", "—", "—")
             return table
 
-        for index, match in enumerate(matches):
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
-            candidate_title = str(
-                match.group("h3") or match.group("bold") or match.group("plain") or ""
-            ).strip()
-            candidate_lines = body[match.end() : end].strip().splitlines()
-            if not candidate_title:
-                continue
-            fields: dict[str, list[str]] = {}
-            freeform_lines: list[str] = []
-            for line in candidate_lines:
-                match = re.match(r"^\s*([^：:]{1,16})[：:]\s*(.+?)\s*$", line)
-                if match:
-                    fields.setdefault(match.group(1).strip(), []).append(match.group(2).strip())
-                elif line.strip():
-                    freeform_lines.append(line.strip())
-            def joined(*labels: str) -> str:
-                values = [value for label in labels for value in fields.get(label, [])]
-                return "\n".join(values)
-
-            rationale = joined("作用", "why", "为什么", "来源与映射") or "\n".join(freeform_lines) or "—"
-            queries = joined("检索", "query") or "—"
-            boundaries = joined("边界", "噪声提示", "待验证问题", "优先级", "priority") or "—"
+        for record in records:
             table.add_row(
-                Text(candidate_title, overflow="fold"),
-                Text(rationale, overflow="fold"),
-                Text(queries, overflow="fold"),
-                Text(boundaries, overflow="fold"),
+                Text(record["title"], overflow="fold"),
+                Text(record["rationale"], overflow="fold"),
+                Text(record["queries"], overflow="fold"),
+                Text(record["boundaries"], overflow="fold"),
             )
         if not table.rows:
             table.add_row("—", "（本组暂无候选）", "—", "—")
         return table
+
+    @staticmethod
+    def _scope_candidate_records(section: str) -> list[dict[str, str]]:
+        """Parse T1 candidates independently of harmless Markdown formatting.
+
+        Models commonly append ``（method_or_model · must_cover）`` after a
+        bold candidate title.  The old renderer required the closing ``**``
+        to be the final characters on the line, so that valid title became
+        prose and the whole section collapsed into one ``—`` row.  Keep the
+        parser deliberately line-oriented: candidate boundaries are semantic
+        IDs, while role/priority suffixes are display metadata.
+        """
+
+        lines = section.splitlines()
+        if not lines:
+            return []
+        body_lines = lines[1:]
+        title_pattern = re.compile(
+            r"^\s*(?:[-*+]\s+)?(?:#{1,6}\s+|\*\*)?(?P<title>(?:core|adj|b)\d+\s*·\s*.+?)"
+            r"(?:\*\*\s*(?P<meta>[（(].*?[）)]))?\s*$",
+            flags=re.IGNORECASE,
+        )
+        matches: list[tuple[int, str, str]] = []
+        for index, raw_line in enumerate(body_lines):
+            line = raw_line.strip()
+            match = title_pattern.match(line)
+            if not match:
+                continue
+            title = match.group("title").strip()
+            # A non-heading line such as ``core1 · ...`` is still a candidate,
+            # but a Markdown emphasis marker must never leak into the title.
+            title = title.rstrip("*").strip()
+            meta = str(match.group("meta") or "").strip().strip("（）()")
+            matches.append((index, title, meta))
+        records: list[dict[str, str]] = []
+        for match_index, (start, title, meta) in enumerate(matches):
+            end = matches[match_index + 1][0] if match_index + 1 < len(matches) else len(body_lines)
+            candidate_lines = body_lines[start + 1 : end]
+            fields: dict[str, list[str]] = {}
+            freeform_lines: list[str] = []
+            for raw_line in candidate_lines:
+                field_match = re.match(r"^\s*(?:[-*+]\s+)?([^：:]{1,16})[：:]\s*(.+?)\s*$", raw_line)
+                if field_match:
+                    fields.setdefault(field_match.group(1).strip(), []).append(field_match.group(2).strip())
+                elif raw_line.strip():
+                    freeform_lines.append(raw_line.strip())
+
+            def joined(*labels: str) -> str:
+                values = [value for label in labels for value in fields.get(label, [])]
+                return "\n".join(values)
+
+            records.append(
+                {
+                    "title": title,
+                    "role": meta or "—",
+                    "rationale": joined("作用", "why", "为什么", "来源与映射")
+                    or "\n".join(freeform_lines)
+                    or "—",
+                    "queries": joined("检索", "query") or "—",
+                    "boundaries": joined(
+                        "边界", "噪声提示", "待验证问题", "优先级", "priority"
+                    )
+                    or "—",
+                }
+            )
+        return records
+
+    @staticmethod
+    def _scope_candidate_detail_view(section: str, *, border_style: str) -> Any:
+        """Build a narrow, vertical view for long T1 scope descriptions.
+
+        Four long prose columns are technically valid Rich output but become
+        unreadable on ordinary terminals.  Each candidate is therefore shown
+        as a compact labelled block; the underlying question text remains the
+        durable source of truth.
+        """
+
+        records = CLIHumanInterface._scope_candidate_records(section)
+        if not records:
+            return Text("（本组暂无候选）", style="dim")
+        blocks: list[Any] = []
+        for record in records:
+            grid = Table.grid(expand=True, padding=(0, 1))
+            grid.add_column(style="bold", width=14, no_wrap=True)
+            grid.add_column(ratio=1, overflow="fold")
+            grid.add_row("定位 / Role", record["role"])
+            grid.add_row("作用 / Why", record["rationale"])
+            grid.add_row("检索 / Query", record["queries"])
+            grid.add_row("边界 / Boundary", record["boundaries"])
+            blocks.extend((Text(record["title"], style=f"bold {border_style}"), grid, Text("")))
+        return Group(*blocks)
 
     def _render_t1_scope_confirmation(
         self, *, question: str, suggestions: list[str] | None
@@ -1239,8 +1300,8 @@ class CLIHumanInterface(HumanInterface):
         }
         for kind, section in sections:
             label, style = styles[kind]
-            table = self._scope_candidate_table(section, border_style=style)
-            console.print(Panel(table, title=label, border_style=style, expand=True))
+            detail = self._scope_candidate_detail_view(section, border_style=style)
+            console.print(Panel(detail, title=label, border_style=style, expand=True))
 
         answer_parts: list[Any] = []
         if answer_help:

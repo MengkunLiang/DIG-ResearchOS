@@ -57,7 +57,7 @@ python -m researchos.cli init-workspace --workspace ./workspace/my-survey \
 | `survey_ccf` / `survey_utd` | 领域综述 | 80 篇候选、40 篇精读、40 篇摘要轻读。 |
 | `survey_exhaustive_utd` | 覆盖更广的 UTD/IS 综述 | 90 篇候选、40 篇精读、50 篇摘要轻读。 |
 
-若你希望在运行时逐项查看和调整这些设置，应选择 Copilot。
+若你希望在运行时逐项查看和调整这些设置，应选择 Copilot。Copilot 只是人工控制模式，不等于默认 CCF/CS；投稿取向会在 T4 前单独询问，可选择 CCF/CS、UTD/IS、Hybrid 或自定义说明。
 
 ### 只记住三个命令即可
 

@@ -116,6 +116,8 @@ T3 的终端验收分为两个明确层次：`[Validation] T3` 的首次提示�
 
 ## T3.6 调查运行时
 
+补读 Reader 只消费 `literature/survey_supplement/reading_upgrade_queue.jsonl` 中已声明的本地材料，不读取 `_runtime/logs/`、trace 或源码。`reading_upgrade_receipt.json` 的每篇论文必须有 `upgraded` 或 `skipped` 决定；校验通过 `id`、`paper_id`、normalized ID、DOI/arXiv、external IDs 和标题的别名交集匹配队列与回执，并允许回执保留历史条目。这样不同来源字段或 resume 历史不会触发重复修复循环。
+
 `BuildSurveyStateTool` 创建部分契约和大纲文件。对于不变的调查计划，它是幂等的：已完成 `written`/`revised` 的部分，只要存在现有的部分文件且大纲指纹匹配，就会在重建中保留。计划或契约的更改有意使受影响的部分状态无效。
 
 每个 `T3.6-SEC-*` 任务也是一个任务作用域的写入沙箱。它只能写入自己的 `drafts/survey/sections/<section>.tex` 文件，并更新共享的 `drafts/survey/survey_state.json` 条目中同一部分的内容。它不能重建部分大纲、写入其他部分、组装调查、生成图表或编译 PDF。在 `resume` 时，文件和状态通过其验证器的部分将直接推进，而不会进行第二次 LLM 重写。
