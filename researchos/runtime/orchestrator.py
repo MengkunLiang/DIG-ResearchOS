@@ -63,7 +63,6 @@ from .t2_config import (
 )
 from .pdf_acquisition import acquire_retained_pdfs, attach_pdf_acquisition, repair_access_only_evidence_levels
 from .literature_contract import build_literature_manifest, iter_literature_note_cards
-from ..literature_resources import format_resource_discovery_notice
 from .t3_recovery import prepare_t3_resume_artifacts
 from .t3_notes_manifest import validate_t3_input_fingerprints
 from .bridge_catalog import iter_bridge_catalog_paths
@@ -4420,15 +4419,11 @@ class AgentRunner:
                 ctx.extra["abstract_sweep"] = result
                 if result.get("notes_generated", 0) > 0:
                     self.progress.emit(
-                        f"[Reader Agent] Abstract sweep fallback 完成：筛选 {result['candidates_found']} 篇候选，"
-                        f"生成 {result['notes_generated']} 篇 abstract note",
+                        "[Reader Agent] 摘要轻读已完成确定性回退："
+                        f"筛选 {result['candidates_found']} 篇候选，写入 {result['notes_generated']} 份 ABSTRACT-ONLY 笔记；"
+                        "正在核验阅读覆盖。",
                         important=True,
                     )
-                resource_notice = format_resource_discovery_notice(
-                    result.get("resource_catalog") if isinstance(result.get("resource_catalog"), dict) else None
-                )
-                if resource_notice:
-                    self.progress.emit(f"[Reader Agent] 本批摘要轻读{resource_notice}", important=True)
                 return self._apply_t3_abstract_sweep_outcome(
                     ctx=ctx,
                     stop_reason=stop_reason,
@@ -4538,20 +4533,14 @@ class AgentRunner:
 
             if result.get("notes_generated", 0) > 0 or result.get("metadata_triage_count", 0) > 0:
                 self.progress.emit(
-                    f"[Reader Agent] Abstract sweep 完成：筛选 {result['candidates_found']} 篇候选，"
-                    f"生成 {result['notes_generated']} 篇 abstract note "
-                    f"（LLM {result.get('llm_notes_generated', 0)}，fallback {result.get('fallback_notes_generated', 0)}），"
-                    f"provider-context 批次 {result.get('llm_batch_calls', 0)}，"
-                    f"metadata-only 批量 triage {result.get('metadata_triage_count', 0)} 篇",
+                    "[Reader Agent] 摘要轻读已写入："
+                    f"{result['notes_generated']} 份 ABSTRACT-ONLY 笔记；"
+                    f"{result.get('metadata_triage_count', 0)} 篇 metadata-only 已转为补资源清单。"
+                    "正在核验阅读覆盖。",
                     important=True,
                 )
             else:
-                self.progress.emit("[Reader Agent] Abstract sweep 无候选论文", important=True)
-            resource_notice = format_resource_discovery_notice(
-                result.get("resource_catalog") if isinstance(result.get("resource_catalog"), dict) else None
-            )
-            if resource_notice:
-                self.progress.emit(f"[Reader Agent] 本批摘要轻读{resource_notice}", important=True)
+                self.progress.emit("[Reader Agent] 摘要轻读没有新的候选；正在核验已有阅读覆盖。", important=True)
             return self._apply_t3_abstract_sweep_outcome(
                 ctx=ctx,
                 stop_reason=stop_reason,
@@ -4609,10 +4598,10 @@ class AgentRunner:
             )
             counts = manifest.get("counts") if isinstance(manifest.get("counts"), dict) else {}
             self.progress.emit(
-                "[Literature] 已检查本轮摘要轻读候选的 PDF 可得性："
+                "[Literature] 摘要轻读候选的 PDF 可得性（仅访问状态）："
                 f"本地可解析 {int(counts.get('available_local') or 0)}/"
                 f"{int(counts.get('total') or len(candidates))}。"
-                "下载成功不代表已读；可读 PDF 将进入升级队列。",
+                "已登记可升级阅读队列；未改变任何证据等级。",
                 important=True,
             )
         except Exception as exc:  # access enrichment must not erase abstract coverage
@@ -4643,8 +4632,8 @@ class AgentRunner:
         if coverage_ok:
             if target not in (None, "all_readable"):
                 self.progress.emit(
-                    f"[Reader Agent] 摘要轻读覆盖已核验：{actual}/{target} 篇真实 ABSTRACT-ONLY 笔记；"
-                    "metadata triage 未计入该数字。",
+                    f"[Reader Agent] 摘要轻读覆盖已核验：{actual}/{target} 篇有效 ABSTRACT-ONLY 笔记。"
+                    "metadata-only 分诊未计入覆盖；完整阅读验收将在本阶段结果面板中汇总。",
                     important=True,
                 )
             return stop_reason, error_msg

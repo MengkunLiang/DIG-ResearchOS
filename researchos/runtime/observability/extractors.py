@@ -137,6 +137,8 @@ def _t3_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
     ]
     manifest = _load_json(workspace / "literature" / "notes_manifest.json")
     shallow_manifest = _load_json(workspace / "literature" / "shallow_read_manifest.json")
+    pdf_manifest = _load_json(workspace / "literature" / "pdf_acquisition_manifest.json")
+    resource_summary = _load_json(workspace / "literature" / "resource_catalog_summary.json")
     bridge_index = _load_json(workspace / CROSS_DOMAIN_CATALOG_INDEX_REL_PATH)
     if not bridge_index:
         bridge_index = _load_json(workspace / LEGACY_BRIDGE_CATALOG_INDEX_REL_PATH)
@@ -186,18 +188,41 @@ def _t3_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
         _to_int(shallow_manifest.get("actual_shallow_read_count")) if isinstance(shallow_manifest, dict) else 0,
     )
     shallow_target = shallow_manifest.get("target") if isinstance(shallow_manifest, dict) else None
+    shallow_completed = str(shallow_manifest.get("status") or "").casefold() == "completed" if isinstance(shallow_manifest, dict) else False
     shallow_coverage = (
-        f"{shallow_actual}/{shallow_target}"
+        f"{shallow_actual}/{shallow_target}" + (" · 已核验" if shallow_completed else " · 待补齐")
         if shallow_target not in (None, "", "all_readable")
-        else str(shallow_actual)
+        else f"{shallow_actual}" + (" · 已核验" if shallow_completed else "")
     )
+    metadata_triage_count = _to_int(shallow_manifest.get("metadata_triage_count")) if isinstance(shallow_manifest, dict) else 0
+    upgrade_count = len(_jsonl(workspace / "literature" / "reading_upgrade_queue.jsonl"))
+    pdf_counts = pdf_manifest.get("counts") if isinstance(pdf_manifest, dict) and isinstance(pdf_manifest.get("counts"), dict) else {}
+    pdf_available = _to_int(pdf_counts.get("available_local"))
+    pdf_total = _to_int(pdf_counts.get("total"))
+    resource_types = resource_summary.get("by_resource_type") if isinstance(resource_summary, dict) and isinstance(resource_summary.get("by_resource_type"), dict) else {}
+    resource_count = _to_int(resource_summary.get("record_count")) if isinstance(resource_summary, dict) else 0
+    code_repositories = _to_int(resource_types.get("code_repository"))
+    deep_coverage = f"{complete}/{strong_target}" if strong_target else str(complete)
+    if strong_target and complete >= strong_target and incomplete == 0 and missing == 0:
+        deep_coverage += " · 已核验"
     rows = [
-        ("强证据阅读（主线 + 跨域）", f"{complete}/{strong_target}" if strong_target else str(complete)),
-        ("其中主线 / 跨域", f"{mainline_strong} / {bridge_strong}"),
-        ("可作为主线依据", str(primary_evidence)),
-        ("摘要轻读覆盖", shallow_coverage),
-        ("尚未完成阅读", f"{incomplete} 篇结构待补；{missing} 篇尚未形成笔记"),
+        ("摘要轻读验收", "已核验：可作为 T3 覆盖的一部分" if shallow_completed else "未完成：仍不能作为 T3 覆盖通过依据"),
+        ("精读证据卡（主线 / 跨域）", f"{deep_coverage} · {mainline_strong} / {bridge_strong}"),
+        ("摘要轻读覆盖", shallow_coverage + "（仅摘要级范围与趋势材料）"),
     ]
+    if metadata_triage_count:
+        rows.append(("Metadata-only 分诊", f"{metadata_triage_count} 篇 → literature/metadata_triage.md（补资源线索，不计入覆盖或证据）"))
+    if pdf_total:
+        rows.append(("PDF 可得性", f"{pdf_available}/{pdf_total} 本地可解析（访问状态，不等于已读）"))
+    if upgrade_count:
+        rows.append(("可升级阅读队列", f"{upgrade_count} 篇 → literature/reading_upgrade_queue.jsonl（仍需记录页码覆盖）"))
+    if resource_count:
+        resource_detail = f"共 {resource_count} 项待核验线索"
+        if code_repositories:
+            resource_detail += f"；其中代码仓库 {code_repositories} 项"
+        rows.append(("关联研究资源", resource_detail + " → literature/resource_catalog.jsonl"))
+    if incomplete or missing:
+        rows.append(("未完成阅读", f"{incomplete} 篇结构待补；{missing} 篇尚未形成笔记"))
     if isinstance(bridge_index, dict):
         bridges = bridge_index.get("bridges") if isinstance(bridge_index.get("bridges"), list) else []
         bridge_counts = Counter(
@@ -216,7 +241,7 @@ def _t3_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
             if not part.endswith(" 0")
         ) or "未配置 Cross-domain 计划"
         rows.append(("Cross-domain 候选方向", bridge_status))
-    rows.append(("后续可用范围", "T3.5/T4 只能把已实际阅读的内容作为依据；其余 Cross-domain 方向保留为待验证探索。"))
+    rows.append(("后续可用范围", "T3.5/T4 只能按阅读层级使用已读材料；abstract-only、metadata-only、PDF 可得性与资源链接均不自动升级为机制或结果证据。"))
     if detailed:
         rows.extend([
             ("阅读层级分布", "；".join(f"{level} {count}" for level, count in evidence.most_common()) or "未标注"),
@@ -232,7 +257,7 @@ def _t3_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
         ):
             if detailed and manifest.get(key) is not None:
                 rows.append((label, str(manifest[key])))
-    insights = [_insight("阅读结果与后续可用范围", "已完成的论文阅读可以进入综合和后续论证；未完成或 Cross-domain 待补材料会保留为明确的下一步，不会被误当作已读证据。", rows)]
+    insights = [_insight("T3 阅读验收与后续可用范围", "此面板给出真正决定能否进入 T3.5 的阅读覆盖结论。访问、资源和 metadata-only 线索会被保留，但不会伪装成已读论文证据。", rows)]
     evidence_rows = [(label, str(count)) for label, count in mechanism_evidence.most_common()]
     if evidence_rows:
         insights.append(_insight("Mechanism Evidence Types", "Mechanism Claim 的 evidence type 来自每张 paper card 的 §13；它描述证据性质，不自动确认机制为真。", evidence_rows[:12 if detailed else 6], kind="table"))

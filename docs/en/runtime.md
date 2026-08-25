@@ -110,6 +110,8 @@ The orchestrator uses the current model's `count_tokens()` and discovered contex
 
 Batch output remains `ABSTRACT_ONLY` / `abstract_claim_hint`. A malformed or partial batch falls back only for missing papers, while metadata-only records remain in their existing batch triage path. Batch count, per-paper fallback, and provider context are emitted as bounded progress and access-audit facts.
 
+The T3 terminal acceptance is intentionally two-level. The first `[Validation] T3` message means only that deep-reading notes, the comparison table, and citation artifacts passed structural checks. Abstract coverage must still complete; the final Rich panel's “abstract-reading acceptance” is what determines whether T3 may enter T3.5. The panel separates PDF availability, the optional reading-upgrade queue, metadata-only triage, and the resource catalog. A PDF download, metadata-only record, repository, or project link is an access/resource lead, never proof of reading and never automatic support for a mechanism, causal, or empirical claim.
+
 ## T3.6 Survey Runtime
 
 `BuildSurveyStateTool` creates section contracts and outline files. It is idempotent for an unchanged survey plan: completed `written`/`revised` sections with existing section files and matching outline fingerprints survive a rebuild. Plan or contract changes intentionally invalidate the affected section state.

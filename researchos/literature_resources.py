@@ -549,16 +549,11 @@ def format_resource_discovery_notice(receipt: dict[str, Any] | None) -> str:
         for kind, count in sorted(type_counts.items())
         if int(count or 0) > 0
     )
-    leads = receipt.get("new_resource_leads") if isinstance(receipt.get("new_resource_leads"), list) else []
-    names = [
-        _clean_text(item.get("name"), limit=72)
-        for item in leads
-        if isinstance(item, dict) and _clean_text(item.get("name"), limit=72)
-    ]
     detail = f"（{type_text}）" if type_text else ""
-    if names:
-        detail += "：" + "、".join(names[:2])
-    return f"发现并记录资源线索 {new_count} 项{detail}；仅为待核验线索，尚未下载或运行"
+    return (
+        f"发现并记录资源线索 {new_count} 项{detail}；"
+        f"详情已归档至 {RESOURCE_CATALOG_REL_PATH}；仅为待核验线索，尚未下载或运行"
+    )
 
 
 def format_resource_section(reported_resources: Iterable[dict[str, Any]] = ()) -> str:

@@ -573,16 +573,28 @@ class StageReporter:
             else:
                 self._render(Text(f"✓ {receipt_label} 完成 · {summary or '结果已保存。'}", style="green", overflow="fold"))
             return
-        renderables: list[Any] = [Text(summary if summary else "阶段执行已结束。")]
+        if task_id == "T3" and ok:
+            renderables: list[Any] = [
+                Text(
+                    "T3 阅读验收通过。已完成本轮精读产物与已配置的摘要级覆盖检查，"
+                    "可以进入 T3.5 文献综合。",
+                    style="bold green",
+                )
+            ]
+        else:
+            renderables = [Text(summary if summary else "阶段执行已结束。")]
         if error:
             renderables.append(Text(f"当前问题：{_public_error_summary(error)}", style="bold red"))
-        if insights and (ok or self.detailed):
+        if insights and (ok or self.detailed or task_id == "T3"):
             # Normal CLI output should answer "what happened" without turning a
             # completion event into a full audit report.  The durable files and
             # --verbose retain every distribution and artifact-level detail.
             # A paused run has not passed its task contract, so showing a rich
             # success-looking insight panel in normal UI would make staged files
-            # look like a completed research decision.
+            # look like a completed research decision. T3 is the exception:
+            # its first compact panel explicitly reports the independent
+            # reading-coverage state, so it remains useful and non-successful
+            # when a shallow-reading shortfall pauses the stage.
             visible_insights = insights if self.detailed else insights[:1]
             for insight in visible_insights:
                 renderables.append(self._insight_panel(insight))

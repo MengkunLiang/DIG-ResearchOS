@@ -809,6 +809,17 @@ class CliProgressEmitter:
         retry_limit: int | None = None,
     ) -> None:
         if ok:
+            if task_id == "T3":
+                # T3 deliberately validates its deep-reading artifacts before
+                # the deterministic abstract sweep.  Calling this simply
+                # "passed" made an intermediate structural checkpoint look
+                # like the whole literature stage was ready for T3.5.
+                self.emit(
+                    "[Validation] T3: 精读产物结构检查通过；"
+                    "正在执行摘要轻读与阅读覆盖验收，完成前仍不能进入 T3.5。",
+                    important=True,
+                )
+                return
             self.emit(f"[Validation] {task_id}: 通过", important=True)
             return
         counter = ""
