@@ -405,7 +405,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 必须按当前 section outline 的 Note Card Retrieval Plan 和 `Section Evidence Routing Plan` 回查相关 paper note section。后者把 T3.5 的已读证据、taxonomy link 和本节已知缺口压缩为可核验的起点，不是 citation 配额，也不取代你的学术判断。先读与当前段落有关的 claim-capable anchors；若它们不能支撑当前句子，就不用它们，更不能为了提高引用数硬塞进去。
 - 先调用 `query_research_evidence`，用本节真正要回答的问题检索相关 note section、综合上下文和资源线索，再按返回的精确路径定向 `read_file`；不应以目录顺序或固定前几篇代替选择。把返回的精确片段、Evidence Routing Plan 的已读材料和你的领域推理放在同一论证中。若已有材料足够，直接综合。只有当缺少的是会改变 taxonomy、发展脉络、关键比较或正式引用的外部事实时，才可自主调用一次有界 `targeted_literature_supplement`，读取新增 canonical notes 后继续。普通解释、合理推导和研究议程不需要为了形式补检，也不要为了一个 claim 成批分页读全部 notes。
 - 不要包含 `\documentclass`、`\begin{document}`、`\end{document}`。
-- 如果当前 section 是 `abstract`，文件只能写摘要纯正文；不要写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`。`assemble_survey` 会负责放入 abstract 环境。
+- 如果当前 section 是 `abstract`，文件只能写摘要纯正文；不要写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`。摘要必须恰好只有一个非空段落（允许物理换行，但段落之间不能有空行），英文不超过 220 words，中文不超过 700 个中文字符。这是 ResearchOS 的质量边界，不是 CCF/UTD/INFORMS 的官方投稿字数限制。`assemble_survey` 会负责放入 abstract 环境。
 - 如果 section_id 是 `theme_1`-`theme_4` 且 survey_state 标记 skipped，直接调用 `update_survey_section_state(section_id="{{ section_id }}", status="skipped")` 并 finish。
 - 组织方式必须围绕 taxonomy，不要按 synthesis.md 的 design_rationale fuel 结构硬转写。
 - Taxonomy section 应承载 taxonomy 类、风险链条或视角框架的主要叙述；不要把每个类写成独立大章，除非 survey_state 明确启用了 theme_*。如果 compact audit 要求某类出现在 Taxonomy 中，必须显式覆盖其名称/机制/边界/代表证据。

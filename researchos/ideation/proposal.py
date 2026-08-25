@@ -8,6 +8,7 @@ alternative source of truth for the executable experiment plan.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -107,6 +108,16 @@ def _first_text(*values: Any) -> str:
         if text:
             return text
     return ""
+
+
+def _sha256_file(path: Path) -> str:
+    """Return a content digest for lineage checks; never use filesystem time as identity."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _selected_candidate_field(selected: dict[str, Any], *keys: str) -> str:
@@ -247,6 +258,11 @@ def repair_t45_proposal_manifest(workspace: Path, audit_path: Path) -> tuple[boo
     manifest["candidate_id"] = candidate_id
     manifest["selection_fingerprint"] = selection_fingerprint
     manifest["novelty_audit_verdict"] = raw_verdict
+    # Bind the Proposal to the actual audit bytes.  A Proposal can be validly
+    # materialized on filesystems whose timestamp resolution reorders writes;
+    # content lineage is the contract, not mtime ordering.
+    manifest["novelty_audit_sha256"] = _sha256_file(audit_path)
+    manifest["proposal_sha256"] = _sha256_file(proposal_path)
 
     section_map = manifest.get("section_source_map")
     section_map = section_map if isinstance(section_map, dict) else {}
@@ -392,10 +408,6 @@ def validate_t45_research_proposal(
     missing = [name for name, path in paths.items() if not path.exists() or path.stat().st_size <= 0]
     if missing:
         return False, "post-novelty proposal is missing: " + ", ".join(missing)
-    stale = [name for name, path in paths.items() if path.stat().st_mtime < audit_path.stat().st_mtime]
-    if stale:
-        return False, "post-novelty proposal predates the novelty audit: " + ", ".join(stale)
-
     manifest_path = paths["proposal_manifest"]
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -407,6 +419,40 @@ def validate_t45_research_proposal(
         return False, "proposal_manifest.json is not marked as an accepted audit result"
     if manifest.get("proposal_path") != PROPOSAL_REL_PATH:
         return False, "proposal_manifest.json must point to research_proposal.md"
+    expected_audit_sha256 = _sha256_file(audit_path)
+    recorded_audit_sha256 = str(manifest.get("novelty_audit_sha256") or "").strip()
+    legacy_receipt = _json_object(workspace / "ideation" / "post_novelty_formalization.json")
+    legacy_digests = legacy_receipt.get("artifact_digests") if isinstance(legacy_receipt.get("artifact_digests"), dict) else {}
+    if not recorded_audit_sha256 and require_accepted_lineage:
+        candidate_digest = str(legacy_digests.get("ideation/novelty_audit.md") or "").strip()
+        if candidate_digest == expected_audit_sha256:
+            recorded_audit_sha256 = candidate_digest
+    if not recorded_audit_sha256:
+        return False, (
+            "proposal_manifest.json 缺少 novelty_audit_sha256；请重新运行 T4.5-REVIEW，"
+            "由 runtime 绑定当前 novelty_audit.md，而不是手动修改时间戳。"
+        )
+    if recorded_audit_sha256 != expected_audit_sha256:
+        return False, (
+            "novelty_audit.md 在 Proposal 绑定后发生了内容变化；请重新运行 T4.5 formalization。"
+            f" recorded={recorded_audit_sha256[:12]} current={expected_audit_sha256[:12]}"
+        )
+    # Review-time prose repair deliberately happens before the runtime refreshes
+    # this manifest.  Keep that source validator able to report the real
+    # proposal argument issue, rather than masking it as a manifest mismatch.
+    # Once a post-novelty receipt is required (T5/resume boundary), the digest
+    # becomes strict and detects a post-publication Proposal mutation.
+    if require_accepted_lineage:
+        recorded_proposal_sha256 = str(manifest.get("proposal_sha256") or "").strip()
+        if not recorded_proposal_sha256:
+            candidate_digest = str(legacy_digests.get(PROPOSAL_REL_PATH) or "").strip()
+            if candidate_digest == _sha256_file(paths["research_proposal"]):
+                recorded_proposal_sha256 = candidate_digest
+            else:
+                return False, "proposal_manifest.json 缺少 proposal_sha256；请重新运行 T4.5-REVIEW"
+        current_proposal_sha256 = _sha256_file(paths["research_proposal"])
+        if recorded_proposal_sha256 != current_proposal_sha256:
+            return False, "research_proposal.md 在 Proposal manifest 绑定后发生了内容变化；请重新运行 T4.5-REVIEW"
     if not str(manifest.get("candidate_id") or "").strip():
         return False, "proposal_manifest.json is missing candidate_id"
     if not str(manifest.get("selection_fingerprint") or "").strip():

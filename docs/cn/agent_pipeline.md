@@ -55,6 +55,7 @@ T3.5 Survey 关卡首先询问是跳过 Survey、使用当前语料库撰写，�
 - `T3.6-SUPPLEMENT-READ` 使用保守的身份别名交集（`id`、`paper_id`、normalized ID、DOI/arXiv、external IDs 和标题）校验补读回执；在 `finish_task` 校验前 runtime 会把当前队列与已校验 FULL/PARTIAL note 做确定性对账，漏写项补为明确的 `skipped`，没有对应 note 的 `upgraded` 仍然失败，因此不会再因模型漏写一条决定而陷入验证循环。Reader 仍禁止读取 `_runtime/logs/` 与 trace；`grep_search` 可用于允许的 `literature/` 定位，探索性权限未命中保留在 trace 中，但不是研究失败。
 - T3.6 的 CCF 模板选择是两级 Gate：先选 CCF/CS 方向，再在 `T3.6-CCF-TEMPLATE-GATE` 选择具体会议 `template_id`；UTD 直接选择 `utd/informs`。T3.6 选择只作为 T4 的透明建议，T4 仍单独确认 publication orientation。
 - `T3.6-ASSEMBLE` 首先创建 `survey.tex`，然后运行确定性审计。在进行具体修复后使用 `audit-survey --workspace <workspace>` 重新生成 `survey_audit.md/json`，无需联系提供程序。引用利用审计会区分范围内可追溯文献与正文实际使用的来源，并列出未使用候选，但不设置固定覆盖百分比。引用存在性、论断语义对齐、provenance 和证据等级仍是硬检查。随总引用量缩放的集中度保护只用于发现对单一来源的机械依赖，不会要求加入无关替代文献。
+- Survey 摘要源文件是 `drafts/survey/sections/abstract.tex`，必须恰好包含一个非空段落，不得包含正式引用或 LaTeX wrapper。ResearchOS 强制紧凑边界：英文最多 220 words，中文最多 700 个中文字符；这是内部质量边界，不是 CCF/UTD/INFORMS 的官方投稿限制。最终 abstract 环境由 `assemble_survey` 写入 `drafts/survey/survey.tex`。
 - T3.6 完成后的核心入口固定为：`drafts/survey/survey.tex`（可编辑的 Survey TeX）、`drafts/survey/survey.pdf`（真实编译 PDF）、`drafts/survey/survey_audit.md/json`（覆盖与引用审计）、`drafts/survey/survey_compile_report.json`（编译后端、哈希和日志指纹）以及 `ideation/survey_insights.json`（传给 T4 的可选 idea fuel）。Gate 只展示这些路径、状态和用途，不展开整份 Markdown/JSON；`survey_state.json` 是 runtime-owned 状态，只能通过 `update_survey_section_state` 更新。
 - `T3.6-REVIEW` 将 `survey.tex` 视为派生文件。它仅审查和修补源章节，然后使用 `assemble_survey` 重新生成包装器，并使用 `audit_survey_coverage` 刷新证据检查。在此阶段，对 `survey.tex` 的普通全文件写入会被拒绝，因为部分上下文读取可能会破坏组装好的文档。审查驱动的组装刻意使先前的 PDF/报告过时；然后 T3.6-COMPILE 执行一次真正的编译。
 
@@ -73,6 +74,7 @@ Gate1 首先展示 1–3 个 Portfolio Candidates，但会保留 6–8 个 Activ
 自然语言会先由可选的 LLM parser 解析为 `IdeaDirective`，再由本地规则核对 Candidate ID、组件引用、fingerprint 和确认要求。用户同时提到多个完整 Candidate 时，默认理解为 parallel，不会擅自合并。跨 Candidate 的 Hypothesis、Contribution 或 Gene 选择会先进行 Compatibility Check，给出 Gene Donor Map，等待第二次确认，再生成 Human-composed Candidate、执行 Independent Scoring，并写入新的 Population snapshot。系统不会把两段文字直接拼接成假设文件，也不会覆盖来源 Candidate。
 
 选择一个完整 Candidate 后，T4 只会生成 `ideation/hypothesis_brief.yaml`、lineage、T4.5 search targets 和 Pre-Novelty brief；这些文件用于查新，不是实验执行授权。随后直接进入 T4.5。查新在独立上下文中完成，只负责 collision 标签、必需 baseline 和 claim 边界；通过后才以新的上下文生成统一的 `research_blueprint.yaml`、`claim_registry.yaml`、正式 `hypotheses.md`、`exp_plan.yaml` 和覆盖七项研究功能的 Proposal。第三个独立的 orientation-aware review/repair 上下文按 UTD、CCF-A 或 Hybrid 的权重复核同一论证框架。若选择多条 Candidate，每份通过的研究包都会先作为独立 track 归档，再处理下一条；只有研究者在 T5 前选择的 track 会被 materialize 为 T5 的唯一输入。七项功能用于保证论证覆盖，而非强制七个固定标题；相邻功能可在有利于连贯表达时自然合并。只有结构化来源、Proposal、claim–实验映射和审阅记录全部一致且通过时，T5 才会解锁。
+- 如果兼容 provider 在 T4 Child 生成时返回了响应对象但没有最终 content，ResearchOS 会写入脱敏的 `empty_role_response` 诊断，并只做一次有界的格式恢复。这是模型服务的交付异常，不是对 Child 的科学否决；恢复失败后由 `resume` 复用已保存的 T4 checkpoint。T4.5 Proposal 的 freshness 现在绑定 `novelty_audit.md` 与 Proposal manifest 的 SHA-256 内容指纹，不再用文件 `mtime` 猜测先后关系，从根源上避免时间戳分辨率造成的 stale-proposal 假失败循环。
 
 ## T5 到 T8 外部证据路径
 

@@ -32,6 +32,7 @@ from ..tools.survey_tools import (
     _survey_section_id_for_heading,
     _survey_state_writing_language,
     _survey_internal_alignment_hits,
+    survey_abstract_issues,
     _validate_input_fingerprint_map,
     migrate_survey_audit_artifact,
     migrate_survey_visual_manifest,
@@ -684,6 +685,7 @@ class SurveyWriterAgent(Agent):
                 "bibliography_quality",
                 "survey_graphics_manifest_alignment",
                 "survey_graphics_layout",
+                "abstract_single_compact_paragraph",
             }
             present_checks = {
                 str(item.get("name") or "")
@@ -1343,6 +1345,10 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
         return False, "survey abstract 文件应只包含摘要正文，不应包含 \\begin{abstract} 或 \\end{abstract}"
     if section_id == "abstract" and re.search(r"\\(?:section|subsection)\*?\{", text, flags=re.IGNORECASE):
         return False, "survey abstract 文件应只包含摘要正文，不应包含 \\section 或 \\subsection 标题"
+    if section_id == "abstract":
+        abstract_issues = survey_abstract_issues(text, _survey_state_writing_language(state, ws))
+        if abstract_issues:
+            return False, "; ".join(abstract_issues)
     process_hits = _survey_runtime_process_hits(text)
     if process_hits:
         return False, (

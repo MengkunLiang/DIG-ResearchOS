@@ -6231,6 +6231,13 @@ class AgentRunner:
                 t4_retry_batches = 1
             retry_batches = max(1, min(t4_retry_batches, 5))
         failed_batches = 0
+        # A provider can return a syntactically valid completion whose first
+        # message contains only hidden reasoning/tool metadata and no final
+        # payload.  Treat that as a bounded transport-format recovery, not as
+        # a scientific rejection of the Child.  The durable T4 checkpoint
+        # remains the outer recovery boundary; this counter prevents an
+        # invisible retry loop inside one role.
+        empty_content_attempts = 0
         while True:
             budget.tick_step()
             budget.check()
@@ -6327,10 +6334,75 @@ class AgentRunner:
             budget.add_tokens(response.tokens_in, response.tokens_out, response.cost_usd)
             ctx.extra["t4_evolution_last_model"] = response.model_used
             ctx.extra["t4_evolution_last_endpoint"] = response.endpoint_used
-            content = str(getattr(response.raw.choices[0].message, "content", "") or "")
+            message = response.raw.choices[0].message
+            content = self._t4_response_content(message)
             if not content:
-                raise RecoverableRuntimePause("T4 role returned an empty response; progress is saved and resume can retry the role.")
+                empty_content_attempts += 1
+                diagnostic = {
+                    "schema_version": "1.0.0",
+                    "semantics": "t4_empty_role_response_diagnostic",
+                    "phase": str(ctx.extra.get("t4_heartbeat_phase_key") or "t4_role"),
+                    "attempt": empty_content_attempts,
+                    "automatic_retry_limit": 1,
+                    "has_tool_calls": bool(getattr(message, "tool_calls", None) or (message.get("tool_calls") if isinstance(message, dict) else None)),
+                    "has_refusal": bool(getattr(message, "refusal", None) or (message.get("refusal") if isinstance(message, dict) else None)),
+                    "has_reasoning_content": bool(getattr(message, "reasoning_content", None) or (message.get("reasoning_content") if isinstance(message, dict) else None)),
+                    "model": response.model_used,
+                    "endpoint": response.endpoint_used,
+                    "recorded_at": datetime.now(timezone.utc).isoformat(),
+                }
+                try:
+                    phase_key = str(ctx.extra.get("t4_heartbeat_phase_key") or "t4_role")
+                    safe_phase = re.sub(r"[^a-zA-Z0-9_.-]+", "_", phase_key).strip("_") or "t4_role"
+                    T4ArtifactStore(ctx.workspace_dir).write_json(
+                        f"ideation/evolution/diagnostics/empty_response_{safe_phase}_{empty_content_attempts:02d}.json",
+                        diagnostic,
+                    )
+                except (OSError, ValueError):
+                    pass
+                if empty_content_attempts <= 1:
+                    request_messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "The previous provider response contained no final content. "
+                                "Return one complete replacement payload now; do not explain the transport issue, "
+                                "do not return an empty message, and preserve the requested structured format."
+                            ),
+                        }
+                    )
+                    self.progress.emit(
+                        "[T4] 模型返回了空的最终 payload；这不是对研究方向的否定，正在进行一次有界格式恢复。",
+                        important=True,
+                    )
+                    continue
+                raise RecoverableRuntimePause(
+                    "T4 role returned an empty final payload after one bounded recovery attempt; "
+                    "the Child was not scientifically rejected. Progress and a sanitized provider diagnostic "
+                    "were saved; resume can retry this role."
+                )
             return content
+
+    @staticmethod
+    def _t4_response_content(message: object) -> str:
+        """Normalize scalar or content-block responses from compatible providers."""
+
+        values: list[object] = [
+            message.get("content") if isinstance(message, dict) else getattr(message, "content", None),
+        ]
+        parts: list[str] = []
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+            elif isinstance(value, list):
+                for block in value:
+                    if isinstance(block, str) and block.strip():
+                        parts.append(block.strip())
+                    elif isinstance(block, dict):
+                        text = block.get("text") or block.get("content")
+                        if isinstance(text, str) and text.strip():
+                            parts.append(text.strip())
+        return "\n".join(parts)
 
     def _record_t4_evolution_activity(
         self,

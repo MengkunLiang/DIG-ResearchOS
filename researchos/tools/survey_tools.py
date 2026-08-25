@@ -184,7 +184,8 @@ SURVEY_SECTION_WRITING_CONTRACTS = {
             "Review contribution and future agenda.",
         ],
         "internal_shape": [
-            "One compact paragraph or two very short paragraphs.",
+            "Exactly one non-empty paragraph.",
+            "Compact bound: 160-220 English words or 450-700 Chinese characters (ResearchOS quality bound, not a venue rule).",
             "No headings, no formal citations, no detailed literature attribution.",
         ],
         "evidence_rules": [
@@ -402,6 +403,12 @@ _SURVEY_MIN_PLAIN_CHARS = {
     "future": {"en": 1350, "zh": 2350},
     "conclusion": {"en": 600, "zh": 1100},
 }
+
+# Abstract limits are intentionally separate from section completeness floors.
+# They prevent an abstract from becoming a second Introduction while allowing
+# Chinese and English drafts to use language-appropriate units.
+SURVEY_ABSTRACT_MAX_EN_WORDS = 220
+SURVEY_ABSTRACT_MAX_ZH_CHARS = 700
 
 _SURVEY_SECTION_QUALITY_PATTERNS = {
     "introduction": {
@@ -2117,6 +2124,13 @@ class AssembleSurveyTool(Tool):
             elif _latex_has_meaningful_content(abstract_text):
                 abstract_source_interface_issues = _survey_abstract_interface_source_issues(abstract_text)
                 abstract_body = _strip_survey_section_heading(abstract_text, "abstract").strip()
+                abstract_contract_issues = survey_abstract_issues(abstract_body, writing_language)
+                if abstract_contract_issues:
+                    return ToolResult(
+                        ok=False,
+                        content="Survey Abstract contract failed: " + "; ".join(abstract_contract_issues),
+                        error="invalid_survey_abstract",
+                    )
                 included.append("abstract")
             else:
                 missing.append("drafts/survey/sections/abstract.tex")
@@ -2340,6 +2354,16 @@ class AuditSurveyCoverageTool(Tool):
                 "abstract_no_formal_citation",
                 not has_formal_citation(abstract_text),
                 "Survey abstract must not contain LaTeX citations, author-year citations, or numeric citations.",
+            )
+        )
+        abstract_contract_issues = survey_abstract_issues(abstract_text, writing_language)
+        checks.append(
+            _check(
+                "abstract_single_compact_paragraph",
+                not abstract_contract_issues,
+                "; ".join(abstract_contract_issues)
+                if abstract_contract_issues
+                else "Abstract is exactly one compact paragraph.",
             )
         )
         abstract_section_heading = bool(re.search(r"\\section\*?\{\s*Abstract\s*\}", tex, flags=re.IGNORECASE))
@@ -3916,6 +3940,36 @@ def _plain_latex_text(text: str) -> str:
     text = re.sub(r"[{}$^_~%&]", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def survey_abstract_issues(text: str, writing_language: str) -> list[str]:
+    """Return deterministic Abstract contract failures shared by all T3.6 gates.
+
+    Physical line wrapping is allowed; only blank-line-separated non-empty
+    blocks count as paragraphs.  The limits are ResearchOS compactness bounds,
+    not official CCF/UTD/INFORMS submission limits.
+    """
+
+    source = re.sub(r"(?m)%[^\n]*", "", text or "")
+    blocks = [block.strip() for block in re.split(r"\n\s*\n+", source) if block.strip()]
+    issues: list[str] = []
+    if len(blocks) != 1:
+        issues.append(f"survey abstract 必须只有一个非空段落，当前检测到 {len(blocks)} 段")
+    plain = _plain_latex_text("\n".join(blocks))
+    normalized_language = str(writing_language or "").strip().lower()
+    if normalized_language == "zh":
+        cjk_chars = len(_CJK_RE.findall(plain))
+        if cjk_chars > SURVEY_ABSTRACT_MAX_ZH_CHARS:
+            issues.append(
+                f"survey abstract 过长：{cjk_chars} 个中文字符，最大允许 {SURVEY_ABSTRACT_MAX_ZH_CHARS}"
+            )
+    else:
+        words = len(_LATIN_WORD_RE.findall(plain))
+        if words > SURVEY_ABSTRACT_MAX_EN_WORDS:
+            issues.append(
+                f"survey abstract 过长：{words} words，最大允许 {SURVEY_ABSTRACT_MAX_EN_WORDS}"
+            )
+    return issues
 
 
 def _survey_language_issues(tex: str, state: dict[str, Any], writing_language: str) -> list[str]:

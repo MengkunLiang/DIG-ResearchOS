@@ -2139,7 +2139,7 @@ state builder 还会从 T3.5 citation workbench、当前 note/BibTeX 映射和 t
 - `T3.6-SEC-CONCLUSION` -> `drafts/survey/sections/conclusion.tex`
 - `T3.6-SEC-ABSTRACT` -> `drafts/survey/sections/abstract.tex`
 
-每次调用输入只包含 `survey_state.json`、当前 `section_outline`、该节需要的证据文件和必要的相邻 section。Writer 不允许生成 `\documentclass`、`\begin{document}` 或其它 section 标题。非 abstract section 必须包含当前节标题，语言必须与 `survey_plan.writing_language` 一致，且篇幅要满足不同 section 的最低展开要求；Introduction/Background/Taxonomy/Comparison/Challenges/Future/Conclusion 的阈值不同，不能用同一短模板糊过去。section validator 还会拦截缺少综述论证信号的草稿，例如文献串烧、没有比较评价、future 只有“加强理论/实证/跨学科研究”等空泛话。它还会在短正文被大量微型标题或重复 `paragraph` 标签切碎时给出非阻塞警告；修复方式是合并没有改变读者问题的标签，而不是删除必要结构。`abstract.tex` 是摘要源片段，只能包含摘要纯正文，不能写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`；`assemble_survey` 会负责放入 abstract 环境。写完后必须调用 `update_survey_section_state(section_id=..., status="written")`。
+每次调用输入只包含 `survey_state.json`、当前 `section_outline`、该节需要的证据文件和必要的相邻 section。Writer 不允许生成 `\documentclass`、`\begin{document}` 或其它 section 标题。非 abstract section 必须包含当前节标题，语言必须与 `survey_plan.writing_language` 一致，且篇幅要满足不同 section 的最低展开要求；Introduction/Background/Taxonomy/Comparison/Challenges/Future/Conclusion 的阈值不同，不能用同一短模板糊过去。section validator 还会拦截缺少综述论证信号的草稿，例如文献串烧、没有比较评价、future 只有“加强理论/实证/跨学科研究”等空泛话。它还会在短正文被大量微型标题或重复 `paragraph` 标签切碎时给出非阻塞警告；修复方式是合并没有改变读者问题的标签，而不是删除必要结构。`abstract.tex` 是摘要源片段，只能包含摘要纯正文，不能写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`；同时必须恰好一个非空段落，英文不超过 220 words，中文不超过 700 个中文字符。这是 ResearchOS 紧凑性边界，不是 venue 官方限制。`assemble_survey` 会负责放入 abstract 环境，并在整篇审计时复核同一契约。写完后必须调用 `update_survey_section_state(section_id=..., status="written")`。
 
 章节顺序有意安排为：background/taxonomy/theme/comparison/challenges/future 先确定事实密集内容，再写 introduction、conclusion、abstract。这样 abstract 和 introduction 不会在方法、比较和挑战尚未稳定时先行编造。
 
@@ -2720,6 +2720,8 @@ T4.5 先用 `query_research_evidence` 查询 canonical notes 与已归档 Eviden
 最终报告必须分开写 `Collision Axis` 与 `Ambition Axis`，并给出 `Contribution Distance` 和 `Final Gate Verdict`。没有 close baseline 不能被惩罚为低 novelty；应写成高新颖/高风险。`contribution_type=routine` 或 `routine_risk` 不能无条件进入外部实验链或 T8 写作，必须建议回到 T4 重新 framing 或放弃；是否继续由 T4.5 人工 gate 裁决。
 
 同时，它加载 `novelty-audit` guidance，用 LLM 从每个假设中提取机制因果断言、操作对象和预期效果，再调用 `extract_mechanism_tuple` 保存 tuple；如果领域里需要更细的标签，可以把 `normalized_input_signal` 一并传给工具，而不是被工具枚举限制。对每篇疑似撞车论文，LLM 先阅读摘要/metadata 提取机制 tuple，再调用 `compare_mechanism_tuples` 获取 mechanical similarity hint。该工具只返回 `possible_true_collision` / `possible_mechanism_collision` / `possible_explanatory_competition` / `likely_distinct` 这类待审提示，不能直接给最终新颖性结论。
+
+Proposal freshness 使用内容 lineage 契约。`ideation/proposal/proposal_manifest.json` 会记录 `novelty_audit_sha256` 与 `proposal_sha256`；审阅阶段修改正文后由 runtime 确定性刷新 manifest，进入 T5 的 accepted lineage boundary 时再核验两个 digest。系统刻意不把文件 `mtime` 作为硬 gate，因为粗粒度时间戳和确定性重写会让语义上最新的产物看起来早于 audit。
 
 审计时它把搜索结果、synthesis、comparison table 和 mechanism hint 对齐，由 LLM 判断相似点、差异点、证据强度、是否需要补 baseline，以及最终标签 `true_collision / mechanism_collision / explanatory_competition / safe`。只有 LLM 确认机制、任务边界和贡献点都高度一致时，才把对应假设降为 Level 0。最后用 `write_file(“ideation/novelty_audit.md”, ...)` 写每个假设的 Level 0-3 判定。如果报告中出现真实 High/Medium Overlap，它还必须写 `ideation/collision_cases.md`，记录论文、相似点、差异点和处理建议；validator 会区分”High Overlap: none”这种空标题和真实案例，只有真实案例才强制 collision 文件。
 

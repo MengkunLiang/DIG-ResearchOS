@@ -2299,20 +2299,11 @@ def _validate_t45_post_novelty_formalization(workspace_dir: Path, audit_path: Pa
     missing = [name for name, path in required.items() if not path.exists() or path.stat().st_size <= 0]
     if missing:
         return False, "post-novelty formalization is missing: " + ", ".join(missing)
-    too_early = [
-        name
-        for name, path in required.items()
-        if path.stat().st_mtime < audit_path.stat().st_mtime
-    ]
-    if too_early:
-        return False, "formal artifacts predate the novelty audit: " + ", ".join(too_early)
-    selection_too_early = [
-        name
-        for name, path in required.items()
-        if path.stat().st_mtime < selected_path.stat().st_mtime
-    ]
-    if selection_too_early:
-        return False, "formal artifacts predate the current Candidate selection: " + ", ".join(selection_too_early)
+    # Do not infer artifact lineage from filesystem mtimes.  Timestamp
+    # resolution and deterministic manifest rewrites can make a valid current
+    # Proposal appear older than novelty_audit.md.  Candidate identity,
+    # selection isolation, source validation, and the post-novelty SHA-256
+    # receipt below are the authoritative freshness checks.
     listed = manifest.get("artifacts") if isinstance(manifest.get("artifacts"), dict) else {}
     if any(str(listed.get(name) or "") != path.relative_to(workspace_dir).as_posix() for name, path in required.items()):
         return False, "post-novelty formalization manifest does not list the required artifact paths"
