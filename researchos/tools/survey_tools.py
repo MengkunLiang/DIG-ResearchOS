@@ -185,7 +185,7 @@ SURVEY_SECTION_WRITING_CONTRACTS = {
         ],
         "internal_shape": [
             "Exactly one non-empty paragraph.",
-            "Compact bound: 160-220 English words or 450-700 Chinese characters (ResearchOS quality bound, not a venue rule).",
+            "Compact target with a hard upper bound: at most 220 English words or 700 Chinese characters (ResearchOS quality bound, not a venue rule).",
             "No headings, no formal citations, no detailed literature attribution.",
         ],
         "evidence_rules": [
