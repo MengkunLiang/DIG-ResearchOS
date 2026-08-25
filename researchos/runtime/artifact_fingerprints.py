@@ -24,7 +24,6 @@ T45_INPUT_FINGERPRINT_PATHS = {
     "comparison_table": "literature/comparison_table.csv",
     "retrieval_scope_plan": "literature/retrieval_scope_plan.json",
     "bridge_domain_plan": "literature/bridge_domain_plan.json",
-    "agent_params_config": "config/system_config/agent_params.yaml",
 }
 
 # Before v2 the novelty audit fingerprinted the entire mutable literature
@@ -36,7 +35,17 @@ T45_LEGACY_INPUT_FINGERPRINT_PATHS = {
     **T45_INPUT_FINGERPRINT_PATHS,
     "literature_manifest": "literature/literature_manifest.json",
     "cross_domain_catalogs": "literature/cross_domain_catalogs",
+    # This was briefly included in historical reports, but it is runtime
+    # configuration rather than a scientific dependency and is ignored below.
+    "agent_params_config": "config/system_config/agent_params.yaml",
 }
+# v1 reports were emitted before ``retrieval_scope_plan`` became part of the
+# T4.5 contract.  ``agent_params_config`` is runtime configuration rather than
+# research evidence; a later prompt/parameter upgrade must not invalidate an
+# already audited research package.  The former is optional when absent, while
+# the latter is ignored for all compatibility checks.
+T45_V1_OPTIONAL_INPUT_LABELS = frozenset({"retrieval_scope_plan", "agent_params_config"})
+T45_V1_RUNTIME_ONLY_INPUT_LABELS = frozenset({"agent_params_config"})
 
 T45_FINGERPRINT_REPORT_REL_PATH = "ideation/novelty_audit_fingerprints.json"
 T45_FINGERPRINT_SEMANTICS = "t45_novelty_audit_input_fingerprints"
@@ -220,11 +229,42 @@ def validate_t45_fingerprint_report(workspace_dir: Path) -> tuple[bool, str | No
     if not isinstance(report, dict) or report.get("semantics") != T45_FINGERPRINT_SEMANTICS:
         return False, f"{T45_FINGERPRINT_REPORT_REL_PATH} semantics 不正确"
 
-    input_paths = (
-        T45_INPUT_FINGERPRINT_PATHS
-        if str(report.get("version") or "").startswith("2")
-        else T45_LEGACY_INPUT_FINGERPRINT_PATHS
-    )
+    if str(report.get("version") or "").startswith("2"):
+        input_paths = T45_INPUT_FINGERPRINT_PATHS
+    else:
+        # Version-1 receipts were written before ``retrieval_scope_plan`` and
+        # ``agent_params_config`` became explicit T4.5 inputs.  Validating a
+        # legacy receipt against today's larger map made every old workspace
+        # look stale even when none of its recorded inputs changed.  Keep the
+        # old receipt's exact label set as its compatibility contract; any
+        # recorded label is still checked byte-for-byte, while newly introduced
+        # labels are required only after a fresh v2 audit is written.
+        recorded_inputs = report.get("input_fingerprints")
+        if not isinstance(recorded_inputs, dict):
+            return False, f"{T45_FINGERPRINT_REPORT_REL_PATH} 缺少 input_fingerprints"
+        unknown_labels = sorted(set(recorded_inputs) - set(T45_LEGACY_INPUT_FINGERPRINT_PATHS))
+        if unknown_labels:
+            return False, (
+                f"{T45_FINGERPRINT_REPORT_REL_PATH} 包含未知 legacy 输入标签: "
+                + ", ".join(str(label) for label in unknown_labels[:8])
+            )
+        input_paths = {
+            label: path
+            for label, path in T45_LEGACY_INPUT_FINGERPRINT_PATHS.items()
+            if label in recorded_inputs and label not in T45_V1_RUNTIME_ONLY_INPUT_LABELS
+        }
+        # A missing v1 control does not prove the scientific audit is stale;
+        # runtime-only controls are likewise not scientific dependencies:
+        # the old runtime could not have bound it.  All historical research
+        # inputs that were part of the contract remain mandatory, so a
+        # truncated/corrupt receipt cannot obtain compatibility acceptance.
+        required_legacy_labels = set(T45_LEGACY_INPUT_FINGERPRINT_PATHS) - T45_V1_OPTIONAL_INPUT_LABELS
+        missing_legacy_labels = sorted(required_legacy_labels - set(recorded_inputs))
+        if missing_legacy_labels:
+            return False, (
+                f"{T45_FINGERPRINT_REPORT_REL_PATH} 缺少必需 legacy 输入标签: "
+                + ", ".join(missing_legacy_labels[:8])
+            )
     ok, error = validate_input_fingerprints(
         workspace_dir,
         report.get("input_fingerprints"),
