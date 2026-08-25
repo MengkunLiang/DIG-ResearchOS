@@ -96,7 +96,7 @@ from ..ideation.novelty_verdict import (
     is_passing_final_gate_verdict,
     normalize_final_gate_verdict,
 )
-from ..ideation.proposal import validate_t45_research_proposal
+from ..ideation.proposal import repair_t45_proposal_manifest, validate_t45_research_proposal
 from ..ideation.proposal_portfolio import (
     active_candidate_id as active_proposal_track_candidate_id,
     activate_next_track,
@@ -2298,6 +2298,14 @@ def _validate_t45_post_novelty_formalization(workspace_dir: Path, audit_path: Pa
     formal_ok, formal_error = validate_t45_formalization_core(workspace_dir)
     if not formal_ok:
         return False, formal_error
+    # proposal_manifest.json is a runtime-owned derived receipt.  Historical
+    # workspaces may contain a valid Proposal written before the SHA-256
+    # lineage fields were introduced.  Rebuild only that deterministic
+    # metadata before treating the package as incomplete; never ask the LLM to
+    # rewrite valid research prose for a schema-version migration.
+    repaired, repair_error = repair_t45_proposal_manifest(workspace_dir, audit_path)
+    if repair_error and not repaired:
+        return False, repair_error
     proposal_ok, proposal_error = validate_t45_research_proposal(
         workspace_dir,
         audit_path,
