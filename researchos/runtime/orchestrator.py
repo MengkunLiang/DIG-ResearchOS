@@ -76,8 +76,10 @@ from .workflow_mode import (
     parse_workflow_mode_answer,
     parse_workflow_mode_proposal,
     workflow_startup_setup_needs_confirmation,
+    workflow_startup_template_needs_confirmation,
     workflow_mode_needs_confirmation,
 )
+from ..latex_templates import available_ccf_template_ids, ccf_template_entries, parse_available_ccf_template_answer
 from .task_recovery import prepare_generic_resume_artifacts
 from .run_logger import RunLogger
 from ..agents.ideation import (
@@ -1261,6 +1263,7 @@ class AgentRunner:
 
         try:
             await self._maybe_run_t1_workflow_mode_gate(ctx, tool_map, messages, trace)
+            await self._maybe_run_t1_workflow_template_gate(ctx, tool_map, messages, trace)
             await self._maybe_run_t1_startup_gate(ctx, tool_map, messages, trace)
 
             t9_pre_finalized = await self._maybe_finalize_t9_submission_before_hooks(ctx)
@@ -3794,6 +3797,78 @@ class AgentRunner:
             selection_source="t1_gate",
         )
         note = Message.user(f"【项目默认执行设置已确认】\n{auto_execution_setup_summary(profile)}", step=0)
+        messages.append(note)
+        trace.write_message(note)
+
+    async def _maybe_run_t1_workflow_template_gate(
+        self,
+        ctx: ExecutionContext,
+        tool_map: dict[str, Tool],
+        messages: list[Message],
+        trace: TraceWriter,
+    ) -> None:
+        """Choose a concrete CCF venue before T1 starts project work.
+
+        The numbered menu is resolved locally against the installed template
+        catalogue.  This is a finite, user-owned configuration choice, so an
+        LLM is neither needed nor allowed to guess a conference that is not
+        present in the workspace-independent template bundle.
+        """
+
+        if ctx.task_id != "T1" or self.agent.spec.name != "pi" or (ctx.mode or "init") != "init":
+            return
+        if not workflow_startup_template_needs_confirmation(ctx.workspace_dir):
+            return
+        tool = tool_map.get("ask_human")
+        if tool is None:
+            raise RecoverableRuntimePause("T1 CCF/CS 会议模板选择需要 ask_human 工具，但当前策略没有开放它。")
+
+        repo_root = Path(__file__).resolve().parents[2]
+        entries = ccf_template_entries(repo_root=repo_root, available_only=True)
+        available_template_ids = available_ccf_template_ids(repo_root)
+        if not entries:
+            raise RecoverableRuntimePause(
+                "当前安装未检测到可用 CCF/CS LaTeX 模板；请检查 latex_templete/ccf-latex-templates 后 resume。"
+            )
+
+        selected_template = ""
+        feedback = ""
+        for _attempt in range(3):
+            question = (
+                "<!-- researchos_workflow_ccf_template_selector -->\n"
+                + (f"上次输入未识别：{feedback}\n" if feedback else "")
+                + "请选择将由本项目未来 Survey 与 T8 复用的具体 CCF/CS 会议 LaTeX 模板。"
+                "选择只保存工作流默认设置，不会改写已有 TeX、研究材料或实验产物。"
+            )
+            suggestions = [f"{index} · {entry.label} ({entry.template_id})" for index, entry in enumerate(entries, start=1)]
+            result = await tool.execute(question=question, suggestions=suggestions)
+            if not result.ok:
+                raise RecoverableRuntimePause(str(result.content or result.error or "未获得 CCF/CS 会议模板选择"))
+            data = result.data if isinstance(result.data, dict) else {}
+            answer = str(data.get("answer") or "").strip()
+            selected_template = parse_available_ccf_template_answer(answer, entries)
+            if selected_template in available_template_ids:
+                break
+            feedback = "请直接输入上表编号、会议名或 template id。"
+
+        if selected_template not in available_template_ids:
+            raise RecoverableRuntimePause(
+                "未识别 CCF/CS 会议模板。恢复后请输入上表编号、会议名或 template id；不会用 basic_en 替代。"
+            )
+        current = load_workflow_mode(ctx.workspace_dir)
+        profile = configure_workflow_mode(
+            ctx.workspace_dir,
+            mode="auto",
+            preset=str(current.get("preset") or "research_ccf"),
+            template_id=selected_template,
+            startup_setup_confirmed=True,
+            selection_source="t1_gate",
+        )
+        note = Message.user(
+            "【T1 CCF/CS 会议模板已确认】\n"
+            f"已选择 {selected_template}；未来 Survey 与 T8 将复用该模板。已有 TeX 和研究产物不会被改写。",
+            step=0,
+        )
         messages.append(note)
         trace.write_message(note)
 

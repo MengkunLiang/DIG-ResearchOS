@@ -91,7 +91,7 @@ python -m researchos.cli workspace-status --workspace-root ./workspace
 | `run` | 运行完整流水线；可选择从其他项目复用已验证的前提条件 | `run --workspace <dir>`; `run --workspace <new> --from <source> --start-task T4` |
 | `run_smoke` | 运行一个真实工具的冒烟工作流 | `run_smoke --workspace <dir>` |
 | `resume` | 继续已暂停的项目；T2 会先确认参数，T3 会先复查检索覆盖 | `resume --workspace <dir>`; 使用 `--from-task T2` 重看参数，或 `--from-task T3` 重看检索覆盖 |
-| `configure-workflow` | 查看或调整未来 Auto/Copilot 默认设置，不改动已完成研究产物 | `configure-workflow --workspace <dir>`；`configure-workflow --workspace <dir> --request "深入 T4，分别写两份 Proposal"` |
+| `configure-workflow` | 查看或调整未来 Auto/Copilot 默认设置，不改动已完成研究产物 | `configure-workflow --workspace <dir>`；`configure-workflow --workspace <dir> --ccf-template neurips`；`configure-workflow --workspace <dir> --request "深入 T4，分别写两份 Proposal"` |
 | `run-task` | 通常诊断或执行单个任务而不推进主流水线；公共名 `T8` 是特例，会接收外部 handoff 并运行完整 T8 链 | `run-task T4 --workspace <dir>`；`run-task T8 --workspace <dir>` |
 | `status` / `workspace-status` | 检查单个项目或工作区根目录；`status --detail` 打印原始状态 | `status --workspace <dir>`; `workspace-status --workspace-root ./workspace` |
 | `configure-llm` / `selftest` | 配置并检查所有阶段共用的 provider/model connection | `configure-llm`; `selftest` |

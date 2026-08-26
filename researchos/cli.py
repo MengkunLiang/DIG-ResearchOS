@@ -76,6 +76,12 @@ from .runtime.workflow_mode import (
     parse_workflow_mode_answer,
     parse_workflow_mode_proposal,
 )
+from .latex_templates import (
+    available_ccf_template_ids,
+    ccf_template_entries,
+    normalize_ccf_template_id,
+    parse_available_ccf_template_answer,
+)
 from .runtime.trace import render_trace_for_humans
 from .runtime.bridge_catalog import migrate_legacy_bridge_catalogs
 from .runtime.literature_contract import build_literature_manifest, migrate_legacy_literature_paths
@@ -1679,6 +1685,7 @@ def _workflow_profile_preview(
     literature_preset: str,
     t4_mode: str,
     proposal_tracks: str,
+    template_id: str | None = None,
 ) -> dict[str, Any]:
     """Build a display-only workflow profile without writing a workspace file."""
 
@@ -1702,6 +1709,20 @@ def _workflow_profile_preview(
             "startup_setup_confirmed": True,
         }
     )
+    if mode == "auto" and str(settings.get("publication_orientation") or "") == "ccf_cs":
+        existing_template = normalize_ccf_template_id(str(previous_settings.get("template_id") or ""))
+        selected_template = normalize_ccf_template_id(str(template_id or ""))
+        available_templates = available_ccf_template_ids(Path(__file__).resolve().parents[1])
+        if not selected_template and str(previous_settings.get("publication_orientation") or "") == "ccf_cs":
+            selected_template = existing_template
+        settings.update(
+            {
+                "template_family": "ccf",
+                "template_id": selected_template if selected_template in available_templates else "",
+                "writing_language": "en",
+                "template_selection_source": "explicit_configuration" if template_id else "preserved" if selected_template in available_templates else "pending_t1",
+            }
+        )
     return {
         "mode": mode,
         "preset": preset,
@@ -1724,6 +1745,8 @@ def _workflow_change_impacts(previous: dict[str, Any], proposed: dict[str, Any])
         impacts.append("T4 探索力度会在下次 T4 pre-run confirmation 使用；已生成的 Candidate、评分和谱系不会变化。")
     if before.get("proposal_tracks") != after.get("proposal_tracks"):
         impacts.append("Proposal 数量只影响下一次 T4 Gate1 的推进策略；已有 Proposal track 不会合并或覆盖。")
+    if before.get("template_id") != after.get("template_id"):
+        impacts.append("LaTeX 模板只影响之后进入的 Survey/T8；已经生成的 TeX 不会被静默重写。")
     if not impacts:
         impacts.append("设置没有实质变化；确认只会刷新这份工作区级默认设置记录。")
     return impacts
@@ -1743,6 +1766,7 @@ async def configure_workflow_command(args: argparse.Namespace) -> int:
     requested_literature = str(getattr(args, "literature_preset", "") or "").strip()
     requested_t4 = str(getattr(args, "auto_t4_mode", "") or "").strip().casefold()
     requested_tracks = str(getattr(args, "proposal_tracks", "") or "").strip().casefold()
+    requested_template = normalize_ccf_template_id(str(getattr(args, "ccf_template", "") or ""))
     request = str(getattr(args, "request", "") or "").strip()
 
     llm_client: LLMClient | None = None
@@ -1757,7 +1781,7 @@ async def configure_workflow_command(args: argparse.Namespace) -> int:
     human = _build_human_interface(runtime_settings, llm_client=llm_client)
 
     try:
-        if not any((requested_mode, requested_preset, requested_literature, requested_t4, requested_tracks, request)):
+        if not any((requested_mode, requested_preset, requested_literature, requested_t4, requested_tracks, requested_template, request)):
             question = (
                 "<!-- researchos_workflow_settings:"
                 + json.dumps(current, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -1779,6 +1803,7 @@ async def configure_workflow_command(args: argparse.Namespace) -> int:
         literature_preset = requested_literature or str(preset_defaults.get("literature_preset") or "standard_research")
         t4_mode = requested_t4 or str(preset_defaults.get("t4_mode") or "auto")
         proposal_tracks = requested_tracks or str(preset_defaults.get("proposal_tracks") or "one")
+        template_id = requested_template
 
         if request:
             deterministic_mode = parse_workflow_mode_answer(request)
@@ -1816,6 +1841,11 @@ async def configure_workflow_command(args: argparse.Namespace) -> int:
             setup_choice = deterministic_setup or semantic_setup
             if setup_choice is not None:
                 literature_preset, t4_mode, proposal_tracks = setup_choice
+            if not template_id:
+                template_id = parse_available_ccf_template_answer(
+                    request,
+                    ccf_template_entries(repo_root=Path(__file__).resolve().parents[1], available_only=True),
+                )
 
         if mode not in {"auto", "copilot"}:
             raise ValueError("工作方式必须是 auto 或 copilot")
@@ -1827,6 +1857,37 @@ async def configure_workflow_command(args: argparse.Namespace) -> int:
             raise ValueError("T4 探索必须是 auto、quick、standard 或 deep")
         if proposal_tracks not in {"one", "top2"}:
             raise ValueError("Proposal 数量必须是 one 或 top2")
+        orientation = str(AUTO_PRESETS[preset].get("publication_orientation") or "") if mode == "auto" else ""
+        available_templates = available_ccf_template_ids(Path(__file__).resolve().parents[1])
+        if template_id and template_id not in available_templates:
+            raise ValueError("CCF 模板必须是当前本机已安装的会议 template_id。")
+        if template_id and orientation != "ccf_cs":
+            raise ValueError("--ccf-template 只能用于 Auto + CCF/CS 预设。")
+        if orientation == "ccf_cs" and not template_id:
+            current_template = normalize_ccf_template_id(str(current_settings.get("template_id") or ""))
+            current_orientation = str(current_settings.get("publication_orientation") or "")
+            if current_orientation == "ccf_cs" and current_template in available_templates:
+                template_id = current_template
+            elif bool(getattr(args, "yes", False)) or not sys.stdin.isatty():
+                raise ValueError("Auto + CCF/CS 必须指定具体会议模板；请传入 --ccf-template <template_id>，不会降级到 basic_en。")
+            else:
+                entries = ccf_template_entries(repo_root=Path(__file__).resolve().parents[1], available_only=True)
+                if not entries:
+                    raise ValueError("当前安装没有可用 CCF/CS 模板；请检查 latex_templete/ccf-latex-templates。")
+                feedback = ""
+                for _attempt in range(3):
+                    template_question = (
+                        "<!-- researchos_workflow_ccf_template_selector -->\n"
+                        + (f"上次输入未识别：{feedback}\n" if feedback else "")
+                        + "请选择未来 Survey 与 T8 复用的具体 CCF/CS 会议 LaTeX 模板。"
+                    )
+                    answer = await human.ask_clarification(question=template_question, suggestions=[])
+                    template_id = parse_available_ccf_template_answer(answer, entries)
+                    if template_id in available_templates:
+                        break
+                    feedback = "请直接输入上表编号、会议名或 template id。"
+                if template_id not in available_templates:
+                    raise ValueError("未识别 CCF/CS 模板；请输入面板编号、会议名或 --ccf-template <template_id>。")
 
         proposed = _workflow_profile_preview(
             current,
@@ -1835,6 +1896,7 @@ async def configure_workflow_command(args: argparse.Namespace) -> int:
             literature_preset=literature_preset,
             t4_mode=t4_mode,
             proposal_tracks=proposal_tracks,
+            template_id=template_id or None,
         )
         _cli_console(args).print(
             workflow_settings_panel(
@@ -1868,6 +1930,7 @@ async def configure_workflow_command(args: argparse.Namespace) -> int:
             literature_preset=literature_preset,
             t4_mode=t4_mode,
             proposal_tracks=proposal_tracks,
+            template_id=template_id or None,
             startup_setup_confirmed=True,
             selection_source="configure_workflow",
         )
@@ -5141,9 +5204,15 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_parser.add_argument("--auto-t4-mode", choices=["standard", "quick", "deep", "auto"], default=None)
     workflow_parser.add_argument("--proposal-tracks", choices=["one", "top2"], default=None)
     workflow_parser.add_argument(
+        "--ccf-template",
+        choices=sorted(available_ccf_template_ids(Path(__file__).resolve().parents[1])),
+        default=None,
+        help="Auto + CCF/CS 的具体会议模板；在 T1、Survey 与 T8 复用",
+    )
+    workflow_parser.add_argument(
         "--request",
         default=None,
-        help="用自然语言描述调整；LLM 只解析有限模式/预设/覆盖/T4/Proposal 枚举，保存前仍会确认",
+        help="用自然语言描述调整；LLM 解析有限模式/预设/覆盖/T4/Proposal，会议模板按本地可用枚举核验，保存前仍会确认",
     )
     workflow_parser.add_argument("--yes", action="store_true", help="非交互模式下明确确认保存")
 

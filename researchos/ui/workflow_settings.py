@@ -15,6 +15,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from ..latex_templates import LatexTemplateEntry, ccf_template_entry
+
 
 _LITERATURE_LABELS = {
     "standard_research": "研究论文覆盖 · 40 / 25 / 15",
@@ -38,16 +40,14 @@ _ORIENTATION_LABELS = {
 
 
 def _template_expectation(settings: dict[str, Any]) -> str:
-    """Describe the next template decision without inventing a venue.
-
-    A CCF/CS orientation cannot select a concrete conference package safely.
-    Showing that pending decision at startup prevents an Auto profile from
-    looking like it has already selected a valid LaTeX template.
-    """
+    """Describe a durable template choice without inventing a venue."""
 
     orientation = str(settings.get("publication_orientation") or "").strip()
     if orientation == "ccf_cs":
-        return "写作前选择具体 CCF/CS 会议模板（不默认基础英文）"
+        entry = ccf_template_entry(str(settings.get("template_id") or ""))
+        if entry is not None:
+            return f"{entry.label}（已确认，Survey 与 T8 复用）"
+        return "T1 立即选择具体 CCF/CS 会议模板（不默认基础英文）"
     if orientation == "utd_is":
         return "INFORMS ISRE 2024（UTD/IS 默认）"
     return "在对应写作 Gate 选择"
@@ -187,8 +187,35 @@ def workflow_mode_selector_panel() -> Panel:
     table.add_row("5", "Auto · 综述 · UTD/IS", "默认综述均衡覆盖，并进入 Survey 支线。")
     table.add_row("6", "Auto · 强覆盖综述 · UTD/IS", "默认综述强覆盖，并进入 Survey 支线。")
     note = Text(
-        "输入编号即可；也兼容 Auto survey_ccf 等命令和自然语言。选择后还会确认文献覆盖、T4 探索力度和 Proposal 数量。CCF/CS 会在真正写作前要求选择具体会议模板。",
+        "输入编号即可；也兼容 Auto survey_ccf 等命令和自然语言。选择后还会确认文献覆盖、T4 探索力度和 Proposal 数量。CCF/CS 会随即选择具体会议模板，供 Survey 与 T8 复用。",
         style="dim",
         overflow="fold",
     )
     return Panel(Group(table, note), title="选择项目运行方式", border_style="bright_cyan", expand=True)
+
+
+def workflow_ccf_template_selector_panel(entries: Iterable[LatexTemplateEntry]) -> Panel:
+    """Render the concrete CCF menu that follows the T1 default settings."""
+
+    available = list(entries)
+    table = Table(
+        box=box.SIMPLE_HEAVY,
+        show_header=True,
+        show_lines=True,
+        header_style="bold cyan",
+        pad_edge=False,
+        expand=True,
+    )
+    table.add_column("选择", justify="right", width=8, style="bold yellow")
+    table.add_column("会议模板", min_width=20, overflow="fold")
+    table.add_column("本地支持", overflow="fold")
+    for index, entry in enumerate(available, start=1):
+        table.add_row(str(index), entry.label, entry.availability_label)
+    if not available:
+        table.add_row("-", "未发现可用 CCF 模板", "请检查 latex_templete/ccf-latex-templates")
+    note = Text(
+        "这里确定的是具体会议模板，不是研究结论。确认后会保存为未来 Survey 与 T8 的共同默认；可用 configure-workflow 显式改动，已有 TeX 不会被静默重写。",
+        style="dim",
+        overflow="fold",
+    )
+    return Panel(Group(table, note), title="选择 CCF/CS 会议 LaTeX 模板", border_style="bright_cyan", expand=True)

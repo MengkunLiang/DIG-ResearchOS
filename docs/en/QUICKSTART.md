@@ -88,7 +88,7 @@ For a multiline Gate answer, type `END` on its own line. This is the documented 
 | `run` | Run the full pipeline; optionally reuse verified prerequisites from another project | `run --workspace <dir>`; `run --workspace <new> --from <source> --start-task T4` |
 | `run_smoke` | Run a real-tool smoke workflow | `run_smoke --workspace <dir>` |
 | `resume` | Continue a paused project; T2 reopens parameter confirmation and T3 reopens retrieval coverage | `resume --workspace <dir>`; use `--from-task T2` to revisit parameters or `--from-task T3` to revisit coverage |
-| `configure-workflow` | Inspect or revise future Auto/Copilot defaults without changing completed research artifacts | `configure-workflow --workspace <dir>`; `configure-workflow --workspace <dir> --request "deeper T4 and two proposals"` |
+| `configure-workflow` | Inspect or revise future Auto/Copilot defaults without changing completed research artifacts | `configure-workflow --workspace <dir>`; `configure-workflow --workspace <dir> --ccf-template neurips`; `configure-workflow --workspace <dir> --request "deeper T4 and two proposals"` |
 | `run-task` | Diagnose or execute one task without advancing the main pipeline; public `T8` is the deliberate exception that accepts the external handoff and runs the complete T8 chain | `run-task T4 --workspace <dir>`; `run-task T8 --workspace <dir>` |
 | `status` / `workspace-status` | Inspect one project or a workspace root; `status --detail` prints raw state | `status --workspace <dir>`; `workspace-status --workspace-root ./workspace` |
 | `configure-llm` / `selftest` | Configure and check the provider/model connection shared by every stage | `configure-llm`; `selftest` |

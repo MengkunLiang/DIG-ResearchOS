@@ -27,11 +27,15 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from ..latex_templates import ccf_template_ids, ccf_template_option_id, normalize_ccf_template_id
+from ..latex_templates import ccf_template_entries, ccf_template_ids, ccf_template_option_id, normalize_ccf_template_id
 from ..ideation.proposal_portfolio import proposal_selection_alias
 from ..ui.tables import lightweight_ruled_table
 from ..ui.candidate_cards import CandidateCardRenderer, CandidateViewModel
-from ..ui.workflow_settings import workflow_mode_selector_panel, workflow_settings_panel
+from ..ui.workflow_settings import (
+    workflow_ccf_template_selector_panel,
+    workflow_mode_selector_panel,
+    workflow_settings_panel,
+)
 
 
 _READLINE_CONFIGURED = False
@@ -1567,9 +1571,10 @@ class CLIHumanInterface(HumanInterface):
         """
 
         mode_marker = "<!-- researchos_workflow_mode_selector -->"
+        ccf_template_marker = "<!-- researchos_workflow_ccf_template_selector -->"
         settings_match = re.search(r"<!-- researchos_workflow_settings:(\{.*?\}) -->", question, re.DOTALL)
         feedback_match = re.search(r"<!-- researchos_workflow_settings_feedback:(.*?) -->", question, re.DOTALL)
-        if mode_marker not in question and settings_match is None:
+        if mode_marker not in question and ccf_template_marker not in question and settings_match is None:
             return False
         width = max(80, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
         buffer = io.StringIO()
@@ -1588,6 +1593,21 @@ class CLIHumanInterface(HumanInterface):
                     Text(
                         "可直接输入上表命令，也可用自然语言说明，例如“我希望每一步都确认”或“按 UTD/IS 自动走研究论文流程”。"
                     ),
+                    title="如何回答",
+                    border_style="bright_yellow",
+                    expand=True,
+                )
+            )
+        elif ccf_template_marker in question:
+            repo_root = Path(__file__).resolve().parents[2]
+            console.print(
+                workflow_ccf_template_selector_panel(
+                    ccf_template_entries(repo_root=repo_root, available_only=True)
+                )
+            )
+            console.print(
+                Panel(
+                    Text("请输入上表编号、会议名或 template id，例如“1”“NeurIPS”或“neurips”。"),
                     title="如何回答",
                     border_style="bright_yellow",
                     expand=True,
@@ -3952,7 +3972,10 @@ class CLIHumanInterface(HumanInterface):
                     captured["template_id"] = detected_template
             else:
                 template_id = normalize_ccf_template_id(detected_template)
-                if template_id not in ccf_template_ids():
+                # The dynamic second-level menu contains only templates whose
+                # local entry file exists.  Do not let a globally known but
+                # unavailable identifier fall through to an arbitrary option.
+                if template_id not in ccf_template_ids() or ccf_template_option_id(template_id) not in option_ids:
                     return None
                 option_id = ccf_template_option_id(template_id)
                 captured.update({"template_family": "ccf", "template_id": template_id, "writing_language": "en"})

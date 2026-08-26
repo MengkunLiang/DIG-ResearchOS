@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 
 
 @dataclass(frozen=True)
@@ -99,8 +100,39 @@ def ccf_template_ids() -> set[str]:
     return {entry.template_id for entry in _CCF_TEMPLATES}
 
 
+def available_ccf_template_ids(repo_root: Path) -> set[str]:
+    """Return only CCF template IDs whose declared local entry is present."""
+
+    return {entry.template_id for entry in ccf_template_entries(repo_root=repo_root, available_only=True)}
+
+
 def ccf_template_option_id(template_id: str) -> str:
     return f"ccf_{normalize_ccf_template_id(template_id)}"
+
+
+def parse_available_ccf_template_answer(value: str, entries: Iterable[LatexTemplateEntry]) -> str:
+    """Resolve a numbered or named answer against an actually available menu.
+
+    The helper intentionally receives the displayed entries rather than the
+    whole catalogue.  A user cannot select a template that is absent from the
+    installed bundle merely because its global identifier is well formed.
+    """
+
+    available = list(entries)
+    normalized = " ".join(str(value or "").strip().casefold().split())
+    if normalized.isdigit() and 1 <= int(normalized) <= len(available):
+        return available[int(normalized) - 1].template_id
+    candidate = normalize_ccf_template_id(normalized.removeprefix("ccf_"))
+    if candidate in {entry.template_id for entry in available}:
+        return candidate
+    return next(
+        (
+            entry.template_id
+            for entry in available
+            if entry.template_id in normalized or entry.label.casefold() in normalized
+        ),
+        "",
+    )
 
 
 def resolve_latex_template(repo_root: Path, family: str, template_id: str, writing_language: str) -> Path | None:

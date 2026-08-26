@@ -7,8 +7,16 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from ..latex_templates import available_ccf_template_ids, normalize_ccf_template_id
+
 
 WORKFLOW_MODE_PATH = "_runtime/workflow_mode.json"
+
+
+def _available_ccf_template_ids() -> set[str]:
+    """Resolve the local bundle once at use time, not at module import time."""
+
+    return available_ccf_template_ids(Path(__file__).resolve().parents[2])
 
 AUTO_PRESETS: dict[str, dict[str, str]] = {
     "research_ccf": {
@@ -18,6 +26,10 @@ AUTO_PRESETS: dict[str, dict[str, str]] = {
         "survey_policy": "skip",
         "writing_style": "ccf_a",
         "proposal_tracks": "one",
+        "template_family": "ccf",
+        "template_id": "",
+        "writing_language": "en",
+        "template_selection_source": "pending_t1",
     },
     "research_utd": {
         "literature_preset": "standard_research",
@@ -26,6 +38,10 @@ AUTO_PRESETS: dict[str, dict[str, str]] = {
         "survey_policy": "skip",
         "writing_style": "is",
         "proposal_tracks": "one",
+        "template_family": "utd",
+        "template_id": "informs",
+        "writing_language": "en",
+        "template_selection_source": "preset_default",
     },
     "survey_ccf": {
         "literature_preset": "survey_balanced",
@@ -34,6 +50,10 @@ AUTO_PRESETS: dict[str, dict[str, str]] = {
         "survey_policy": "write_with_supplement",
         "writing_style": "ccf_a",
         "proposal_tracks": "one",
+        "template_family": "ccf",
+        "template_id": "",
+        "writing_language": "en",
+        "template_selection_source": "pending_t1",
     },
     "survey_utd": {
         "literature_preset": "survey_balanced",
@@ -42,6 +62,10 @@ AUTO_PRESETS: dict[str, dict[str, str]] = {
         "survey_policy": "write_with_supplement",
         "writing_style": "is",
         "proposal_tracks": "one",
+        "template_family": "utd",
+        "template_id": "informs",
+        "writing_language": "en",
+        "template_selection_source": "preset_default",
     },
     "survey_exhaustive_utd": {
         "literature_preset": "survey_exhaustive",
@@ -50,6 +74,10 @@ AUTO_PRESETS: dict[str, dict[str, str]] = {
         "survey_policy": "write_with_supplement",
         "writing_style": "is",
         "proposal_tracks": "one",
+        "template_family": "utd",
+        "template_id": "informs",
+        "writing_language": "en",
+        "template_selection_source": "preset_default",
     },
 }
 
@@ -76,7 +104,85 @@ def _copilot_settings() -> dict[str, str]:
         "survey_policy": "ask",
         "writing_style": _COPILOT_PENDING_ORIENTATION,
         "proposal_tracks": "one",
+        "template_family": _COPILOT_PENDING_ORIENTATION,
+        "template_id": "",
+        "writing_language": "",
+        "template_selection_source": "pending_user",
     }
+
+
+def _apply_template_settings(
+    settings: dict[str, Any],
+    *,
+    mode: str,
+    existing_settings: Mapping[str, Any],
+    preserve_existing: bool,
+    template_id: str | None,
+) -> None:
+    """Normalize template identity without letting a profile change leak it.
+
+    The workflow profile is deliberately the one durable owner of the early
+    template decision.  A CCF/CS orientation alone has no concrete conference
+    identity, while the UTD/IS branch has exactly one bundled default.  An
+    explicit preset change starts from that preset's template policy; a
+    mode-only update can preserve a compatible, already confirmed conference.
+    """
+
+    if mode != "auto":
+        settings.update(
+            {
+                "template_family": _COPILOT_PENDING_ORIENTATION,
+                "template_id": "",
+                "writing_language": "",
+                "template_selection_source": "pending_user",
+            }
+        )
+        if template_id is not None:
+            raise ValueError("Copilot 模式没有可预先授权的 CCF 模板；请先切换到 Auto + CCF/CS。")
+        return
+
+    orientation = str(settings.get("publication_orientation") or "")
+    if orientation == "utd_is":
+        requested = normalize_ccf_template_id(template_id) if template_id is not None else ""
+        if requested and requested != "informs":
+            raise ValueError("UTD/IS 当前只支持 INFORMS ISRE 模板（template_id=informs）。")
+        settings.update(
+            {
+                "template_family": "utd",
+                "template_id": "informs",
+                "writing_language": "en",
+                "template_selection_source": "preset_default",
+            }
+        )
+        return
+
+    if orientation == "ccf_cs":
+        requested = normalize_ccf_template_id(template_id) if template_id is not None else ""
+        available = _available_ccf_template_ids()
+        if template_id is not None and requested not in available:
+            raise ValueError("CCF 模板必须是当前本机已安装的会议 template_id。")
+        existing_orientation = str(existing_settings.get("publication_orientation") or "")
+        existing_template = normalize_ccf_template_id(str(existing_settings.get("template_id") or ""))
+        if not requested and preserve_existing and existing_orientation == "ccf_cs" and existing_template in available:
+            requested = existing_template
+        settings.update(
+            {
+                "template_family": "ccf",
+                "template_id": requested,
+                "writing_language": "en",
+                "template_selection_source": "explicit_configuration" if template_id is not None else "preserved" if requested else "pending_t1",
+            }
+        )
+        return
+
+    settings.update(
+        {
+            "template_family": _COPILOT_PENDING_ORIENTATION,
+            "template_id": "",
+            "writing_language": "",
+            "template_selection_source": "pending_user",
+        }
+    )
 
 
 def configure_workflow_mode(
@@ -87,6 +193,7 @@ def configure_workflow_mode(
     t4_mode: str | None = None,
     literature_preset: str | None = None,
     proposal_tracks: str | None = None,
+    template_id: str | None = None,
     startup_setup_confirmed: bool | None = None,
     selection_source: str = "api",
 ) -> dict[str, Any]:
@@ -140,6 +247,17 @@ def configure_workflow_mode(
         if proposal_tracks not in {"one", "top2"}:
             raise ValueError("proposal tracks must be one or top2")
         settings["proposal_tracks"] = proposal_tracks
+    existing_settings = existing.get("settings") if isinstance(existing.get("settings"), dict) else {}
+    _apply_template_settings(
+        settings,
+        mode=normalized_mode,
+        existing_settings=existing_settings,
+        # A CCF-to-CCF preset change keeps an already confirmed conference;
+        # switching from UTD/Copilot cannot leak a template because the helper
+        # checks the prior orientation before preservation.
+        preserve_existing=True,
+        template_id=template_id,
+    )
     if startup_setup_confirmed is not None:
         settings["startup_setup_confirmed"] = bool(startup_setup_confirmed)
     elif selection_source == "command_line":
@@ -236,6 +354,28 @@ def workflow_startup_setup_needs_confirmation(workspace: Path) -> bool:
     if "startup_setup_confirmed" in settings:
         return not bool(settings.get("startup_setup_confirmed"))
     return str(profile.get("selection_source") or "").strip() in {"t1_gate", "command_line"}
+
+
+def workflow_startup_template_needs_confirmation(workspace: Path) -> bool:
+    """Whether Auto + CCF/CS still needs its concrete conference at T1.
+
+    This is intentionally separate from the coverage/effort confirmation.  A
+    CCF/CS paper family is not a LaTeX template, so treating it as one leaves
+    Survey and manuscript assembly with an unresolved venue much later in the
+    pipeline.  Legacy profiles with no template remain valid and are prompted
+    when they next enter T1 or their existing T3.6/T8 style Gate.
+    """
+
+    profile = load_workflow_mode(workspace)
+    if str(profile.get("mode") or "").casefold() != "auto":
+        return False
+    settings = profile.get("settings") if isinstance(profile.get("settings"), dict) else {}
+    if str(settings.get("publication_orientation") or "") != "ccf_cs":
+        return False
+    if str(settings.get("template_family") or "ccf") != "ccf":
+        return True
+    template_id = normalize_ccf_template_id(str(settings.get("template_id") or ""))
+    return template_id not in _available_ccf_template_ids()
 
 
 def workflow_auto_setup_needs_confirmation(workspace: Path) -> bool:
@@ -476,6 +616,16 @@ def load_workflow_mode(workspace: Path) -> dict[str, Any]:
     if configured_proposal_tracks not in {"one", "top2"}:
         return _fallback_profile("workflow proposal track setting is invalid")
     normalized_settings["proposal_tracks"] = configured_proposal_tracks
+    # Profiles created before T1 template selection existed deliberately stay
+    # usable.  Their CCF setting is normalized to an explicit pending value
+    # rather than being treated as corrupt or silently mapped to basic_en.
+    _apply_template_settings(
+        normalized_settings,
+        mode=mode,
+        existing_settings=settings,
+        preserve_existing=True,
+        template_id=None,
+    )
     if "startup_setup_confirmed" in settings:
         normalized_settings["startup_setup_confirmed"] = bool(settings.get("startup_setup_confirmed"))
     normalized = dict(payload)
@@ -512,6 +662,7 @@ def automatic_gate_result(
     orientation = str(settings.get("publication_orientation") or "ccf_cs")
     survey_policy = str(settings.get("survey_policy") or "skip")
     style = str(settings.get("writing_style") or "ccf_a")
+    template_id = normalize_ccf_template_id(str(settings.get("template_id") or ""))
     confirmation = (
         presentation.get("t4_directive_confirmation")
         if isinstance(presentation, dict)
@@ -558,10 +709,29 @@ def automatic_gate_result(
         decisions["t36_template_gate"] = {"option_id": "utd_informs", "captured": {}}
         decisions["t8_style_template_gate"] = {"option_id": "is_informs", "captured": {}}
     elif style == "ccf_a":
-        # CCF/CS is a publication orientation, not a concrete venue. Never
-        # disguise that unresolved choice as a basic English template. The
-        # two-level T3.6/T8 template Gates must ask for a real conference.
-        pass
+        # CCF/CS only becomes automatic after T1 has persisted a concrete
+        # conference.  Retain the two-level state-machine route so its normal
+        # receipt and template validation still run, but feed both levels the
+        # same researcher-selected venue instead of asking again at T3.6/T8.
+        if template_id in _available_ccf_template_ids():
+            ccf_captured = {
+                "template_family": "ccf",
+                "template_id": template_id,
+                "writing_language": "en",
+            }
+            decisions["t36_template_gate"] = {"option_id": "ccf", "captured": dict(ccf_captured)}
+            decisions["t36_ccf_template_gate"] = {
+                "option_id": f"ccf_{template_id}",
+                "captured": dict(ccf_captured),
+            }
+            decisions["t8_style_template_gate"] = {
+                "option_id": "ccf",
+                "captured": {**ccf_captured, "venue_style": "ccf_a"},
+            }
+            decisions["t8_ccf_template_gate"] = {
+                "option_id": f"ccf_{template_id}",
+                "captured": {**ccf_captured, "venue_style": "ccf_a"},
+            }
     if lead_candidate_id:
         selected_ids = portfolio_candidate_ids[:2] if proposal_tracks == "top2" and len(portfolio_candidate_ids) >= 2 else [lead_candidate_id]
         action = "select_multiple" if len(selected_ids) > 1 else "select_candidate"
