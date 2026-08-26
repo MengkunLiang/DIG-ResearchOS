@@ -431,7 +431,7 @@ BibTeX 只保存可发表引用元数据：title、author、year、journal/bookt
 | queue_rank | stable key | title | target sections | queue reason |
 |---:|---|---|---|---|
 {% for item in survey_supplement_upgrade_queue %}
-| {{ loop.index }} | {{ item.paper_id or item.normalized_id or item.id or item.canonical_id or item.doi or 'unknown' }} | {{ item.title or 'untitled' }} | {{ item.target_sections or 'not specified' }} | {{ item.queue_reason or 'not specified' }} |
+| {{ loop.index }} | {{ item.get('paper_id') or item.get('normalized_id') or item.get('id') or item.get('canonical_id') or item.get('doi') or 'unknown' }} | {{ item.get('title') or 'untitled' }} | {{ item.get('target_sections') or item.get('survey_supplement_upgrade', {}).get('target_sections') or 'not specified' }} | {{ item.get('queue_reason') or 'not specified' }} |
 {% endfor %}
 
 对每条记录：

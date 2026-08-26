@@ -3279,6 +3279,7 @@ def _build_survey_supplement_reading_upgrade_queue(
         candidates.append(
             {
                 **record,
+                "_upgrade_paper_id": paper_id,
                 "_upgrade_relevance": relevance,
                 "_upgrade_section_ids": section_ids,
                 "_upgrade_pdf_path": pdf_path,
@@ -3308,6 +3309,14 @@ def _build_survey_supplement_reading_upgrade_queue(
             continue
         rank = len(selected) + 1
         record = {key: value for key, value in candidate.items() if not key.startswith("_upgrade_")}
+        # T2/T3 retrieval adapters legitimately use different identity field
+        # names (most often ``id``).  The supplement reader's queue is a
+        # durable, user-visible contract, so materialize its canonical field
+        # here rather than requiring every prompt consumer to guess which
+        # upstream adapter produced the row.
+        selected_paper_id = str(candidate.get("_upgrade_paper_id") or "").strip()
+        if selected_paper_id:
+            record["paper_id"] = selected_paper_id
         record.update(
             {
                 "queue_rank": rank,
