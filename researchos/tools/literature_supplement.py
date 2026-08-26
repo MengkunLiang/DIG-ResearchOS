@@ -74,7 +74,11 @@ class TargetedLiteratureSupplementTool(Tool):
         requested_query_count = len(params.queries)
         params.queries = self._bounded_queries_for_task(caller_task_id, params.queries)
         stage_caps = {
-            "T3.6-SEC": 8,
+            # A survey section may need a second, genuinely different
+            # supplement after its first new notes have been reviewed.  Keep
+            # each action small: the per-section budget below limits the two
+            # actions to twenty verified records in total.
+            "T3.6-SEC": 10,
             "T8-SEC": 6,
             "T4.5": 6,
             "T6": 6,
@@ -82,6 +86,9 @@ class TargetedLiteratureSupplementTool(Tool):
         family = next((prefix for prefix in stage_caps if caller_task_id.startswith(prefix)), "")
         if family:
             params.target_record_count = min(params.target_record_count, stage_caps[family])
+        remaining_record_budget = self._autonomous_record_budget(caller_task_id)
+        if remaining_record_budget is not None and remaining_record_budget > 0:
+            params.target_record_count = min(params.target_record_count, remaining_record_budget)
         stage = "".join(char if char.isalnum() or char in {"-", "_"} else "-" for char in params.stage).strip("-")
         stage = stage or "downstream"
         query_fingerprint = self._query_fingerprint(params)
@@ -314,12 +321,22 @@ class TargetedLiteratureSupplementTool(Tool):
 
         if not caller_task_id:
             return None
+        remaining_record_budget = self._autonomous_record_budget(caller_task_id)
+        if remaining_record_budget is not None and remaining_record_budget <= 0:
+            return (
+                f"Task {caller_task_id} already has 20 verified autonomous supplement records; "
+                "use those archived notes or request an explicit corpus expansion."
+            )
         root = self.policy.workspace_dir / "literature" / "targeted_supplements"
         same_task = 0
         family_count = 0
         all_autonomous = 0
         if caller_task_id.startswith("T3.6-SEC-"):
-            family, per_task_limit, family_limit = "T3.6-SEC", 1, 4
+            # Two rounds are useful only when the second round addresses a
+            # residual, material gap found after reading the first round. A
+            # survey-wide cap prevents every section from expanding by
+            # default, while the record budget keeps each section bounded.
+            family, per_task_limit, family_limit = "T3.6-SEC", 2, 12
         elif caller_task_id.startswith("T8-SEC-"):
             family, per_task_limit, family_limit = "T8-SEC", 1, 3
         elif caller_task_id in {"T3.5", "T4", "T4.5", "T4.5-FORMALIZE", "T4.5-REVIEW", "T6", "T8-RESOURCE", "T8-WRITE"}:
@@ -348,9 +365,40 @@ class TargetedLiteratureSupplementTool(Tool):
             return f"Task {caller_task_id} reached its autonomous literature supplement limit; use the archived evidence or request an explicit scope expansion."
         if family_count >= family_limit:
             return f"Stage family {family} reached its autonomous literature supplement limit; continue with existing evidence or request an explicit scope expansion."
-        if all_autonomous >= 10:
+        if all_autonomous >= 16:
             return "This workspace reached the downstream autonomous literature supplement safety limit; review accumulated evidence before expanding scope."
         return None
+
+    def _autonomous_record_budget(self, caller_task_id: str) -> int | None:
+        """Return remaining verified-record budget for a section supplement.
+
+        The limit is deliberately expressed in *verified records*, not search
+        hits.  This makes two focused calls useful for a survey section while
+        preventing an apparently small retry from silently accumulating a
+        large, unread candidate pool.
+        """
+
+        if not caller_task_id.startswith("T3.6-SEC-"):
+            return None
+        root = self.policy.workspace_dir / "literature" / "targeted_supplements"
+        verified_records = 0
+        if root.is_dir():
+            for path in root.rglob("supplement.json"):
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError, json.JSONDecodeError):
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                if str(payload.get("caller_task_id") or "") != caller_task_id:
+                    continue
+                if payload.get("executed_external_retrieval") is False:
+                    continue
+                try:
+                    verified_records += max(0, int(payload.get("verified_count") or 0))
+                except (TypeError, ValueError):
+                    continue
+        return max(0, 20 - verified_records)
 
     @staticmethod
     def _bounded_queries_for_task(caller_task_id: str, queries: list[str]) -> list[str]:

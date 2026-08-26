@@ -395,8 +395,9 @@ class SurveyWriterAgent(Agent):
                 "文献只能用 literature/...，不要写成 drafts/survey/literature/...。"
                 "读取其它 section 前先 list_files 或查看 survey_state 确认文件存在；不要 read_file 尚未生成的 later section。"
                 "先用现有 synthesis、workbench、note 与 bibliography 写作；若在本节发现一个具体、可检索且会影响 taxonomy/发展脉络/代表性覆盖的证据缺口，"
-                "可自行调用一次 targeted_literature_supplement。stage 使用当前 section_id，target_record_count 不超过 8，并写明缺口原因。"
-                "调用后读取新增 shallow_read_notes 再继续本节；新增材料仍是 ABSTRACT_ONLY，不能支撑机制、结果、因果或 novelty 强论断。"
+                "可自行调用 targeted_literature_supplement，最多两次。每次 target_record_count 不超过 10；两次累计最多 20 篇经验证候选。"
+                "第一次后必须读取新增 shallow_read_notes；只有仍存在不同的、会改变本节论证的实质缺口时才可第二次调用，不能换同义 query 重复检索。"
+                "新增材料仍是 ABSTRACT_ONLY，不能支撑机制、结果、因果或 novelty 强论断。"
                 "如果现有证据足够则不要调用，也不要为增加引用数量而检索。"
                 "写完后调用 update_survey_section_state。"
             )
