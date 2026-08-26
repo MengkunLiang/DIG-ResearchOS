@@ -632,7 +632,7 @@ T2 is not “just searching a few papers” but a full:
 
 ### Current Default Configuration
 
-T2 uses the one provider/model in `config/model_settings.yaml`. It has no user-managed step, token, or wall-clock budget table. `config/system_config/agent_params.yaml` declares Scout tools, permissions, prompts, and mechanical behaviour; workspace-local `literature/literature_params.json` records the researcher-confirmed corpus settings for this project.
+T2 uses the one provider/model in `config/model_settings.yaml`. It has no user-managed step, token, or wall-clock budget table. `config/system_config/agent_params.yaml` declares Scout tools, permissions, prompts, and mechanical behaviour; it is runtime-owned configuration rather than a searchable Scout workspace input. The runtime injects the effective candidate cap and reading targets into the Scout prompt; workspace-local `literature/literature_params.json` records the researcher-confirmed corpus settings for this project.
 
 Main tools include:
 

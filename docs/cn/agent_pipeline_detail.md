@@ -632,7 +632,7 @@ T2 不是“随便搜几篇论文”，而是完整的：
 
 ### 当前默认配置
 
-T2 使用 `config/model_settings.yaml` 中唯一的 provider/model，不再有面向用户的 step/token/wall budget 表。`config/system_config/agent_params.yaml` 只声明 Scout 的工具、权限、prompt 与机械 behavior；本项目由 `literature/literature_params.json` 记录研究者确认过的文献范围设置。
+T2 使用 `config/model_settings.yaml` 中唯一的 provider/model，不再有面向用户的 step/token/wall budget 表。`config/system_config/agent_params.yaml` 只声明 Scout 的工具、权限、prompt 与机械 behavior；它是 runtime-owned 配置，不属于 Scout 可搜索的 workspace 输入。运行时把本轮实际候选上限和阅读目标注入 Scout prompt；本项目由 `literature/literature_params.json` 记录研究者确认过的文献范围设置。
 
 主要工具包括：
 

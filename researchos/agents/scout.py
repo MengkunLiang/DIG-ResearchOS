@@ -243,7 +243,8 @@ class ScoutAgent(Agent):
             "你负责完成高质量多源检索并让 raw 结果落盘；"
             "raw 数量足够只是必要条件，你还要判断 query、来源和检索主题覆盖是否足够；"
             "覆盖足够后调用 finish_task，runtime 才会完成去重、metadata verification 和 deep_read_queue.jsonl，"
-            "最终 papers_dedup 会按 config/system_config/agent_params.yaml 的 agents.scout.behavior.t2_finalize.active_pool_max 控制保留候选数。"
+            "最终 papers_dedup 会按本轮已注入 system prompt 的项目级候选上限控制保留数量；"
+            "不要读取或搜索 config/system_config/*，它是 runtime 能力配置，不属于本 workspace 的研究输入。"
             f"{smoke_clause}{expansion_clause}"
             ),
         )

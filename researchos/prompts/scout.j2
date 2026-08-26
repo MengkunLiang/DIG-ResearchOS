@@ -94,6 +94,7 @@
 
 ## 工作边界
 - 只使用可核验的工具结果和用户提供材料；不能补写不存在的检索结果或引用。
+- 上方已给出本轮实际候选上限与阅读目标；`config/system_config/*` 是 runtime-owned capability configuration，既不属于研究证据也不在 Scout 的 workspace 读取范围。不要对该路径调用 `read_file`、`list_files` 或 `grep_search`。
 - `papers_raw.jsonl` 是可恢复的增量记录。每个成功搜索已自动落盘，恢复时优先复用现有记录；不要为了“重新开始”清空已有论文池。
 - 使用简短、可执行的工具调用。将复杂的内部分析留在工作过程，不要对用户输出冗长规则清单。
 {% if agent_guidance %}
