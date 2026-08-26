@@ -320,8 +320,8 @@ gates:
   # T3.6 综述完成后的去向确认：
   # Survey PDF/summary 已生成后，用户可能只想结束综述任务，也可能继续进入 T4 idea。
   t36_post_survey_gate:
-    title: "T3.6 综述完成后去向确认"
-    description: "综述支线已完成并导出 survey_insights。请确认现在结束项目，还是继续进入 T4 生成研究 idea。"
+    title: "综述已完成：选择下一步"
+    description: "PDF、TeX、审计与 T4 交接材料均已生成。请决定本次工作在综述处结束，还是继续将综述洞察用于研究 idea。"
     presentation:
       survey_summary:
         from_file: drafts/survey/survey_summary.md

@@ -2758,6 +2758,7 @@ class ExportSurveyForIdeationTool(Tool):
                 error="survey_audit_not_passed",
             )
 
+        reader_summary = _survey_reader_summary(tex)
         insights = {
             "semantics": "survey_insights_optional_ideation_fuel_not_gate",
             "input_fingerprints": _input_fingerprints(
@@ -2777,6 +2778,7 @@ class ExportSurveyForIdeationTool(Tool):
                 _resource_upgrade_needs(state.get("shared_facts") if isinstance(state.get("shared_facts"), dict) else state),
             ),
             "outline": plan.get("outline") or [],
+            "reader_summary": reader_summary,
             "challenge_hints": _extract_section_hints(tex, "challenge"),
             "future_direction_hints": _extract_section_hints(tex, "future"),
             "audit_summary": {
@@ -2802,22 +2804,21 @@ class ExportSurveyForIdeationTool(Tool):
         }
         insights_path.write_text(json.dumps(insights, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         summary = [
-            "# Survey Summary for T4 Ideation",
+            "# Survey Completion Brief",
             "",
-            "This summary is optional idea-generation fuel, not a gate.",
+            "## Core conclusion",
+            reader_summary or "The compiled survey does not expose a readable abstract; consult survey.tex before using it as T4 input.",
             "",
-            f"- Taxonomy dimension: {((plan.get('taxonomy') or {}).get('dimension') if isinstance(plan.get('taxonomy'), dict) else '')}",
-            f"- Outline sections: {len(plan.get('outline') or [])}",
-            f"- Resource upgrade needs: {len(insights['resource_upgrade_needs'])}",
-            f"- Audit passed: {insights['audit_summary']['passed']}",
+            "## Field map and evidence status",
+            f"- Taxonomy: {((plan.get('taxonomy') or {}).get('dimension') if isinstance(plan.get('taxonomy'), dict) else '')}",
+            f"- Reviewed outline sections: {len(plan.get('outline') or [])}",
+            f"- Coverage audit: {'passed' if insights['audit_summary']['passed'] else 'requires review'}",
+            f"- Evidence upgrades still worth pursuing: {len(insights['resource_upgrade_needs'])}",
             "",
-            "## Challenge Hints",
-            *[f"- {item}" for item in insights["challenge_hints"][:8]],
+            "## Handoff to idea generation",
+            "`ideation/survey_insights.json` preserves the full taxonomy, challenge and future-direction evidence. It is optional input for T4, not a constraint that replaces the broader literature corpus or researcher judgment.",
             "",
-            "## Future Direction Hints",
-            *[f"- {item}" for item in insights["future_direction_hints"][:8]],
-            "",
-            "## Resource Upgrade Needs",
+            "## Evidence upgrade priorities",
             *[
                 "- {paper_or_topic}: {reason} -> {suggested_action}".format(
                     paper_or_topic=item.get("paper_or_topic") or item.get("topic") or "unknown",
@@ -4027,6 +4028,24 @@ def _plain_latex_text(text: str) -> str:
     text = re.sub(r"[{}$^_~%&]", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def _survey_reader_summary(tex: str, *, max_chars: int = 900) -> str:
+    """Return the compiled Survey's own abstract as a readable handoff.
+
+    The completion Gate needs an actual research takeaway, not the first lines
+    that happen to contain the words "challenge" or "future".  The abstract is
+    the reviewed article-level statement, is available across templates, and
+    can be shown without inventing a second LLM summary.
+    """
+
+    abstract = _plain_latex_text(_extract_survey_abstract(tex))
+    if not abstract:
+        return ""
+    if len(abstract) <= max_chars:
+        return abstract
+    boundary = abstract[:max_chars].rsplit(" ", 1)[0].rstrip()
+    return (boundary or abstract[:max_chars]).rstrip(" ,;:") + "…"
 
 
 def survey_abstract_issues(text: str, writing_language: str) -> list[str]:

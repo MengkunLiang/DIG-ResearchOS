@@ -1822,6 +1822,9 @@ class CLIHumanInterface(HumanInterface):
         elif gate_id == "t2_coverage_gate":
             self._render_t2_coverage_overview(presentation)
             rendered_compact_gate = True
+        elif gate_id == "t36_post_survey_gate":
+            self._render_t36_post_survey_overview(presentation)
+            rendered_compact_gate = True
         for key, value in presentation.items():
             if key.startswith("_"):
                 continue
@@ -2400,6 +2403,115 @@ class CLIHumanInterface(HumanInterface):
             title="即将确认的文献阅读方案",
             border_style="bright_cyan",
         )
+
+    def _render_t36_post_survey_overview(self, presentation: dict[str, Any]) -> None:
+        """Render the Survey completion Gate as a researcher-facing handoff.
+
+        The old three-field presentation was technically accurate but made a
+        finished PDF look like an implementation detail.  This view leads with
+        the deliverable, then gives the reviewed article-level takeaway and a
+        clear T4 handoff boundary without dumping machine artifacts.
+        """
+
+        summary_value = presentation.get("survey_summary")
+        summary_path, _summary_text = _path_summary_text(
+            summary_value,
+            default_path="drafts/survey/survey_summary.md",
+        )
+        report = presentation.get("survey_compile_report")
+        report = report if isinstance(report, dict) else {}
+        insights = presentation.get("survey_insights")
+        insights = insights if isinstance(insights, dict) else {}
+
+        pdf_path = str(report.get("pdf_path") or "drafts/survey/survey.pdf")
+        tex_path = str(report.get("tex_path") or "drafts/survey/survey.tex")
+        audit_path = "drafts/survey/survey_audit.md"
+        compile_ok = report.get("success") is True
+        audit_ok = insights.get("audit_passed") is True or (
+            isinstance(insights.get("audit_summary"), dict)
+            and insights["audit_summary"].get("passed") is True
+        )
+        taxonomy = str(insights.get("taxonomy_dimension") or "").strip()
+        if not taxonomy and isinstance(insights.get("taxonomy"), dict):
+            taxonomy = str(insights["taxonomy"].get("dimension") or "").strip()
+        reader_summary = _compact_text(
+            insights.get("reader_summary") or "",
+            720,
+        )
+
+        width = max(80, min(140, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        buffer = io.StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=not self._no_color,
+            color_system=None if self._no_color else "truecolor",
+            no_color=self._no_color,
+            width=width,
+            highlight=False,
+            _environ={"COLUMNS": str(width), "LINES": "40"},
+        )
+        deliverables = Table(
+            expand=True,
+            show_header=True,
+            show_lines=True,
+            box=box.SQUARE,
+            header_style="bold cyan",
+            border_style="cyan",
+        )
+        deliverables.add_column("交付物", width=16)
+        deliverables.add_column("状态", width=13)
+        deliverables.add_column("打开或后续用途", ratio=3, overflow="fold")
+        deliverables.add_row(
+            "最终综述 PDF",
+            "已生成" if compile_ok else "需检查",
+            pdf_path,
+        )
+        deliverables.add_row(
+            "可编辑源稿",
+            "已生成",
+            tex_path,
+        )
+        deliverables.add_row(
+            "证据与覆盖审计",
+            "已通过" if audit_ok else "需检查",
+            audit_path,
+        )
+        deliverables.add_row(
+            "Idea 交接材料",
+            "可选输入",
+            "ideation/survey_insights.json（补充 T4，不限制其独立判断）",
+        )
+        deliverables.add_row(
+            "可读交接摘要",
+            "已生成",
+            summary_path,
+        )
+        components: list[Any] = [
+            Text("Survey 已完成。建议先打开 PDF；其余文件用于复现、修改和后续 Idea 工作。", style="bold green"),
+            deliverables,
+        ]
+        if taxonomy:
+            components.append(Text("研究地图：" + taxonomy, style="bold cyan", overflow="fold"))
+        if reader_summary:
+            components.append(
+                Panel(
+                    Text(reader_summary, overflow="fold"),
+                    title="综述核心结论（来自已编译摘要）",
+                    border_style="green",
+                    expand=True,
+                )
+            )
+        components.append(
+            Text(
+                "下一步：只需要综述时选择“结束项目”；希望据此继续形成研究 idea、Proposal 和论文时选择“继续进入 T4”。",
+                style="bold yellow",
+                overflow="fold",
+            )
+        )
+        console.print(Panel(Group(*components), title="Survey 完成与后续选择", border_style="bright_green", expand=True))
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            print(rendered)
 
     def _render_t2_coverage_overview(self, presentation: dict[str, Any]) -> None:
         """Compress T2 artifacts into the actual decision required before T3."""
