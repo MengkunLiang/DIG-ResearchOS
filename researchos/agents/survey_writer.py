@@ -1642,6 +1642,7 @@ def _missing_survey_audit_fingerprints(audit: dict[str, Any]) -> list[str]:
         "survey_tex",
         "related_work_bib",
         "survey_references_bib",
+        "survey_citation_key_map",
         "bibliography_reconciliation",
         "citation_map",
         "deep_read_notes_dir",

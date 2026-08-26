@@ -562,7 +562,7 @@ Venue-aware survey framing:
 - `latex_compile` 会自动把编译报告写入 `drafts/survey/survey_compile_report.json`，你不需要再手工复制 `data.compile_report`。
 - 编译产物应包括 `drafts/survey/survey.pdf` 和 `drafts/survey/survey.log`。
 - `latex_compile` 的 `auto` 后端会优先使用本机 TeX；宿主机没有 TeX 时会使用配置的 ResearchOS Docker TeX 镜像。只有本机和 Docker 后端都不可用时才会返回 `waiting_environment_*`；不要伪造 PDF 或 report。先运行 `researchos doctor` 检查 daemon、镜像和 TeX 工具链，再修复后 resume。
-- 如果是 LaTeX 语法或引用错误，读取 log，修对应 section 文件或 references，再重新 `assemble_survey`、`audit_survey_coverage`、`latex_compile`；不要一次性重写整篇 survey.tex，也不要复用修订前的旧 `survey_audit.json`。
+- 如果是 LaTeX 语法或引用错误，先读取 workspace 内的 `drafts/survey/survey.log`。不要读取 `/usr/share`、TeX Live 安装目录或其他绝对系统路径，也不要创建 `_citest`、临时裸 `article` 文档或手工替换派生的 `survey.tex`。修对应 section 或 canonical bibliography 后重新调用 `assemble_survey`；它会生成模板本地的 citation-key projection 和 references.bib。再运行 `audit_survey_coverage`、`latex_compile`；不要一次性重写整篇 survey.tex，也不要复用修订前的旧 `survey_audit.json`。
 
 最后调用 `finish_task`。
 {% endif %}

@@ -220,6 +220,8 @@ sudo apt-get install -y \
   texlive-fonts-recommended texlive-xetex texlive-lang-chinese
 ```
 
+T3.6 拼装综述时，`literature/` 中的 canonical 文献键与各 section 源文件不会被改写。编译前，系统会在 `drafts/survey/survey_citation_key_map.json` 生成仅供所选模板使用的引用键映射，并一致应用到派生产物 `survey.tex` 与 `references.bib`。这避免部分期刊模板无法解析带 DOI 标点的引用键。对于作者—年份模板，被正文引用的记录必须具有可核验的 `author` 或 `editor` 元数据；缺失时系统会在拼装阶段明确停止，不会虚构作者，也不会等到 TeX 编译时才报模糊错误。
+
 Windows 上推荐使用运行 Linux containers 的 Docker Desktop 完成真实 PDF 工作流，项目镜像已经包含完整 TeX 工具链。Compose 会把 `config/` 只读挂载进容器，因此先在 Windows 主机上配置模型，再用 PowerShell 构建并诊断：
 
 ```powershell

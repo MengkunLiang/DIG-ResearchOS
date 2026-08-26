@@ -2203,10 +2203,46 @@ class AssembleSurveyTool(Tool):
             template_selection.get("template_id", ""),
             writing_language,
         )
+        # INFORMS uses an author--year bibliography style.  A BibTeX ``key``
+        # or publisher/organization is not reliable authorship metadata for a
+        # scholarly article.  Reject such cited records before TeX compilation
+        # rather than letting the style fail late with an opaque natbib error.
+        template_text = template_path.read_text(encoding="utf-8", errors="replace") if template_path and template_path.is_file() else ""
+        if _is_informs_template(template_path, template_text):
+            missing_authorship = _author_year_citation_authorship_issues(effective_bib_text, cited_keys)
+            if missing_authorship:
+                return ToolResult(
+                    ok=False,
+                    content=(
+                        "The selected author--year template cannot safely render cited records without "
+                        "verified authorship metadata: "
+                        + ", ".join(missing_authorship[:12])
+                        + ". Replace those citations with verified records or backfill real authors in the literature source; "
+                        "do not invent authors."
+                    ),
+                    error="author_year_citation_metadata_missing",
+                    data={"citation_keys": missing_authorship},
+                )
+
+        # Canonical Literature keys can legitimately contain DOI-derived
+        # punctuation (for example ``p_10_...``).  Some journal class/style
+        # combinations do not robustly parse those keys in author--year mode.
+        # Keep all upstream keys untouched and create a deterministic, TeX-safe
+        # projection solely for the assembled survey and its references.bib.
+        citation_key_projection = _survey_citation_key_projection(cited_keys)
+        rendered_abstract_body = _rewrite_latex_citation_keys(abstract_body, citation_key_projection["canonical_to_rendered"])
+        rendered_body_sections = [
+            _rewrite_latex_citation_keys(section, citation_key_projection["canonical_to_rendered"])
+            for section in body_sections
+        ]
+        rendered_bib_text = _project_bibtex_citation_keys(
+            effective_bib_text,
+            citation_key_projection["canonical_to_rendered"],
+        )
         tex = _render_survey_document(
             title=title,
-            abstract=abstract_body,
-            body_sections=body_sections,
+            abstract=rendered_abstract_body,
+            body_sections=rendered_body_sections,
             writing_language=writing_language,
             template_selection=template_selection,
             repo_root=repo_root,
@@ -2218,7 +2254,28 @@ class AssembleSurveyTool(Tool):
             self.policy,
             params.related_work_bib_path,
             references_path,
-            source_text=effective_bib_text,
+            source_text=rendered_bib_text,
+        )
+        citation_key_map_path = output_path.parent / "survey_citation_key_map.json"
+        citation_key_map_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "semantics": "deterministic_template_local_citation_key_projection",
+                    "canonical_bibliography": params.related_work_bib_path,
+                    "canonical_bibliography_sha256": _sha256_text(effective_bib_text),
+                    "template_selection": template_selection,
+                    "mappings": citation_key_projection["mappings"],
+                    "policy": (
+                        "Canonical literature keys and section source files remain unchanged. "
+                        "Only the assembled survey.tex and its local references.bib use rendered aliases."
+                    ),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
         )
         reconciliation_path = output_path.parent / "bibliography_reconciliation.json"
         reconciliation_path.write_text(
@@ -2229,8 +2286,9 @@ class AssembleSurveyTool(Tool):
                     "source_bibliography": params.related_work_bib_path,
                     "source_bibliography_sha256": _sha256_text(bib_text),
                     "effective_bibliography": "drafts/survey/references.bib",
-                    "effective_bibliography_sha256": _sha256_text(strip_internal_bibtex_notes(effective_bib_text)),
+                    "effective_bibliography_sha256": _sha256_text(strip_internal_bibtex_notes(rendered_bib_text)),
                     "cited_keys": sorted(cited_keys),
+                    "rendered_citation_keys": citation_key_projection["mappings"],
                     "author_repairs": bibliography_reconciliation,
                     "policy": (
                         "Only fills a missing author field from an exact DOI/key match in an existing local literature record; "
@@ -2254,6 +2312,7 @@ class AssembleSurveyTool(Tool):
                     "survey_visual_manifest": "drafts/survey/figures/survey_visual_manifest.json",
                     "survey_tex": params.output_path,
                     "references_bib": "drafts/survey/references.bib",
+                    "survey_citation_key_map": "drafts/survey/survey_citation_key_map.json",
                     "bibliography_reconciliation": "drafts/survey/bibliography_reconciliation.json",
                     **{f"section_{sid}": str(((state.get("sections") or {}).get(sid) or {}).get("file") or "") for sid in included},
                 },
@@ -2301,15 +2360,23 @@ class AuditSurveyCoverageTool(Tool):
         except (ToolAccessDenied, FileNotFoundError, ValueError) as exc:
             return ToolResult(ok=False, content=str(exc), error="invalid_input")
 
-        cited = _cited_keys(tex)
+        rendered_cited = _cited_keys(tex)
         source_bibtex = _bibtex_optional(self.policy, params.related_work_bib_path)
+        canonical_keys = set(extract_bib_keys_from_text(source_bibtex))
+        citation_key_projection = _survey_citation_key_projection(canonical_keys)
+        rendered_to_canonical = citation_key_projection["rendered_to_canonical"]
+        cited = {rendered_to_canonical.get(key, key) for key in rendered_cited}
         effective_bibtex, expected_reconciliation = _reconcile_survey_bibliography_authors(
             self.policy.workspace_dir,
             source_bibtex,
             cited,
         )
         rendered_bibtex = _bibtex_optional(self.policy, "drafts/survey/references.bib")
-        expected_rendered_bibtex = dedupe_bibtex_entries(strip_internal_bibtex_notes(effective_bibtex))
+        expected_rendered_bibtex = dedupe_bibtex_entries(
+            strip_internal_bibtex_notes(
+                _project_bibtex_citation_keys(effective_bibtex, citation_key_projection["canonical_to_rendered"])
+            )
+        )
         uses_assembled_bibliography = bool(rendered_bibtex.strip())
         if uses_assembled_bibliography:
             bibtex = rendered_bibtex
@@ -2320,19 +2387,24 @@ class AuditSurveyCoverageTool(Tool):
         bib_keys = set(extract_bib_keys_from_text(bibtex))
         citation_inventory, citation_scope_diagnostics = _survey_traceable_citation_inventory(
             self.policy.workspace_dir,
-            bibtex,
-            bib_keys,
+            effective_bibtex,
+            set(extract_bib_keys_from_text(effective_bibtex)),
             survey_plan=plan,
         )
         citation_coverage_contract = _survey_citation_coverage_contract(
             cited=cited,
-            bib_keys=bib_keys,
+            bib_keys=set(extract_bib_keys_from_text(effective_bibtex)),
             inventory=citation_inventory,
             state=state,
             scope_diagnostics=citation_scope_diagnostics,
         )
         writing_language = _survey_state_writing_language(state, self.policy.workspace_dir)
         section_texts = _survey_section_texts(tex, state)
+        # Content and evidence audits operate on canonical keys.  The emitted
+        # TeX deliberately uses template-local aliases, which must not make a
+        # cited paper appear unrepresented to the survey-quality checks.
+        canonical_tex = _rewrite_latex_citation_keys(tex, rendered_to_canonical)
+        canonical_section_texts = _survey_section_texts(canonical_tex, state)
         visual_manifest = _read_optional_json(self.policy, "drafts/survey/figures/survey_visual_manifest.json")
         checks = []
         checks.append(_check("has_framework_section", "taxonomy" in section_texts, "Survey should include a taxonomy/framework section."))
@@ -2416,7 +2488,7 @@ class AuditSurveyCoverageTool(Tool):
                 ),
             )
         )
-        missing_cites = sorted(cited - bib_keys) if bib_keys else []
+        missing_cites = sorted(rendered_cited - bib_keys) if bib_keys else []
         checks.append(_check("all_citations_in_bib", not missing_cites, f"Citation keys missing from bib: {missing_cites}"))
         checks.append(
             _check(
@@ -2471,8 +2543,8 @@ class AuditSurveyCoverageTool(Tool):
             )
         )
         citation_diversity_detail = _survey_citation_diversity_diagnostic(
-            tex,
-            section_texts,
+            canonical_tex,
+            canonical_section_texts,
             coverage_contract=citation_coverage_contract,
             inventory=citation_inventory,
             survey_plan=plan,
@@ -2489,7 +2561,7 @@ class AuditSurveyCoverageTool(Tool):
                 "Citation diversity issues: " + "; ".join(citation_diversity_issues[:8]),
             )
         )
-        citation_issues = _survey_section_citation_issues(section_texts, state)
+        citation_issues = _survey_section_citation_issues(canonical_section_texts, state)
         checks.append(
             _check(
                 "section_level_citation_density",
@@ -2498,10 +2570,15 @@ class AuditSurveyCoverageTool(Tool):
                 level_if_fail="WARN",
             )
         )
+        support_by_canonical = citation_support_text_by_key(self.policy.workspace_dir, keys=cited)
+        support_by_rendered = {
+            citation_key_projection["canonical_to_rendered"].get(key, key): value
+            for key, value in support_by_canonical.items()
+        }
         citation_alignment = citation_alignment_issues(
             tex=tex,
             bibtex=bibtex,
-            support_text_by_key=citation_support_text_by_key(self.policy.workspace_dir, keys=cited),
+            support_text_by_key=support_by_rendered,
         )
         checks.append(
             _check(
@@ -2522,7 +2599,7 @@ class AuditSurveyCoverageTool(Tool):
                 "Runtime process prose found: " + "; ".join(process_issues[:8]),
             )
         )
-        bib_quality_issues = _blocking_bibtex_quality_issues(bibtex if bib_keys else "", cited)
+        bib_quality_issues = _blocking_bibtex_quality_issues(effective_bibtex, cited)
         checks.append(
             _check(
                 "bibliography_quality",
@@ -2576,6 +2653,7 @@ class AuditSurveyCoverageTool(Tool):
                     "survey_tex": params.survey_tex_path,
                     "related_work_bib": params.related_work_bib_path,
                     "survey_references_bib": "drafts/survey/references.bib",
+                    "survey_citation_key_map": "drafts/survey/survey_citation_key_map.json",
                     "bibliography_reconciliation": "drafts/survey/bibliography_reconciliation.json",
                     "citation_map": "literature/citation_map.json",
                     "deep_read_notes_dir": "literature/deep_read_notes",
@@ -5318,6 +5396,97 @@ def _is_publication_ready_title(value: str) -> bool:
 
 def _escape_latex_title(title: str) -> str:
     return title.replace("&", "\\&").replace("%", "\\%").replace("_", "\\_")
+
+
+_SURVEY_CITATION_COMMAND_RE = re.compile(
+    r"(\\(?:[Cc]ite[A-Za-z*]*)\s*(?:\[[^\]]*\]\s*){0,2}\{)([^{}]+)(\})"
+)
+_TEX_SAFE_CITATION_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
+_BIB_ENTRY_KEY_PREFIX_RE = re.compile(r"(?m)^(@[A-Za-z]+\s*\{\s*)([^,\s{}]+)(?=\s*,)")
+
+
+def _survey_citation_key_projection(canonical_keys: set[str]) -> dict[str, Any]:
+    """Build a deterministic, template-local mapping for unsafe BibTeX keys.
+
+    Literature identities often originate in DOI/OpenAlex identifiers and may
+    contain punctuation that BibTeX accepts but a particular class file does
+    not.  The returned aliases are deliberately short, alphabetic-leading and
+    collision-resistant.  They are never written back to ``related_work.bib``.
+    """
+
+    canonical_to_rendered: dict[str, str] = {}
+    mappings: list[dict[str, str]] = []
+    used: set[str] = set()
+    for key in sorted(str(item).strip() for item in canonical_keys if str(item).strip()):
+        rendered = key
+        if not _TEX_SAFE_CITATION_KEY_RE.fullmatch(key):
+            rendered = "cite" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+            collision = 1
+            while rendered in used:
+                rendered = "cite" + hashlib.sha256(f"{key}:{collision}".encode("utf-8")).hexdigest()[:16]
+                collision += 1
+        used.add(rendered)
+        canonical_to_rendered[key] = rendered
+        if rendered != key:
+            mappings.append(
+                {
+                    "canonical_key": key,
+                    "rendered_key": rendered,
+                    "reason": "template_safe_alias_for_non_alphanumeric_citation_key",
+                }
+            )
+    return {
+        "canonical_to_rendered": canonical_to_rendered,
+        "rendered_to_canonical": {value: key for key, value in canonical_to_rendered.items()},
+        "mappings": mappings,
+    }
+
+
+def _rewrite_latex_citation_keys(text: str, canonical_to_rendered: dict[str, str]) -> str:
+    """Rewrite only keys inside LaTeX citation commands, preserving prose."""
+
+    if not text or not canonical_to_rendered:
+        return text
+
+    def replace(match: re.Match[str]) -> str:
+        keys = [item.strip() for item in match.group(2).split(",")]
+        rendered = [canonical_to_rendered.get(key, key) for key in keys if key]
+        return match.group(1) + ",".join(rendered) + match.group(3)
+
+    return _SURVEY_CITATION_COMMAND_RE.sub(replace, text)
+
+
+def _project_bibtex_citation_keys(bibtex: str, canonical_to_rendered: dict[str, str]) -> str:
+    """Rename BibTeX entry keys for a generated survey projection only."""
+
+    if not bibtex or not canonical_to_rendered:
+        return bibtex
+
+    def replace(match: re.Match[str]) -> str:
+        canonical = match.group(2).strip()
+        return match.group(1) + canonical_to_rendered.get(canonical, canonical)
+
+    return _BIB_ENTRY_KEY_PREFIX_RE.sub(replace, bibtex)
+
+
+def _author_year_citation_authorship_issues(bibtex: str, cited_keys: set[str]) -> list[str]:
+    """Return cited records that cannot support an author--year citation.
+
+    ``key`` is a BibTeX sorting fallback, not verified scholarly authorship.
+    Nor is ``organization`` reliably an author for a journal article.  This
+    deliberately stricter projection rule avoids silently manufacturing author
+    labels for publication output.
+    """
+
+    issues: list[str] = []
+    for entry in parse_bib_entries(bibtex):
+        key = str(entry.get("key") or "").strip()
+        if key not in cited_keys:
+            continue
+        fields = entry.get("fields") if isinstance(entry.get("fields"), dict) else {}
+        if not str(fields.get("author") or fields.get("editor") or "").strip():
+            issues.append(key)
+    return sorted(set(issues))
 
 
 def _copy_bibliography_for_survey(

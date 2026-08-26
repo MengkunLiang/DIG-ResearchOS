@@ -224,6 +224,8 @@ sudo apt-get install -y \
   texlive-fonts-recommended texlive-xetex texlive-lang-chinese
 ```
 
+When T3.6 assembles a Survey, its canonical literature keys and section files remain unchanged. Before compilation, ResearchOS creates a template-local citation-key projection at `drafts/survey/survey_citation_key_map.json` and applies it consistently to the derived `survey.tex` and `references.bib`. This protects journal templates that cannot parse DOI-derived keys with punctuation. For author--year templates, a cited record must have verified `author` or `editor` metadata; the system stops during assembly when it is missing rather than inventing an author or failing later during TeX compilation.
+
 On Windows, use Docker Desktop with Linux containers for the recommended PDF workflow: the supplied image already contains the complete TeX toolchain. Configure the model on the Windows host first because Compose mounts `config/` read-only, then build and diagnose with PowerShell:
 
 ```powershell
