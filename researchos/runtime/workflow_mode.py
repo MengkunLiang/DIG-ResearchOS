@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 
 WORKFLOW_MODE_PATH = "_runtime/workflow_mode.json"
@@ -93,7 +93,8 @@ def configure_workflow_mode(
     normalized_mode = str(mode or "copilot").strip().casefold()
     if normalized_mode not in {"auto", "copilot"}:
         raise ValueError("workflow mode must be auto or copilot")
-    existing = load_workflow_mode(workspace) if (workspace / WORKFLOW_MODE_PATH).is_file() else _fallback_profile()
+    existing_path = workspace / WORKFLOW_MODE_PATH
+    existing = load_workflow_mode(workspace) if existing_path.is_file() else _fallback_profile()
     if normalized_mode == "copilot":
         # ``preset`` remains a compatibility field for the prior literature
         # coverage family.  It is *not* a publication authorization in this
@@ -141,6 +142,28 @@ def configure_workflow_mode(
         settings["proposal_tracks"] = proposal_tracks
     if startup_setup_confirmed is not None:
         settings["startup_setup_confirmed"] = bool(startup_setup_confirmed)
+    elif selection_source == "command_line":
+        # ``run --workflow-mode ...`` and ``init-workspace --auto-preset ...``
+        # have chosen an authorization style, but have not yet shown the full
+        # coverage/effort/Proposal comparison. Let T1 render that one compact
+        # confirmation instead of treating a partial flag set as consent to
+        # every default. ``configure-workflow --yes`` passes an explicit True.
+        settings["startup_setup_confirmed"] = False
+    previous_history = existing.get("configuration_history") if isinstance(existing.get("configuration_history"), list) else []
+    previous_record = {
+        "mode": str(existing.get("mode") or ""),
+        "preset": str(existing.get("preset") or ""),
+        "settings": existing.get("settings") if isinstance(existing.get("settings"), dict) else {},
+        "selection_source": str(existing.get("selection_source") or ""),
+        "configured_at": str(existing.get("configured_at") or ""),
+    }
+    configured_at = datetime.now(timezone.utc).isoformat()
+    history = [item for item in previous_history if isinstance(item, dict)]
+    # Do not fabricate a history record from the in-memory legacy fallback or
+    # a corrupt JSON file. A history entry is meaningful only when it refers
+    # to an earlier durable, successfully parsed project setting.
+    if existing_path.is_file() and not existing.get("load_warning") and any(previous_record.values()):
+        history.append(previous_record)
     payload: dict[str, Any] = {
         "version": "1.0",
         "semantics": "researchos_project_workflow_mode",
@@ -150,10 +173,18 @@ def configure_workflow_mode(
         "authorization_boundary": (
             "Auto may resolve preconfigured coverage, survey, T4 run, top-ranked Candidate, and writing-style Gates. "
             "It never auto-resolves recovery, failed novelty, external side-effect, or changed-research-scope Gates."
+            if normalized_mode == "auto"
+            else "Copilot records future Gate recommendations only. Every research Gate remains a human decision; "
+            "the profile never supplies a publication orientation, recovery decision, novelty verdict, or external execution authorization."
         ),
-        "configured_at": datetime.now(timezone.utc).isoformat(),
+        "configured_at": configured_at,
         "selection_source": str(selection_source or "api"),
     }
+    if history:
+        # This is operational audit history, not research history. Retain a
+        # bounded tail so settings can be changed freely without allowing this
+        # small runtime receipt to grow without limit.
+        payload["configuration_history"] = history[-20:]
     path = workspace / WORKFLOW_MODE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -184,25 +215,33 @@ def workflow_mode_needs_confirmation(workspace: Path) -> bool:
         "command_line",
         "t1_gate",
         "api",
+        "configure_workflow",
     }
 
 
-def workflow_auto_setup_needs_confirmation(workspace: Path) -> bool:
-    """Whether an interactively selected Auto profile still needs its plan.
+def workflow_startup_setup_needs_confirmation(workspace: Path) -> bool:
+    """Whether a freshly selected mode still needs default-plan confirmation.
 
-    The initial Auto/Copilot choice grants only the mode.  T2/T3 coverage and
-    T4 effort are research-facing quality/cost choices, so an interactive T1
-    run asks for them once before later Gates are auto-resolved.  Explicit CLI
-    and API configuration already supplies that authorization.
+    Mode selection controls authorization style, but it does not fully answer
+    how much literature to cover, how much T4 exploration to request, or how
+    many independent Proposals to carry. Both Auto and Copilot therefore get
+    one explicit default-settings confirmation after an interactive T1 mode
+    choice. In Copilot the settings remain recommendations; they never make a
+    human Gate automatic.
     """
 
     profile = load_workflow_mode(workspace)
-    if profile.get("mode") != "auto":
-        return False
     settings = profile.get("settings") if isinstance(profile.get("settings"), dict) else {}
     if "startup_setup_confirmed" in settings:
         return not bool(settings.get("startup_setup_confirmed"))
-    return str(profile.get("selection_source") or "").strip() == "t1_gate"
+    return str(profile.get("selection_source") or "").strip() in {"t1_gate", "command_line"}
+
+
+def workflow_auto_setup_needs_confirmation(workspace: Path) -> bool:
+    """Backward-compatible Auto-only view of the startup confirmation state."""
+
+    profile = load_workflow_mode(workspace)
+    return profile.get("mode") == "auto" and workflow_startup_setup_needs_confirmation(workspace)
 
 
 def parse_workflow_mode_answer(answer: str) -> tuple[str, str, str | None] | None:
@@ -236,6 +275,31 @@ def parse_workflow_mode_answer(answer: str) -> tuple[str, str, str | None] | Non
     return "auto", preset, t4_mode
 
 
+def parse_workflow_mode_proposal(value: object) -> tuple[str, str, str | None] | None:
+    """Validate a bounded LLM proposal for first-run mode selection.
+
+    The LLM may translate prose such as "I want every gate confirmed" into a
+    small proposal, but it cannot introduce a mode, preset, or exploration
+    value outside the same enum exposed by the CLI. Exact menu input still
+    takes precedence in the caller.
+    """
+
+    if not isinstance(value, Mapping):
+        return None
+    mode = str(value.get("mode") or "").strip().casefold()
+    preset = str(value.get("preset") or "").strip()
+    t4_mode = str(value.get("t4_mode") or "").strip().casefold() or None
+    if mode not in {"auto", "copilot"}:
+        return None
+    if preset not in AUTO_PRESETS:
+        preset = "research_ccf" if mode == "copilot" else ""
+    if not preset:
+        return None
+    if t4_mode is not None and t4_mode not in {"quick", "standard", "deep", "auto"}:
+        return None
+    return mode, preset, t4_mode
+
+
 def parse_auto_execution_setup_answer(
     answer: str,
     *,
@@ -255,55 +319,92 @@ def parse_auto_execution_setup_answer(
     if not normalized:
         return None
 
+    recognized = False
+
     if any(token in normalized for token in ("exhaustive", "强覆盖", "全面综述")):
         literature_preset = "survey_exhaustive"
+        recognized = True
     elif any(token in normalized for token in ("balanced", "均衡", "survey", "综述")):
         literature_preset = "survey_balanced"
+        recognized = True
     elif any(token in normalized for token in ("standard", "research", "研究", "轻量")):
         literature_preset = "standard_research"
+        recognized = True
     else:
         literature_preset = current_preset
 
     # ``standard_research`` is a literature preset, not an implicit request
     # for standard T4 exploration.  Check the explicit T4 words first so
     # `standard_research deep top2` faithfully means deep exploration.
-    effort = next((item for item in ("deep", "quick", "standard") if item in normalized), None)
+    effort = next((item for item in ("deep", "quick", "standard", "auto") if item in normalized), None)
     if effort is None:
-        effort = next(
+        localized_effort = next(
             (
                 mapped
                 for token, mapped in (("快速", "quick"), ("标准", "standard"), ("深入", "deep"), ("深度", "deep"))
                 if token in normalized
             ),
-            current_t4_mode,
+            None,
         )
+        effort = localized_effort or current_t4_mode
+        recognized = recognized or localized_effort is not None
+    else:
+        recognized = True
     if effort not in {"auto", "quick", "standard", "deep"}:
         return None
-    proposal_tracks = (
-        "top2"
-        if any(
-            token in normalized
-            for token in (
-                "top2",
-                "two",
-                "two proposals",
-                "2 proposals",
-                "multiple",
-                "multi",
-                "2份",
-                "两个",
-                "两份",
-                "两条",
-                "多个",
-                "多份",
-                "多条",
-            )
+    top2_requested = any(
+        token in normalized
+        for token in (
+            "top2",
+            "two",
+            "two proposals",
+            "2 proposals",
+            "multiple",
+            "multi",
+            "2份",
+            "两个",
+            "两份",
+            "两条",
+            "多个",
+            "多份",
+            "多条",
         )
-        else current_proposal_tracks
     )
+    one_requested = any(token in normalized for token in ("one", "single", "一份", "一个", "一条", "单个"))
+    proposal_tracks = "top2" if top2_requested else "one" if one_requested else current_proposal_tracks
+    recognized = recognized or top2_requested or one_requested
+    if not recognized:
+        return None
     if proposal_tracks not in {"one", "top2"}:
         return None
     return literature_preset, effort, proposal_tracks
+
+
+def parse_execution_setup_proposal(
+    value: object,
+    *,
+    current_preset: str,
+    current_t4_mode: str,
+    current_proposal_tracks: str,
+) -> tuple[str, str, str] | None:
+    """Validate a bounded LLM proposal for setup or later workflow changes."""
+
+    if not isinstance(value, Mapping):
+        return None
+    literature_preset = str(value.get("literature_preset") or current_preset).strip()
+    t4_mode = str(value.get("t4_mode") or current_t4_mode).strip().casefold()
+    proposal_tracks = str(value.get("proposal_tracks") or current_proposal_tracks).strip().casefold()
+    if literature_preset not in _LITERATURE_PRESET_SUMMARIES:
+        return None
+    if t4_mode not in {"auto", "quick", "standard", "deep"}:
+        return None
+    if proposal_tracks not in {"one", "top2"}:
+        return None
+    recognized = any(
+        str(value.get(key) or "").strip()
+        for key in ("literature_preset", "t4_mode", "proposal_tracks")
+    )
+    return (literature_preset, t4_mode, proposal_tracks) if recognized else None
 
 
 def auto_execution_setup_summary(profile: dict[str, Any]) -> str:

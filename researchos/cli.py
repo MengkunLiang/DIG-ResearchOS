@@ -67,7 +67,15 @@ from .runtime.model_settings import (
 )
 from .runtime.observability.reporter import public_error_summary
 from .runtime.system_config import system_config_path
-from .runtime.workflow_mode import AUTO_PRESETS, configure_workflow_mode, load_workflow_mode
+from .runtime.workflow_mode import (
+    AUTO_PRESETS,
+    configure_workflow_mode,
+    load_workflow_mode,
+    parse_auto_execution_setup_answer,
+    parse_execution_setup_proposal,
+    parse_workflow_mode_answer,
+    parse_workflow_mode_proposal,
+)
 from .runtime.trace import render_trace_for_humans
 from .runtime.bridge_catalog import migrate_legacy_bridge_catalogs
 from .runtime.literature_contract import build_literature_manifest, migrate_legacy_literature_paths
@@ -142,7 +150,10 @@ from .tools.human_gate import (
     HumanInputUnavailable,
     build_t2_parameter_llm_interpreter,
     build_t4_directive_llm_interpreter,
+    build_workflow_mode_llm_interpreter,
+    build_workflow_setup_llm_interpreter,
 )
+from .ui.workflow_settings import workflow_settings_panel
 from .tools.latex_compile import latex_backend_preflight
 from .tools.mcp_adapter import connect_stdio_mcp_server, load_mcp_server_configs, register_mcp_servers
 
@@ -513,9 +524,13 @@ def _build_human_interface(
     if backend in {"", "cli"}:
         interpreter = build_t2_parameter_llm_interpreter(llm_client) if llm_client is not None else None
         t4_interpreter = build_t4_directive_llm_interpreter(llm_client) if llm_client is not None else None
+        workflow_mode_interpreter = build_workflow_mode_llm_interpreter(llm_client) if llm_client is not None else None
+        workflow_setup_interpreter = build_workflow_setup_llm_interpreter(llm_client) if llm_client is not None else None
         return CLIHumanInterface(
             t2_parameter_interpreter=interpreter,
             t4_directive_interpreter=t4_interpreter,
+            workflow_mode_interpreter=workflow_mode_interpreter,
+            workflow_setup_interpreter=workflow_setup_interpreter,
             no_color=runtime_settings.ui.no_color,
         )
     raise SystemExit(f"Unsupported human_interface.backend: {runtime_settings.human_interface.backend}")
@@ -1656,6 +1671,225 @@ async def configure_llm_command(args: argparse.Namespace) -> int:
     return 1
 
 
+def _workflow_profile_preview(
+    current: dict[str, Any],
+    *,
+    mode: str,
+    preset: str,
+    literature_preset: str,
+    t4_mode: str,
+    proposal_tracks: str,
+) -> dict[str, Any]:
+    """Build a display-only workflow profile without writing a workspace file."""
+
+    previous_settings = current.get("settings") if isinstance(current.get("settings"), dict) else {}
+    if mode == "auto":
+        settings = dict(AUTO_PRESETS[preset])
+    else:
+        settings = {
+            "literature_preset": str(previous_settings.get("literature_preset") or "standard_research"),
+            "t4_mode": str(previous_settings.get("t4_mode") or "auto"),
+            "publication_orientation": "pending_user",
+            "survey_policy": "ask",
+            "writing_style": "pending_user",
+            "proposal_tracks": str(previous_settings.get("proposal_tracks") or "one"),
+        }
+    settings.update(
+        {
+            "literature_preset": literature_preset,
+            "t4_mode": t4_mode,
+            "proposal_tracks": proposal_tracks,
+            "startup_setup_confirmed": True,
+        }
+    )
+    return {
+        "mode": mode,
+        "preset": preset,
+        "settings": settings,
+        "selection_source": "configure_workflow_preview",
+    }
+
+
+def _workflow_change_impacts(previous: dict[str, Any], proposed: dict[str, Any]) -> list[str]:
+    """Describe future-only profile changes without claiming an automatic rerun."""
+
+    before = previous.get("settings") if isinstance(previous.get("settings"), dict) else {}
+    after = proposed.get("settings") if isinstance(proposed.get("settings"), dict) else {}
+    impacts: list[str] = []
+    if previous.get("mode") != proposed.get("mode"):
+        impacts.append("工作方式会影响未来常规 Gate 是否可自动通过；失败恢复、研究范围变化与外部执行仍必须人工确认。")
+    if before.get("literature_preset") != after.get("literature_preset"):
+        impacts.append("文献覆盖默认值会在下次 T2 参数 Gate 使用；已经检索或阅读的材料会保留，不会自动重跑。")
+    if before.get("t4_mode") != after.get("t4_mode"):
+        impacts.append("T4 探索力度会在下次 T4 pre-run confirmation 使用；已生成的 Candidate、评分和谱系不会变化。")
+    if before.get("proposal_tracks") != after.get("proposal_tracks"):
+        impacts.append("Proposal 数量只影响下一次 T4 Gate1 的推进策略；已有 Proposal track 不会合并或覆盖。")
+    if not impacts:
+        impacts.append("设置没有实质变化；确认只会刷新这份工作区级默认设置记录。")
+    return impacts
+
+
+async def configure_workflow_command(args: argparse.Namespace) -> int:
+    """Inspect or revise future workflow defaults without touching research artifacts."""
+
+    runtime_settings = load_runtime_settings(system_config_path("runtime.yaml"))
+    runtime_settings = _runtime_settings_for_args(runtime_settings, args)
+    workspace_dir = Path(args.workspace).resolve()
+    ensure_workspace_layout(workspace_dir, runtime_settings)
+    current = load_workflow_mode(workspace_dir)
+
+    requested_mode = str(getattr(args, "workflow_mode", "") or "").strip().casefold()
+    requested_preset = str(getattr(args, "auto_preset", "") or "").strip()
+    requested_literature = str(getattr(args, "literature_preset", "") or "").strip()
+    requested_t4 = str(getattr(args, "auto_t4_mode", "") or "").strip().casefold()
+    requested_tracks = str(getattr(args, "proposal_tracks", "") or "").strip().casefold()
+    request = str(getattr(args, "request", "") or "").strip()
+
+    llm_client: LLMClient | None = None
+    try:
+        candidate = LLMClient(Path(args.model_settings).resolve())
+        if candidate.configuration_status().get("ready", False):
+            llm_client = candidate
+        else:
+            await candidate.aclose()
+    except Exception:
+        llm_client = None
+    human = _build_human_interface(runtime_settings, llm_client=llm_client)
+
+    try:
+        if not any((requested_mode, requested_preset, requested_literature, requested_t4, requested_tracks, request)):
+            question = (
+                "<!-- researchos_workflow_settings:"
+                + json.dumps(current, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                + " -->\n"
+                + "请输入“确认”保留当前设置，或直接描述希望调整的模式、文献覆盖、T4 探索或 Proposal 数量。"
+            )
+            request = await human.ask_clarification(
+                question=question,
+                suggestions=["确认", "协作模式，综述均衡覆盖，深入探索", "自动 UTD/IS 研究流程，分别写两份 Proposal"],
+            )
+
+        current_settings = current.get("settings") if isinstance(current.get("settings"), dict) else {}
+        mode = requested_mode or str(current.get("mode") or "copilot")
+        preset = requested_preset or str(current.get("preset") or "research_ccf")
+        # Naming an Auto preset is an intentional profile change. Start the
+        # preview from that preset so the Rich comparison and saved file agree;
+        # a separate explicit flag can still override any individual knob.
+        preset_defaults = AUTO_PRESETS.get(preset, current_settings) if requested_preset else current_settings
+        literature_preset = requested_literature or str(preset_defaults.get("literature_preset") or "standard_research")
+        t4_mode = requested_t4 or str(preset_defaults.get("t4_mode") or "auto")
+        proposal_tracks = requested_tracks or str(preset_defaults.get("proposal_tracks") or "one")
+
+        if request:
+            deterministic_mode = parse_workflow_mode_answer(request)
+            semantic_mode = None
+            if deterministic_mode is None and isinstance(human, CLIHumanInterface):
+                semantic_mode = parse_workflow_mode_proposal(await human.interpret_workflow_mode(request))
+            mode_choice = deterministic_mode or semantic_mode
+            if mode_choice is not None:
+                mode, preset, selected_t4 = mode_choice
+                # A named mode preset is meaningful by itself. Rebase the
+                # non-explicit defaults before parsing any more detailed
+                # request text, then let that text override only the stated
+                # settings below.
+                named_defaults = AUTO_PRESETS[preset]
+                if not requested_literature:
+                    literature_preset = str(named_defaults["literature_preset"])
+                if not requested_t4:
+                    t4_mode = selected_t4 or str(named_defaults["t4_mode"])
+                if not requested_tracks:
+                    proposal_tracks = str(named_defaults["proposal_tracks"])
+            deterministic_setup = parse_auto_execution_setup_answer(
+                request,
+                current_preset=literature_preset,
+                current_t4_mode=t4_mode,
+                current_proposal_tracks=proposal_tracks,
+            )
+            semantic_setup = None
+            if deterministic_setup is None and isinstance(human, CLIHumanInterface):
+                semantic_setup = parse_execution_setup_proposal(
+                    await human.interpret_workflow_setup(request),
+                    current_preset=literature_preset,
+                    current_t4_mode=t4_mode,
+                    current_proposal_tracks=proposal_tracks,
+                )
+            setup_choice = deterministic_setup or semantic_setup
+            if setup_choice is not None:
+                literature_preset, t4_mode, proposal_tracks = setup_choice
+
+        if mode not in {"auto", "copilot"}:
+            raise ValueError("工作方式必须是 auto 或 copilot")
+        if preset not in AUTO_PRESETS:
+            raise ValueError("Auto preset 无效；请选择已列出的 research/survey profile")
+        if literature_preset not in {"standard_research", "survey_balanced", "survey_exhaustive"}:
+            raise ValueError("文献覆盖必须是 standard_research、survey_balanced 或 survey_exhaustive")
+        if t4_mode not in {"auto", "quick", "standard", "deep"}:
+            raise ValueError("T4 探索必须是 auto、quick、standard 或 deep")
+        if proposal_tracks not in {"one", "top2"}:
+            raise ValueError("Proposal 数量必须是 one 或 top2")
+
+        proposed = _workflow_profile_preview(
+            current,
+            mode=mode,
+            preset=preset,
+            literature_preset=literature_preset,
+            t4_mode=t4_mode,
+            proposal_tracks=proposal_tracks,
+        )
+        _cli_console(args).print(
+            workflow_settings_panel(
+                proposed,
+                previous=current,
+                title="确认工作流设置变更",
+                impacts=_workflow_change_impacts(current, proposed),
+                border_style="bright_yellow",
+            )
+        )
+        if not bool(getattr(args, "yes", False)):
+            if not sys.stdin.isatty():
+                _cli_console(args).print(
+                    Panel(
+                        Text("非交互模式不会写入工作流设置。请添加 --yes 显式确认。"),
+                        title="等待确认",
+                        border_style="bright_yellow",
+                        expand=True,
+                    )
+                )
+                return 2
+            answer = input("确认保存? [y/N]: ").strip().casefold()
+            if answer not in {"y", "yes", "确认", "是"}:
+                _cli_console(args).print("未保存任何设置。")
+                return 0
+
+        saved = configure_workflow_mode(
+            workspace_dir,
+            mode=mode,
+            preset=preset,
+            literature_preset=literature_preset,
+            t4_mode=t4_mode,
+            proposal_tracks=proposal_tracks,
+            startup_setup_confirmed=True,
+            selection_source="configure_workflow",
+        )
+        _cli_console(args).print(
+            workflow_settings_panel(
+                saved,
+                title="工作流设置已保存",
+                impacts=("已保存到 _runtime/workflow_mode.json；已有研究产物未被修改。",),
+                border_style="green",
+            )
+        )
+        return 0
+    except (HumanInputUnavailable, ValueError) as exc:
+        _cli_console(args).print(
+            Panel(Text(str(exc)), title="工作流设置未保存", border_style="bright_yellow", expand=True)
+        )
+        return 2
+    finally:
+        if llm_client is not None:
+            await llm_client.aclose()
+
+
 def _dependency_selftest() -> dict[str, dict[str, Any]]:
     """检查本地关键运行依赖。
 
@@ -1875,10 +2109,14 @@ async def run_command(args: argparse.Namespace) -> int:
         for name in ("workflow_mode", "auto_preset", "auto_t4_mode")
     ):
         existing_workflow = load_workflow_mode(workspace_dir)
+        requested_auto_preset = getattr(args, "auto_preset", None)
         configure_workflow_mode(
             workspace_dir,
-            mode=getattr(args, "workflow_mode", None) or str(existing_workflow.get("mode") or "copilot"),
-            preset=getattr(args, "auto_preset", None),
+            mode=(
+                getattr(args, "workflow_mode", None)
+                or ("auto" if requested_auto_preset else str(existing_workflow.get("mode") or "copilot"))
+            ),
+            preset=requested_auto_preset,
             t4_mode=getattr(args, "auto_t4_mode", None),
             selection_source="command_line",
         )
@@ -3533,10 +3771,11 @@ def init_workspace_command(args: argparse.Namespace) -> int:
     )
     workflow_profile = None
     if any(getattr(args, name, None) for name in ("workflow_mode", "auto_preset", "auto_t4_mode")):
+        requested_auto_preset = getattr(args, "auto_preset", None)
         workflow_profile = configure_workflow_mode(
             workspace_dir,
-            mode=getattr(args, "workflow_mode", None) or "copilot",
-            preset=getattr(args, "auto_preset", None),
+            mode=getattr(args, "workflow_mode", None) or ("auto" if requested_auto_preset else "copilot"),
+            preset=requested_auto_preset,
             t4_mode=getattr(args, "auto_t4_mode", None),
             selection_source="command_line",
         )
@@ -4887,6 +5126,27 @@ def build_parser() -> argparse.ArgumentParser:
     configure_llm_parser.add_argument("--skip-check", dest="check", action="store_false", help="保存后不做连通性检查")
     configure_llm_parser.set_defaults(check=True)
 
+    workflow_parser = subparsers.add_parser(
+        "configure-workflow",
+        help="查看或修改后续流程的模式与默认执行设置",
+    )
+    _add_shared_cli_options(workflow_parser, runtime_settings, use_defaults=False)
+    workflow_parser.add_argument("--workflow-mode", choices=["auto", "copilot"], default=None)
+    workflow_parser.add_argument("--auto-preset", choices=sorted(AUTO_PRESETS), default=None)
+    workflow_parser.add_argument(
+        "--literature-preset",
+        choices=["standard_research", "survey_balanced", "survey_exhaustive"],
+        default=None,
+    )
+    workflow_parser.add_argument("--auto-t4-mode", choices=["standard", "quick", "deep", "auto"], default=None)
+    workflow_parser.add_argument("--proposal-tracks", choices=["one", "top2"], default=None)
+    workflow_parser.add_argument(
+        "--request",
+        default=None,
+        help="用自然语言描述调整；LLM 只解析有限模式/预设/覆盖/T4/Proposal 枚举，保存前仍会确认",
+    )
+    workflow_parser.add_argument("--yes", action="store_true", help="非交互模式下明确确认保存")
+
     doctor_parser = subparsers.add_parser("doctor", help="检查 Native/Docker 运行环境")
     _add_shared_cli_options(doctor_parser, runtime_settings, use_defaults=False)
     doctor_parser.add_argument(
@@ -5085,6 +5345,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_async_cli_command(args, selftest_command(args))
     if args.command == "configure-llm":
         return _run_async_cli_command(args, configure_llm_command(args))
+    if args.command == "configure-workflow":
+        return _run_async_cli_command(args, configure_workflow_command(args))
     if args.command == "trace":
         return trace_command(args)
     if args.command == "validate":

@@ -17,6 +17,7 @@ def render_t4_prerun(
     inspection: T4InputInspection,
     config: T4RunConfig,
     *,
+    workflow_default_note: str = "",
     console: Console | None = None,
     file: TextIO | None = None,
 ) -> None:
@@ -94,16 +95,17 @@ def render_t4_prerun(
         "deep": "连续运行三轮 Evolution，保留每一代中间结果。",
         "auto": "由 Controller 依据候选质量与多样性判断是否值得继续下一轮。",
     }[config.mode]
+    run_summary = (
+        f"本轮建议：{profile_label}（来源：{profile_source}）\n"
+        f"本轮流程：P0 → P{config.rounds}（初始候选集形成后，经过独立评分、演化与存活选择；每一代都可回退）。\n"
+        f"运行方式：{round_description}\n"
+        + (f"{workflow_default_note}\n" if workflow_default_note else "")
+        + "预计时间：取决于模型响应和材料量；所有 Population、评分和谱系都会保存，可 resume 或 rollback。\n"
+        + "接下来请选一种运行方式。选择后才会调用模型，已有版本不会被删除。"
+    )
     output.print(
         Panel(
-            Text(
-                f"本轮建议：{profile_label}（来源：{profile_source}）\n"
-                f"本轮流程：P0 → P{config.rounds}（初始候选集形成后，经过独立评分、演化与存活选择；每一代都可回退）。\n"
-                f"运行方式：{round_description}\n"
-                f"预计时间：取决于模型响应和材料量；所有 Population、评分和谱系都会保存，可 resume 或 rollback。\n"
-                "接下来请选一种运行方式。选择后才会调用模型，已有版本不会被删除。",
-                overflow="fold",
-            ),
+            Text(run_summary, overflow="fold"),
             title="本轮会做什么",
             border_style="green",
             expand=True,

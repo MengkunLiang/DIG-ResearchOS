@@ -31,6 +31,7 @@ from ..runtime.agent import (
     ToolPolicyOverride,
 )
 from ..runtime.task_recovery import prepare_task_resume_artifacts
+from ..runtime.workflow_mode import load_workflow_mode
 from ..runtime.artifact_fingerprints import (
     build_input_fingerprints,
     validate_input_fingerprints,
@@ -572,7 +573,41 @@ def _clone_literature_param_preset(option: str) -> dict[str, Any]:
     return json.loads(json.dumps(_LITERATURE_PARAM_PRESETS[option], ensure_ascii=False))
 
 
+def _persisted_workflow_setting(
+    workspace_dir: Path | None,
+    setting: str,
+    *,
+    allowed: set[str],
+) -> str | None:
+    """Return one explicitly persisted workflow default, never a fallback.
+
+    The runtime has a safe in-memory Copilot fallback for legacy workspaces.
+    That fallback must not silently override a recommendation inferred from
+    project materials.  Only an actual ``workflow_mode.json`` can affect a
+    future Gate's default selection.
+    """
+
+    if workspace_dir is None:
+        return None
+    profile_path = Path(workspace_dir) / "_runtime" / "workflow_mode.json"
+    if not profile_path.is_file():
+        return None
+    profile = load_workflow_mode(Path(workspace_dir))
+    if profile.get("load_warning"):
+        return None
+    settings = profile.get("settings") if isinstance(profile.get("settings"), dict) else {}
+    value = str(settings.get(setting) or "").strip()
+    return value if value in allowed else None
+
+
 def _recommended_literature_param_option(workspace_dir: Path | None = None) -> str:
+    configured = _persisted_workflow_setting(
+        workspace_dir,
+        "literature_preset",
+        allowed=set(_LITERATURE_PARAM_PRESETS),
+    )
+    if configured is not None:
+        return configured
     if workspace_dir is None:
         return "standard_research"
     detected_profile = _detect_literature_profile_hint(workspace_dir)
@@ -675,6 +710,11 @@ def build_literature_param_gate_preview(workspace_dir: Path | None = None) -> di
     """Return human-readable current T2/T3 coverage presets for gate display."""
 
     detected_profile = _detect_literature_profile_hint(workspace_dir) if workspace_dir is not None else "research_article"
+    configured_option = _persisted_workflow_setting(
+        workspace_dir,
+        "literature_preset",
+        allowed=set(_LITERATURE_PARAM_PRESETS),
+    )
     recommended_option = _recommended_literature_param_option(workspace_dir)
     options: dict[str, Any] = {}
     for option_id, payload in _LITERATURE_PARAM_PRESETS.items():
@@ -693,6 +733,8 @@ def build_literature_param_gate_preview(workspace_dir: Path | None = None) -> di
     recommended_summary = options[recommended_option]["summary"]
     return {
         "detected_profile": detected_profile,
+        "recommendation_source": "项目默认设置" if configured_option is not None else "项目材料推断",
+        "configured_workflow_option": configured_option,
         "recommended_option": recommended_option,
         "recommended_label": _LITERATURE_PARAM_PRESET_LABELS[recommended_option],
         "recommended_summary": recommended_summary,
@@ -749,6 +791,70 @@ def enrich_literature_param_gate_options(options: list[dict[str, Any]], workspac
             item.pop("collect_input", None)
             item["single_input_examples"] = preview["custom_input_examples"]
         enriched.append(item)
+    return enriched
+
+
+def _t4_prerun_default_mode(workspace_dir: Path) -> tuple[str, str]:
+    """Return the T4 mode to preselect and the reason it was selected.
+
+    Copilot remains a real Gate: this is only the option selected by Enter.
+    The distinction matters because a saved ``deep`` preference should reduce
+    repetitive configuration without pretending that it authorizes a new T4
+    run or a changed research scope.
+    """
+
+    configured = _persisted_workflow_setting(
+        workspace_dir,
+        "t4_mode",
+        allowed={"auto", "quick", "standard", "deep"},
+    )
+    if configured is not None:
+        return configured, "项目默认设置"
+    return "standard", "首次 T4 的常规建议"
+
+
+def enrich_t4_prerun_gate_options(options: list[dict[str, Any]], workspace_dir: Path) -> list[dict[str, Any]]:
+    """Mark the configured T4 mode as the visible, keyboard-default option."""
+
+    default_mode, source = _t4_prerun_default_mode(workspace_dir)
+    default_id = f"start_{default_mode}"
+    enriched: list[dict[str, Any]] = []
+    for option in options:
+        item = dict(option)
+        option_id = str(item.get("id") or item.get("key") or "")
+        item["is_default"] = option_id == default_id
+        label = str(item.get("label") or option_id).replace("（推荐）", "").strip()
+        if item["is_default"]:
+            marker = "项目默认" if source == "项目默认设置" else "当前推荐"
+            if marker not in label:
+                label = f"{label}（{marker}）"
+        item["label"] = label
+        enriched.append(item)
+    return enriched
+
+
+def _with_t4_proposal_recommendation(overview: dict[str, Any], workspace_dir: Path) -> dict[str, Any]:
+    """Attach the saved Proposal-count default to the T4 decision surface.
+
+    It intentionally does not add a default action.  Gate1 uses natural
+    language because the researcher must select actual Candidate IDs; this
+    small display cue makes the later effect of a T1/configure-workflow choice
+    visible without guessing which Candidate should be advanced.
+    """
+
+    tracks = _persisted_workflow_setting(
+        workspace_dir,
+        "proposal_tracks",
+        allowed={"one", "top2"},
+    )
+    if tracks is None:
+        return overview
+    enriched = dict(overview)
+    enriched["workflow_proposal_recommendation"] = (
+        "默认建议：从比较后选择前两条 Candidate，分别完成独立 Proposal，再在 T5 前选择一条执行。"
+        if tracks == "top2"
+        else "默认建议：从比较后选择一条 Candidate 进入独立 Proposal。"
+    )
     return enriched
 
 
@@ -2746,7 +2852,10 @@ class StateMachine:
         elif node.task_id == "T4.5-PORTFOLIO-GATE" and workspace_dir is not None:
             presentation["proposal_portfolio"] = self._t45_proposal_portfolio_summary(workspace_dir)
         if node.task_id == "T4-GATE1" and workspace_dir is not None:
-            presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
+            presentation["candidate_overview"] = _with_t4_proposal_recommendation(
+                _t4_gate1_candidate_overview(workspace_dir),
+                workspace_dir,
+            )
             presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
             presentation["t4_artifact_guide"] = _t4_gate1_file_navigation(workspace_dir)
             operation_result = _latest_native_t4_operation_result(workspace_dir)
@@ -2799,6 +2908,17 @@ class StateMachine:
 
         catalog_context = materialize_t4_cross_domain_catalog_context(workspace_dir)
         inspection = inspect_t4_inputs(workspace_dir)
+        default_mode, default_source = _t4_prerun_default_mode(workspace_dir)
+        proposal_tracks = _persisted_workflow_setting(
+            workspace_dir,
+            "proposal_tracks",
+            allowed={"one", "top2"},
+        ) or "one"
+        # The preview config is never persisted here.  It gives the person at
+        # the Gate an accurate description of what Enter will select, while
+        # preserving the rule that T4 only writes a run receipt after a real
+        # Gate result has been accepted.
+        default_directive = parse_t4_prerun_intent(default_mode)
         if catalog_context.get("status") == "degraded":
             inspection = inspection.model_copy(
                 update={
@@ -2815,11 +2935,13 @@ class StateMachine:
         except ValueError:
             config = default_run_config(
                 load_t4_evolution_settings(),
+                default_directive,
                 target_profile=suggest_target_profile(workspace_dir),
             )
         if not config.target_profile.confirmed_by_user:
             config = default_run_config(
                 load_t4_evolution_settings(),
+                default_directive,
                 target_profile=suggest_target_profile(workspace_dir),
             )
         gate_spec = self._find_gate("t4_prerun_gate")
@@ -2829,13 +2951,16 @@ class StateMachine:
             "t4_prerun": {
                 "inspection": model_dump(inspection, mode="json"),
                 "run_config": model_dump(config, mode="json"),
+                "workflow_default_mode": default_mode,
+                "workflow_default_source": default_source,
+                "workflow_proposal_tracks": proposal_tracks,
             },
         }
         state.pending_gate = GateState(
             gate_id="t4_prerun_gate",
             presented_at=_now_iso(),
             presentation=presentation,
-            options=list(gate_spec.get("options", [])),
+            options=enrich_t4_prerun_gate_options(list(gate_spec.get("options", [])), workspace_dir),
         )
         state.status = "WAITING_HUMAN"
         state.paused_at = _now_iso()
@@ -4276,7 +4401,10 @@ class StateMachine:
             redirected = self._redirect_incomplete_t4_gate_to_recovery(state, workspace_dir)
             if redirected is not None:
                 return redirected
-            presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
+            presentation["candidate_overview"] = _with_t4_proposal_recommendation(
+                _t4_gate1_candidate_overview(workspace_dir),
+                workspace_dir,
+            )
             presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
             presentation["t4_artifact_guide"] = _t4_gate1_file_navigation(workspace_dir)
             operation_result = _latest_native_t4_operation_result(workspace_dir)
@@ -4861,7 +4989,10 @@ class StateMachine:
             elif state.current_task in _CCF_TEMPLATE_GATE_TASKS:
                 options = _ccf_template_gate_options(task_id=state.current_task)
             if state.current_task == "T4-GATE1" and workspace_dir is not None:
-                presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
+                presentation["candidate_overview"] = _with_t4_proposal_recommendation(
+                    _t4_gate1_candidate_overview(workspace_dir),
+                    workspace_dir,
+                )
                 presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
                 presentation["t4_artifact_guide"] = _t4_gate1_file_navigation(workspace_dir)
                 operation_result = _latest_native_t4_operation_result(workspace_dir)
@@ -5122,7 +5253,10 @@ class StateMachine:
                     model_dump(state, mode="json"),
                     workspace_dir,
                 )
-                presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
+                presentation["candidate_overview"] = _with_t4_proposal_recommendation(
+                    _t4_gate1_candidate_overview(workspace_dir),
+                    workspace_dir,
+                )
                 presentation["candidate_pool_fingerprints"] = current_pool
                 presentation["t4_artifact_guide"] = _t4_gate1_file_navigation(workspace_dir)
                 presentation["stale_reason"] = (

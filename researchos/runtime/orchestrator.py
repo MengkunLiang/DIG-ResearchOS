@@ -70,9 +70,12 @@ from .artifact_fingerprints import validate_t45_fingerprint_report
 from .workflow_mode import (
     auto_execution_setup_summary,
     configure_workflow_mode,
+    load_workflow_mode,
     parse_auto_execution_setup_answer,
+    parse_execution_setup_proposal,
     parse_workflow_mode_answer,
-    workflow_auto_setup_needs_confirmation,
+    parse_workflow_mode_proposal,
+    workflow_startup_setup_needs_confirmation,
     workflow_mode_needs_confirmation,
 )
 from .task_recovery import prepare_generic_resume_artifacts
@@ -3638,25 +3641,9 @@ class AgentRunner:
             raise RecoverableRuntimePause("T1 工作模式选择需要 ask_human 工具，但当前策略没有开放它。")
         if workflow_mode_needs_confirmation(ctx.workspace_dir):
             question = (
-                "# 选择本项目的运行方式\n\n"
-                "这只决定哪些已预设的流程 Gate 可自动通过，不会替你决定研究问题、文献范围、"
-                "关键假设、外部实验或失败恢复。\n\n"
-                "## Copilot\n\n"
-                "所有关键 Gate 都由你确认。Copilot 不预选 CCF/CS、UTD/IS 或任何投稿取向；"
-                "进入 T4 前会单独询问论文取向（CCF/CS、UTD/IS、Hybrid 或自定义说明）。"
-                "适合希望逐步调整检索规模、阅读、T4 候选与写作方向的项目。\n\n"
-                "## Auto · CCF/AI 研究\n\n"
-                "采用标准研究型文献规模、自动 T4 运行、CCF/AI 写作取向，默认跳过独立综述论文支线。\n\n"
-                "## Auto · UTD/IS 研究\n\n"
-                "采用标准研究型文献规模、自动 T4 运行、UTD/IS 写作取向，默认跳过独立综述论文支线。\n\n"
-                "## 其他 Auto 配置\n\n"
-                "可输入 `Auto survey_ccf`、`Auto survey_utd` 或 `Auto survey_exhaustive_utd`；"
-                "也可在后面附加 `quick`、`standard` 或 `deep` 调整 T4 探索力度。\n\n"
-                "例如：\n\n"
-                "- `Auto survey_ccf deep`：以 CCF/AI 取向运行综述支线，并深入探索 T4。\n"
-                "- `Auto survey_utd standard`：以 UTD/IS 取向运行综述支线，并采用标准 T4 探索。\n"
-                "- `Auto survey_exhaustive_utd deep`：使用更广综述覆盖和深入 T4 探索。\n\n"
-                "请直接回答：`Copilot`、`Auto research_ccf`、`Auto research_utd`，或上述其他 Auto 配置。"
+                "<!-- researchos_workflow_mode_selector -->\n"
+                "请选择本项目的运行方式。这个选择只决定已授权常规 Gate 的自动化程度；"
+                "不会替你决定研究问题、文献范围、关键假设、失败恢复或外部执行。"
             )
             result = await tool.execute(
                 question=question,
@@ -3668,8 +3655,12 @@ class AgentRunner:
             answer = str(data.get("answer") or "").strip()
             parsed = parse_workflow_mode_answer(answer)
             if parsed is None:
+                interpreter = getattr(getattr(tool, "human", None), "interpret_workflow_mode", None)
+                proposal = await interpreter(answer) if callable(interpreter) else {}
+                parsed = parse_workflow_mode_proposal(proposal)
+            if parsed is None:
                 raise RecoverableRuntimePause(
-                    "未识别工作模式。请在恢复后明确输入 Copilot，或 Auto research_ccf / Auto research_utd。"
+                    "未识别工作模式。请在恢复后输入 Copilot、Auto research_ccf / Auto research_utd，或用一句话说明希望自动化还是逐步确认。"
                 )
             mode, preset, t4_mode = parsed
             profile = configure_workflow_mode(
@@ -3677,7 +3668,10 @@ class AgentRunner:
                 mode=mode,
                 preset=preset,
                 t4_mode=t4_mode,
-                startup_setup_confirmed=(mode != "auto"),
+                # Selecting a mode is not agreement to its cost/coverage
+                # defaults. Both Auto and Copilot receive the next compact
+                # default-settings confirmation before T1 starts model work.
+                startup_setup_confirmed=False,
                 selection_source="t1_gate",
             )
             summary = (
@@ -3689,42 +3683,24 @@ class AgentRunner:
             messages.append(note)
             trace.write_message(note)
 
-        if not workflow_auto_setup_needs_confirmation(ctx.workspace_dir):
+        if not workflow_startup_setup_needs_confirmation(ctx.workspace_dir):
             return
         if tool is None:
-            raise RecoverableRuntimePause("Auto 启动配置需要 ask_human 工具，但当前策略没有开放它。")
-        profile = configure_workflow_mode(
-            ctx.workspace_dir,
-            mode="auto",
-            selection_source="t1_gate",
-        )
+            raise RecoverableRuntimePause("项目默认设置确认需要 ask_human 工具，但当前策略没有开放它。")
+        existing_profile = load_workflow_mode(ctx.workspace_dir)
+        # The first screen may already have parsed an explicit effort from a
+        # compact command such as ``Auto survey_utd deep``.  Do not rebuild
+        # the profile from its preset here: that would silently replace the
+        # user's stated value before the Rich confirmation has a chance to
+        # show it.  This screen is deliberately read-only until its answer is
+        # validated and saved below.
+        profile = existing_profile
         settings = profile["settings"]
         setup_question = (
-            "# 确认 Auto 的执行设置\n\n"
-            "Auto 会在后续使用这组预设自动通过常规 Gate；T1 仍会完成种子、研究边界、"
-            "项目草案和检索范围确认，不会跳过它们。失败恢复、研究范围变更、外部执行和新颖性失败仍必须人工处理。\n\n"
-            f"当前推荐：{auto_execution_setup_summary(profile)}\n\n"
-            "## 你只需要决定三件事\n\n"
-            "**第一，文献要读到什么范围。** 三个数字依次表示“保留候选 / 精读 / 摘要轻读”。\n\n"
-            "- `standard_research`：适合写一篇研究论文。40 / 25 / 15，聚焦核心问题，速度最快。\n"
-            "- `survey_balanced`：适合需要更完整文献脉络的综述或研究论文。80 / 40 / 40，覆盖与时间较均衡。\n"
-            "- `survey_exhaustive`：适合正式领域综述。90 / 40 / 50，覆盖最广，运行时间和成本也最高。\n\n"
-            "**第二，T4 要花多少力气探索 research idea。**\n\n"
-            "- `quick`：快速形成少量可用方向。\n"
-            "- `standard`：通常够用的比较与筛选。\n"
-            "- `deep`：为复杂、竞争激烈或尚不清晰的问题做更充分的探索。\n"
-            "- `auto`：让系统根据问题与证据质量自行选择；这正是当前推荐。\n\n"
-            "**第三，要产出几份独立 Proposal。**\n\n"
-            "- `one`：推荐。T4 选择一条最合适的 idea，完成一份 Proposal 后进入 T5。\n"
-            "- `top2`：将 T4 最靠前的两条 Candidate 分别完成 T4.5，随后在 T5 前由你选择一条深入推进。两条 Proposal 不会合并。\n\n"
-            "## 怎么输入\n\n"
-            "如果接受当前推荐，直接输入 `确认`。若想调整，输入“文献档位 + T4 档位 + Proposal 数量”，例如：\n\n"
-            "- `standard_research deep`：保持研究论文规模，但让 T4 更充分地探索 idea。\n"
-            "- `survey_balanced standard`：扩大文献覆盖，同时以常规力度探索 idea。\n"
-            "- `survey_exhaustive deep`：用于正式综述或高度陌生的领域，覆盖和探索都取最高档。\n"
-            "- `standard_research deep top2`：保持研究论文规模，充分探索 T4，并分别写两份候选 Proposal 后再选一条进入 T5。\n\n"
-            "如果界面把参考回答显示为编号，也可以直接输入编号：1=确认默认设置，"
-            "2=standard_research deep top2，3=survey_balanced standard。"
+            "<!-- researchos_workflow_settings:"
+            + json.dumps(profile, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            + " -->\n"
+            + "请确认项目默认执行设置。接受当前设置可输入“确认”；也可说明需要更广覆盖、更多 T4 探索，或希望分别完成两份 Proposal。"
         )
         setup_suggestions = ["确认", "standard_research deep top2", "survey_balanced standard"]
         result = await tool.execute(
@@ -3744,20 +3720,32 @@ class AgentRunner:
             suggestion_index = int(raw_setup_answer) - 1
             if 0 <= suggestion_index < len(setup_suggestions):
                 raw_setup_answer = setup_suggestions[suggestion_index]
+        current_preset = str(settings.get("literature_preset") or "standard_research")
+        current_t4_mode = str(settings.get("t4_mode") or "auto")
+        current_proposal_tracks = str(settings.get("proposal_tracks") or "one")
         parsed_setup = parse_auto_execution_setup_answer(
             raw_setup_answer,
-            current_preset=str(settings.get("literature_preset") or "standard_research"),
-            current_t4_mode=str(settings.get("t4_mode") or "auto"),
-            current_proposal_tracks=str(settings.get("proposal_tracks") or "one"),
+            current_preset=current_preset,
+            current_t4_mode=current_t4_mode,
+            current_proposal_tracks=current_proposal_tracks,
         )
         if parsed_setup is None:
+            interpreter = getattr(getattr(tool, "human", None), "interpret_workflow_setup", None)
+            proposal = await interpreter(raw_setup_answer) if callable(interpreter) else {}
+            parsed_setup = parse_execution_setup_proposal(
+                proposal,
+                current_preset=current_preset,
+                current_t4_mode=current_t4_mode,
+                current_proposal_tracks=current_proposal_tracks,
+            )
+        if parsed_setup is None:
             raise RecoverableRuntimePause(
-                "未识别 Auto 启动配置。请在恢复后输入确认，或如 survey_balanced deep。"
+                "未识别默认执行设置。请在恢复后输入确认，或如 survey_balanced deep top2，也可以用一句话说明希望怎样调整。"
             )
         literature_preset, configured_t4_mode, configured_proposal_tracks = parsed_setup
         profile = configure_workflow_mode(
             ctx.workspace_dir,
-            mode="auto",
+            mode=str(profile.get("mode") or "copilot"),
             preset=str(profile.get("preset") or "research_ccf"),
             literature_preset=literature_preset,
             t4_mode=configured_t4_mode,
@@ -3765,7 +3753,7 @@ class AgentRunner:
             startup_setup_confirmed=True,
             selection_source="t1_gate",
         )
-        note = Message.user(f"【Auto 启动配置已确认】\n{auto_execution_setup_summary(profile)}", step=0)
+        note = Message.user(f"【项目默认执行设置已确认】\n{auto_execution_setup_summary(profile)}", step=0)
         messages.append(note)
         trace.write_message(note)
 

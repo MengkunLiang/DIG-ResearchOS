@@ -31,6 +31,7 @@ from ..latex_templates import ccf_template_ids, ccf_template_option_id, normaliz
 from ..ideation.proposal_portfolio import proposal_selection_alias
 from ..ui.tables import lightweight_ruled_table
 from ..ui.candidate_cards import CandidateCardRenderer, CandidateViewModel
+from ..ui.workflow_settings import workflow_mode_selector_panel, workflow_settings_panel
 
 
 _READLINE_CONFIGURED = False
@@ -132,6 +133,9 @@ _T4_LLM_DIRECTIVE_FIELDS = {
     "requested_route",
     "constraints",
 }
+
+_WORKFLOW_MODE_LLM_FIELDS = {"mode", "preset", "t4_mode"}
+_WORKFLOW_SETUP_LLM_FIELDS = {"literature_preset", "t4_mode", "proposal_tracks"}
 
 
 # The T2 decision surfaces are scan-oriented three-line tables: a strong
@@ -476,6 +480,42 @@ def _sanitize_t4_llm_directive(value: Any) -> dict[str, Any]:
     return result
 
 
+def _sanitize_workflow_llm_capture(value: Any, *, allowed_fields: set[str]) -> dict[str, str]:
+    """Keep a workflow parser's output inside its finite public vocabulary."""
+
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, str] = {}
+    for key in allowed_fields:
+        item = value.get(key)
+        if isinstance(item, str) and item.strip():
+            result[key] = _strip_terminal_control_sequences(item).strip()
+    return result
+
+
+def _llm_final_content(response: Any) -> str:
+    """Extract a small parser payload from common compatible-provider shapes."""
+
+    raw = getattr(response, "raw", None)
+    choices = getattr(raw, "choices", None)
+    if choices is None and isinstance(raw, dict):
+        choices = raw.get("choices")
+    first = choices[0] if isinstance(choices, (list, tuple)) and choices else None
+    message = first.get("message") if isinstance(first, dict) else getattr(first, "message", None)
+    content = message.get("content") if isinstance(message, dict) else getattr(message, "content", None)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and isinstance(item.get("text") or item.get("content"), str):
+                parts.append(str(item.get("text") or item.get("content")))
+        return "\n".join(parts)
+    return ""
+
+
 def build_t2_parameter_llm_interpreter(
     llm_client: Any,
 ) -> Callable[[str], Awaitable[dict[str, str]]]:
@@ -563,6 +603,81 @@ User input:
         )
         choice = response.raw.choices[0].message
         return _sanitize_t4_llm_directive(_parse_json_object_from_llm_content(getattr(choice, "content", "")))
+
+    return interpret
+
+
+def build_workflow_mode_llm_interpreter(
+    llm_client: Any,
+) -> Callable[[str], Awaitable[dict[str, str]]]:
+    """Build an LLM translator for a first-run Auto/Copilot instruction.
+
+    The returned mapping is merely a proposal. ``workflow_mode.py`` validates
+    its enums and the runtime still asks for a separate settings confirmation.
+    """
+
+    async def interpret(raw_answer: str) -> dict[str, str]:
+        prompt = """Parse one user's ResearchOS workflow-mode preference. Return exactly one JSON object and no Markdown.
+Allowed keys: mode, preset, t4_mode.
+Allowed mode values: auto, copilot.
+Allowed preset values: research_ccf, research_utd, survey_ccf, survey_utd, survey_exhaustive_utd.
+Allowed t4_mode values: auto, quick, standard, deep.
+Use copilot when the user wants to approve normal research Gates personally. Use auto when the user asks for routine automatic progression.
+Only include settings that the user states or that are unambiguous from a named profile. Do not invent a research question, scope, venue, or external action.
+User input:
+""" + _strip_terminal_control_sequences(raw_answer)
+        response = await llm_client.chat(
+            messages=[
+                {"role": "system", "content": "You are a strict JSON intent parser. Return only the requested object."},
+                {"role": "user", "content": prompt},
+            ],
+            tools=None,
+            temperature=0.0,
+            tier="light",
+            profile=None,
+            timeout=25,
+            max_retries_per_model=1,
+            retry_base_delay=0.0,
+        )
+        return _sanitize_workflow_llm_capture(
+            _parse_json_object_from_llm_content(_llm_final_content(response)),
+            allowed_fields=_WORKFLOW_MODE_LLM_FIELDS,
+        )
+
+    return interpret
+
+
+def build_workflow_setup_llm_interpreter(
+    llm_client: Any,
+) -> Callable[[str], Awaitable[dict[str, str]]]:
+    """Build an LLM translator for finite workflow default-setting changes."""
+
+    async def interpret(raw_answer: str) -> dict[str, str]:
+        prompt = """Parse one user's ResearchOS default execution-setting request. Return exactly one JSON object and no Markdown.
+Allowed keys: literature_preset, t4_mode, proposal_tracks.
+Allowed literature_preset values: standard_research, survey_balanced, survey_exhaustive.
+Allowed t4_mode values: auto, quick, standard, deep.
+Allowed proposal_tracks values: one, top2.
+Map phrases such as "write two separate proposals" to top2. Do not infer omitted settings and do not introduce numeric search limits, research claims, venue rules, or execution actions.
+User input:
+""" + _strip_terminal_control_sequences(raw_answer)
+        response = await llm_client.chat(
+            messages=[
+                {"role": "system", "content": "You are a strict JSON intent parser. Return only the requested object."},
+                {"role": "user", "content": prompt},
+            ],
+            tools=None,
+            temperature=0.0,
+            tier="light",
+            profile=None,
+            timeout=25,
+            max_retries_per_model=1,
+            retry_base_delay=0.0,
+        )
+        return _sanitize_workflow_llm_capture(
+            _parse_json_object_from_llm_content(_llm_final_content(response)),
+            allowed_fields=_WORKFLOW_SETUP_LLM_FIELDS,
+        )
 
     return interpret
 
@@ -1030,10 +1145,14 @@ class CLIHumanInterface(HumanInterface):
         *,
         t2_parameter_interpreter: Callable[[str], Awaitable[dict[str, str]]] | None = None,
         t4_directive_interpreter: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
+        workflow_mode_interpreter: Callable[[str], Awaitable[dict[str, str]]] | None = None,
+        workflow_setup_interpreter: Callable[[str], Awaitable[dict[str, str]]] | None = None,
         no_color: bool = False,
     ) -> None:
         self._t2_parameter_interpreter = t2_parameter_interpreter
         self._t4_directive_interpreter = t4_directive_interpreter
+        self._workflow_mode_interpreter = workflow_mode_interpreter
+        self._workflow_setup_interpreter = workflow_setup_interpreter
         self._no_color = bool(no_color)
 
     def _render_panel(self, *, title: str, lines: list[str], border_style: str) -> None:
@@ -1362,7 +1481,7 @@ class CLIHumanInterface(HumanInterface):
         self, *, question: str, suggestions: list[str] | None = None
     ) -> str:
         reference_answers = _clarification_reference_answers(question, suggestions)
-        if not self._render_t1_scope_confirmation(question=question, suggestions=reference_answers):
+        if not self._render_workflow_configuration(question=question, suggestions=reference_answers) and not self._render_t1_scope_confirmation(question=question, suggestions=reference_answers):
             lines = [question]
             if reference_answers:
             # Markdown collapses ordinary newlines into one paragraph. Use a
@@ -1405,6 +1524,96 @@ class CLIHumanInterface(HumanInterface):
 
         print("连续多次未收到有效输入，任务将暂停等待明确输入。")
         raise HumanInputUnavailable("ask_human 连续收到空回答，任务已暂停等待明确输入。")
+
+    async def interpret_workflow_mode(self, raw_answer: str) -> dict[str, str]:
+        """Ask the configured light model to translate a free-form mode request."""
+
+        if self._workflow_mode_interpreter is None:
+            return {}
+        print("[工作流设置] 正在用 LLM 解析运行方式，并用本地枚举校验...")
+        try:
+            return await self._workflow_mode_interpreter(_strip_terminal_control_sequences(raw_answer))
+        except Exception as exc:
+            print(f"[工作流设置] LLM 解析暂不可用（{type(exc).__name__}）；将使用精确菜单解析。")
+            return {}
+
+    async def interpret_workflow_setup(self, raw_answer: str) -> dict[str, str]:
+        """Ask the configured light model to translate a default-settings request."""
+
+        if self._workflow_setup_interpreter is None:
+            return {}
+        print("[工作流设置] 正在用 LLM 解析默认参数，并用本地范围校验...")
+        try:
+            return await self._workflow_setup_interpreter(_strip_terminal_control_sequences(raw_answer))
+        except Exception as exc:
+            print(f"[工作流设置] LLM 解析暂不可用（{type(exc).__name__}）；将保留未识别字段等待重新输入。")
+            return {}
+
+    def _render_workflow_configuration(self, *, question: str, suggestions: list[str]) -> bool:
+        """Render the two stable T1 workflow questions as compact Rich panels.
+
+        The exact question stays in ``ask_human``'s durable receipt. The
+        marker is presentation-only and lets an older resume show the current
+        structured profile rather than a long Markdown explanation.
+        """
+
+        mode_marker = "<!-- researchos_workflow_mode_selector -->"
+        settings_match = re.search(r"<!-- researchos_workflow_settings:(\{.*?\}) -->", question, re.DOTALL)
+        if mode_marker not in question and settings_match is None:
+            return False
+        width = max(80, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        buffer = io.StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=not self._no_color,
+            color_system=None if self._no_color else "truecolor",
+            no_color=self._no_color,
+            width=width,
+            highlight=False,
+        )
+        if mode_marker in question:
+            console.print(workflow_mode_selector_panel())
+            console.print(
+                Panel(
+                    Text(
+                        "可直接输入上表命令，也可用自然语言说明，例如“我希望每一步都确认”或“按 UTD/IS 自动走研究论文流程”。"
+                    ),
+                    title="如何回答",
+                    border_style="bright_yellow",
+                    expand=True,
+                )
+            )
+        else:
+            try:
+                profile = json.loads(settings_match.group(1)) if settings_match is not None else {}
+            except (TypeError, ValueError, json.JSONDecodeError):
+                profile = {}
+            if not isinstance(profile, dict):
+                profile = {}
+            console.print(
+                workflow_settings_panel(
+                    profile,
+                    title="确认项目默认执行设置",
+                    impacts=(
+                        "确认只保存未来 Gate 的默认设置，不会开始检索、生成 Candidate 或改写已有研究材料。",
+                        "以后可运行 `python -m researchos.cli configure-workflow --workspace <路径>` 随时修改；已有阶段不会被静默重跑。",
+                    ),
+                )
+            )
+            console.print(
+                Panel(
+                    Text(
+                        "接受当前设置请输入“确认”。也可直接描述修改，例如“覆盖更广、深入探索、分别做两份 Proposal”。"
+                    ),
+                    title="如何回答",
+                    border_style="bright_yellow",
+                    expand=True,
+                )
+            )
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            print(rendered)
+        return True
 
     async def present_gate(
         self, *, gate_id: str, presentation: dict, options: list[dict]
@@ -1645,7 +1854,26 @@ class CLIHumanInterface(HumanInterface):
             highlight=False,
             _environ={"COLUMNS": str(width), "LINES": "48"},
         )
-        render_t4_prerun(inspection, config, console=console)
+        default_mode = str(value.get("workflow_default_mode") or "").strip()
+        default_source = str(value.get("workflow_default_source") or "").strip()
+        proposal_tracks = str(value.get("workflow_proposal_tracks") or "one").strip()
+        mode_label = {
+            "quick": "快速探索",
+            "standard": "标准探索",
+            "deep": "深入探索",
+            "auto": "自动判断",
+        }.get(default_mode, default_mode)
+        workflow_default_note = ""
+        if mode_label:
+            source_label = default_source or "当前建议"
+            proposal_note = "；T4 后默认建议分别推进前两条 Candidate" if proposal_tracks == "top2" else "；T4 后默认建议推进一条 Candidate"
+            workflow_default_note = f"回车默认：{mode_label}（{source_label}）{proposal_note}。你仍可改选。"
+        render_t4_prerun(
+            inspection,
+            config,
+            workflow_default_note=workflow_default_note,
+            console=console,
+        )
         rendered = buffer.getvalue().rstrip()
         if rendered:
             print(rendered)
@@ -1836,6 +2064,7 @@ class CLIHumanInterface(HumanInterface):
         data = value if isinstance(value, dict) else {}
         summary = data.get("recommended_summary") if isinstance(data.get("recommended_summary"), dict) else {}
         profile = str(data.get("detected_profile") or "research_article")
+        recommendation_source = str(data.get("recommendation_source") or "项目材料推断")
         profile_label = {
             "research_article": "研究论文",
             "survey": "综述论文",
@@ -1861,6 +2090,10 @@ class CLIHumanInterface(HumanInterface):
         )
         table.add_column("可设置内容", style="bold cyan", width=16)
         table.add_column("本轮可选择或调整的范围", overflow="fold")
+        table.add_row(
+            "推荐来源",
+            f"{recommendation_source}。回车只采用下方标记的默认值；也可选择其他档位或自定义。",
+        )
         table.add_row("研究用途", "研究论文、综述均衡覆盖、综述强覆盖，或按你的研究目标自定义。")
         table.add_row(
             "阅读范围",
@@ -2526,8 +2759,11 @@ class CLIHumanInterface(HumanInterface):
         guide_text = "先比较 Portfolio 中最成熟的 1-3 个 Candidate；完整 Active Population 和所有历史版本均已保留。"
         if isinstance(remaining_count, int) and remaining_count:
             guide_text += f" 还有 {remaining_count} 个 Active Candidate 未在首屏展开，可按需查看。"
-        guide = Text(guide_text, overflow="fold")
-        console.print(Panel(guide, title="研究方向选择", border_style="bright_cyan", expand=True))
+        recommendation = " ".join(str(value.get("workflow_proposal_recommendation") or "").split())
+        guide_items: list[Any] = [Text(guide_text, overflow="fold")]
+        if recommendation:
+            guide_items.append(Text(recommendation, style="bold yellow", overflow="fold"))
+        console.print(Panel(Group(*guide_items), title="研究方向选择", border_style="bright_cyan", expand=True))
 
         # The comparison table is intentionally only a decision index.  The
         # complete LLM-authored explanation belongs in the card immediately
