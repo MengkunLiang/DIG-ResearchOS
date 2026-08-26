@@ -653,6 +653,10 @@ class StageReporter:
             file_guide = self._t45_completion_guide()
             if file_guide is not None:
                 renderables.append(file_guide)
+        if task_id == "T5-SPECIALIZE-EXECUTOR-SKILLS" and ok:
+            suite_guide = self._t5_executor_skill_suite_guide()
+            if suite_guide is not None:
+                renderables.append(suite_guide)
         if task_id == "T2" and run and run.source_health and self.detailed:
             rows = []
             for item in sorted(run.source_health.values(), key=lambda row: str(row.get("source") or "")):
@@ -1052,6 +1056,56 @@ class StageReporter:
         return Panel(
             Group(table, note),
             title="T4.5 · 研究方案审计与正式化已完成",
+            border_style="bright_green",
+            expand=True,
+        )
+
+    def _t5_executor_skill_suite_guide(self) -> Panel | None:
+        """Show the external executor's single entry point after specialization.
+
+        The suite is intentionally not a menu of 13 human-run commands. Its
+        root Skill owns durable routing across all child Skills, so a T5
+        completion screen needs to make that fact visible before the later
+        protocol and executor-authorization Gates supply a runnable prompt.
+        """
+
+        root_skill = self.workspace / "external_executor" / "skills" / "research-execution" / "SKILL.md"
+        context = self.workspace / "external_executor" / "project_skill_context.yaml"
+        report = self.workspace / "external_executor" / "report" / "skill_specialization_report.json"
+        if not root_skill.is_file() or not context.is_file() or not report.is_file():
+            return None
+        table = lightweight_ruled_table(
+            expand=True,
+            header_style="bold bright_cyan",
+            border_style="bright_cyan",
+        )
+        table.add_column("入口", width=18, overflow="fold")
+        table.add_column("位置", width=52, overflow="fold")
+        table.add_column("作用", ratio=2, overflow="fold")
+        table.add_row(
+            "唯一总控 Skill",
+            "external_executor/skills/research-execution/SKILL.md",
+            "负责按持久化状态串行调度、校验和恢复 12 个子 Skill，并在 Writer Handoff 合格后启动 T8。",
+        )
+        table.add_row(
+            "项目上下文",
+            "external_executor/project_skill_context.yaml",
+            "根 Skill 与子 Skill 读取的项目专属约束；不要手工修改。",
+        )
+        table.add_row(
+            "执行说明",
+            "external_executor/AGENTS.md / CLAUDE.md",
+            "T5 选定 Codex 或 Claude Code 后，这两份文件会提供可直接发送的一条启动请求。",
+        )
+        note = Text(
+            "Skill Suite 已发布，但尚未授权真实执行。下一步先完成协议与执行器 Gate；"
+            "授权后只启动 research-execution，不要手动逐个运行子 Skill。",
+            style="dim",
+            overflow="fold",
+        )
+        return Panel(
+            Group(table, note),
+            title="T5 · 外部执行总控 Skill 已发布",
             border_style="bright_green",
             expand=True,
         )

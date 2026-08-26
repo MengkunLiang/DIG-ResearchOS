@@ -49,8 +49,11 @@ from ..schemas.state import BudgetCumulative, GateState, StateYaml, TaskHistoryE
 from .gate_presenter import build_presentation
 from .task_io_contract import get_task_io, task_io_contract_source
 from ..tools.external_experiment import (
+    ROOT_EXECUTOR_SKILL_NAME,
+    ROOT_EXECUTOR_SKILL_PATH,
     build_executor_selection_payload,
     patch_external_executor_files_with_selection,
+    root_executor_prompt,
 )
 from .t5_t8_bridge import validate_modern_t5_handoff, validate_t8_ingest_artifacts
 from ..ideation.config import load_t4_evolution_settings
@@ -3707,9 +3710,10 @@ class StateMachine:
         selected_executor = str(selection.get("selected_executor") or "unknown").strip()
         execution_scope = str(selection.get("execution_scope") or "full_execution").strip()
         root = str(workspace) if workspace is not None else "<workspace>"
-        prompt = str(selection.get("codex_user_input") or "").strip()
-        if selected_executor == "codex_cli" and not prompt:
-            prompt = "请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research-execution/SKILL.md。"
+        prompt_key = "codex_user_input" if selected_executor == "codex_cli" else "claude_code_user_input"
+        prompt = str(selection.get(prompt_key) or selection.get("executor_user_input") or "").strip()
+        if selected_executor in {"codex_cli", "claude_code_window"} and not prompt:
+            prompt = root_executor_prompt(executor=selected_executor)
 
         if execution_scope == "resource_preparation":
             required_paths = [
@@ -3731,7 +3735,11 @@ class StateMachine:
             }
             for rel_path in required_paths
         ]
-        command_lines = [f"cd {shlex.quote(root)}", "codex"] if selected_executor == "codex_cli" else []
+        command_lines: list[str] = []
+        if selected_executor == "codex_cli":
+            command_lines = [f"cd {shlex.quote(root)}", "codex"]
+        elif selected_executor == "claude_code_window":
+            command_lines = [f"cd {shlex.quote(root)}", "claude"]
         if selected_executor == "claude_code_window":
             launch_summary = "在当前 workspace 根目录启动 Claude Code，并发送下方执行指令。"
         elif selected_executor == "manual":
@@ -3749,6 +3757,8 @@ class StateMachine:
             "workspace_root": root,
             "launch_summary": launch_summary,
             "command_lines": command_lines,
+            "root_skill": str(selection.get("root_skill") or ROOT_EXECUTOR_SKILL_PATH),
+            "root_skill_name": ROOT_EXECUTOR_SKILL_NAME,
             "executor_prompt": prompt,
             "required_artifacts": artifacts,
             "concurrency_boundary": (

@@ -26,7 +26,7 @@ After REBOOST and project-Skill specialization, T5 first stops at the **protocol
 2. Source datasets, baselines, benchmarks, model weights, and repositories may be placed under `workspace/project-a/resources/`, but are not required by hand. When none are available, Phase B checks local resources, then authorized public sources, and only then provenance-backed baseline reimplementation where permitted.
 3. Put only already runnable deployment assets under `workspace/project-a/external_executor/expr/`. After automatic resource preparation, stop the external executor and run `resume`; ResearchOS accepts the Phase B report and recompiles T5.
 4. Choose Codex CLI, Claude Code, or a manual executor for full experiments only after the protocol is ready and materials are confirmed. `mock dry-run` only validates the local file protocol; it returns to the executor Gate and cannot enter T8 or support paper claims.
-5. For Codex CLI, start Codex from the workspace root:
+5. After choosing a full executor, start exactly one root Skill: `external_executor/skills/research-execution/SKILL.md`. It dispatches, validates, and resumes the other 12 child Skills from durable state; do not manually chain child Skills. For Codex CLI, start Codex from the workspace root:
 
 ```bash
 cd workspace/project-a
@@ -36,7 +36,20 @@ codex
 Then send:
 
 ```text
-Please read external_executor/AGENTS.md and execute external_executor/skills/research-execution/SKILL.md.
+Execute the ResearchOS external-experiment root Skill: first read external_executor/AGENTS.md, then execute external_executor/skills/research-execution/SKILL.md. Do not manually start child Skills one by one; research-execution owns durable dispatch, validation, and resume.
+```
+
+For Claude Code, start it from the same workspace root:
+
+```bash
+cd workspace/project-a
+claude
+```
+
+Then send:
+
+```text
+Execute the ResearchOS external-experiment root Skill: first read external_executor/CLAUDE.md and external_executor/AGENTS.md, then execute external_executor/skills/research-execution/SKILL.md. Do not manually start child Skills one by one; research-execution owns durable dispatch, validation, and resume.
 ```
 
 The root external Skill attempts to start T8 from the same executor session after Writer Handoff succeeds. While it writes, do not run `resume`, `run-task T5-*`, or `run-task T8` for the same workspace in another terminal.
@@ -129,7 +142,7 @@ external_executor/report/phase_F/writer_handoff_validation.json
 | `external_executor/AGENTS.md`, `external_executor/CLAUDE.md` | Executor instructions |
 | `external_executor/report/reboost_report.json`, `external_executor/report/reboost_validation_report.json` | Compilation and independent validation receipts |
 
-`T5-SPECIALIZE-EXECUTOR-SKILLS` then deterministically publishes `external_executor/project_skill_context.yaml`, its schema, `external_executor/skills/`, and specialization report/execution records. It does not call a model or ask one to repeatedly diagnose shell scripts; a schema, template, or genuine upstream-input failure writes its precise report and creates one targeted recovery pause. Do not edit the project-specific blocks by hand. Rebuild from REBOOST if upstream formal artifacts change.
+`T5-SPECIALIZE-EXECUTOR-SKILLS` then deterministically publishes `external_executor/project_skill_context.yaml`, its schema, `external_executor/skills/`, and specialization report/execution records. Its sole human/executor entry point is `external_executor/skills/research-execution/SKILL.md`: the root serially dispatches 12 child Skills, handles checkpoints and resume, and starts the T8 bridge only after Writer Handoff validation. It does not call a model or ask one to repeatedly diagnose shell scripts; a schema, template, or genuine upstream-input failure writes its precise report and creates one targeted recovery pause. Do not edit project-specific blocks or manually chain child Skills. Rebuild from REBOOST if upstream formal artifacts change.
 
 ## External Execution A to F
 

@@ -2902,7 +2902,7 @@ T6 不应该从零重跑一次 T4.5，这个逻辑现在已经明确分开了。
 - mode：`executor_gate`
 - 类型：状态机 `immediate_gate`，正常完整 pipeline 不启动 LLM
 
-`T5-EXECUTOR-GATE` 是真实实验启动前的人工控制点。它展示 `handoff_pack.json`、`allowed_paths.txt`、specialization report 和 Codex resume instructions。执行器专属 prompt 文件不再生成；Codex/Claude/manual 执行器直接读取 AGENTS/CLAUDE 和其中引用的控制文件。
+`T5-EXECUTOR-GATE` 是真实实验启动前的人工控制点。它展示 `handoff_pack.json`、`allowed_paths.txt`、specialization report 和启动说明。最终选择后，Rich 面板及 `AGENTS.md` / `CLAUDE.md` 都会明确唯一总控入口 `external_executor/skills/research-execution/SKILL.md`，并给出一条可发送给 Codex 或 Claude Code 的启动请求；执行器只启动这个根 Skill，不手工串联子 Skill。根 Skill 读取 AGENTS/CLAUDE 与其中引用的控制文件，再按持久化状态调度、校验和恢复 12 个子 Skill。
 
 - `mock_dry_run`：进入 `T5-DRY-RUN`，只测试文件协议；
 - `claude_code_window`：进入 `T5-EXTERNAL-WAIT`，用户把 workspace 根目录和 `external_executor/CLAUDE.md` 提供给 Claude Code；

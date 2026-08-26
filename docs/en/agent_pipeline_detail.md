@@ -2896,7 +2896,7 @@ It may not implement a method, reproduce a baseline, run an experiment, diagnose
 - mode: `executor_gate`
 - Type: state machine `immediate_gate`, normal full pipeline does not start an LLM
 
-`T5-EXECUTOR-GATE` is a human control point before starting a real experiment. It displays `handoff_pack.json`, `allowed_paths.txt`, the specialization report, and Codex resume instructions. Executor-specific prompt files are not generated; Codex/Claude/manual executors read AGENTS/CLAUDE and the referenced control files directly.
+`T5-EXECUTOR-GATE` is a human control point before starting a real experiment. It displays `handoff_pack.json`, `allowed_paths.txt`, the specialization report, and launch guidance. After selection, the Rich view and `AGENTS.md` / `CLAUDE.md` identify one root entry point, `external_executor/skills/research-execution/SKILL.md`, and provide one request to send to Codex or Claude Code. The executor starts only that root Skill, not a hand-chained sequence of child Skills; the root reads AGENTS/CLAUDE and referenced controls, then dispatches, validates, and resumes the 12 children from durable state.
 
 - `mock_dry_run`: Enters `T5-DRY-RUN`, only tests the file protocol;
 - `claude_code_window`: Enters `T5-EXTERNAL-WAIT`, the user gives Claude Code the workspace root and `external_executor/CLAUDE.md`;

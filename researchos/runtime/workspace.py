@@ -1176,7 +1176,7 @@ def _default_dir_guide(rel_dir: str, *, runtime_dir_name: str) -> dict[str, str]
         }
     if normalized == "external_executor/skills":
         return {
-            "purpose": "T5 project-specialization output: one `research-execution` root Skill plus twelve child Skill templates with project-specific guidance inserted only between protected markers.",
+            "purpose": "T5 project-specialization output: one `research-execution` root Skill plus twelve child Skill templates with project-specific guidance inserted only between protected markers. Start only `research-execution`; it routes every child from durable state.",
             "produced_by": "T5-SPECIALIZE-EXECUTOR-SKILLS deterministic compiler.",
             "consumed_by": "The selected external executor, research-execution routing, and specialization validators.",
             "key_files": "research-execution/, context-alignment/, resource-and-baseline-preparation/, experiment-design/, baseline-reproduction/, method-refinement/, implementation/, code-and-protocol-review/, experiment-run/, result-diagnosis/, module-attribution/, evidence-packaging/, writer-handoff/.",

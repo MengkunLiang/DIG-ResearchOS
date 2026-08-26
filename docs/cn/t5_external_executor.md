@@ -26,7 +26,7 @@ T5 完成 REBOOST 与项目专属 Skill Suite 后，终端会先停在**实验�
 2. 数据集、baseline、benchmark、模型权重和仓库等**源资源**可由研究者放入 `workspace/project-a/resources/`，但不是必需前提。没有现成材料时，Phase B 会先检查本地目录，再从授权公开来源获取，最后才在许可条件下尝试有来源的 baseline 重实现。
 3. 仅将已经整理为可直接运行的部署资产放入 `workspace/project-a/external_executor/expr/`。不要把未经审查的下载仓库或原始数据混入该目录。自动资源准备完成后，停止外部执行器并运行 `resume`；ResearchOS 会接收 Phase B 报告并重新编译 T5。
 4. 只有协议 ready 且材料确认后，才选择 Codex CLI、Claude Code 或人工执行器进行完整实验。`mock dry-run` 仅用于验证本地文件协议；它完成后会回到执行器 Gate，不能进入 T8 或形成论文实验结论。
-5. 选择 Codex CLI 时，在 workspace 根目录启动 Codex：
+5. 选择完整执行器后，只启动一个总控 Skill：`external_executor/skills/research-execution/SKILL.md`。它会按持久化状态串行分派、检查和恢复其余 12 个子 Skill；不要手工逐个串联子 Skill。选择 Codex CLI 时，在 workspace 根目录启动 Codex：
 
 ```bash
 cd workspace/project-a
@@ -36,7 +36,20 @@ codex
 然后输入：
 
 ```text
-请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research-execution/SKILL.md。
+执行 ResearchOS 外部实验总控 Skill：先读取 external_executor/AGENTS.md，再执行 external_executor/skills/research-execution/SKILL.md。不要手动逐个启动子 Skill；由 research-execution 根据持久化状态调度、校验和恢复。
+```
+
+选择 Claude Code 时，在同一 workspace 根目录启动：
+
+```bash
+cd workspace/project-a
+claude
+```
+
+然后输入：
+
+```text
+执行 ResearchOS 外部实验总控 Skill：先读取 external_executor/CLAUDE.md 和 external_executor/AGENTS.md，再执行 external_executor/skills/research-execution/SKILL.md。不要手动逐个启动子 Skill；由 research-execution 根据持久化状态调度、校验和恢复。
 ```
 
 外部执行器完成 Writer Handoff 后，会在同一执行器会话中尝试启动 T8。外部执行器仍在写入时，不要在另一个终端对同一 workspace 运行 `resume`、`run-task T5-*` 或 `run-task T8`，否则可能读到尚未原子写完的结果包、状态或运行清单。
@@ -190,7 +203,7 @@ drafts/result_to_claim.json
 | 项目专属 Skill Suite | `external_executor/skills/` |
 | 专项 Skill 发布与执行记录 | `external_executor/report/skill_specialization_report.json`、`external_executor/report/skill_specialization_execution.json` |
 
-外部执行器同时消费 REBOOST 控制文件与 SPECIALIZE 生成的 Skill Suite。不要手工改写 `project_skill_context.yaml` 或 Skill 的项目专属区块。上游正式材料变化后，应从 REBOOST 重新生成。
+外部执行器同时消费 REBOOST 控制文件与 SPECIALIZE 生成的 Skill Suite。对人和 Codex/Claude Code 而言，唯一入口是 `external_executor/skills/research-execution/SKILL.md`：它串行分派 12 个子 Skill、处理 checkpoint 与 resume，并且只有在 Writer Handoff 核验通过后才启动 T8。不要手工改写 `project_skill_context.yaml` 或 Skill 的项目专属区块，也不要手工串联子 Skill。上游正式材料变化后，应从 REBOOST 重新生成。
 
 ## 外部执行 A 到 F 阶段
 

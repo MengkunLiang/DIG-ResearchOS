@@ -1078,10 +1078,13 @@ def _format_external_executor_launch(value: Any) -> str:
         return "未读取到外部执行器交接信息；请检查 external_executor/report/executor_selection.json。"
     selected = str(value.get("selected_executor") or "unknown")
     root = str(value.get("workspace_root") or "<workspace>")
+    root_skill = str(value.get("root_skill") or "external_executor/skills/research-execution/SKILL.md")
+    root_skill_name = str(value.get("root_skill_name") or "research-execution")
     lines = [
         f"当前执行器：{selected}",
         f"选择记录：{value.get('selection_path') or 'external_executor/report/executor_selection.json'}",
         f"workspace 根目录：{root}",
+        f"唯一总控 Skill：{root_skill_name}（`{root_skill}`）",
         "",
         str(value.get("launch_summary") or ""),
     ]
@@ -1092,7 +1095,7 @@ def _format_external_executor_launch(value: Any) -> str:
         lines.append("```")
     prompt = str(value.get("executor_prompt") or "").strip()
     if prompt:
-        lines.extend(["", "向执行器输入：", "```text", prompt, "```"])
+        lines.extend(["", "向执行器输入（只启动总控 Skill；不要手动逐个运行子 Skill）：", "```text", prompt, "```"])
     artifacts = value.get("required_artifacts")
     if isinstance(artifacts, list):
         lines.extend(["", "T8 前必须回传："])
@@ -1691,6 +1694,9 @@ class CLIHumanInterface(HumanInterface):
             if gate_id == "t4_prerun_gate" and key == "t4_prerun":
                 self._render_t4_prerun_overview(value)
                 continue
+            if gate_id == "runtime_recovery_gate" and key == "external_executor_launch":
+                self._render_external_executor_launch(value)
+                continue
             rendered = self._format_presentation_value(key, value, gate_id=gate_id)
             if not rendered.strip():
                 continue
@@ -1914,6 +1920,57 @@ class CLIHumanInterface(HumanInterface):
         rendered = buffer.getvalue().rstrip()
         if rendered:
             print(rendered)
+
+    def _render_external_executor_launch(self, value: Any) -> None:
+        """Render the one-root-Skill external launch without Markdown noise."""
+
+        if not isinstance(value, dict):
+            self._render_rich_panel(
+                Text("未读取到外部执行器交接信息；请检查 external_executor/report/executor_selection.json。"),
+                title="外部执行启动",
+                border_style="yellow",
+            )
+            return
+        table = lightweight_ruled_table(
+            expand=True,
+            header_style="bold bright_cyan",
+            border_style="bright_cyan",
+        )
+        table.add_column("项目", width=16, style="bold cyan")
+        table.add_column("当前值", ratio=1, overflow="fold")
+        table.add_row("执行器", str(value.get("selected_executor") or "unknown"))
+        table.add_row("执行范围", str(value.get("execution_scope") or "full_execution"))
+        table.add_row("唯一总控 Skill", str(value.get("root_skill") or "external_executor/skills/research-execution/SKILL.md"))
+        table.add_row("为什么只启动它", "它会按持久化状态调度、校验和恢复子 Skill；不要手动逐个启动子 Skill。")
+
+        items: list[Any] = [table]
+        launch_summary = " ".join(str(value.get("launch_summary") or "").split())
+        if launch_summary:
+            items.append(Text(launch_summary, style="dim", overflow="fold"))
+        commands = [str(item).strip() for item in value.get("command_lines") or [] if str(item).strip()]
+        if commands:
+            items.extend(
+                [
+                    Text("在单独终端启动", style="bold yellow"),
+                    Text("\n".join(commands), style="bold green", overflow="fold"),
+                ]
+            )
+        prompt = " ".join(str(value.get("executor_prompt") or "").split())
+        if prompt:
+            items.extend(
+                [
+                    Text("向执行器发送", style="bold yellow"),
+                    Text(prompt, overflow="fold"),
+                ]
+            )
+        required = value.get("required_artifacts") if isinstance(value.get("required_artifacts"), list) else []
+        pending = [str(item.get("path") or "") for item in required if isinstance(item, dict) and item.get("status") != "已回传"]
+        if pending:
+            items.append(Text("回传后由 ResearchOS 接收：" + "、".join(pending), style="dim", overflow="fold"))
+        completion = " ".join(str(value.get("completion_boundary") or "").split())
+        if completion:
+            items.append(Text(completion, style="dim", overflow="fold"))
+        self._render_rich_panel(Group(*items), title="外部执行器启动", border_style="bright_cyan")
 
     def _render_t5_action_options(self, gate_id: str, options: list[dict]) -> None:
         """Render T5 choices as an ordinary next-step decision, not jargon."""

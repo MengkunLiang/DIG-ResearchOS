@@ -56,6 +56,26 @@ RUN_MANIFEST_PATH = "external_executor/report/run_manifest.json"
 LEGACY_EXECUTOR_SELECTION_PATH = "external_executor/executor_selection.json"
 LEGACY_EXECUTOR_CAPABILITIES_PATH = "external_executor/executor_capabilities.json"
 LEGACY_RUN_MANIFEST_PATH = "external_executor/run_manifest.json"
+ROOT_EXECUTOR_SKILL_NAME = "research-execution"
+ROOT_EXECUTOR_SKILL_PATH = f"external_executor/skills/{ROOT_EXECUTOR_SKILL_NAME}/SKILL.md"
+
+
+def root_executor_prompt(*, executor: str = "generic") -> str:
+    """Return the one bounded request that starts an executor Skill Suite.
+
+    A project-specialized suite contains many child Skills, but the executor
+    must never pick or chain them manually.  The root Skill owns dispatch,
+    durable checkpoints, and the T5-to-T8 transition.  Keep this prompt
+    stable in selection receipts, Rich launch views, and generated guides so
+    Codex and Claude Code receive the same entry contract.
+    """
+
+    guide = "external_executor/CLAUDE.md 和 external_executor/AGENTS.md" if executor == "claude_code_window" else "external_executor/AGENTS.md"
+    return (
+        f"执行 ResearchOS 外部实验总控 Skill：先读取 {guide}，"
+        f"再执行 {ROOT_EXECUTOR_SKILL_PATH}。"
+        "不要手动逐个启动子 Skill；由 research-execution 根据持久化状态调度、校验和恢复。"
+    )
 
 
 def _sha256(path: Path) -> str:
@@ -3351,7 +3371,8 @@ def build_executor_selection_payload(
         payload["workspace_relative_workdir"] = "."
         payload["workspace_relative_executor_root"] = "."
         payload["workspace_relative_deployment_dir"] = "external_executor/expr"
-        payload["codex_user_input"] = "请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research-execution/SKILL.md。"
+        payload["root_skill"] = ROOT_EXECUTOR_SKILL_PATH
+        payload["codex_user_input"] = root_executor_prompt()
         payload["launch_instruction"] = (
             "On the host, enter the <workspace> root, start Codex CLI there, and paste codex_user_input."
         )
@@ -3362,9 +3383,30 @@ def build_executor_selection_payload(
             )
         else:
             payload["resume_instruction"] = (
-                "After Codex writes external_executor/executor_research_report.md, result_pack.json, "
-                f"executor_status.json, and {RUN_MANIFEST_PATH}, run: python -m researchos.cli resume --workspace <workspace>"
+                "The root Skill normally launches T8 after a validated Writer Handoff. "
+                "Only if it reports that it could not launch T8, stop the executor and run: "
+                "python -m researchos.cli resume --workspace <workspace>"
             )
+    elif selected_executor == "claude_code_window":
+        payload["root_skill"] = ROOT_EXECUTOR_SKILL_PATH
+        payload["claude_code_user_input"] = root_executor_prompt(executor="claude_code_window")
+        payload["launch_instruction"] = (
+            "On the host, enter the <workspace> root, start Claude Code there, and paste claude_code_user_input."
+        )
+        if execution_scope == "resource_preparation":
+            payload["resume_instruction"] = (
+                "After Claude Code completes the bounded Phase B resource report and stops, run: "
+                "python -m researchos.cli resume --workspace <workspace>"
+            )
+        else:
+            payload["resume_instruction"] = (
+                "The root Skill normally launches T8 after a validated Writer Handoff. "
+                "Only if it reports that it could not launch T8, stop the executor and run: "
+                "python -m researchos.cli resume --workspace <workspace>"
+            )
+    elif selected_executor == "manual":
+        payload["root_skill"] = ROOT_EXECUTOR_SKILL_PATH
+        payload["executor_user_input"] = root_executor_prompt()
     return payload
 
 
@@ -3801,8 +3843,14 @@ def _write_external_executor_guides(
         + common_header
         + "## Role\n"
         "You are an external experiment executor for ResearchOS. You are not the paper writer and not the ResearchOS runtime.\n\n"
-        "## Start command\n"
-        "Read this file, then execute `external_executor/skills/research-execution/SKILL.md`.\n\n"
+        "## One entry point\n"
+        f"The only total Skill to start is `{ROOT_EXECUTOR_SKILL_PATH}` (`{ROOT_EXECUTOR_SKILL_NAME}`). "
+        "After T5 has selected an executor and this guide no longer says `UNSET`, read this file and then execute that root Skill. "
+        "Do not manually chain its child Skills: the root owns routing, checkpoints, validation, budget boundaries, and the T5-to-T8 handoff.\n\n"
+        "Paste this one request into Codex or a compatible coding agent:\n\n"
+        "```text\n"
+        f"{root_executor_prompt()}\n"
+        "```\n\n"
         "## This experiment in one line\n"
         f"{handoff.get('experiment_intent_oneliner')}\n\n"
         + readiness_block
@@ -3853,6 +3901,13 @@ def _write_external_executor_guides(
         + readiness_block
         + auto_settings_block
         + "You are used as an external coding executor for ResearchOS via a Claude Code window.\n\n"
+        "## One entry point\n"
+        f"After T5 has selected an executor and this guide no longer says `UNSET`, execute exactly one total Skill: `{ROOT_EXECUTOR_SKILL_PATH}` (`{ROOT_EXECUTOR_SKILL_NAME}`). "
+        "Do not manually sequence child Skills; the root owns routing, checkpoints, validation, budget boundaries, and the T5-to-T8 handoff.\n\n"
+        "Paste this request into Claude Code:\n\n"
+        "```text\n"
+        f"{root_executor_prompt(executor='claude_code_window')}\n"
+        "```\n\n"
         "## Steps\n"
         "1. Read handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt.\n"
         "2. Read optional baseline/resource maps and literature/resource_catalog.jsonl only if they exist; the catalog is a discovery lead, not an approved resource.\n"
@@ -3893,7 +3948,7 @@ def _write_external_executor_guides(
         "| `handoff_pack.json` | T5 编译的实验任务、协议、证据契约和 allowed paths。 |\n"
         "| `expected_outputs_schema.json` | 外部执行器必须写回的 result pack/status/manifest schema。 |\n"
         "| `allowed_paths.txt` | 外部执行器可读写路径边界。 |\n"
-        "| `skills/` | Project-specific external executor Skill Suite published by `T5-SPECIALIZE-EXECUTOR-SKILLS`. Use `researchos specialize-executor-skills --deterministic` only for offline preview, repair, or validation. |\n"
+        "| `skills/` | Project-specific external executor Skill Suite published by `T5-SPECIALIZE-EXECUTOR-SKILLS`. Start only `skills/research-execution/SKILL.md`; it routes the child Skills. Use `researchos specialize-executor-skills --deterministic` only for offline preview, repair, or validation. |\n"
         "| `expr/` | Human-provided experimental materials gate directory. |\n"
         "| `executor_research_report.md` | T5 直接交给 T8 的核心外部执行研究报告。 |\n"
         "| `result_pack.json` | 外部执行器写回的支持性结果包，供 T8 需要时回查。 |\n"
