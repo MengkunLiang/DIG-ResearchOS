@@ -76,6 +76,24 @@ def _multiline_editing_instruction() -> str:
     return "当前行可按 Ctrl+U 清空；若已换行，单独输入 CLEAR（或“重输”）可清空整段后重新输入"
 
 
+def _looks_like_t1_scope_confirmation(question: str) -> bool:
+    """Recognize the semantic T1 scope Gate across harmless title variants.
+
+    T1 asks for three specific retrieval lanes.  Providers often prepend a
+    round counter to the required title or abbreviate ``核心研究线`` as
+    ``核心线``.  Requiring all three lane markers and an explicit T1/range
+    context keeps this distinct from an ordinary research discussion that
+    happens to mention a core method or Bridge.
+    """
+
+    normalized = str(question or "")
+    has_t1_scope_context = "T1" in normalized and "文献范围" in normalized and "跨域" in normalized
+    has_core = "核心研究线" in normalized or "核心线" in normalized
+    has_adjacent = "邻接" in normalized and "线" in normalized
+    has_bridge = "Bridge" in normalized or "跨领域" in normalized
+    return has_t1_scope_context and has_core and has_adjacent and has_bridge
+
+
 def has_specialized_cli_question_presentation(question: str) -> bool:
     """Return whether the CLI owns a deterministic presentation for a question.
 
@@ -88,7 +106,7 @@ def has_specialized_cli_question_presentation(question: str) -> bool:
 
     normalized = str(question or "")
     return (
-        "T1 文献范围与跨域探索确认" in normalized
+        _looks_like_t1_scope_confirmation(normalized)
         or "<!-- researchos_workflow_mode_selector -->" in normalized
         or "<!-- researchos_workflow_ccf_template_selector -->" in normalized
         or "<!-- researchos_workflow_settings:" in normalized
@@ -1228,7 +1246,7 @@ class CLIHumanInterface(HumanInterface):
         panel rather than being silently reformatted or dropped.
         """
 
-        if "T1 文献范围与跨域探索确认" not in question:
+        if not _looks_like_t1_scope_confirmation(question):
             return None
         # LLMs may place the ordinal inside or outside bold markup, use a
         # Markdown heading, or emit a plain line.  Those forms are all the
@@ -1243,11 +1261,19 @@ class CLIHumanInterface(HumanInterface):
             heading = heading.replace("**", "").strip()
             heading = re.sub(r"^[一二三123]\s*[、.)]\s*", "", heading)
             heading = heading.rstrip(" ：:").strip()
-            if heading.startswith("核心研究线"):
+            # An explanatory line such as ``核心线：T2 必须覆盖`` belongs
+            # to the intro, while ``核心线（必须覆盖）`` is a section title.
+            # Do not treat the former as a candidate section just because a
+            # provider shortened the canonical wording.
+            if ":" in heading or "：" in heading:
+                continue
+            if heading.startswith("核心研究线") or heading.startswith("核心线"):
                 recognized.append((match, "core"))
             elif heading.startswith("邻接") and ("线" in heading or "理论" in heading):
                 recognized.append((match, "adjacent"))
-            elif heading.startswith("真正") and ("Bridge" in heading or "跨领域" in heading):
+            elif (
+                heading.startswith("真正") and ("Bridge" in heading or "跨领域" in heading)
+            ) or heading.startswith("Bridge"):
                 recognized.append((match, "bridge"))
         if len(recognized) != 3 or {kind for _, kind in recognized} != {"core", "adjacent", "bridge"}:
             return None
@@ -1352,6 +1378,33 @@ class CLIHumanInterface(HumanInterface):
             # but a Markdown emphasis marker must never leak into the title.
             title = title.rstrip("*").strip()
             meta = str(match.group("meta") or "").strip().strip("（）()")
+            # Plain candidate headings commonly carry a Chinese role suffix
+            # such as ``（研究对象与基线）`` rather than bold Markdown's
+            # separate metadata group.  Split only recognizable role/priority
+            # wording so a substantive parenthetical part of a research title
+            # is not silently moved out of the title.
+            if not meta:
+                plain_meta = re.match(r"^(?P<title>.+?)\s*[（(](?P<meta>[^（）()]{1,80})[）)]$", title)
+                if plain_meta:
+                    candidate_meta = plain_meta.group("meta").strip()
+                    role_markers = (
+                        "研究对象",
+                        "基线",
+                        "方法",
+                        "机制",
+                        "理论",
+                        "评测",
+                        "must",
+                        "should",
+                        "重点",
+                        "普通",
+                        "research_",
+                        "method_",
+                        "baseline_",
+                    )
+                    if any(marker.casefold() in candidate_meta.casefold() for marker in role_markers):
+                        title = plain_meta.group("title").strip()
+                        meta = candidate_meta
             matches.append((index, title, meta))
         records: list[dict[str, str]] = []
         for match_index, (start, title, meta) in enumerate(matches):
@@ -1359,12 +1412,38 @@ class CLIHumanInterface(HumanInterface):
             candidate_lines = body_lines[start + 1 : end]
             fields: dict[str, list[str]] = {}
             freeform_lines: list[str] = []
+            field_labels = (
+                "来源与映射",
+                "待验证问题",
+                "作用",
+                "检索",
+                "边界",
+                "噪声提示",
+                "优先级",
+                "why",
+                "query",
+                "priority",
+            )
+            field_pattern = re.compile(
+                r"(?:^|[\s；;。！？?!])(?P<label>" + "|".join(field_labels) + r")[：:]",
+                flags=re.IGNORECASE,
+            )
             for raw_line in candidate_lines:
-                field_match = re.match(r"^\s*(?:[-*+]\s+)?([^：:]{1,16})[：:]\s*(.+?)\s*$", raw_line)
-                if field_match:
-                    fields.setdefault(field_match.group(1).strip(), []).append(field_match.group(2).strip())
-                elif raw_line.strip():
-                    freeform_lines.append(raw_line.strip())
+                line = re.sub(r"^\s*(?:[-*+]\s+)?", "", raw_line).strip()
+                matches_in_line = list(field_pattern.finditer(line))
+                if matches_in_line:
+                    for field_index, field_match in enumerate(matches_in_line):
+                        value_start = field_match.end()
+                        value_end = (
+                            matches_in_line[field_index + 1].start()
+                            if field_index + 1 < len(matches_in_line)
+                            else len(line)
+                        )
+                        value = line[value_start:value_end].strip(" \t；;。")
+                        if value:
+                            fields.setdefault(field_match.group("label").strip(), []).append(value)
+                elif line:
+                    freeform_lines.append(line)
 
             def joined(*labels: str) -> str:
                 values = [value for label in labels for value in fields.get(label, [])]
