@@ -33,6 +33,7 @@ from ..ui.tables import lightweight_ruled_table
 from ..ui.candidate_cards import CandidateCardRenderer, CandidateViewModel
 from ..ui.workflow_settings import (
     workflow_ccf_template_selector_panel,
+    workflow_execution_setup_guide_panel,
     workflow_mode_selector_panel,
     workflow_settings_panel,
 )
@@ -1572,6 +1573,7 @@ class CLIHumanInterface(HumanInterface):
 
         mode_marker = "<!-- researchos_workflow_mode_selector -->"
         ccf_template_marker = "<!-- researchos_workflow_ccf_template_selector -->"
+        settings_confirmation_marker = "<!-- researchos_workflow_settings_change_confirmation -->"
         settings_match = re.search(r"<!-- researchos_workflow_settings:(\{.*?\}) -->", question, re.DOTALL)
         feedback_match = re.search(r"<!-- researchos_workflow_settings_feedback:(.*?) -->", question, re.DOTALL)
         if mode_marker not in question and ccf_template_marker not in question and settings_match is None:
@@ -1623,13 +1625,18 @@ class CLIHumanInterface(HumanInterface):
             console.print(
                 workflow_settings_panel(
                     profile,
-                    title="确认项目默认执行设置",
+                    title="确认拟应用的项目默认设置" if settings_confirmation_marker in question else "确认项目默认执行设置",
                     impacts=(
-                        "确认只保存未来 Gate 的默认设置，不会开始检索、生成 Candidate 或改写已有研究材料。",
+                        (
+                            "这是未保存的修改预览；输入“1”或“确认”后才会写入未来 Gate 的默认设置。"
+                            if settings_confirmation_marker in question
+                            else "确认只保存未来 Gate 的默认设置，不会开始检索、生成 Candidate 或改写已有研究材料。"
+                        ),
                         "以后可运行 `python -m researchos.cli configure-workflow --workspace <路径>` 随时修改；已有阶段不会被静默重跑。",
                     ),
                 )
             )
+            console.print(workflow_execution_setup_guide_panel())
             feedback = " ".join((feedback_match.group(1) if feedback_match is not None else "").split())
             if feedback:
                 console.print(
@@ -1643,7 +1650,11 @@ class CLIHumanInterface(HumanInterface):
             console.print(
                 Panel(
                     Text(
-                        "输入“1”或“确认”接受当前设置。也可直接描述修改，例如“覆盖更广、深入探索、分别做两份 Proposal”。"
+                        (
+                            "输入“1”或“确认”保存上方预览。也可直接说明新的修改；未确认的预览不会写入。"
+                            if settings_confirmation_marker in question
+                            else "输入“1”或“确认”接受当前设置。也可直接描述修改，例如“覆盖更广、深入探索、分别做两份 Proposal”。"
+                        )
                     ),
                     title="如何回答",
                     border_style="bright_yellow",

@@ -70,6 +70,7 @@ from .artifact_fingerprints import validate_t45_fingerprint_report
 from .workflow_mode import (
     auto_execution_setup_summary,
     configure_workflow_mode,
+    is_execution_setup_confirmation_answer,
     load_workflow_mode,
     parse_auto_execution_setup_answer,
     parse_execution_setup_proposal,
@@ -3699,25 +3700,31 @@ class AgentRunner:
             raise RecoverableRuntimePause("项目默认设置确认需要 ask_human 工具，但当前策略没有开放它。")
         existing_profile = load_workflow_mode(ctx.workspace_dir)
         # The first screen may already have parsed an explicit effort from a
-        # compact command such as ``Auto survey_utd deep``.  Do not rebuild
-        # the profile from its preset here: that would silently replace the
-        # user's stated value before the Rich confirmation has a chance to
-        # show it.  This screen is deliberately read-only until its answer is
-        # validated and saved below.
+        # compact command such as ``Auto survey_utd deep``. Do not rebuild the
+        # profile from its preset here: that would silently replace the user's
+        # stated value before the Rich confirmation has a chance to show it.
+        # Free-form changes below remain in memory until an explicit second
+        # confirmation, so a phrase like "两个 Proposal" is a proposal rather
+        # than immediate permission to alter durable workflow defaults.
         profile = existing_profile
         settings = profile["settings"]
-        setup_suggestions = ["确认", "standard_research deep top2", "survey_balanced standard"]
+        setup_suggestions = [
+            "确认",
+            "综述均衡覆盖、深入探索、两个 Proposal",
+            "标准研究覆盖、标准探索、一条 Proposal",
+        ]
         current_preset = str(settings.get("literature_preset") or "standard_research")
         current_t4_mode = str(settings.get("t4_mode") or "auto")
         current_proposal_tracks = str(settings.get("proposal_tracks") or "one")
         parsed_setup: tuple[str, str, str] | None = None
         feedback = ""
-        raw_setup_answer = ""
-        for attempt in range(3):
+        awaiting_change_confirmation = False
+        for _attempt in range(4):
             setup_question = (
                 "<!-- researchos_workflow_settings:"
                 + json.dumps(profile, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
                 + " -->\n"
+                + ("<!-- researchos_workflow_settings_change_confirmation -->\n" if awaiting_change_confirmation else "")
                 + (
                     "<!-- researchos_workflow_settings_feedback:"
                     + feedback
@@ -3725,19 +3732,27 @@ class AgentRunner:
                     if feedback
                     else ""
                 )
-                + "请确认项目默认执行设置。接受当前设置可输入“1”或“确认”；也可说明需要更广覆盖、更多 T4 探索，或希望分别完成两份 Proposal。"
+                + (
+                    "请确认上方未保存的修改预览。输入“1”或“确认”才会保存；也可继续描述新的修改。"
+                    if awaiting_change_confirmation
+                    else "请查看参数含义与输入示例。接受当前设置可输入“1”或“确认”；也可描述希望调整的文献覆盖、T4 探索或 Proposal 数量。"
+                )
             )
             result = await tool.execute(question=setup_question, suggestions=setup_suggestions)
             if not result.ok:
                 raise RecoverableRuntimePause(str(result.content or result.error or "未获得 Auto 启动配置"))
             data = result.data if isinstance(result.data, dict) else {}
             raw_setup_answer = str(data.get("answer") or "").strip()
-            # ``ask_human`` may return the 1-based suggestion number rather
-            # than its text. Preserve the compact first option as confirmation.
-            if raw_setup_answer.isdigit():
-                suggestion_index = int(raw_setup_answer) - 1
-                if 0 <= suggestion_index < len(setup_suggestions):
-                    raw_setup_answer = setup_suggestions[suggestion_index]
+            # The renderer presents suggestions as examples, not numbered
+            # actions. Only ``1`` has a stable semantic: accept the displayed
+            # settings. Mapping ``2`` to an example used to turn a user's
+            # ordinary numeric answer into a hidden mutation.
+            if raw_setup_answer in {"1", "[1]"}:
+                raw_setup_answer = "确认"
+
+            if is_execution_setup_confirmation_answer(raw_setup_answer):
+                parsed_setup = (current_preset, current_t4_mode, current_proposal_tracks)
+                break
 
             normalized_answer = " ".join(raw_setup_answer.casefold().split())
             status_question = any(
@@ -3761,7 +3776,41 @@ class AgentRunner:
                     current_proposal_tracks=current_proposal_tracks,
                 )
             if parsed_setup is not None:
-                break
+                proposed_preset, proposed_t4_mode, proposed_proposal_tracks = parsed_setup
+                previous_values = (current_preset, current_t4_mode, current_proposal_tracks)
+                current_preset = proposed_preset
+                current_t4_mode = proposed_t4_mode
+                current_proposal_tracks = proposed_proposal_tracks
+                preview_settings = dict(settings)
+                preview_settings.update(
+                    {
+                        "literature_preset": current_preset,
+                        "t4_mode": current_t4_mode,
+                        "proposal_tracks": current_proposal_tracks,
+                    }
+                )
+                profile = {**profile, "settings": preview_settings}
+                settings = preview_settings
+                changed_labels = [
+                    label
+                    for label, before, after in (
+                        ("文献覆盖", previous_values[0], current_preset),
+                        ("T4 探索", previous_values[1], current_t4_mode),
+                        ("Proposal 数量", previous_values[2], current_proposal_tracks),
+                    )
+                    if before != after
+                ]
+                awaiting_change_confirmation = bool(changed_labels) or awaiting_change_confirmation
+                parsed_setup = None
+                if changed_labels:
+                    feedback = (
+                        "已按你的描述生成未保存的修改预览："
+                        + "、".join(changed_labels)
+                        + " 已更新。请检查上方设置后输入“1”或“确认”保存；继续描述可再次调整。"
+                    )
+                else:
+                    feedback = "你的描述与当前预览相同；当前预览仍未保存。请输入“1”或“确认”，或继续描述修改。"
+                continue
 
             is_auto = str(profile.get("mode") or "").casefold() == "auto"
             survey_policy = str(settings.get("survey_policy") or "")
@@ -3779,11 +3828,15 @@ class AgentRunner:
                 f"当前已选择：{'Auto' if is_auto else 'Copilot'} · {survey_label} · {orientation_label}。"
                 "本页只确认文献覆盖、T4 探索和 Proposal 数量；不会改变刚才选择的综述/研究模式。"
                 + (f" {llm_feedback}" if llm_feedback else "")
-                + "如保持当前设置，请输入“1”或“确认”。"
+                + (
+                    "当前预览尚未保存；如接受它，请输入“1”或“确认”。"
+                    if awaiting_change_confirmation
+                    else "如保持当前设置，请输入“1”或“确认”。"
+                )
             )
         if parsed_setup is None:
             raise RecoverableRuntimePause(
-                f"{feedback or '未识别默认执行设置。'} 请在恢复后输入“1”/“确认”，或如 survey_balanced deep top2，也可以用一句话说明希望怎样调整。"
+                f"{feedback or '未识别默认执行设置。'} 请在恢复后输入“1”/“确认”，或如“综述均衡覆盖、深入探索、两个 Proposal”说明希望怎样调整。"
             )
         literature_preset, configured_t4_mode, configured_proposal_tracks = parsed_setup
         profile = configure_workflow_mode(

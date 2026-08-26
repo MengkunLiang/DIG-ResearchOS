@@ -92,6 +92,7 @@ _LITERATURE_PRESET_SUMMARIES = {
 # never carry a hidden CCF/CS or UTD/IS answer into the T4 pre-run Gate.
 _COPILOT_PENDING_ORIENTATION = "pending_user"
 _COPILOT_PRESET = "copilot"
+_EXECUTION_SETUP_CONFIRMATIONS = {"1", "[1]", "confirm", "确认", "确认默认", "确认保存", "默认", "保存", "yes", "是"}
 
 
 def _copilot_settings() -> dict[str, str]:
@@ -385,6 +386,18 @@ def workflow_auto_setup_needs_confirmation(workspace: Path) -> bool:
     return profile.get("mode") == "auto" and workflow_startup_setup_needs_confirmation(workspace)
 
 
+def is_execution_setup_confirmation_answer(answer: str) -> bool:
+    """Return whether the user explicitly approves the displayed setup.
+
+    Free-form parsing can propose a valid configuration, but it must not be
+    confused with permission to write that proposal.  T1 uses this predicate
+    to require one final confirmation after every actual default change.
+    """
+
+    normalized = " ".join(str(answer or "").strip().casefold().split())
+    return normalized in _EXECUTION_SETUP_CONFIRMATIONS
+
+
 def parse_workflow_mode_answer(answer: str) -> tuple[str, str, str | None] | None:
     """Parse the numbered T1 workflow-mode menu before an LLM fallback.
 
@@ -469,7 +482,7 @@ def parse_auto_execution_setup_answer(
     """
 
     normalized = " ".join(str(answer or "").strip().casefold().split())
-    if normalized in {"1", "[1]", "confirm", "确认", "确认默认", "默认", "yes", "是"}:
+    if is_execution_setup_confirmation_answer(normalized):
         return current_preset, current_t4_mode, current_proposal_tracks
     if not normalized:
         return None

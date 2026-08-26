@@ -166,6 +166,49 @@ def workflow_settings_panel(
     return Panel(Group(*body), title=title, border_style=border_style, expand=True)
 
 
+def workflow_execution_setup_guide_panel() -> Panel:
+    """Explain the editable T1 defaults before asking for a free-form reply.
+
+    The compact settings table intentionally prioritizes the selected values.
+    This companion view restores the operational meaning and directly usable
+    examples, so a researcher does not have to infer what ``80 / 40 / 40`` or
+    ``top2`` changes from an internal preset name.
+    """
+
+    table = Table(
+        box=box.SIMPLE_HEAVY,
+        show_header=True,
+        show_lines=True,
+        header_style="bold cyan",
+        pad_edge=False,
+        expand=True,
+    )
+    table.add_column("参数", style="bold cyan", width=13)
+    table.add_column("实际含义", min_width=32, overflow="fold")
+    table.add_column("可直接输入", min_width=25, overflow="fold")
+    table.add_row(
+        "文献覆盖",
+        "三元组依次为：保留候选 / T3 精读 / 摘要级轻读。强覆盖会增加检索、阅读时间和模型成本。",
+        "“标准研究覆盖”\n“综述均衡覆盖”\n“全面综述覆盖”",
+    )
+    table.add_row(
+        "T4 探索",
+        "控制 Candidate 形成与演化的探索力度；auto 根据证据质量与候选多样性决定，不改变研究范围。",
+        "“快速探索”\n“标准探索”\n“深入探索”",
+    )
+    table.add_row(
+        "Proposal",
+        "一条：只正式化排序最高的 Candidate。两条：前两条分别形成独立 Proposal，之后再明确选择一条进入 T5。",
+        "“一条 Proposal”\n“两个 Proposal”",
+    )
+    note = Text(
+        "输入“1”或“确认”接受当前显示的设置。提出修改后，系统会先展示未保存预览，必须再次确认才会生效。",
+        style="dim",
+        overflow="fold",
+    )
+    return Panel(Group(table, note), title="参数含义与输入示例", border_style="bright_cyan", expand=True)
+
+
 def workflow_mode_selector_panel() -> Panel:
     """Return the first-run mode selector without a long Markdown tutorial."""
 
