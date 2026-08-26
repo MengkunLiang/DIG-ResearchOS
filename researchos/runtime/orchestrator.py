@@ -141,7 +141,12 @@ from ..orchestration.t5_t8_bridge import (
     accept_and_ingest_t5_handoff,
     validate_t8_ingest_artifacts,
 )
-from ..tools.human_gate import HumanInputUnavailable, HumanInterface
+from ..tools.human_gate import (
+    CLIHumanInterface,
+    HumanInputUnavailable,
+    HumanInterface,
+    has_specialized_cli_question_presentation,
+)
 from ..tools.paper_save_tools import SavePapersRawTool
 from ..tools.registry import ToolBuildContext, ToolRegistry
 from .agent_params import get_agent_mode_params, get_budget_escalation_policy, get_global_timeout, get_retry_policy
@@ -1782,17 +1787,34 @@ class AgentRunner:
                 empty_count = 0
                 messages.append(assistant_msg)
 
-                # 输出 Agent 的文本回复（如果有）。普通状态说明默认只在 verbose 显示；
-                # 但同一轮如果要 ask_human，正文通常包含用户必须看到的草案、
-                # 候选清单或决策上下文，不能被简洁模式吞掉。
-                if assistant_msg.content and assistant_msg.content.strip():
-                    self.progress.agent_markdown(
-                        task_id=ctx.task_id,
-                        agent=self.agent.spec.name,
-                        content=assistant_msg.content,
-                        human_action_context=any(tc.name == "ask_human" for tc in assistant_msg.tool_calls),
-                        verbose_only=not any(tc.name == "ask_human" for tc in assistant_msg.tool_calls),
+                # A human question must be complete before choosing its
+                # presentation.  For the narrow set of stable CLI decision
+                # pages, the purpose-built Rich renderer then becomes the one
+                # visible surface instead of duplicating model Markdown.
+                self._ensure_ask_human_questions_are_self_contained(assistant_msg)
+                has_specialized_cli_gate = (
+                    isinstance(self.human, CLIHumanInterface)
+                    and any(
+                        has_specialized_cli_question_presentation(
+                            str(tool_call.arguments.get("question") or "")
+                        )
+                        for tool_call in assistant_msg.tool_calls
+                        if tool_call.name == "ask_human"
                     )
+                )
+
+                # 普通状态说明默认只在 verbose 显示；同一轮 ask_human 的正文
+                # 也仍会显示，除非 CLI 已有完整、确定性的专用决策视图。原始正文
+                # 仍会保存在 trace，且专用视图读取的是同一份持久化 question。
+                if assistant_msg.content and assistant_msg.content.strip():
+                    if not has_specialized_cli_gate:
+                        self.progress.agent_markdown(
+                            task_id=ctx.task_id,
+                            agent=self.agent.spec.name,
+                            content=assistant_msg.content,
+                            human_action_context=any(tc.name == "ask_human" for tc in assistant_msg.tool_calls),
+                            verbose_only=not any(tc.name == "ask_human" for tc in assistant_msg.tool_calls),
+                        )
 
                 post_tool_runtime_notes: list[Message] = []
                 # 如果模型在文本里向用户提问/要求选择，但没有显式调用 ask_human，
@@ -1849,7 +1871,6 @@ class AgentRunner:
                         continue
 
                 nudge_count = 0
-                self._ensure_ask_human_questions_are_self_contained(assistant_msg)
                 if any(tc.name == "ask_human" for tc in assistant_msg.tool_calls):
                     ask_call = next(tc for tc in assistant_msg.tool_calls if tc.name == "ask_human")
                     blocked_tools = [tc.name for tc in assistant_msg.tool_calls if tc.name != "ask_human"]

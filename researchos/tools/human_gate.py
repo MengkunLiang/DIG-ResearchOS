@@ -76,6 +76,25 @@ def _multiline_editing_instruction() -> str:
     return "当前行可按 Ctrl+U 清空；若已换行，单独输入 CLEAR（或“重输”）可清空整段后重新输入"
 
 
+def has_specialized_cli_question_presentation(question: str) -> bool:
+    """Return whether the CLI owns a deterministic presentation for a question.
+
+    The source text is retained in the trace and the resumable human receipt.
+    Rendering it immediately before an equivalent purpose-built Rich view,
+    however, makes one decision appear twice and exposes the model's Markdown
+    rather than the intended interaction surface.  Keep the predicate narrow
+    so ordinary agent questions still use the normal progress presentation.
+    """
+
+    normalized = str(question or "")
+    return (
+        "T1 文献范围与跨域探索确认" in normalized
+        or "<!-- researchos_workflow_mode_selector -->" in normalized
+        or "<!-- researchos_workflow_ccf_template_selector -->" in normalized
+        or "<!-- researchos_workflow_settings:" in normalized
+    )
+
+
 def _clarification_reference_answers(question: str, suggestions: list[str] | None) -> list[str]:
     """Return three useful, editable answer examples for ordinary text gates.
 
@@ -1234,6 +1253,14 @@ class CLIHumanInterface(HumanInterface):
             return None
 
         intro = question[: recognized[0][0].start()].strip()
+        # The T1 title is already the enclosing Panel title.  Keeping the
+        # model's optional Markdown heading in the body wastes a line and
+        # makes the same title look like duplicated agent output.
+        intro = re.sub(
+            r"(?im)^\s*(?:#{1,6}\s*)?(?:\*\*)?T1\s+文献范围与跨域探索确认(?:\*\*)?\s*$",
+            "",
+            intro,
+        ).strip()
         sections: list[tuple[str, str]] = []
         for index, (match, kind) in enumerate(recognized):
             end = recognized[index + 1][0].start() if index + 1 < len(recognized) else len(question)
@@ -1375,7 +1402,10 @@ class CLIHumanInterface(HumanInterface):
         blocks: list[Any] = []
         for record in records:
             grid = Table.grid(expand=True, padding=(0, 1))
-            grid.add_column(style="bold", width=14, no_wrap=True)
+            # These are stable field labels, not variable content.  Give the
+            # longest bilingual label enough fixed space so narrow terminal
+            # rendering never turns it into an ellipsis.
+            grid.add_column(style="bold", width=18, no_wrap=True)
             grid.add_column(ratio=1, overflow="fold")
             grid.add_row("定位 / Role", record["role"])
             grid.add_row("作用 / Why", record["rationale"])
