@@ -171,7 +171,8 @@ def configure_workflow_mode(
         "preset": selected_preset,
         "settings": settings,
         "authorization_boundary": (
-            "Auto may resolve preconfigured coverage, survey, T4 run, top-ranked Candidate, and writing-style Gates. "
+            "Auto may resolve preconfigured coverage, survey, T4 run, top-ranked Candidate, and UTD/IS writing-style Gates. "
+            "It never selects an unresolved CCF/CS conference template. "
             "It never auto-resolves recovery, failed novelty, external side-effect, or changed-research-scope Gates."
             if normalized_mode == "auto"
             else "Copilot records future Gate recommendations only. Every research Gate remains a human decision; "
@@ -245,7 +246,13 @@ def workflow_auto_setup_needs_confirmation(workspace: Path) -> bool:
 
 
 def parse_workflow_mode_answer(answer: str) -> tuple[str, str, str | None] | None:
-    """Parse the small, explicit T1 workflow-mode menu without an LLM."""
+    """Parse the numbered T1 workflow-mode menu before an LLM fallback.
+
+    Numbers are first-class inputs because this decision is presented as a
+    compact terminal menu.  Keep the same mapping visible in the Rich panel
+    and in this parser so a researcher never needs to reconstruct a wrapped
+    command such as ``Auto survey_ccf`` from a narrow terminal table.
+    """
 
     normalized = " ".join(str(answer or "").strip().casefold().split())
     if not normalized:
@@ -256,6 +263,14 @@ def parse_workflow_mode_answer(answer: str) -> tuple[str, str, str | None] | Non
         return "auto", "research_ccf", None
     if normalized in {"3", "[3]"}:
         return "auto", "research_utd", None
+    if normalized in {"4", "[4]"}:
+        return "auto", "survey_ccf", None
+    if normalized in {"5", "[5]"}:
+        return "auto", "survey_utd", None
+    if normalized in {"6", "[6]"}:
+        return "auto", "survey_exhaustive_utd", None
+    if normalized in AUTO_PRESETS:
+        return "auto", normalized, None
     if "auto" not in normalized and "自动" not in normalized:
         return None
 
@@ -532,20 +547,21 @@ def automatic_gate_result(
             "option_id": "yes_targeted_retrieval" if survey_policy == "write_with_supplement" else "no",
             "captured": {},
         },
-        "t36_template_gate": {
-            "option_id": "utd_informs" if style == "is" else "basic_en",
-            "captured": {},
-        },
         "t36_corpus_gate": {
             "option_id": "complete",
             "captured": {"supplement_target_papers": "8", "supplement_focus": "taxonomy coverage gaps"},
         },
         "t36_post_survey_gate": {"option_id": "continue_to_t4", "captured": {}},
-        "t8_style_template_gate": {
-            "option_id": "is_informs" if style == "is" else "basic_en",
-            "captured": {},
-        },
     }
+    if style == "is":
+        # UTD/IS has a single supported default: the bundled INFORMS package.
+        decisions["t36_template_gate"] = {"option_id": "utd_informs", "captured": {}}
+        decisions["t8_style_template_gate"] = {"option_id": "is_informs", "captured": {}}
+    elif style == "ccf_a":
+        # CCF/CS is a publication orientation, not a concrete venue. Never
+        # disguise that unresolved choice as a basic English template. The
+        # two-level T3.6/T8 template Gates must ask for a real conference.
+        pass
     if lead_candidate_id:
         selected_ids = portfolio_candidate_ids[:2] if proposal_tracks == "top2" and len(portfolio_candidate_ids) >= 2 else [lead_candidate_id]
         action = "select_multiple" if len(selected_ids) > 1 else "select_candidate"

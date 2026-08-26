@@ -135,7 +135,7 @@ _T4_LLM_DIRECTIVE_FIELDS = {
 }
 
 _WORKFLOW_MODE_LLM_FIELDS = {"mode", "preset", "t4_mode"}
-_WORKFLOW_SETUP_LLM_FIELDS = {"literature_preset", "t4_mode", "proposal_tracks"}
+_WORKFLOW_SETUP_LLM_FIELDS = {"literature_preset", "t4_mode", "proposal_tracks", "clarification"}
 
 
 # The T2 decision surfaces are scan-oriented three-line tables: a strong
@@ -489,7 +489,13 @@ def _sanitize_workflow_llm_capture(value: Any, *, allowed_fields: set[str]) -> d
     for key in allowed_fields:
         item = value.get(key)
         if isinstance(item, str) and item.strip():
-            result[key] = _strip_terminal_control_sequences(item).strip()
+            cleaned = _strip_terminal_control_sequences(item).strip()
+            if key == "clarification":
+                # This is terminal-facing explanatory text, never a setting.
+                # Keep a malformed provider response from expanding a small
+                # confirmation panel into an unbounded transcript.
+                cleaned = " ".join(cleaned.split()).replace("-->", "")[:480]
+            result[key] = cleaned
     return result
 
 
@@ -654,11 +660,11 @@ def build_workflow_setup_llm_interpreter(
 
     async def interpret(raw_answer: str) -> dict[str, str]:
         prompt = """Parse one user's ResearchOS default execution-setting request. Return exactly one JSON object and no Markdown.
-Allowed keys: literature_preset, t4_mode, proposal_tracks.
+Allowed keys: literature_preset, t4_mode, proposal_tracks, clarification.
 Allowed literature_preset values: standard_research, survey_balanced, survey_exhaustive.
 Allowed t4_mode values: auto, quick, standard, deep.
 Allowed proposal_tracks values: one, top2.
-Map phrases such as "write two separate proposals" to top2. Do not infer omitted settings and do not introduce numeric search limits, research claims, venue rules, or execution actions.
+Map phrases such as "write two separate proposals" to top2. If the user is asking what the current page means rather than requesting a setting change, return only a short Chinese `clarification`; do not infer a setting change. Do not infer omitted settings and do not introduce numeric search limits, research claims, venue rules, or execution actions.
 User input:
 """ + _strip_terminal_control_sequences(raw_answer)
         response = await llm_client.chat(
@@ -1562,6 +1568,7 @@ class CLIHumanInterface(HumanInterface):
 
         mode_marker = "<!-- researchos_workflow_mode_selector -->"
         settings_match = re.search(r"<!-- researchos_workflow_settings:(\{.*?\}) -->", question, re.DOTALL)
+        feedback_match = re.search(r"<!-- researchos_workflow_settings_feedback:(.*?) -->", question, re.DOTALL)
         if mode_marker not in question and settings_match is None:
             return False
         width = max(80, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
@@ -1603,10 +1610,20 @@ class CLIHumanInterface(HumanInterface):
                     ),
                 )
             )
+            feedback = " ".join((feedback_match.group(1) if feedback_match is not None else "").split())
+            if feedback:
+                console.print(
+                    Panel(
+                        Text(feedback, overflow="fold"),
+                        title="当前说明",
+                        border_style="bright_yellow",
+                        expand=True,
+                    )
+                )
             console.print(
                 Panel(
                     Text(
-                        "接受当前设置请输入“确认”。也可直接描述修改，例如“覆盖更广、深入探索、分别做两份 Proposal”。"
+                        "输入“1”或“确认”接受当前设置。也可直接描述修改，例如“覆盖更广、深入探索、分别做两份 Proposal”。"
                     ),
                     title="如何回答",
                     border_style="bright_yellow",

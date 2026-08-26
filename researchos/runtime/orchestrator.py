@@ -3647,7 +3647,14 @@ class AgentRunner:
             )
             result = await tool.execute(
                 question=question,
-                suggestions=["Copilot", "Auto research_ccf", "Auto research_utd"],
+                suggestions=[
+                    "1 · Copilot",
+                    "2 · Auto research_ccf",
+                    "3 · Auto research_utd",
+                    "4 · Auto survey_ccf",
+                    "5 · Auto survey_utd",
+                    "6 · Auto survey_exhaustive_utd",
+                ],
             )
             if not result.ok:
                 raise RecoverableRuntimePause(str(result.content or result.error or "未获得工作模式选择"))
@@ -3696,51 +3703,84 @@ class AgentRunner:
         # validated and saved below.
         profile = existing_profile
         settings = profile["settings"]
-        setup_question = (
-            "<!-- researchos_workflow_settings:"
-            + json.dumps(profile, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            + " -->\n"
-            + "请确认项目默认执行设置。接受当前设置可输入“确认”；也可说明需要更广覆盖、更多 T4 探索，或希望分别完成两份 Proposal。"
-        )
         setup_suggestions = ["确认", "standard_research deep top2", "survey_balanced standard"]
-        result = await tool.execute(
-            question=setup_question,
-            suggestions=setup_suggestions,
-        )
-        if not result.ok:
-            raise RecoverableRuntimePause(str(result.content or result.error or "未获得 Auto 启动配置"))
-        data = result.data if isinstance(result.data, dict) else {}
-        raw_setup_answer = str(data.get("answer") or "").strip()
-        # ``ask_human`` may return the 1-based suggestion number rather than
-        # the suggestion text.  Without this normalization, selecting the
-        # second displayed example (``standard_research deep top2``) was
-        # silently treated as an unrecognized free-form answer and the
-        # default ``one`` Proposal track setting survived.
-        if raw_setup_answer.isdigit():
-            suggestion_index = int(raw_setup_answer) - 1
-            if 0 <= suggestion_index < len(setup_suggestions):
-                raw_setup_answer = setup_suggestions[suggestion_index]
         current_preset = str(settings.get("literature_preset") or "standard_research")
         current_t4_mode = str(settings.get("t4_mode") or "auto")
         current_proposal_tracks = str(settings.get("proposal_tracks") or "one")
-        parsed_setup = parse_auto_execution_setup_answer(
-            raw_setup_answer,
-            current_preset=current_preset,
-            current_t4_mode=current_t4_mode,
-            current_proposal_tracks=current_proposal_tracks,
-        )
-        if parsed_setup is None:
+        parsed_setup: tuple[str, str, str] | None = None
+        feedback = ""
+        raw_setup_answer = ""
+        for attempt in range(3):
+            setup_question = (
+                "<!-- researchos_workflow_settings:"
+                + json.dumps(profile, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                + " -->\n"
+                + (
+                    "<!-- researchos_workflow_settings_feedback:"
+                    + feedback
+                    + " -->\n"
+                    if feedback
+                    else ""
+                )
+                + "请确认项目默认执行设置。接受当前设置可输入“1”或“确认”；也可说明需要更广覆盖、更多 T4 探索，或希望分别完成两份 Proposal。"
+            )
+            result = await tool.execute(question=setup_question, suggestions=setup_suggestions)
+            if not result.ok:
+                raise RecoverableRuntimePause(str(result.content or result.error or "未获得 Auto 启动配置"))
+            data = result.data if isinstance(result.data, dict) else {}
+            raw_setup_answer = str(data.get("answer") or "").strip()
+            # ``ask_human`` may return the 1-based suggestion number rather
+            # than its text. Preserve the compact first option as confirmation.
+            if raw_setup_answer.isdigit():
+                suggestion_index = int(raw_setup_answer) - 1
+                if 0 <= suggestion_index < len(setup_suggestions):
+                    raw_setup_answer = setup_suggestions[suggestion_index]
+
+            normalized_answer = " ".join(raw_setup_answer.casefold().split())
+            status_question = any(
+                marker in normalized_answer
+                for marker in ("我选", "当前", "是不是", "为什么", "咋", "怎么")
+            )
+            if not status_question:
+                parsed_setup = parse_auto_execution_setup_answer(
+                    raw_setup_answer,
+                    current_preset=current_preset,
+                    current_t4_mode=current_t4_mode,
+                    current_proposal_tracks=current_proposal_tracks,
+                )
             interpreter = getattr(getattr(tool, "human", None), "interpret_workflow_setup", None)
-            proposal = await interpreter(raw_setup_answer) if callable(interpreter) else {}
-            parsed_setup = parse_execution_setup_proposal(
-                proposal,
-                current_preset=current_preset,
-                current_t4_mode=current_t4_mode,
-                current_proposal_tracks=current_proposal_tracks,
+            proposal = await interpreter(raw_setup_answer) if parsed_setup is None and callable(interpreter) else {}
+            if parsed_setup is None and not status_question:
+                parsed_setup = parse_execution_setup_proposal(
+                    proposal,
+                    current_preset=current_preset,
+                    current_t4_mode=current_t4_mode,
+                    current_proposal_tracks=current_proposal_tracks,
+                )
+            if parsed_setup is not None:
+                break
+
+            is_auto = str(profile.get("mode") or "").casefold() == "auto"
+            survey_policy = str(settings.get("survey_policy") or "")
+            survey_label = (
+                "自动综述"
+                if survey_policy == "write_with_supplement"
+                else "研究论文"
+                if survey_policy == "skip"
+                else "综述支线将在后续单独确认"
+            )
+            orientation = str(settings.get("publication_orientation") or "")
+            orientation_label = "CCF/CS" if orientation == "ccf_cs" else "UTD/IS" if orientation == "utd_is" else "T4 前由你确认"
+            llm_feedback = str(proposal.get("clarification") or "").strip() if isinstance(proposal, dict) else ""
+            feedback = (
+                f"当前已选择：{'Auto' if is_auto else 'Copilot'} · {survey_label} · {orientation_label}。"
+                "本页只确认文献覆盖、T4 探索和 Proposal 数量；不会改变刚才选择的综述/研究模式。"
+                + (f" {llm_feedback}" if llm_feedback else "")
+                + "如保持当前设置，请输入“1”或“确认”。"
             )
         if parsed_setup is None:
             raise RecoverableRuntimePause(
-                "未识别默认执行设置。请在恢复后输入确认，或如 survey_balanced deep top2，也可以用一句话说明希望怎样调整。"
+                f"{feedback or '未识别默认执行设置。'} 请在恢复后输入“1”/“确认”，或如 survey_balanced deep top2，也可以用一句话说明希望怎样调整。"
             )
         literature_preset, configured_t4_mode, configured_proposal_tracks = parsed_setup
         profile = configure_workflow_mode(

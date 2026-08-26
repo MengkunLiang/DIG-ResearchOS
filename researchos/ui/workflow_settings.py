@@ -37,6 +37,22 @@ _ORIENTATION_LABELS = {
 }
 
 
+def _template_expectation(settings: dict[str, Any]) -> str:
+    """Describe the next template decision without inventing a venue.
+
+    A CCF/CS orientation cannot select a concrete conference package safely.
+    Showing that pending decision at startup prevents an Auto profile from
+    looking like it has already selected a valid LaTeX template.
+    """
+
+    orientation = str(settings.get("publication_orientation") or "").strip()
+    if orientation == "ccf_cs":
+        return "写作前选择具体 CCF/CS 会议模板（不默认基础英文）"
+    if orientation == "utd_is":
+        return "INFORMS ISRE 2024（UTD/IS 默认）"
+    return "在对应写作 Gate 选择"
+
+
 def _settings(profile: dict[str, Any] | None) -> dict[str, Any]:
     value = profile.get("settings") if isinstance(profile, dict) else None
     return value if isinstance(value, dict) else {}
@@ -109,6 +125,11 @@ def workflow_settings_panel(
             ),
         ),
         (
+            "LaTeX 模板",
+            _template_expectation(settings),
+            _template_expectation(previous_settings),
+        ),
+        (
             "综述支线",
             "默认写作并可定向补检"
             if settings.get("survey_policy") == "write_with_supplement"
@@ -156,16 +177,17 @@ def workflow_mode_selector_panel() -> Panel:
         pad_edge=False,
         expand=True,
     )
-    table.add_column("输入", justify="right", width=8, style="bold yellow")
-    table.add_column("方式", min_width=22, overflow="fold")
+    table.add_column("选择", justify="right", width=8, style="bold yellow")
+    table.add_column("运行方式", min_width=27, overflow="fold")
     table.add_column("后续行为", overflow="fold")
-    table.add_row("Copilot", "协作模式", "每个研究关键 Gate 都由你确认；不默认选择 CCF/CS 或 UTD/IS。")
-    table.add_row("Auto research_ccf", "自动研究 · CCF/CS", "默认研究论文覆盖与 CCF/CS 取向；常规 Gate 可自动通过。")
-    table.add_row("Auto research_utd", "自动研究 · UTD/IS", "默认研究论文覆盖与 UTD/IS 取向；常规 Gate 可自动通过。")
-    table.add_row("Auto survey_ccf", "自动综述 · CCF/CS", "默认综述均衡覆盖，并进入 Survey 支线。")
-    table.add_row("Auto survey_utd", "自动综述 · UTD/IS", "默认综述均衡覆盖，并进入 Survey 支线。")
+    table.add_row("1", "Copilot · 协作", "每个研究关键 Gate 都由你确认；不默认选择 CCF/CS 或 UTD/IS。")
+    table.add_row("2", "Auto · 研究 · CCF/CS", "默认研究论文覆盖与 CCF/CS 取向；常规 Gate 可自动通过。")
+    table.add_row("3", "Auto · 研究 · UTD/IS", "默认研究论文覆盖与 UTD/IS 取向；常规 Gate 可自动通过。")
+    table.add_row("4", "Auto · 综述 · CCF/CS", "默认综述均衡覆盖，并进入 Survey 支线。")
+    table.add_row("5", "Auto · 综述 · UTD/IS", "默认综述均衡覆盖，并进入 Survey 支线。")
+    table.add_row("6", "Auto · 强覆盖综述 · UTD/IS", "默认综述强覆盖，并进入 Survey 支线。")
     note = Text(
-        "选择模式后还会确认文献覆盖、T4 探索力度和 Proposal 数量。模式不会替你确定研究问题、范围、失败恢复或外部执行。",
+        "输入编号即可；也兼容 Auto survey_ccf 等命令和自然语言。选择后还会确认文献覆盖、T4 探索力度和 Proposal 数量。CCF/CS 会在真正写作前要求选择具体会议模板。",
         style="dim",
         overflow="fold",
     )
