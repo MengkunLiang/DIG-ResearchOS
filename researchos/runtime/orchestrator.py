@@ -2093,6 +2093,19 @@ class AgentRunner:
                         and tool_call.name == "write_structured_file"
                     ):
                         failure_kind = str(tool_error or "")
+                        argument_repair = tool_data.get("argument_auto_repair")
+                        transport_repaired = (
+                            isinstance(argument_repair, dict)
+                            and argument_repair.get("kind") == "native_tool_json_lossless_repair"
+                        )
+                        # A losslessly closed native tool payload can still
+                        # fail schema validation because the provider stopped
+                        # before required fields.  Preserve the transport
+                        # classification in that case: it needs the malformed
+                        # call's longer retry budget, not a misleading claim
+                        # that the research contract itself was malformed.
+                        if transport_repaired and failure_kind == "schema_validation_failed":
+                            failure_kind = "parameter_validation"
                         structured_error = failure_kind in {"schema_validation_failed", "parameter_validation"}
                         path = str(tool_data.get("path") or tool_call.arguments.get("path") or "").strip()
                         schema = str(tool_data.get("schema_name") or tool_call.arguments.get("schema_name") or "").strip()
@@ -2107,6 +2120,12 @@ class AgentRunner:
                             # after two attempts before the model has seen a
                             # useful diagnosis.
                             raw_arguments = str(tool_call.arguments.get("__raw__") or "")
+                            repaired_structure = (
+                                argument_repair.get("json_structure")
+                                if isinstance(argument_repair, dict)
+                                and isinstance(argument_repair.get("json_structure"), dict)
+                                else {}
+                            )
                             signature = json.dumps(
                                 diagnostics
                                 if failure_kind == "schema_validation_failed"
@@ -2116,11 +2135,11 @@ class AgentRunner:
                                     # different byte offsets; using the length
                                     # as identity defeated the circuit breaker
                                     # and allowed an effectively infinite loop.
-                                    "json_parse_failed": bool(tool_call.arguments.get("__parse_error__")),
-                                    "open_curly": raw_arguments.count("{"),
-                                    "close_curly": raw_arguments.count("}"),
-                                    "open_square": raw_arguments.count("["),
-                                    "close_square": raw_arguments.count("]"),
+                                    "json_parse_failed": bool(tool_call.arguments.get("__parse_error__")) or transport_repaired,
+                                    "open_curly": repaired_structure.get("open_curly", raw_arguments.count("{")),
+                                    "close_curly": repaired_structure.get("close_curly", raw_arguments.count("}")),
+                                    "open_square": repaired_structure.get("open_square", raw_arguments.count("[")),
+                                    "close_square": repaired_structure.get("close_square", raw_arguments.count("]")),
                                 },
                                 ensure_ascii=False,
                                 sort_keys=True,
@@ -2149,14 +2168,19 @@ class AgentRunner:
                                     "schema_errors": diagnostics,
                                     "repeated_identical_failure_count": repeated_count,
                                     "json_structure": {
-                                        "open_curly": raw_arguments.count("{"),
-                                        "close_curly": raw_arguments.count("}"),
-                                        "open_square": raw_arguments.count("["),
-                                        "close_square": raw_arguments.count("]"),
+                                        "open_curly": repaired_structure.get("open_curly", raw_arguments.count("{")),
+                                        "close_curly": repaired_structure.get("close_curly", raw_arguments.count("}")),
+                                        "open_square": repaired_structure.get("open_square", raw_arguments.count("[")),
+                                        "close_square": repaired_structure.get("close_square", raw_arguments.count("]")),
                                     },
                                 }
+                                repeat_description = (
+                                    f"同一结构连续 {repeated_count} 次"
+                                    if failure_kind == "parameter_validation"
+                                    else "连续两次"
+                                )
                                 pause_reason = (
-                                    f"{path} 连续两次产生相同的 {failure_label}（相同结构，累计 {repeated_count} 次），runtime 已暂停以避免继续重复生成和消耗额度。"
+                                    f"{path} {repeat_description}产生相同的 {failure_label}，runtime 已暂停以避免继续重复生成和消耗额度。"
                                     "已保存此前工具结果；resume 后应依据列出的精确字段结构修复同一文件。"
                                 )
                         elif path and schema:
@@ -8148,8 +8172,15 @@ class AgentRunner:
         """
 
         arguments = dict(tc.arguments) if isinstance(tc.arguments, dict) else {}
+        native_repair = arguments.pop("__native_json_transport_repair__", None)
+        repair_metadata: dict[str, Any] = {}
+        if isinstance(native_repair, dict):
+            repair_metadata = {
+                "kind": "native_tool_json_lossless_repair",
+                **native_repair,
+            }
         if tc.name != "read_file":
-            return arguments, {}
+            return arguments, repair_metadata
 
         ignored_keys = {
             "limit",
@@ -8163,8 +8194,9 @@ class AgentRunner:
             if key in arguments
         }
         if not removed:
-            return arguments, {}
+            return arguments, repair_metadata
         return arguments, {
+            **repair_metadata,
             "kind": "read_file_legacy_size_hint_ignored",
             "removed_fields": removed,
             "reason": "read_file response size is derived from the active model context",
@@ -8419,15 +8451,18 @@ class AgentRunner:
                         "不要改用 write_file，也不要因此重写其它已通过来源。"
                     )
                     if raw_arguments and tool_arguments.get("__parse_error__"):
+                        compact_limit = 5_500
                         parameter_content += (
                             " "
                             + parse_detail
                             + "Do not try to repair this artifact in prose or by a text patch. "
                             "Do not copy the malformed raw arguments. Regenerate one complete, compact "
                             "model-authored write_structured_file call for the same source, keeping required fields "
-                            "and concise descriptions, with every closing JSON delimiter and no explanatory text "
+                            f"and concise descriptions. Keep serialized data below about {compact_limit} JSON characters "
+                            "to leave provider output room, close every JSON delimiter, and put no explanatory text "
                             "inside the tool arguments."
                         )
+                        parameter_data["recommended_data_max_json_chars"] = compact_limit
             tool_msg = Message.tool(
                 tool_call_id=tc.id,
                 name=tc.name,
@@ -9811,11 +9846,22 @@ class AgentRunner:
                 # uniquely determined delimiter before falling back to a
                 # model-authored retry.  In particular, never append missing
                 # content, infer a field value, or close a truncated object.
-                arguments = self._repair_lossless_native_tool_json(tool_call.function.arguments)
+                raw_arguments = str(tool_call.function.arguments or "")
+                arguments = self._repair_lossless_native_tool_json(raw_arguments)
                 if arguments is None:
                     arguments = {
-                        "__raw__": tool_call.function.arguments,
+                        "__raw__": raw_arguments,
                         "__parse_error__": True,
+                    }
+                else:
+                    arguments["__native_json_transport_repair__"] = {
+                        "raw_arguments_length": len(raw_arguments),
+                        "json_structure": {
+                            "open_curly": raw_arguments.count("{"),
+                            "close_curly": raw_arguments.count("}"),
+                            "open_square": raw_arguments.count("["),
+                            "close_square": raw_arguments.count("]"),
+                        },
                     }
             tool_calls.append(
                 ToolCall(id=tool_call.id, name=tool_call.function.name, arguments=arguments)
@@ -9839,10 +9885,11 @@ class AgentRunner:
         omits a `]` immediately before a matching `}` while emitting every
         field value and every object closer.  The missing bracket is uniquely
         determined by the delimiter stack, so inserting it changes no model
-        authored research content.  Truncation, missing commas, unfinished
-        strings or values, multiple missing object closers, concatenated
-        objects, and every ambiguous structure remain hard failures for the
-        model to repair.
+        authored research content.  A small terminal run of missing outer
+        object closers is equally deterministic when every scalar and array
+        is already complete.  Truncation, missing commas, unfinished strings
+        or values, concatenated objects, and every ambiguous structure remain
+        hard failures for the model to repair.
         """
 
         try:
@@ -9918,11 +9965,18 @@ class AgentRunner:
                 if not stack or stack[-1] != "[":
                     return None
                 stack.pop()
-        # A single omitted outer object closer is the only repair we can
-        # establish without guessing whether the provider also omitted a
-        # field value or nested object. Multiple missing object closers remain
-        # a model-authored repair, not a transport repair.
-        if in_string or len(stack) != 1 or stack[0] != "{":
+        # At end-of-input the stack can prove a short run of only object
+        # closers.  It is safe to append them when the final scalar/container
+        # was complete: this adds no field, string, value, array element, or
+        # research content.  Keep the run small to distinguish known provider
+        # delimiter loss from a genuinely truncated nested payload.
+        max_lossless_object_closers = 3
+        if (
+            in_string
+            or not stack
+            or len(stack) > max_lossless_object_closers
+            or any(item != "{" for item in stack)
+        ):
             return None
         if last_significant in {"", ",", ":", "{", "["}:
             return None
