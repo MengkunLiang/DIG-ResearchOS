@@ -19,9 +19,9 @@ from ..latex_templates import LatexTemplateEntry, ccf_template_entry
 
 
 _LITERATURE_LABELS = {
-    "standard_research": "研究论文覆盖 · 40 / 25 / 15",
-    "survey_balanced": "综述均衡覆盖 · 80 / 40 / 40",
-    "survey_exhaustive": "综述强覆盖 · 90 / 40 / 50",
+    "standard_research": "研究论文覆盖\n候选池 40 篇：深度阅读 25 篇；摘要浏览 15 篇",
+    "survey_balanced": "综述均衡覆盖\n候选池 80 篇：深度阅读 40 篇；摘要浏览 40 篇",
+    "survey_exhaustive": "综述强覆盖\n候选池 90 篇：深度阅读 40 篇；摘要浏览 50 篇",
 }
 
 _T4_LABELS = {
@@ -109,9 +109,17 @@ def workflow_settings_panel(
             ),
         ),
         (
-            "Proposal",
-            "前两条分别正式化后再选择" if settings.get("proposal_tracks") == "top2" else "一条 Proposal",
-            "前两条分别正式化后再选择" if previous_settings.get("proposal_tracks") == "top2" else "一条 Proposal",
+            "Proposal 产出",
+            (
+                "将评分最高的 2 个 Candidate 分别正式化为独立 Proposal，再由你选 1 个进入 T5"
+                if settings.get("proposal_tracks") == "top2"
+                else "只将评分最高的 1 个 Candidate 正式化为 Proposal；其他 Candidate 会保留，不会删除"
+            ),
+            (
+                "将评分最高的 2 个 Candidate 分别正式化为独立 Proposal，再由你选 1 个进入 T5"
+                if previous_settings.get("proposal_tracks") == "top2"
+                else "只将评分最高的 1 个 Candidate 正式化为 Proposal；其他 Candidate 会保留，不会删除"
+            ),
         ),
         (
             "论文取向",
@@ -188,7 +196,7 @@ def workflow_execution_setup_guide_panel() -> Panel:
     table.add_column("可直接输入", min_width=25, overflow="fold")
     table.add_row(
         "文献覆盖",
-        "三元组依次为：保留候选 / T3 精读 / 摘要级轻读。强覆盖会增加检索、阅读时间和模型成本。",
+        "不是三个神秘参数：先建立候选池，再分别安排深度阅读和摘要浏览。例如 40 / 25 / 15 就是候选池 40 篇，其中 25 篇深读、15 篇只读摘要。强覆盖会增加检索、阅读时间和模型成本。",
         "“标准研究覆盖”\n“综述均衡覆盖”\n“全面综述覆盖”",
     )
     table.add_row(
@@ -197,8 +205,8 @@ def workflow_execution_setup_guide_panel() -> Panel:
         "“快速探索”\n“标准探索”\n“深入探索”",
     )
     table.add_row(
-        "Proposal",
-        "一条：只正式化排序最高的 Candidate。两条：前两条分别形成独立 Proposal，之后再明确选择一条进入 T5。",
+        "Proposal 产出",
+        "一条：只把评分最高的 1 个 Candidate 写成完整 Proposal，其他 Candidate 仍保留供以后重开。两条：把前 2 个分别写成互不混合的 Proposal，完成后再由你明确选择 1 个进入 T5。",
         "“一条 Proposal”\n“两个 Proposal”",
     )
     note = Text(
