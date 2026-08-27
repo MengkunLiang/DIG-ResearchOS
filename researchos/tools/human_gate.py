@@ -1501,7 +1501,7 @@ class CLIHumanInterface(HumanInterface):
         parsed = self._t1_scope_sections(question)
         if parsed is None:
             return False
-        intro, sections, answer_help = parsed
+        _intro, sections, answer_help = parsed
         width = max(80, min(140, shutil.get_terminal_size(fallback=(120, 40)).columns))
         buffer = io.StringIO()
         console = Console(
@@ -1521,12 +1521,15 @@ class CLIHumanInterface(HumanInterface):
         definitions.add_row("邻接理论/方法线", "帮助形式化、比较或划清边界。按当前论证需要选择性检索，不会替代研究主线。")
         definitions.add_row("真正跨领域 Bridge", "来自不同问题域的可检验借鉴。可以为空；只触发有针对性的额外检索，不会自动变成核心论文。")
         definitions.add_row("重点 / 普通交叉", "重点交叉会保底做最小必要探索；普通交叉仅在能补足当前问题时检索。两者都不是强制采用的方法。")
+        # ``ask_human.question`` deliberately remains self-contained for
+        # persistence and non-CLI consumers, so it includes the same concept
+        # explanation.  The interactive renderer owns that explanation and
+        # must not print the model-authored copy before this canonical table:
+        # doing so produced a duplicated, occasionally contradictory preface.
         console.print(
             Panel(
                 Group(
-                    Markdown(intro),
-                    Text("", style="none"),
-                    Text("先理解这三类范围，再决定保留、删除或调整哪些候选。", style="bold cyan"),
+                    Text("先区分三层范围；Bridge 的探索强度见最后一行。然后再决定保留、删除或新增哪些候选。", style="bold cyan"),
                     definitions,
                 ),
                 title="T1 文献范围与跨域探索确认",
