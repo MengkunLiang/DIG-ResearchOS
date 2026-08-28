@@ -109,42 +109,24 @@ T4 如果在生成 Portfolio 之前遇到短暂模型服务中断，恢复页只
 
 ### 不用术语理解 T4.5 与 T5
 
-T4.5 的作用是把“有潜力的 Idea”变成“可执行、可证伪的研究方案”，依次经过三个检查点：
+把这两步理解成一件事即可：**T4 先提出可选方向，T4.5 把你选中的方向写成可执行的研究方案，T5 再把其中一份方案交给实验执行。** 它们都不会把假设伪装成实验结论。
 
-1. **新颖性审计**：把 Idea 与当前文献比较，找出必须对比的已有方法。
-2. **研究正式化**：建立统一研究蓝图，导出主张，映射实验计划，并写出 Proposal。
-3. **质量审阅**：检查 Proposal 是否连贯、可检验、易读，并且与结构化计划一致。
+1. **决定要写几份 Proposal。** T4 会比较 Candidate。Auto 默认只把评分最高的一条写成 Proposal，也可在启动时选“两份 Proposal”；Copilot 可在 T4 决策页选择想分别推进的方向。多选并不混合 Idea：每个方向各自完成文献对比、方案撰写和质量复核。
+2. **T4.5 把每个方向变成完整方案。** 它先检查与已有工作是否可区分、必须比较哪些 baseline，再把问题、技术设计、可检验主张和实验安排写成 Proposal，并复核论证是否连贯。写作取向会影响强调重点，但不会改变这条研究逻辑。
+3. **多个 Proposal 时，由你选择一条进入 T5。** 页面会列出 `D1`、`D2` 等别名、每条方案的核心问题和机制。按页面提示选择即可；没有选中的 Proposal 会完整保留，之后仍可回看、重开或单独实验。
+4. **T5 只准备执行，不会悄悄跑实验。** 它接收你选中的已通过方案，整理为交接包，然后请你确认已有材料或是否允许准备公开资源。即使选择自动准备资源，也只是下载、核验和配置，不会直接启动正式实验，更不会改变研究问题、核心机制、必需 baseline、benchmark 范围或主张边界。
 
-Proposal 是给研究者阅读的完整论证；蓝图和主张登记表则让后续实现保持精确。三者描述的是同一个研究方案，不是三份彼此竞争的版本。UTD、CCF-A 与 Hybrid 都遵循同一研究逻辑，只是在贡献和写作取向上权重不同。
+你通常不需要管理多个 Proposal 的文件路径。每条方案都被独立归档；根目录中只显示当前选中的活动方案并不代表其他方案被覆盖。若恢复页报告“归档溯源不一致”，不要手工复制文件：回到该 Candidate 的 T4.5 重新正式化即可，系统会阻止不同方案的内容混用。
 
-在 T4 Gate 中，Copilot 可以选择一条 Candidate 进入 Proposal，也可以选择 2–3 条“分别写多个 Proposal”。后者不会拼接 Idea：每条 Candidate 都各自完成 T4.5，并归档在 `ideation/proposal_portfolio/tracks/`。如果只有一条 Proposal，系统直接进入 T5；如果有多条已通过的 Proposal，T4.5 结束前会出现一个带有 `D1`、`D2` 等稳定别名的选择表。表格同时显示每条候选的核心问题、核心机制、父子/共享父方向关系、完整 Candidate ID、Proposal 文件路径和结构化产物完成度。父方向与其扩展方向可以分别推进，但系统会明确提示“扩展关系”，并要求扩展 Proposal 写出新增机制和新增判别实验；它们不会被当作互不相关的方向，也不会共享一份活动研究包。输入 `D1`、`D2`、完整 Candidate ID，或自然表达“第一个/第二个”“第一条/第二条”均可选择；数字 `1`、`2` 在菜单中仍表示菜单项，在随后要求输入 Candidate 时也会按表格顺序解析。其余 Proposal 会保留，方便以后回看或另开实验。
-
-并行正式化期间，`ideation/proposal/`、`hypotheses.md`、蓝图、主张、实验计划、验证/停止条件、研究 dossier 以及新颖性指纹等活动路径只表示“当前正在处理的那一条”。切换到下一条时，上一条的完整候选绑定产物会先复制到对应的 `tracks/<Candidate>/artifacts/`，再清理活动投影。因而根目录最后只看到最后一条是正常的活动投影，不代表前一条被覆盖。两条独立 Proposal 的唯一真源是 `ideation/proposal_portfolio/manifest.json` 及其 `tracks/` 子目录，而不是活动根目录。选择某条时，系统会从该条归档恢复全部候选绑定文件，避免不同 Proposal 串线；如果归档缺少必需文件，系统会回到同一个选择页并报告缺失项，不会从另一条 Proposal 借文件。
-
-每条归档还必须通过候选身份一致性检查。`selected_candidate.json`、隔离回执、研究 dossier、Proposal manifest 和正式化回执中的 `candidate_id` 与 `selection_fingerprint` 必须彼此相符；manifest 还保存 Candidate anchor、Candidate fingerprint 和活动轨迹上下文。仅仅文件齐全或 YAML/JSON 能解析，并不代表归档可信。旧版本在等待 Gate 时可能已经保存了旧的 17 项文件表，或漏存共享的 `orientation_config.yaml`；resume 会依据该条归档自己的回执安全补齐缺失文件，并重新编译确定性的 dossier/映射，不会从另一条 Proposal 借用研究内容。若发现 dossier 来自另一条 Candidate、fingerprint 过期、活动投影与当前轨迹不一致，或历史回执无法证明来源，Formalizer 会在模型调用前暂停，表格会标记“归档溯源不一致”，不会分配 D1/D2 别名，也不会让 T5 读取这条结果。系统还会拒绝两条轨迹之间的精确重复或高相似研究包。此时应从对应 Candidate 重新完成 T4.5，而不是手工把另一条 Proposal 的文件复制过来。
-
-正式化回执还会保存候选绑定文件的 SHA-256 摘要，并在交接前检查验证映射、贡献映射、研究 dossier、实验计划与 claim registry 的 ID 集合是否一致。这样即使旧文件仍能通过单文件 schema，也会在跨 Proposal 串线时被隔离。
-
-Auto 在启动设置中可以选 `one` 或 `top2`。`one` 是默认值，按排序推进一条；`top2` 会把 T4 最靠前的两条 Candidate 分别正式化，再在 T5 前请求你选择。示例：`standard_research deep top2`。这不是自动合并两个方向，也不会自动替你决定要投入实验资源的 Proposal。
-
-T5 **不会**静默替你跑实验。它先把已通过的 T4.5 方案编译为受约束的交接，再让你选择或授权外部执行器。执行器可以准备公开资源并完成已批准的工作，但不能静默修改研究问题、核心机制、必需 baseline、benchmark 范围或 claim 边界。
-
-如果 T4.5 前台提示“模型提交的结构化工具 JSON 不完整”，这表示模型到 `write_structured_file` 的一次函数调用没有完整闭合，文件尚未写入；它不是 Proposal 内容被判错，也不需要手工编辑 YAML。运行时只会恢复能由括号位置唯一确定的传输错误。其余情况会把准确的目标文件和诊断交还给模型重发同一份结构化来源，随后再继续共同契约检查。
-
-T5 的前台只展示下一步决策。若没有现成数据或代码，通常选择“我还没有现成材料”，系统只准备和审查公开资源，不会运行实验。完整 handoff、Skill 和路径仍保存于 workspace，供 `--verbose`、`trace` 或排障时查看。
-
-只有 T4.5 最后的 orientation-aware 审阅接受研究包后，终端才会显示 Rich“研究方案审计与正式化已完成”表。它会列出 proposal、正式假设、研究蓝图、实验计划、贡献/验证映射、停止条件、新颖性审计、审阅记录与正式化通过回执，并说明每个文件的角色和后续用途；T5 只消费这一已接受研究包，不需要靠记忆寻找文件。
-
-自己复核 T4.5 结果时，建议按下列顺序阅读。它们是研究计划和可反驳性契约，不是已经得到的实验结论。
+T4.5 通过后，终端会展示五个最值得阅读的入口。它们描述的是**待检验的计划**，不是已经得到的结果。
 
 | 先看什么 | 为什么重要 | T5 如何使用 |
 | --- | --- | --- |
-| `ideation/proposal/research_proposal.md` | 完整研究叙事：问题、机制、理论与现实含义、贡献、研究设计、风险和局限。 | 保留结构化控制文件背后的研究意图与边界。 |
-| `ideation/hypotheses.md` | 可反驳的中心/支持假设、前提、预期观察、竞争解释。 | 防止执行器把假设改写成已经观察到的结果。 |
-| `ideation/exp_plan.yaml` | 已规划任务、指标、必需 baseline、已知数据集/benchmark 与评价规则。 | 成为实验执行的核心约束。 |
-| `ideation/contribution_hypothesis_map.yaml` 与 `ideation/validation_map.yaml` | 每个贡献依赖哪条假设，以及什么证据能验证或反驳。 | 成为实现和 T8 写作时的 claim/evidence 边界。 |
-| `ideation/kill_criteria.yaml` | 收窄、停止或否决主张的条件。 | 保持负结果与失效路径可见。 |
-| `ideation/novelty_audit.md` | 相似工作 collision、机制差异、必需 baseline 与未解决缺口。 | 定义比较与新颖性边界，未解决缺口不会被隐藏。 |
+| `ideation/proposal/research_proposal.md` | 最适合先读：完整说明问题、方法、贡献、研究设计与风险。 | 保留研究意图与边界。 |
+| `ideation/hypotheses.md` | 说明每项假设如何被支持、反驳，以及有哪些竞争解释。 | 防止把假设误写成结果。 |
+| `ideation/research_blueprint.yaml` 与 `ideation/claim_registry.yaml` | 把 Proposal 中的研究问题、技术组件和主张转成一致的可执行约束。 | 保持实现不偏离方案。 |
+| `ideation/exp_plan.yaml` | 数据、benchmark、指标、baseline 与评价规则。 | 成为实验执行的核心约束。 |
+| `ideation/orientation_review.json` 与 `ideation/novelty_audit.md` | 最终质量结论、相似工作的区别以及必须保留的比较边界。 | 确认哪些主张可以成立、哪些仍需谨慎。 |
 
 ## Workspace 是项目事实源
 
