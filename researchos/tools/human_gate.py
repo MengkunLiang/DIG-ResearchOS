@@ -130,6 +130,16 @@ def _clarification_reference_answers(question: str, suggestions: list[str] | Non
     if not answers:
         return answers
 
+    # A two-way operational confirmation already has a complete, actionable
+    # menu.  Adding the generic "use the first answer" fallback makes the
+    # display look like three choices although only two actions exist, and it
+    # is especially misleading for standalone Skill execution confirmation.
+    normalized_suggestions = {" ".join(item.casefold().split()) for item in answers}
+    has_execute = any(any(token in item for token in ("执行", "开始", "运行", "run", "execute", "start")) for item in normalized_suggestions)
+    has_pause = any(any(token in item for token in ("暂停", "取消", "不执行", "pause", "cancel", "stop")) for item in normalized_suggestions)
+    if len(answers) == 2 and has_execute and has_pause:
+        return answers
+
     normalized_question = str(question or "").casefold()
     if any(marker in normalized_question for marker in ("确认", "confirm", "批准")):
         fallbacks = [

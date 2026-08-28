@@ -21,6 +21,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import sys
@@ -3357,12 +3358,74 @@ def _normalized_skill_answer(value: str) -> str:
     return " ".join(str(value or "").casefold().split())
 
 
+def _selected_reference_answer(value: str, suggestions: list[str]) -> str:
+    """Resolve a numbered/ordinal CLI reply to the suggestion it displayed.
+
+    The number has no intrinsic action meaning.  It is only a stable reference
+    to the first, second, and so on suggestion rendered on this particular
+    page.  Callers then interpret the returned *suggestion text* according to
+    their own domain semantics.
+    """
+
+    raw = _normalized_skill_answer(value)
+    compact = re.sub(r"[\s\[\]（）()、.。,:：;；_-]+", "", raw)
+    selected_index: int | None = None
+    numeric = re.fullmatch(r"\[?(\d+)\]?", raw)
+    if numeric:
+        selected_index = int(numeric.group(1))
+    else:
+        ordinal_aliases = {
+            "第一个": 1,
+            "第一条": 1,
+            "第一项": 1,
+            "第1个": 1,
+            "第1条": 1,
+            "第1项": 1,
+            "第二个": 2,
+            "第二条": 2,
+            "第二项": 2,
+            "第2个": 2,
+            "第2条": 2,
+            "第2项": 2,
+            "第三个": 3,
+            "第三条": 3,
+            "第三项": 3,
+            "第3个": 3,
+            "第3条": 3,
+            "第3项": 3,
+        }
+        for alias, index in ordinal_aliases.items():
+            if compact == alias or compact == f"按{alias}参考回答继续":
+                selected_index = index
+                break
+    if selected_index is None or not 1 <= selected_index <= len(suggestions):
+        return value
+    return str(suggestions[selected_index - 1])
+
+
+def _skill_confirmation_action(value: str) -> str | None:
+    """Interpret the content of a selected Skill confirmation suggestion."""
+
+    normalized = _normalized_skill_answer(value)
+    # Test pausing/negation before the positive action: ``不执行`` must never
+    # become execution merely because it contains the word ``执行``.
+    if normalized in _SKILL_PAUSE_ANSWERS or any(
+        token in normalized for token in ("暂停", "取消", "不执行", "pause", "cancel", "stop")
+    ):
+        return "pause"
+    if normalized in _SKILL_EXECUTE_ANSWERS or any(
+        token in normalized for token in ("执行", "开始", "运行", "run", "execute", "start")
+    ):
+        return "execute"
+    return None
+
+
 def _skill_user_confirms_execution(value: str) -> bool:
-    return _normalized_skill_answer(value) in _SKILL_EXECUTE_ANSWERS
+    return _skill_confirmation_action(value) == "execute"
 
 
 def _skill_user_paused(value: str) -> bool:
-    return _normalized_skill_answer(value) in _SKILL_PAUSE_ANSWERS
+    return _skill_confirmation_action(value) == "pause"
 
 
 def _skill_result_waits_for_human_input(result: AgentResult) -> bool:
@@ -3637,6 +3700,7 @@ async def run_skill_command(args: argparse.Namespace) -> int:
 
     if interactive_session and not getattr(args, "yes", False):
         confirmation_human = human or _build_human_interface(runtime_settings)
+        skill_confirmation_suggestions = ["执行当前 Skill", "暂停，稍后使用 --resume 继续"]
         record_skill_execution_confirmation_pending(
             workspace=workspace_dir,
             session_id=session_id,
@@ -3650,7 +3714,11 @@ async def run_skill_command(args: argparse.Namespace) -> int:
                         f"Skill `{skill.name}` 的初始输入已通过检查。是否现在执行？\n"
                         "输入“执行”开始；输入“暂停”只保留已整理的材料和会话。"
                     ),
-                    suggestions=["执行当前 Skill", "暂停，稍后使用 --resume 继续"],
+                    suggestions=skill_confirmation_suggestions,
+                )
+                decision = _selected_reference_answer(
+                    decision,
+                    skill_confirmation_suggestions,
                 )
                 if _skill_user_confirms_execution(decision):
                     break
