@@ -53,9 +53,9 @@ python -m researchos.cli init-workspace --workspace ./workspace/my-survey \
 
 | 预设 | 面向的产出 | 文献设置 |
 | --- | --- | --- |
-| `research_ccf` / `research_utd` | 研究论文 | 40 篇候选、25 篇精读、15 篇摘要轻读。 |
-| `survey_ccf` / `survey_utd` | 领域综述 | 80 篇候选、40 篇精读、40 篇摘要轻读。 |
-| `survey_exhaustive_utd` | 覆盖更广的 UTD/IS 综述 | 90 篇候选、40 篇精读、50 篇摘要轻读。 |
+| `research_ccf` / `research_utd` | 研究论文 | 候选池 40 篇，其中深度阅读 25 篇、摘要浏览 15 篇。 |
+| `survey_ccf` / `survey_utd` | 领域综述 | 候选池 80 篇，其中深度阅读 40 篇、摘要浏览 40 篇。 |
+| `survey_exhaustive_utd` | 覆盖更广的 UTD/IS 综述 | 候选池 90 篇，其中深度阅读 40 篇、摘要浏览 50 篇。 |
 
 若你希望在运行时逐项查看和调整这些设置，应选择 Copilot。Copilot 只是人工控制模式，不等于默认 CCF/CS；投稿取向会在 T4 前单独询问，可选择 CCF/CS、UTD/IS、Hybrid 或自定义说明。
 
@@ -67,7 +67,7 @@ python -m researchos.cli init-workspace --workspace ./workspace/my-survey \
 | 继续已有项目 | `resume --workspace <目录>` | 从保存的状态继续。 |
 | 看看现在该做什么 | `status --workspace <目录>` | 显示当前阶段、等待你的选择和下一条安全命令。 |
 
-终端出现 **Gate** 时，表示系统正在等待一个可能影响研究方向、证据边界或外部执行的选择；它不是报错页。按照编号选择即可。多行输入始终可用单独一行 `END` 提交；POSIX 使用 `Ctrl+D`，Windows 使用 `Ctrl+Z` 后按 Enter。
+终端出现 **Gate** 时，表示系统正在等待一个可能影响研究方向、证据边界或外部执行的选择；它不是报错页。按页面的选项或参考回答作答即可。多行输入始终可用单独一行 `END` 提交；POSIX 使用 `Ctrl+D`，Windows 使用 `Ctrl+Z` 后按 Enter。
 
 ## 已有 Workspace 时如何选择命令
 
@@ -98,7 +98,7 @@ python -m researchos.cli init-workspace --workspace ./workspace/my-survey \
 | T3.5 综合 | 把文献整理成机制、方法差异、张力和研究缺口。 | 决定是否进入可选综述分支。 | `literature/synthesis.md` |
 | T3.6 可选综述 | 在当前证据足够时撰写领域综述；不做综述时会跳过。 | 选择跳过、使用当前语料库，或先做一次定向补检。 | `drafts/survey/` |
 | T4 研究方向 | 生成、比较和演化多个可选研究方向。 | 选择推进、优化、再探索，或只查看 Candidate。 | `ideation/` 下的 Candidate Card、评分、证据和谱系 |
-| T4.5 研究方案 | 检查新颖性，把选定 Idea 变成可检验的 Proposal，再做质量审阅。 | 仅在新颖性审计未通过时需要你复核。 | `ideation/` 下的 Proposal、假设、实验计划与审阅记录。 |
+| T4.5 研究方案 | 检查新颖性，把选定 Idea 变成可检验的 Proposal，再做质量审阅。 | 多份 Proposal 时选择进入 T5 的一份；或在审计、质量和恢复问题需要判断时复核。 | `ideation/` 下的 Proposal、假设、实验计划与审阅记录。 |
 | T5 外部执行准备 | 把 T4.5 的正式研究包变成外部执行器不能擅自改写的交接。 | 明确仍影响研究边界的设置；可放置已有资源，或让执行器自动准备公开资源。 | `external_executor/handoff_pack.json`、`resources/` |
 | T8 写作 | 用已经核验的实验事实写作、审稿和修订。 | 选择写作风格或模板。 | `drafts/`、实验 claim/evidence 文件 |
 | T9 投稿 | 审阅、真实编译并生成提交包。 | 只在环境或编译恢复时处理问题。 | `submission/`、最终 PDF 与编译报告 |
@@ -398,7 +398,7 @@ python -m researchos.cli run-skill pdf-note-card --workspace ./workspace/project
 python -m researchos.cli skill-status --workspace ./workspace/project-a
 ```
 
-交互式 `run-skill` 的生命周期是：**任务说明 -> 输入检查 -> 缺失材料 intake -> 显式“执行”确认 -> 写入声明输出 -> `skill-status` 可恢复检查**。缺少必需输入时，系统只会写入 `user_inputs/<skill>/` 和 session 记录，不会伪造论文、实验、引用或完成状态。`--non-interactive` 适用于脚本：缺输入时保存 `WAITING_INPUT`，不创建 provider client；随后补材料后以相同 `--session-id ... --resume` 恢复。
+交互式 `run-skill` 的生命周期是：**任务说明 -> 输入检查 -> 缺失材料 intake -> 显式“执行”确认 -> 写入声明输出 -> `skill-status` 可恢复检查**。确认页可直接输入“执行”或“暂停”；若选择页面列出的第 1、2 条参考回答，编号只表示该条回答，系统再按回答内容判断动作。缺少必需输入时，系统只会写入 `user_inputs/<skill>/` 和 session 记录，不会伪造论文、实验、引用或完成状态。`--non-interactive` 适用于脚本：缺输入时保存 `WAITING_INPUT`，不创建 provider client；随后补材料后以相同 `--session-id ... --resume` 恢复。
 
 常见 Skill 的准确定位如下。真实的输入路径、输出路径和是否允许自动补检始终以 `describe-skill` 的当前输出为准，因为每个 Skill 的契约不同。
 
@@ -415,7 +415,7 @@ python -m researchos.cli skill-status --workspace ./workspace/project-a
 
 ### 5. T5 外部执行：从研究方案到真实实验
 
-完整流程在 T4.5 通过后会自动进入 T5。T5 会确定性编译 handoff 并发布 13 个项目专属执行 Skill，不让模型重写这些控制文件；之后先停在“协议就绪”。“材料准备”只是盘点你已经拥有的资源的可选入口；缺少公开资源时，系统会先自动准备，再进入完整执行器选择。
+这一节只在 T5 Gate 出现后再看即可。完整流程在 T4.5 通过后会自动进入 T5：系统会编译研究交接与项目专属执行说明，随后停在“协议就绪”等待你的决定。“材料准备”只是盘点你已经拥有的资源的可选入口；缺少公开资源时，系统会先自动准备，再进入完整执行器选择。
 
 正常使用时不需要手工启动这些 T5 子节点。T5 会读取并保留 T4.5 的完整 proposal、正式假设、实验计划、新颖性审计和停止条件；它不会重做 T4/T4.5，也不会允许执行器静默改变研究任务、核心机制、必需 baseline、benchmark 范围或论文主张。随机种子使用可审计的稳定默认 ensemble，除非项目已明确声明自己的 seed policy。
 

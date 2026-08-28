@@ -53,9 +53,9 @@ python -m researchos.cli init-workspace --workspace ./workspace/my-survey \
 
 | Preset | Intended output | Literature setup |
 | --- | --- | --- |
-| `research_ccf` / `research_utd` | Research paper | 40 candidates, 25 deep reads, 15 abstract reads. |
-| `survey_ccf` / `survey_utd` | Field Survey | 80 candidates, 40 deep reads, 40 abstract reads. |
-| `survey_exhaustive_utd` | Broad UTD/IS Survey | 90 candidates, 40 deep reads, 50 abstract reads. |
+| `research_ccf` / `research_utd` | Research paper | A pool of 40 candidates: 25 deep reads and 15 abstract reads. |
+| `survey_ccf` / `survey_utd` | Field Survey | A pool of 80 candidates: 40 deep reads and 40 abstract reads. |
+| `survey_exhaustive_utd` | Broad UTD/IS Survey | A pool of 90 candidates: 40 deep reads and 50 abstract reads. |
 
 Copilot is the better choice when you want to see and adjust these settings during the run. It is a control mode, not a CCF/CS publication preset: Copilot leaves publication orientation unset until the T4 pre-run Gate asks for CCF/CS, UTD/IS, Hybrid, or a custom direction.
 
@@ -67,7 +67,7 @@ Copilot is the better choice when you want to see and adjust these settings duri
 | Continue an existing workspace | `resume --workspace <directory>` | Continue from the saved state. |
 | See what needs attention | `status --workspace <directory>` | Show the current stage, any pending decision, and the next safe command. |
 
-When the terminal shows a **Gate**, it is waiting for a choice that could affect the research direction, evidence boundary, or external execution. It is not an error page. Follow the numbered options; `END` always submits multi-line text, while terminal EOF is `Ctrl+D` on POSIX and `Ctrl+Z` then Enter on Windows.
+When the terminal shows a **Gate**, it is waiting for a choice that could affect the research direction, evidence boundary, or external execution. It is not an error page. Follow the displayed option or answer example; `END` always submits multi-line text, while terminal EOF is `Ctrl+D` on POSIX and `Ctrl+Z` then Enter on Windows.
 
 ## Choose The Right Command For An Existing Workspace
 
@@ -99,7 +99,7 @@ Longer names such as `T5-REBOOST-GATE`, `T5-PROTOCOL-GATE`, and `T3.6-SEC-INTRO`
 | T3.5 synthesis | Turn the literature into mechanisms, method differences, tensions, and research gaps. | Decide whether to take the optional Survey branch. | `literature/synthesis.md` |
 | T3.6 optional Survey | Write a field Survey only when the current evidence justifies it; otherwise it is skipped. | Skip, write from the present corpus, or request one targeted supplement. | `drafts/survey/` |
 | T4 research ideas | Generate, compare, and evolve multiple research directions. | Proceed, optimize, explore again, or inspect a Candidate only. | Candidate Cards, scores, evidence, and lineage under `ideation/` |
-| T4.5 research plan | Check novelty, turn the selected idea into a testable Proposal, then review it. | Only if the novelty audit does not pass. | Proposal, hypotheses, experiment plan, and review record under `ideation/`. |
+| T4.5 research plan | Check novelty, turn the selected idea into a testable Proposal, then review it. | Choose one Proposal for T5 when several exist, or review an audit, quality, or recovery issue when needed. | Proposal, hypotheses, experiment plan, and review record under `ideation/`. |
 | T5 external-execution preparation | Compile the T4.5 package into an executor handoff whose research constraints cannot be silently changed. | Resolve only settings that affect research boundaries; place existing resources or let the executor prepare public ones. | `external_executor/handoff_pack.json`, `resources/` |
 | T8 writing | Write, review, and revise using verified experimental facts. | Choose a writing style or template. | `drafts/` and experiment claim/evidence files |
 | T9 submission | Review, genuinely compile, and package the submission. | Only when an environment or compilation recovery is needed. | `submission/`, final PDF, and compile report |
@@ -401,7 +401,7 @@ python -m researchos.cli run-skill pdf-note-card --workspace ./workspace/project
 python -m researchos.cli skill-status --workspace ./workspace/project-a
 ```
 
-The interactive lifecycle is: **request -> input check -> missing-material intake -> explicit Run confirmation -> declared outputs -> recoverable `skill-status` record**. If required input is missing, ResearchOS stages only the material you provide under `user_inputs/<skill>/` and records the session; it never fabricates a paper, citation, experiment, or completion status. `--non-interactive` is for scripts: missing inputs produce `WAITING_INPUT` without constructing a provider client. Add material, then resume with the same `--session-id ... --resume`.
+The interactive lifecycle is: **request -> input check -> missing-material intake -> explicit Run confirmation -> declared outputs -> recoverable `skill-status` record**. At confirmation, enter “execute” or “pause” directly; when choosing a displayed first or second answer example, the number selects that answer and the system interprets its content. If required input is missing, ResearchOS stages only the material you provide under `user_inputs/<skill>/` and records the session; it never fabricates a paper, citation, experiment, or completion status. `--non-interactive` is for scripts: missing inputs produce `WAITING_INPUT` without constructing a provider client. Add material, then resume with the same `--session-id ... --resume`.
 
 Use `describe-skill` as the source of truth for each Skill's live paths and outputs. Typical starting points are:
 
@@ -418,7 +418,7 @@ For integrated workflows, source-resolution input, permission boundaries, and ev
 
 ### 5. T5 External Execution: From Research Plan To Real Experiments
 
-The normal pipeline reaches T5 automatically after T4.5. T5 deterministically compiles the handoff and publishes the 13 project-specific executor Skills; it does not ask a model to reconstruct these control files. It then pauses at Protocol Readiness; the optional material inventory is only for resources you already have, while missing public resources can be prepared automatically before full executor selection.
+Read this section when the T5 Gate appears. The normal pipeline reaches T5 automatically after T4.5: it compiles the research handoff and project-specific execution instructions, then pauses at Protocol Readiness for your decision. The optional material inventory is only for resources you already have, while missing public resources can be prepared automatically before full executor selection.
 
 In normal use, do not start these T5 subnodes yourself. T5 reads and preserves the complete T4.5 proposal, formal hypotheses, experiment plan, novelty audit, and stopping criteria. It neither repeats T4/T4.5 nor permits an executor to silently change the research task, core mechanism, required baseline set, benchmark scope, or paper-claim boundary. Seeds use an auditable stable default ensemble unless the project already declares its own seed policy.
 
