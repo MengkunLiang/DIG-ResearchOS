@@ -111,7 +111,7 @@ fallback:
 
 `context_window_fallback: 262144` 与 provider、URL、key、model 一起位于真实生效的 `config/model_settings.yaml`。仅当当前 provider/model 没有通过模型 metadata 报告可核验的真实 context window 时，才会使用该值；provider 报告的、与当前 model 匹配的真实容量优先。手工填写的 fallback 支持 4,096 到 100,000,000 token，与 provider metadata 的容量合理性范围一致。
 
-如果研究者已确认当前账号、第三方 gateway 或本地部署的真实容量，可设置 `context_window_override`，例如 `128000`、`256000` 或 `1000000`。它是可信的连接级安全上限，优先于自动探测。不设置时仍是自动模式，即“先探测 → 探测失败才使用 fallback”；交互向导中可输入 `128k`、`256k`、`1m`，或输入 `auto` 恢复自动模式。
+如果研究者已确认当前账号、第三方 gateway 或本地部署的真实容量，可设置 `context_window_override`，例如 `128000`、`256000` 或 `1000000`。它是可信的连接级安全上限，优先于自动探测。不设置时仍是自动模式，即“先探测 → 探测失败才使用 fallback”；交互向导中可输入纯 token 数（如 `262100`）或 `128k`、`256k`、`1m`；直接回车或输入 `auto` 都恢复自动模式。
 
 这个数值表示 token 计的**总上下文容量估计**，由 system prompt、研究材料、对话历史、Tool 调用及其结果，以及为模型回复预留的空间共同使用。因此它不是用户单次输入上限，不是固定文件读取大小，也不表示 provider 对外承诺的 API 极限。runtime 会依据有效容量自动计算文件分页、上下文压缩与摘要批处理。研究者日常通常保留该默认值；只有维护一个无法报告容量、且其总上下文容量已知的 provider/gateway 时，才应修改该兜底值。
 

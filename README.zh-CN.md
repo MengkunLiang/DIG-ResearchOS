@@ -156,7 +156,7 @@ T4.5 通过后，终端会展示五个最值得阅读的入口。它们描述的
 
 `python -m researchos.cli configure-llm` 会创建真实生效的本地连接文件 `config/model_settings.yaml`。首次从 `run`/`resume` 进入且配置不完整时，可选“引导配置”逐项填写，也可选“直接编辑文件”；后者会明确显示真正生效的 `config/model_settings.yaml`，保存后回终端按 Enter 即可重新校验。`model_settings.example.yaml` 只用于复制参考，直接改模板不会生效。交互输入 API key 时默认会直接显示在当前终端，方便核对是否完整粘贴；配置保存后的摘要仍只显示掩码。共享屏幕时可加 `--hide-api-key` 改为隐藏输入。手动配置时，把 `config/model_settings.example.yaml` 复制到这个准确输出路径，再填写 `provider`、`api_key` 和 `model`；`openai_compatible` 还必须填写 `api_base`。手动保存后执行 `python -m researchos.cli selftest` 校验；自定义位置可执行 `python -m researchos.cli selftest --model-settings /absolute/path/model_settings.yaml`。
 
-同一份 `config/model_settings.yaml` 还包含 `context_window_fallback: 262144` 与 `truncation`，模型连接和上下文设置无需再分开查看。它不是单次 prompt 输入上限；只有 provider 无法报告 model 的真实 context window 时，ResearchOS 才把 fallback 作为总 token 容量估计。该容量由 prompt、研究材料、历史、Tool 输入/结果和回复空间共同使用；provider 报告真实容量时始终优先。若你已确认当前账号、网关或本地部署的真实容量，可选写入 `context_window_override`（如 `128000`、`256000`、`1000000`）；它会作为安全上限优先于自动探测。留空则保持“自动探测 → 262k fallback”的策略；首次交互配置也接受 `128k`、`256k`、`1m` 或 `auto`。完整字段和兜底语义见[配置说明](docs/cn/config.md)。
+同一份 `config/model_settings.yaml` 还包含 `context_window_fallback: 262144` 与 `truncation`，模型连接和上下文设置无需再分开查看。它不是单次 prompt 输入上限；只有 provider 无法报告 model 的真实 context window 时，ResearchOS 才把 fallback 作为总 token 容量估计。该容量由 prompt、研究材料、历史、Tool 输入/结果和回复空间共同使用；provider 报告真实容量时始终优先。若你已确认当前账号、网关或本地部署的真实容量，可选写入 `context_window_override`（如 `128000`、`256000`、`1000000`）；它会作为安全上限优先于自动探测。留空则保持“自动探测 → 262k fallback”的策略；首次交互配置接受纯 token 数（如 `262100`）以及 `128k`、`256k`、`1m`，直接回车或输入 `auto` 都恢复自动模式。完整字段和兜底语义见[配置说明](docs/cn/config.md)。
 - `requirements.txt` / `pyproject.toml` 只管理 Python 依赖。TeX、`latexmk` 与字体由宿主机或 Docker 镜像提供。
 
 ## 本地安装

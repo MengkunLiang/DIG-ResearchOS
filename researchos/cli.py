@@ -1671,14 +1671,18 @@ async def configure_llm_command(args: argparse.Namespace) -> int:
             step="可选",
             title="上下文容量",
             description=(
-                "回车使用自动探测；若服务端不提供容量则使用 262k 兜底。"
-                "如果你确知当前网关/部署的真实上限，可输入 128k、256k 或 1m；该人工值会优先于自动探测。"
+                "直接回车使用自动策略：先探测，探测不到才使用 262k 兜底。"
+                "如果你确知当前网关/部署的真实上限，可输入 262100、128k、256k 或 1m；该人工值会优先于自动探测。"
             ),
             current=(f"人工声明 {current_override:,} tokens" if current_override else "自动探测 + 262k 兜底"),
         )
         while True:
-            capacity_input = input("上下文容量 [回车保持；128k/256k/1m；auto=自动]: ").strip()
+            capacity_input = input("上下文容量 [回车=自动；262100/128k/256k/1m]: ").strip()
             if not capacity_input:
+                # A blank answer is an intentional return to the documented
+                # default strategy, rather than silently preserving a capacity
+                # that may have belonged to a previous provider or gateway.
+                context_window_override = 0
                 break
             try:
                 context_window_override = _parse_context_window_choice(capacity_input)
