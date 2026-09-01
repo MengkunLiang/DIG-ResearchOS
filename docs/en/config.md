@@ -33,10 +33,11 @@ The interactive flow asks for:
 | `model` | The one model used throughout the workflow. |
 | `fallback` | Per-request deadline and retry behaviour for the same provider/model after temporary failures. It is not an alternate-model route. |
 | `context_window_fallback` | Total context capacity in tokens to use only when the provider cannot report the model's real capacity. Provider metadata takes priority. |
+| `context_window_override` | Optional verified connection-level capacity cap. When set, it takes priority over automatic discovery. |
 | `truncation` | History-compaction thresholds before the effective total capacity. Its optional `max_input_tokens` is only for a gateway that requires a stricter history cap. |
 | `rate_limit` | Optional local TPM token bucket. It is disabled by default and is unrelated to model context capacity. |
 
-The command writes the active file at `config/model_settings.yaml`, offers to store the key either in that local file or in `.env`, and sends a minimal request to check the connection. The file is ignored by Git and is written with owner-only permissions where the platform supports them. It also writes or preserves `context_window_fallback`, `truncation`, and the optional `rate_limit` block in that same file, so model connection and context settings never need a second configuration file.
+The command writes the active file at `config/model_settings.yaml`, offers to store the key either in that local file or in `.env`, and sends a minimal request to check the connection. The file is ignored by Git and is written with owner-only permissions where the platform supports them. It also writes or preserves optional `context_window_override`, `context_window_fallback`, `truncation`, and the optional `rate_limit` block in that same file, so model connection and context settings never need a second configuration file.
 
 A noninteractive setup is also available:
 
@@ -85,6 +86,8 @@ api_base: https://api.deepseek.com
 api_key: "${DEEPSEEK_API_KEY}"
 model: your-model-name
 context_window_fallback: 262144
+# Optional: set only for a verified gateway/deployment capacity.
+# context_window_override: 1000000
 truncation:
   trigger_ratio: 0.90
   target_ratio: 0.72
@@ -107,6 +110,8 @@ The `fallback` settings govern one connection only. `request_timeout_seconds` is
 ## Context Capacity Fallback
 
 `context_window_fallback: 262144` is a field in the same active `config/model_settings.yaml` file as the provider, URL, key, and model. It is used only when the configured provider/model does not expose a verifiable real context window through its model metadata. When the provider reports a matched real capacity, that capacity takes precedence. Manually configured fallback values support 4,096 through 100,000,000 tokens, the same plausibility range used for provider metadata.
+
+When a researcher knows the actual capacity of an account, third-party gateway, or local deployment, optional `context_window_override` may be set to a verified cap such as `128000`, `256000`, or `1000000`. It takes priority over discovery. When omitted, the automatic order remains “discover first, then fallback”; the interactive wizard accepts `128k`, `256k`, `1m`, or `auto` to return to automatic mode.
 
 The value is a total context-capacity estimate in tokens. It is shared by the system prompt, research material, conversation history, Tool calls and results, and room reserved for the model response. It is therefore not a raw user-input limit, not a fixed file-read size, and not a statement of the provider's public API limit. The runtime derives file pages, context compaction, and abstract batching from the effective capacity. Researchers normally keep this default; maintainers should change the fallback only for a provider or gateway that cannot report its capacity and whose total context capacity is known.
 

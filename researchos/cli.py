@@ -899,6 +899,22 @@ def _masked_secret_confirmation(value: object) -> str:
     return f"已设置，长度 {len(secret)}，末尾 …{suffix}"
 
 
+def _parse_context_window_choice(value: str) -> int:
+    """Parse an explicit capacity such as ``128k`` or the ``auto`` sentinel."""
+
+    normalized = value.strip().casefold().replace("_", "").replace(",", "")
+    if normalized in {"auto", "自动"}:
+        return 0
+    match = re.fullmatch(r"(\d+)\s*([km]?)", normalized)
+    if not match:
+        raise ValueError("请输入 128k、256k、1m、纯数字 token 数，或 auto")
+    multiplier = {"": 1, "k": 1_000, "m": 1_000_000}[match.group(2)]
+    tokens = int(match.group(1)) * multiplier
+    if not 4_096 <= tokens <= 100_000_000:
+        raise ValueError("上下文容量必须在 4k 到 100m tokens 之间")
+    return tokens
+
+
 def _render_workspace_entry_panel(
     args: argparse.Namespace,
     *,
@@ -1295,6 +1311,11 @@ def _render_llm_context_capacity_notice(
     details.add_column(style="bold cyan", no_wrap=True)
     details.add_column(overflow="fold")
     details.add_row("当前兜底", f"{fallback:,} tokens")
+    override = int(settings.get("context_window_override") or 0)
+    details.add_row(
+        "人工声明",
+        f"{override:,} tokens（优先于自动探测）" if override else "未设置：先自动探测模型容量",
+    )
     details.add_row("何时生效", "仅当 provider/model 未报告可核验的真实 context window 时使用")
     details.add_row("优先级", "provider 报告的真实容量优先；该值不会覆盖已发现的真实容量")
     details.add_row("它表示什么", "整次模型调用共享的总上下文容量，不是单独的用户输入上限")
@@ -1317,7 +1338,7 @@ def _render_llm_context_capacity_notice(
         else f"已启用：{rate_limit['tokens_per_minute']:,} TPM，burst {rate_limit['burst']:,}",
     )
     details.add_row("配置位置", str(settings_path.resolve()))
-    details.add_row("同一文件中的字段", "context_window_fallback、fallback.request_timeout_seconds、truncation（可选 max_input_tokens）和可选 rate_limit")
+    details.add_row("同一文件中的字段", "context_window_override（可选）、context_window_fallback、fallback.request_timeout_seconds、truncation（可选 max_input_tokens）和可选 rate_limit")
     _cli_console(args).print(
         Panel(
             Group(
@@ -1387,6 +1408,11 @@ def _render_llm_configuration_saved(
     settings = load_model_settings(settings_path)
     context_fallback = settings["context_window_fallback"]
     table.add_row("上下文容量兜底", f"{context_fallback:,} tokens；仅在 provider 未报告真实容量时使用")
+    override = int(settings.get("context_window_override") or 0)
+    table.add_row(
+        "上下文容量模式",
+        f"人工声明 {override:,} tokens（不再自动探测）" if override else "自动探测；探测不到时使用上方兜底",
+    )
     request_timeout = settings["fallback"]["request_timeout_seconds"]
     table.add_row("单次模型请求 deadline", f"{request_timeout:,} 秒；可在同一文件的 fallback.request_timeout_seconds 调整")
     _cli_console(args).print(Panel(table, title="模型配置已保存", border_style="green", expand=True))
@@ -1410,6 +1436,7 @@ def _configure_llm_args_from_startup(args: argparse.Namespace) -> argparse.Names
         api_base=None,
         api_key=None,
         model=None,
+        context_window=None,
         key_storage=None,
         check=True,
         model_settings=getattr(args, "model_settings", "config/model_settings.yaml"),
@@ -1508,6 +1535,7 @@ async def configure_llm_command(args: argparse.Namespace) -> int:
     requested_api_base = getattr(args, "api_base", None)
     requested_api_key = getattr(args, "api_key", None)
     requested_model = getattr(args, "model", None)
+    requested_context_window = getattr(args, "context_window", None)
     try:
         provider = normalize_provider(requested_provider or current["provider"])
     except ValueError as exc:
@@ -1542,6 +1570,13 @@ async def configure_llm_command(args: argparse.Namespace) -> int:
     needs_api_key = provider_requires_api_key(provider) and not api_key and not requested_api_key
     needs_model = not model and not requested_model
     api_key_changed = bool(requested_api_key)
+    context_window_override: int | None = None
+    if requested_context_window is not None:
+        try:
+            context_window_override = _parse_context_window_choice(str(requested_context_window))
+        except ValueError as exc:
+            _render_llm_setup_required_rich({"missing": [str(exc)], "settings_path": str(settings_path)}, args=args)
+            return 2
 
     if interactive and any((needs_provider, needs_api_base, needs_api_key, needs_model)):
         _cli_console(args).print(
@@ -1630,6 +1665,27 @@ async def configure_llm_command(args: argparse.Namespace) -> int:
             )
             model = input("Model 名称: ").strip() or model
 
+        current_override = int(current.get("context_window_override") or 0)
+        _render_llm_configuration_step(
+            args,
+            step="可选",
+            title="上下文容量",
+            description=(
+                "回车使用自动探测；若服务端不提供容量则使用 262k 兜底。"
+                "如果你确知当前网关/部署的真实上限，可输入 128k、256k 或 1m；该人工值会优先于自动探测。"
+            ),
+            current=(f"人工声明 {current_override:,} tokens" if current_override else "自动探测 + 262k 兜底"),
+        )
+        while True:
+            capacity_input = input("上下文容量 [回车保持；128k/256k/1m；auto=自动]: ").strip()
+            if not capacity_input:
+                break
+            try:
+                context_window_override = _parse_context_window_choice(capacity_input)
+                break
+            except ValueError as exc:
+                _cli_console(args).print(Text(f"输入无效：{exc}", style="bold red"))
+
     required_fields = [("provider", provider), ("model", model)]
     if provider_requires_api_key(provider):
         required_fields.insert(1, ("api_key", api_key))
@@ -1670,6 +1726,7 @@ async def configure_llm_command(args: argparse.Namespace) -> int:
         api_key=stored_key,
         model=model,
         fallback=current.get("fallback") if isinstance(current.get("fallback"), dict) else None,
+        context_window_override=context_window_override,
         path=settings_path,
     )
     _render_llm_configuration_saved(
@@ -5299,6 +5356,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="交互式配置时隐藏 API key 输入；默认明文显示，便于核对粘贴内容",
     )
     configure_llm_parser.add_argument("--model", help="Model name used for every stage")
+    configure_llm_parser.add_argument(
+        "--context-window",
+        help="可信的模型/网关上下文上限，如 128k、256k、1m；auto 恢复自动探测",
+    )
     configure_llm_parser.add_argument("--key-storage", choices=("config", "env"), help="Store the key in model settings or .env")
     configure_llm_parser.add_argument("--skip-check", dest="check", action="store_false", help="保存后不做连通性检查")
     configure_llm_parser.set_defaults(check=True)

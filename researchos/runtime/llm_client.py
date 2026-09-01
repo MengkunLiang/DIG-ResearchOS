@@ -573,11 +573,16 @@ class LLMClient:
     ) -> ContextWindowInfo:
         """Report why a binding has the context value it currently has."""
 
-        if explicit_override:
+        configured_override = self._configured_context_window_override()
+        if explicit_override or configured_override:
             return ContextWindowInfo(
-                max_context=binding.max_context,
+                max_context=configured_override or binding.max_context,
                 source="explicit_override",
-                detail="由 task/CLI 的显式 max_context 上限指定",
+                detail=(
+                    "由 model_settings.yaml 的 context_window_override 明确指定"
+                    if configured_override
+                    else "由 task/CLI 的显式 max_context 上限指定"
+                ),
             )
         if endpoint is not None:
             cached = self._context_window_cache.get(self._context_cache_key(binding, endpoint))
@@ -608,6 +613,15 @@ class LLMClient:
         cached = self._context_window_cache.get(key)
         if cached is not None:
             return cached
+        configured_override = self._configured_context_window_override()
+        if configured_override:
+            info = ContextWindowInfo(
+                max_context=configured_override,
+                source="explicit_override",
+                detail="由 model_settings.yaml 的 context_window_override 明确指定",
+            )
+            self._context_window_cache[key] = info
+            return info
         if key in self._context_discovery_failures:
             return self.get_context_window_info(binding, endpoint)
 
@@ -644,6 +658,17 @@ class LLMClient:
             reason=reason,
         )
         return self.get_context_window_info(binding, endpoint)
+
+    def _configured_context_window_override(self) -> int:
+        """Return the user-declared connection capacity, or zero for auto mode."""
+
+        if not self.single_model_mode:
+            return 0
+        try:
+            value = int(self.raw.get("_simple_llm", {}).get("context_window_override") or 0)
+        except (TypeError, ValueError):
+            return 0
+        return value if value >= 4_096 else 0
 
     def _binding_with_discovered_context(
         self,

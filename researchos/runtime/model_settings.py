@@ -231,6 +231,15 @@ def load_model_settings(path: Path | None = None) -> dict[str, Any]:
             minimum=4_096,
             maximum=MAX_CONTEXT_WINDOW_TOKENS,
         ),
+        # A researcher may know that a particular account, gateway, or local
+        # deployment has a lower (or otherwise authoritative) capacity than
+        # public provider metadata.  Zero means automatic discovery first.
+        "context_window_override": _nonnegative_int(
+            connection.get("context_window_override"),
+            0,
+            minimum_nonzero=4_096,
+            maximum=MAX_CONTEXT_WINDOW_TOKENS,
+        ),
         "truncation": {
             "trigger_ratio": _positive_float(
                 truncation.get("trigger_ratio"),
@@ -311,6 +320,7 @@ def inspect_model_settings_source(path: Path | None = None) -> dict[str, Any]:
         "api_base": str(connection.get("api_base") or "").strip(),
         "api_key": str(connection.get("api_key") or "").strip(),
         "model": str(connection.get("model") or "").strip(),
+        "context_window_override": str(connection.get("context_window_override") or "").strip(),
     }
 
 
@@ -337,7 +347,7 @@ def build_single_model_runtime_config(path: Path | None = None) -> dict[str, Any
                     "primary": {
                         "model": connection["model"],
                         "endpoint": "default",
-                        "max_context": connection["context_window_fallback"],
+                        "max_context": connection["context_window_override"] or connection["context_window_fallback"],
                     }
                 }
             }
@@ -353,6 +363,7 @@ def write_model_settings(
     api_key: str,
     model: str,
     fallback: Mapping[str, Any] | None = None,
+    context_window_override: int | None = None,
     path: Path | None = None,
 ) -> Path:
     """Write the single local user configuration with private permissions."""
@@ -364,6 +375,21 @@ def write_model_settings(
     recovery = dict(current.get("fallback") or {})
     if fallback:
         recovery.update(dict(fallback))
+    override = (
+        _nonnegative_int(
+            context_window_override,
+            0,
+            minimum_nonzero=4_096,
+            maximum=MAX_CONTEXT_WINDOW_TOKENS,
+        )
+        if context_window_override is not None
+        else _nonnegative_int(
+            current.get("context_window_override"),
+            0,
+            minimum_nonzero=4_096,
+            maximum=MAX_CONTEXT_WINDOW_TOKENS,
+        )
+    )
     payload = {
         "provider": normalize_provider(provider),
         "api_base": str(api_base).strip(),
@@ -426,6 +452,8 @@ def write_model_settings(
             ),
         },
     }
+    if override:
+        payload["context_window_override"] = override
     # Keep the ordinary user-facing file to one capacity setting. The optional
     # advanced override is emitted only when a researcher has opted into a
     # positive value in an existing local configuration.

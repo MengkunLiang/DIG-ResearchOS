@@ -33,10 +33,11 @@ python -m researchos.cli configure-llm
 | `model` | 全部 workflow 共用的一个 model。 |
 | `fallback` | 同一 provider/model 的单次请求 deadline 与临时失败后的 retry 策略，不是自动换模型的路由链。 |
 | `context_window_fallback` | 仅当 provider 无法报告 model 真实容量时使用的总上下文容量（token）；provider metadata 优先。 |
+| `context_window_override` | 可选的人工确认容量上限；设置后优先于自动探测，适合网关/部署的真实容量已知时。 |
 | `truncation` | 到达有效总容量前的历史压缩阈值；可选的 `max_input_tokens` 仅用于某些 gateway 需要更严格历史上限的情况。 |
 | `rate_limit` | 可选的本地 TPM token bucket；默认关闭，且与模型上下文容量无关。 |
 
-命令会写入真实生效文件 `config/model_settings.yaml`，让用户选择把 key 存在该本地文件或 `.env`，并立刻发送一个最小请求检查连接。该文件已被 Git 忽略；系统支持时会设置为仅当前用户可读。`context_window_fallback`、`truncation` 和可选的 `rate_limit` 也会在同一个文件中写入或保留，因此模型连接和上下文设置不需要查看第二个配置文件。
+命令会写入真实生效文件 `config/model_settings.yaml`，让用户选择把 key 存在该本地文件或 `.env`，并立刻发送一个最小请求检查连接。该文件已被 Git 忽略；系统支持时会设置为仅当前用户可读。可选的 `context_window_override`、`context_window_fallback`、`truncation` 和可选的 `rate_limit` 也会在同一个文件中写入或保留，因此模型连接和上下文设置不需要查看第二个配置文件。
 
 非交互环境也可以显式配置：
 
@@ -85,6 +86,8 @@ api_base: https://api.deepseek.com
 api_key: "${DEEPSEEK_API_KEY}"
 model: your-model-name
 context_window_fallback: 262144
+# 可选：仅在已确认当前连接真实上限时设置；不设则先自动探测。
+# context_window_override: 1000000
 truncation:
   trigger_ratio: 0.90
   target_ratio: 0.72
@@ -107,6 +110,8 @@ fallback:
 ## 上下文容量兜底
 
 `context_window_fallback: 262144` 与 provider、URL、key、model 一起位于真实生效的 `config/model_settings.yaml`。仅当当前 provider/model 没有通过模型 metadata 报告可核验的真实 context window 时，才会使用该值；provider 报告的、与当前 model 匹配的真实容量优先。手工填写的 fallback 支持 4,096 到 100,000,000 token，与 provider metadata 的容量合理性范围一致。
+
+如果研究者已确认当前账号、第三方 gateway 或本地部署的真实容量，可设置 `context_window_override`，例如 `128000`、`256000` 或 `1000000`。它是可信的连接级安全上限，优先于自动探测。不设置时仍是自动模式，即“先探测 → 探测失败才使用 fallback”；交互向导中可输入 `128k`、`256k`、`1m`，或输入 `auto` 恢复自动模式。
 
 这个数值表示 token 计的**总上下文容量估计**，由 system prompt、研究材料、对话历史、Tool 调用及其结果，以及为模型回复预留的空间共同使用。因此它不是用户单次输入上限，不是固定文件读取大小，也不表示 provider 对外承诺的 API 极限。runtime 会依据有效容量自动计算文件分页、上下文压缩与摘要批处理。研究者日常通常保留该默认值；只有维护一个无法报告容量、且其总上下文容量已知的 provider/gateway 时，才应修改该兜底值。
 

@@ -36,7 +36,14 @@ model: deepseek-v4-pro
 # Total context capacity fallback (tokens) when the provider cannot report a
 # real window. It is shared by prompts, research material, history, Tool I/O,
 # and response space; provider-reported capacity takes priority.
-context_window_fallback: 131072
+context_window_fallback: 262144
+
+# 可选：若你已确认当前账号、网关或本地部署的真实容量，可填 128k/256k/1m
+# 对应的整数 token 数。该值优先于自动探测，适合网关实际限制小于官方模型标称值时。
+# 留空或删除该字段时，系统先探测 provider 元数据，探测不到才使用上方 fallback。
+# Optional: a verified per-connection capacity in tokens. It takes precedence
+# over automatic discovery; omit it to discover first and then use fallback.
+# context_window_override: 262144
 
 # 到达总上下文容量前的历史压缩阈值。默认直接根据 provider 已报告的容量或
 # context_window_fallback 计算；通常只需调整上面的 context_window_fallback。
