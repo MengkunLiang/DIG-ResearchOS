@@ -61,7 +61,6 @@ from .runtime.model_settings import (
     provider_requires_api_key,
     provider_requires_api_base,
     resolve_model_settings_path,
-    supported_provider_names,
     write_api_key_to_dotenv,
     write_model_settings,
 )
@@ -894,6 +893,8 @@ def _masked_secret_confirmation(value: object) -> str:
     secret = str(value or "").strip()
     if not secret:
         return "未设置"
+    if re.fullmatch(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}", secret):
+        return f"环境变量引用 {secret}"
     suffix = secret[-4:] if len(secret) >= 4 else "*" * len(secret)
     return f"已设置，长度 {len(secret)}，末尾 …{suffix}"
 
@@ -1239,12 +1240,42 @@ def _render_llm_configuration_step(
     description: str,
     current: str,
 ) -> None:
-    table = Table(box=box.SIMPLE_HEAVY, show_header=False, expand=True)
-    table.add_column(style="bold cyan", no_wrap=True)
-    table.add_column(overflow="fold")
-    table.add_row("当前值", current or "未设置")
     _cli_console(args).print(
-        Panel(Group(Text(description), table), title=f"模型配置 {step} · {title}", border_style="cyan", expand=True)
+        Panel(
+            Group(
+                Text(description),
+                Text(f"当前设置：{current or '未设置'}", style="dim"),
+            ),
+            title=f"模型配置 {step} · {title}",
+            border_style="cyan",
+            expand=True,
+            padding=(0, 1),
+        )
+    )
+
+
+def _render_llm_provider_choices(args: argparse.Namespace, *, current: str) -> None:
+    """Present provider presets as a readable chooser instead of one long prompt."""
+
+    choices = Table(box=box.SIMPLE_HEAVY, show_header=True, expand=True)
+    choices.add_column("类别", style="bold cyan", no_wrap=True)
+    choices.add_column("可直接输入的 Provider", overflow="fold")
+    choices.add_row("常用云端", "deepseek、qwen、siliconflow、openai、openrouter")
+    choices.add_row("其他云端", "anthropic、google、groq、together、fireworks、mistral、cohere、xai、perplexity、cerebras、nvidia_nim、moonshot、zhipu、minimax")
+    choices.add_row("本地部署", "ollama、lm_studio、vllm（通常不需要 API key）")
+    choices.add_row("自定义网关", "openai_compatible（随后填写完整 API URL）")
+    _cli_console(args).print(
+        Panel(
+            Group(
+                Text("输入一个名称即可；已知云端服务会自动使用官方 URL。回车保留当前选择；未列出的兼容 OpenAI 服务请选择 openai_compatible。"),
+                choices,
+                Text(f"当前选择：{current}", style="dim"),
+            ),
+            title="模型配置 1 · Provider",
+            border_style="cyan",
+            expand=True,
+            padding=(0, 1),
+        )
     )
 
 
@@ -1523,18 +1554,8 @@ async def configure_llm_command(args: argparse.Namespace) -> int:
         )
         prompted_count = 0
         if needs_provider:
-            _render_llm_configuration_step(
-                args,
-                step="缺失项 1",
-                title="Provider",
-                description="选择 API provider。未列出的 OpenAI-compatible 服务请选择 openai_compatible。",
-                current=provider,
-            )
-            selected_provider = input(
-                "Provider "
-                f"[{', '.join(supported_provider_names())}] "
-                f"[{provider}]: "
-            ).strip() or provider
+            _render_llm_provider_choices(args, current=provider)
+            selected_provider = input(f"Provider [当前 {provider}，回车保留]: ").strip() or provider
             previous_provider = provider
             try:
                 provider = normalize_provider(selected_provider)
@@ -1574,13 +1595,13 @@ async def configure_llm_command(args: argparse.Namespace) -> int:
                 step=f"{step_number}/{total_steps}",
                 title="API key",
                 description=(
-                    "本次输入会直接显示在终端，便于检查是否完整粘贴；保存后只显示长度和末尾校验位。"
+                    "本次输入会直接显示在终端，便于检查是否完整粘贴。可填写真实 key 或 ${PROVIDER_API_KEY}；保存后只显示安全摘要。"
                     if not hide_api_key
-                    else "本次输入会隐藏；保存后显示长度和末尾校验位，确认已接收。"
+                    else "本次输入会隐藏。可填写真实 key 或 ${PROVIDER_API_KEY}；保存后只显示安全摘要。"
                 ),
                 current="未设置",
             )
-            key_prompt = "API key（本终端可见）: " if not hide_api_key else "API key（隐藏输入）: "
+            key_prompt = "API key 或 ${环境变量名}（本终端可见）: " if not hide_api_key else "API key（隐藏输入）: "
             if hide_api_key:
                 from getpass import getpass
 
