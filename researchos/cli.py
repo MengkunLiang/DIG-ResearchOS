@@ -14,7 +14,6 @@ import argparse
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from getpass import getpass
 import importlib
 import importlib.util
 import json
@@ -1218,7 +1217,7 @@ def _render_llm_setup_required_rich(
     details.add_row("缺少", missing)
     details.add_row("配置文件", str(status.get("settings_path") or "config/model_settings.yaml"))
     details.add_row("连接模式", "所有 Agent 和 Skill 共用一个 provider 与一个 model")
-    details.add_row("下一步", "选择“现在配置”后只填写缺少或无效的项；已有设置会保留")
+    details.add_row("下一步", "可选择引导填写，或直接编辑下方实际生效的 model_settings.yaml；模板文件不会自动生效")
     _cli_console(args).print(
         Panel(
             Group(
@@ -1313,18 +1312,18 @@ def _render_llm_manual_edit_instructions(
     details = Table(box=box.SIMPLE_HEAVY, show_header=False, expand=True)
     details.add_column(style="bold cyan", no_wrap=True)
     details.add_column(overflow="fold")
-    details.add_row("实际生效文件", str(target_path))
-    details.add_row("安全模板", str(template_path))
+    details.add_row("现在要编辑", str(target_path))
+    details.add_row("参考模板（不会生效）", str(template_path))
     details.add_row("最小必填字段", "provider、api_key、model；仅 openai_compatible 还必须填写 api_base")
     details.add_row("上下文/输入字段", "日常只维护 context_window_fallback；truncation.max_input_tokens 仅是可选 gateway 兼容覆盖")
     details.add_row("请求 deadline", "fallback.request_timeout_seconds 与同块的重试参数共同控制正式科研模型请求；默认 300 秒")
     details.add_row("本地限流字段", "rate_limit 默认关闭；它不等于模型容量，只有明确知道 provider 配额时才启用")
-    details.add_row("创建方式", f"cp {template_path} {target_path}")
+    details.add_row("若实际文件不存在", f"cp {template_path} {target_path}")
     details.add_row("保存后校验", f"python -m researchos.cli selftest --model-settings {target_path}")
     _cli_console(args).print(
         Panel(
             Group(
-                Text("只会读取“实际生效文件”；模板不会自动生效。API key 可填写为环境变量引用，例如 ${DEEPSEEK_API_KEY}。"),
+                Text("你可以直接用编辑器修改“现在要编辑”这一文件；不要只改 example 模板。API key 可填写为环境变量引用，例如 ${DEEPSEEK_API_KEY}。"),
                 details,
                 Text("完成编辑后回到本终端按 Enter，ResearchOS 会重新读取并检查该文件。"),
             ),
@@ -1398,16 +1397,26 @@ async def _ensure_llm_is_ready(args: argparse.Namespace, client: LLMClient) -> L
         await client.aclose()
         raise SystemExit(2)
 
+    settings_path = Path(status.get("settings_path") or getattr(args, "model_settings", "config/model_settings.yaml"))
+    choices = Table(box=box.SIMPLE_HEAVY, show_header=True, expand=True)
+    choices.add_column("输入", style="bold cyan", no_wrap=True)
+    choices.add_column("方式", style="bold")
+    choices.add_column("你会做什么", overflow="fold")
+    choices.add_row("1", "引导配置", "逐项填写缺少信息；API key 默认在当前终端可见，保存摘要只显示掩码。")
+    choices.add_row("2", "直接编辑文件", f"编辑 {settings_path.expanduser().resolve()}；保存后回到这里按 Enter，系统会重新读取并校验。")
+    choices.add_row("3", "退出", "不修改任何设置，也不启动项目。")
     _cli_console(args).print(
         Panel(
-            Text("[1] 现在配置  [2] 手动编辑 model_settings.yaml  [3] 退出"),
+            Group(
+                Text("两种方式都会写入同一个实际生效文件。`model_settings.example.yaml` 只供复制参考，单独修改它不会生效。"),
+                choices,
+            ),
             title="选择配置方式",
             border_style="cyan",
             expand=True,
         )
     )
-    choice = input("请选择 [1/2/3]: ").strip()
-    settings_path = Path(status.get("settings_path") or getattr(args, "model_settings", "config/model_settings.yaml"))
+    choice = input("请选择 [1 引导填写 / 2 直接编辑 / 3 退出]: ").strip()
     if choice in {"2", "edit", "e"}:
         _render_llm_manual_edit_instructions(
             args,
@@ -1506,7 +1515,7 @@ async def configure_llm_command(args: argparse.Namespace) -> int:
     if interactive and any((needs_provider, needs_api_base, needs_api_key, needs_model)):
         _cli_console(args).print(
             Panel(
-                Text("所有 ResearchOS 阶段共用一个 provider 和一个 model。只会询问缺少或无效的项；已有设置保持不变。API key 输入采用隐藏方式，保存后显示掩码确认。"),
+                Text("所有 ResearchOS 阶段共用一个 provider 和一个 model。只会询问缺少或无效的项；已有设置保持不变。API key 默认明文显示，方便当场检查；保存后的摘要仍只显示掩码。共享屏幕时可使用 --hide-api-key 隐藏输入。"),
                 title="模型配置向导",
                 border_style="cyan",
                 expand=True,
@@ -1559,14 +1568,25 @@ async def configure_llm_command(args: argparse.Namespace) -> int:
 
         if needs_api_key:
             step_number += 1
+            hide_api_key = bool(getattr(args, "hide_api_key", False))
             _render_llm_configuration_step(
                 args,
                 step=f"{step_number}/{total_steps}",
                 title="API key",
-                description="输入会被终端隐藏；保存后会显示长度和末尾校验位，确认已接收。",
+                description=(
+                    "本次输入会直接显示在终端，便于检查是否完整粘贴；保存后只显示长度和末尾校验位。"
+                    if not hide_api_key
+                    else "本次输入会隐藏；保存后显示长度和末尾校验位，确认已接收。"
+                ),
                 current="未设置",
             )
-            entered_key = getpass("API key: ").strip()
+            key_prompt = "API key（本终端可见）: " if not hide_api_key else "API key（隐藏输入）: "
+            if hide_api_key:
+                from getpass import getpass
+
+                entered_key = getpass(key_prompt).strip()
+            else:
+                entered_key = input(key_prompt).strip()
             api_key = entered_key or api_key
             api_key_changed = bool(entered_key)
             _cli_console(args).print(
@@ -5252,6 +5272,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="API URL override; required only for openai_compatible",
     )
     configure_llm_parser.add_argument("--api-key", help="API key; prefer interactive input to avoid shell history")
+    configure_llm_parser.add_argument(
+        "--hide-api-key",
+        action="store_true",
+        help="交互式配置时隐藏 API key 输入；默认明文显示，便于核对粘贴内容",
+    )
     configure_llm_parser.add_argument("--model", help="Model name used for every stage")
     configure_llm_parser.add_argument("--key-storage", choices=("config", "env"), help="Store the key in model settings or .env")
     configure_llm_parser.add_argument("--skip-check", dest="check", action="store_false", help="保存后不做连通性检查")

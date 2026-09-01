@@ -22,9 +22,10 @@ api_base: https://api.deepseek.com
 
 # 可直接填写 key，或引用 .env，例如 "${DEEPSEEK_API_KEY}"。
 # 留空时会检查该 provider 的惯例环境变量。
-# 交互输入会隐藏完整 key；系统只显示掩码、长度和末尾校验位以确认已保存。
-# Interactive entry never echoes the key; it confirms a masked value, length,
-# and final characters after the value has been saved.
+# 交互输入默认会显示在当前终端，便于确认完整粘贴；保存后的摘要只显示掩码、长度和末尾校验位。
+# 共享屏幕时可使用 `configure-llm --hide-api-key` 改为隐藏输入。
+# Interactive entry is visible in the current terminal by default for paste
+# verification; the saved summary is masked. Use --hide-api-key when sharing.
 api_key: "${DEEPSEEK_API_KEY}"
 
 # 所有 Agent 和 Skill 使用同一个 model；没有 heavy/medium/light 或单 Agent 路由。

@@ -35,7 +35,14 @@ python -m researchos.cli configure-llm
 python -m researchos.cli configure-llm
 ```
 
-交互式配置会询问 `provider`、`api_base`、`api_key` 和 `model`，然后让你选择将 key 存在本地 `model_settings.yaml`，或存入 `.env` 并在配置中写入 `${PROVIDER_API_KEY}`。已知 provider 有官方 API URL preset；`openai_compatible` 必须填写 URL。`ollama`、`lm_studio`、`vllm` 等本地 preset 通常不需要 key。保存后会立刻进行一次最小连接检查。
+首次从 `run`、`resume` 等命令进入而发现配置不完整时，界面会清楚给出两种等价方式：
+
+| 选择 | 适合情形 | 操作结果 |
+| --- | --- | --- |
+| `1` 引导配置 | 希望逐项填写 | 只询问缺少的 provider、URL、API key 和 model；已有值会保留。 |
+| `2` 直接编辑文件 | 想一次查看和修改全部设置 | 编辑屏幕显示的**实际生效路径** `config/model_settings.yaml`，保存后回到终端按 Enter 重新校验。 |
+
+无论选哪一种，实际读取的都只是 `config/model_settings.yaml`；`model_settings.example.yaml` 只用于复制参考，直接修改模板不会影响运行。交互式配置会询问 `provider`、`api_base`、`api_key` 和 `model`，然后让你选择将 key 存在本地 `model_settings.yaml`，或存入 `.env` 并在配置中写入 `${PROVIDER_API_KEY}`。API key 默认以明文出现在当前终端，方便核对是否完整粘贴；保存后的配置摘要只显示掩码。如正在共享屏幕，可加 `--hide-api-key` 改为隐藏输入。已知 provider 有官方 API URL preset；`openai_compatible` 必须填写 URL。`ollama`、`lm_studio`、`vllm` 等本地 preset 通常不需要 key。保存后会立刻进行一次最小连接检查。
 
 所有 Agent 和 Skill 共享这一对 provider/model。`model_settings.yaml` 中的 `fallback` 仅控制 provider 临时故障后的同连接 retry；不会暗中引入 heavy/medium/light profile 或第二条模型链。
 
