@@ -2925,6 +2925,12 @@ def _prepare_resume_from_task(
     # Requiring every historical summary before it can be shown would hide the
     # decision a researcher needs to repair or expand the corpus.
     t4_gate1_reentry = start_task in {"T4", "T4-GATE1"}
+    # The public `T3.6` alias means the researcher explicitly wants the
+    # optional Survey branch to execute.  Without this receipt, an Auto
+    # research-paper preset (`survey_policy=skip`) immediately answers `no`
+    # at the first T3.6 Gate and makes `resume --from-task T3.6` look like a
+    # no-op that jumps to T4.
+    t36_explicit_reentry = requested_task == "T3.6-GATE-SURVEY"
     if start_task != "T2-COVERAGE-GATE" and not t4_gate1_reentry:
         ok, err = validate_prerequisites(workspace_dir, start_task)
         if not ok:
@@ -2971,6 +2977,13 @@ def _prepare_resume_from_task(
     records = list(history) if isinstance(history, list) else []
     records.append(reentry)
     state.task_context["manual_reentries"] = records[-20:]
+    if t36_explicit_reentry:
+        state.task_context["t36_explicit_reentry"] = {
+            "semantics": "explicit_cli_t36_survey_reentry",
+            "force_write_survey": True,
+            "requested_at": reentry["requested_at"],
+            "source": "resume --from-task T3.6",
+        }
     state.current_task = start_task
     state.status = "PAUSED"
     state.pending_gate = None
@@ -2984,6 +2997,11 @@ def _prepare_resume_from_task(
         message = (
             f"[进度] 已从 {prior_task} 重入 T4-GATE1；旧的 Gate1 选择已归档到 {archived}。"
             "将复用当前 Candidate Portfolio 并重新打开候选选择；历史确认只保留审计记录，不会自动进入 T4.5。"
+        )
+    elif t36_explicit_reentry:
+        message = (
+            f"[进度] 已从 {prior_task} 重入 T3.6；这次是显式综述请求，"
+            "不会被 Auto 研究论文预设的“跳过综述”默认值覆盖。"
         )
     else:
         message = f"[进度] 已受校验地从 {prior_task} 重入 {start_task}；下一步将按该节点正常执行。"

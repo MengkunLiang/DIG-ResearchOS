@@ -783,6 +783,7 @@ def automatic_gate_result(
     gate_id: str,
     *,
     presentation: dict[str, Any] | None = None,
+    runtime_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Return a pre-authorized Gate decision, or None for a genuine pause."""
 
@@ -803,6 +804,11 @@ def automatic_gate_result(
         if isinstance(presentation, dict)
         and isinstance(presentation.get("t4_directive_confirmation"), dict)
         else {}
+    )
+    explicit_t36_reentry = bool(
+        isinstance(runtime_context, Mapping)
+        and isinstance(runtime_context.get("t36_explicit_reentry"), Mapping)
+        and runtime_context["t36_explicit_reentry"].get("force_write_survey")
     )
     if gate_id == "t4_gate1_selection_gate" and confirmation:
         # Only the pre-authorized transition of the current lead Candidate to
@@ -830,7 +836,10 @@ def automatic_gate_result(
             "captured": {"publication_orientation": orientation},
         },
         "t36_survey_gate": {
-            "option_id": "yes_targeted_retrieval" if survey_policy == "write_with_supplement" else "no",
+            # `resume --from-task T3.6` is an explicit request to run this
+            # optional branch.  Do not silently override that request with a
+            # research-paper Auto preset's normal `skip` policy.
+            "option_id": "yes" if explicit_t36_reentry else "yes_targeted_retrieval" if survey_policy == "write_with_supplement" else "no",
             "captured": {},
         },
         "t36_corpus_gate": {

@@ -674,7 +674,7 @@ gates:
       final_gate_verdict:
         from_file_regex:
           path: ideation/novelty_audit.md
-          pattern: "(?im)^\\s*(?:#+\\s*)?(?:\\*\\*)?\\s*Final\\s+Gate\\s+Verdict\\s*(?:\\*\\*)?\\s*[:：]\\s*(.+?)\\s*$"
+          pattern: "(?im)^\\s*(?:#+\\s*)?(?:\\*\\*)?\\s*Final\\s+Gate\\s+Verdict\\s*(?:\\*\\*)?\\s*[:：]\\s*(.+?)(?:\\s*\\*\\*)?\\s*$"
           group: 1
           default: "未解析到 Final Gate Verdict"
       novelty_audit:

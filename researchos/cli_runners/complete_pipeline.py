@@ -926,6 +926,7 @@ class CompletePipelineRunner:
             self.workspace,
             gate_id,
             presentation=state.pending_gate.presentation,
+            runtime_context=state.task_context,
         )
         if gate_result is None:
             self.progress.stage_human_action_required(
