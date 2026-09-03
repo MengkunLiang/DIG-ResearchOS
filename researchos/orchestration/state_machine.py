@@ -5409,6 +5409,15 @@ class StateMachine:
 
         if node.task_id == "T4.5-HUMAN-REVIEW" and workspace_dir is not None:
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "").strip()
+            if option_id == "pause_decision":
+                # "I need time" is not a terminal research decision.  Keep
+                # the pending Gate untouched so a plain resume returns to the
+                # same card instead of forcing an explicit --from-task
+                # recovery from a COMPLETED workspace.
+                state.status = "PAUSED"
+                state.paused_at = _now_iso()
+                state.last_error = "T4.5 similarity-work decision paused by researcher; no Proposal or audit artifact was changed."
+                return state
             if option_id == "reframe_current":
                 audit_path = workspace_dir / "ideation" / "novelty_audit.md"
                 try:

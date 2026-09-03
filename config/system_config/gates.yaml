@@ -685,6 +685,10 @@ gates:
         label: "自行回到 T4 重构"
         description: "保留当前审计结论后回到 T4，再自行选择新的重构方向。"
         next: T4
+      - id: pause_decision
+        label: "暂不决定，保留并暂停"
+        description: "不结束项目、不改写 Proposal；下次 resume 会回到这张决策卡。"
+        next: T4.5-HUMAN-REVIEW
       - id: stop_project
         label: "结束当前项目"
         next: done
