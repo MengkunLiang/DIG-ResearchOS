@@ -1893,6 +1893,9 @@ class CLIHumanInterface(HumanInterface):
         elif gate_id == "t36_post_survey_gate":
             self._render_t36_post_survey_overview(presentation)
             rendered_compact_gate = True
+        elif gate_id == "t45_human_review_gate":
+            self._render_t45_novelty_decision(presentation.get("t45_novelty_decision"))
+            rendered_compact_gate = True
         for key, value in presentation.items():
             if key.startswith("_"):
                 continue
@@ -1941,6 +1944,8 @@ class CLIHumanInterface(HumanInterface):
             self._render_t5_action_options(gate_id, options)
         elif gate_id == "t45_proposal_portfolio_gate":
             self._render_t45_proposal_portfolio_options(options)
+        elif gate_id == "t45_human_review_gate":
+            self._render_t45_novelty_decision_options(options, presentation.get("t45_novelty_decision"))
         elif gate_id in {
             "t2_literature_param_gate",
             "t2_literature_param_confirm_gate",
@@ -2342,6 +2347,57 @@ class CLIHumanInterface(HumanInterface):
             print(f"[{index}] {option.get('label') or option.get('id')}")
             if option.get("description"):
                 print(f"    作用: {option['description']}")
+
+    def _render_t45_novelty_decision(self, value: Any) -> None:
+        """Render a collision result as a decision card, never an error log."""
+
+        data = value if isinstance(value, dict) else {}
+        candidate_id = str(data.get("current_candidate_id") or "未识别")
+        title = str(data.get("current_title") or "").strip()
+        verdict = str(data.get("verdict") or "未解析")
+        headline = str(data.get("headline") or "").strip()
+        impact = str(data.get("impact") or "").strip()
+        next_available = bool(data.get("next_available"))
+        next_id = str(data.get("next_candidate_id") or "")
+        next_title = str(data.get("next_title") or "").strip()
+
+        width = max(80, min(150, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        buffer = io.StringIO()
+        console = Console(file=buffer, force_terminal=not self._no_color, color_system=None if self._no_color else "truecolor", no_color=self._no_color, width=width, highlight=False)
+        facts = Table(box=_T2_THREE_LINE_RULED_BOX, show_header=False, show_lines=True, pad_edge=False, expand=True)
+        facts.add_column("项目", width=17, style="bold bright_yellow")
+        facts.add_column("当前情况", ratio=1, overflow="fold")
+        facts.add_row("当前 Proposal", f"{candidate_id}" + (f" · {title}" if title else ""))
+        facts.add_row("审计结论", verdict)
+        facts.add_row("这意味着什么", impact or "当前贡献表述需要按审计调整。")
+        if headline:
+            facts.add_row("审计摘要", headline)
+        if next_available:
+            facts.add_row("可推进的下一条", f"{next_id}" + (f" · {next_title}" if next_title else "") + "（独立 Proposal，不与当前方案混合）")
+        else:
+            facts.add_row("可推进的下一条", "没有。当前只剩重构或结束；系统不会把未通过审计的 Proposal 送入 T5。")
+        paths = Text(
+            f"完整审计：{data.get('audit_path') or 'ideation/novelty_audit.md'}\n"
+            f"Proposal 队列：{data.get('portfolio_path') or 'ideation/proposal_portfolio/manifest.json'}",
+            style="dim",
+            overflow="fold",
+        )
+        console.print(Panel(Group(Text("这是研究判断，不是运行错误。请根据下方选项决定下一步。", overflow="fold"), facts, paths), title="T4.5 · 相似工作提醒", border_style="bright_yellow", expand=True))
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            print(rendered)
+
+    def _render_t45_novelty_decision_options(self, options: list[dict], value: Any) -> None:
+        next_available = bool(value.get("next_available")) if isinstance(value, dict) else False
+        print("下一步选择：")
+        for index, option in enumerate(options, start=1):
+            option_id = str(option.get("id") or "")
+            if option_id == "advance_next_proposal" and not next_available:
+                print(f"[{index}] {option.get('label')}（当前不可用：没有下一条独立 Proposal）")
+                continue
+            print(f"[{index}] {option.get('label') or option_id}")
+            if option.get("description"):
+                print(f"    结果: {option['description']}")
 
     def _render_t2_parameter_overview(self, value: Any) -> None:
         """Present the choices this gate controls before any plan is committed."""
@@ -3769,6 +3825,8 @@ class CLIHumanInterface(HumanInterface):
             return key == "protocol_readiness"
         if gate_id == "t45_proposal_portfolio_gate":
             return key in {"proposal_portfolio", "portfolio_selection_error"}
+        if gate_id == "t45_human_review_gate":
+            return key == "t45_novelty_decision"
         if gate_id in {"t5_expr_material_gate", "t5_executor_gate", "t5_resource_executor_gate"}:
             # These gates have a purpose-built choice table below.  Raw
             # handoff, path and Skill previews are durable audit materials,

@@ -2855,6 +2855,13 @@ class StateMachine:
             presentation["protocol_readiness"] = self._t5_protocol_gate_summary(workspace_dir)
         elif node.task_id == "T4.5-PORTFOLIO-GATE" and workspace_dir is not None:
             presentation["proposal_portfolio"] = self._t45_proposal_portfolio_summary(workspace_dir)
+        elif node.task_id == "T4.5-HUMAN-REVIEW" and workspace_dir is not None:
+            # A non-passing novelty verdict is a research decision, not an
+            # exception dump.  Build a compact decision model from the audit
+            # and the Proposal portfolio; the terminal renderer deliberately
+            # keeps the full audit on disk rather than making researchers
+            # scroll through it before they can see their available choices.
+            presentation["t45_novelty_decision"] = self._t45_novelty_decision_summary(workspace_dir)
         if node.task_id == "T4-GATE1" and workspace_dir is not None:
             presentation["candidate_overview"] = _with_t4_proposal_recommendation(
                 _t4_gate1_candidate_overview(workspace_dir),
@@ -6466,6 +6473,60 @@ class StateMachine:
                     label = label[:61].rstrip() + "…"
                 labels[str(item.get("candidate_id") or item.get("id") or "")] = label
         return proposal_portfolio_overview(manifest, labels, workspace_dir=workspace_dir)
+
+    def _t45_novelty_decision_summary(self, workspace_dir: Path) -> dict[str, Any]:
+        """Return the researcher-facing decision facts for a novelty reminder.
+
+        The underlying audit can be long and evidence-dense.  This summary is
+        intentionally not a second audit: it tells the user what happened,
+        what claim is affected, and whether an independently selected next
+        Proposal is actually available.
+        """
+
+        audit_path = workspace_dir / "ideation" / "novelty_audit.md"
+        audit_text = ""
+        try:
+            audit_text = audit_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+
+        verdict = extract_final_gate_verdict(audit_text) if audit_text else ""
+        candidate_match = re.search(r"(?im)^\s*-\s*\*\*Candidate\*\*\s*:\s*(.+?)\s*$", audit_text)
+        headline_match = re.search(r"(?im)^\s*-\s*\*\*Headline finding\*\*\s*:\s*(.+?)\s*$", audit_text)
+        candidate_from_audit = candidate_match.group(1).strip() if candidate_match else ""
+        headline = headline_match.group(1).strip() if headline_match else ""
+        if len(headline) > 340:
+            headline = headline[:337].rstrip() + "…"
+
+        portfolio = self._t45_proposal_portfolio_summary(workspace_dir)
+        manifest = load_proposal_portfolio_manifest(workspace_dir) or {}
+        active_id = active_proposal_track_candidate_id(manifest) or candidate_from_audit
+        tracks = portfolio.get("tracks") if isinstance(portfolio.get("tracks"), list) else []
+        track_by_id = {
+            str(track.get("candidate_id") or ""): track
+            for track in tracks
+            if isinstance(track, dict)
+        }
+        active_track = track_by_id.get(active_id, {})
+        queued_ids = [
+            str(track.get("candidate_id") or "")
+            for track in manifest.get("tracks", [])
+            if isinstance(track, dict) and str(track.get("status") or "") == "queued"
+        ]
+        next_id = queued_ids[0] if queued_ids else ""
+        next_track = track_by_id.get(next_id, {})
+        return {
+            "verdict": normalize_final_gate_verdict(verdict) or verdict or "未解析",
+            "current_candidate_id": active_id or candidate_from_audit or "未识别",
+            "current_title": str(active_track.get("title") or "").strip(),
+            "headline": headline,
+            "impact": "当前 Proposal 不能以原先的“机制首创”表述进入 T5；审计并不否定已保存的证据或领域迁移价值。",
+            "next_available": bool(next_id),
+            "next_candidate_id": next_id,
+            "next_title": str(next_track.get("title") or "").strip(),
+            "audit_path": "ideation/novelty_audit.md",
+            "portfolio_path": "ideation/proposal_portfolio/manifest.json",
+        }
 
     def _rollback_native_t4_population(
         self,
