@@ -994,6 +994,9 @@ class LLMIdeaEvolver(IdeaEvolverPort):
                 "`genome`, `contributions`, `hypotheses`, `evidence_composition`, and `lineage`. For a new Child use `status=active`, `maturity=evolved`, "
                 "and `genome.maturity=evolved`. Put the Plan identity only in `lineage.evolution_plan_id` and Parent IDs only in `lineage.parent_ids`/`genome.parents`; "
                 "never put `plan_id`, `child_type`, `parent_ids`, `gene_donor_map`, `evidence_status`, `plan_refs`, or `context_boundary` at Child top level. "
+                "`evidence_composition` is a compact count map, never an evidence-detail map: every value must be a non-negative integer "
+                "(for example `{\"mechanism\": 2, \"validation_platform\": 1}`); source excerpts belong only in the relevant Genome Gene provenance. "
+                "`creative_context.evidence_status` must be exactly one of `supported`, `conjectural`, or `mixed`; use `conjectural` for a design-only or unverified proposal. "
                 "`creative_context.reading_or_validation_upgrades`, when present, must be an array of plain strings, not objects."
                 + repair_instruction
             ),
@@ -1038,6 +1041,9 @@ class LLMIdeaEvolver(IdeaEvolverPort):
                 "CandidateDossier with integer `version`, `status`, `maturity`, `genome`, `contributions`, `hypotheses`, `evidence_composition`, and `lineage`. "
                 "Remove Plan-envelope keys such as `plan_id`, `child_type`, `parent_ids`, `gene_donor_map`, `evidence_status`, `plan_refs`, and `context_boundary` "
                 "from the Child top level; preserve Plan/Parent identity only under `lineage.evolution_plan_id`, `lineage.parent_ids`, and `genome.parents`. "
+                "Repair field types as well as aliases: `evidence_composition` is `dict[str, int]`, so replace each misplaced evidence-detail list "
+                "with its item count and retain its actual source references in the unchanged Genome Gene provenance; never leave a list, object, or string as a value. "
+                "Set `creative_context.evidence_status` to exactly `supported`, `conjectural`, or `mixed`; map a design-only/conjecture label to `conjectural`. "
                 "`creative_context.reading_or_validation_upgrades` must contain only strings. Return exactly one JSON object and no Markdown."
             ),
             payload={

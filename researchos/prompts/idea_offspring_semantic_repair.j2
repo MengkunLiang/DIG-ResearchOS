@@ -7,4 +7,6 @@ Do not select Parents, create a Plan, add a Child, merge Plans, approve a crosso
 
 For a retained Child, normalize lifecycle-only aliases without changing its scientific content: set `status` to exactly `active`, `lineage.created_by` to exactly `evolver`, and `lineage.complexity_inflation` to one of `low`, `medium`, `high`, or `unknown`. Preserve a supplied Hypothesis-level `what_changes_if_true` and `creative_context.extended_validation_design` as optional explanatory fields when present.
 
+Repair these contract errors explicitly: `evidence_composition` is `dict[str, int]`, so each value must be a non-negative integer. If a value is a misplaced evidence-detail list, replace it with that list's item count; do not delete its source references from Genome Gene provenance. `creative_context.evidence_status` must be exactly `supported`, `conjectural`, or `mixed`; map a design-only or conjecture label to `conjectural`.
+
 {{ payload_json }}

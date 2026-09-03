@@ -19,16 +19,16 @@ from ..latex_templates import LatexTemplateEntry, ccf_template_entry
 
 
 _LITERATURE_LABELS = {
-    "standard_research": "研究论文覆盖\n候选池 40 篇：深度阅读 25 篇；摘要浏览 15 篇",
-    "survey_balanced": "综述均衡覆盖\n候选池 80 篇：深度阅读 40 篇；摘要浏览 40 篇",
-    "survey_exhaustive": "综述强覆盖\n候选池 90 篇：深度阅读 40 篇；摘要浏览 50 篇",
+    "standard_research": "研究论文覆盖（40 / 25 / 15）\n保留候选上限 40；精读目标 25；摘要轻读目标 15",
+    "survey_balanced": "综述均衡覆盖（80 / 40 / 40）\n保留候选上限 80；精读目标 40；摘要轻读目标 40",
+    "survey_exhaustive": "综述强覆盖（90 / 40 / 50）\n保留候选上限 90；精读目标 40；摘要轻读目标 50",
 }
 
 _T4_LABELS = {
     "quick": "快速探索",
     "standard": "标准探索",
     "deep": "深入探索",
-    "auto": "按证据与多样性自动决定",
+    "auto": "自动选择探索深度",
 }
 
 _ORIENTATION_LABELS = {
@@ -101,7 +101,7 @@ def workflow_settings_panel(
             ),
         ),
         (
-            "T4 探索",
+            "研究方向探索",
             _T4_LABELS.get(str(settings.get("t4_mode") or ""), str(settings.get("t4_mode") or "未设置")),
             _T4_LABELS.get(
                 str(previous_settings.get("t4_mode") or ""),
@@ -195,22 +195,22 @@ def workflow_execution_setup_guide_panel() -> Panel:
     table.add_column("实际含义", min_width=32, overflow="fold")
     table.add_column("可直接输入", min_width=25, overflow="fold")
     table.add_row(
-        "文献覆盖",
-        "不是三个神秘参数：先建立候选池，再分别安排深度阅读和摘要浏览。例如 40 / 25 / 15 就是候选池 40 篇，其中 25 篇深读、15 篇只读摘要。强覆盖会增加检索、阅读时间和模型成本。",
-        "“标准研究覆盖”\n“综述均衡覆盖”\n“全面综述覆盖”",
+        "文献阅读规模",
+        "三个数字依次表示保留候选、精读和摘要轻读。例如 40 / 25 / 15：先从检索结果中保留 40 篇，再精读 25 篇，并对 15 篇做摘要级浏览。研究论文通常选较小规模；综述需要更广的材料覆盖。",
+        "“研究论文覆盖（40 / 25 / 15）”\n“综述均衡覆盖（80 / 40 / 40）”\n“综述强覆盖（90 / 40 / 50）”",
     )
     table.add_row(
-        "T4 探索",
-        "控制 Candidate 形成与演化的探索力度；auto 根据证据质量与候选多样性决定，不改变研究范围。",
+        "研究方向探索",
+        "决定系统在文献证据基础上生成和比较研究方向的广度。快速探索适合先得到方向；标准探索适合常规研究；深入探索会比较更多替代机制与实验设计。Auto 由现有证据和方向差异自动选择合适力度。",
         "“快速探索”\n“标准探索”\n“深入探索”",
     )
     table.add_row(
-        "Proposal 产出",
-        "一条：只把评分最高的 1 个 Candidate 写成完整 Proposal，其他 Candidate 仍保留供以后重开。两条：把前 2 个分别写成互不混合的 Proposal，完成后再由你明确选择 1 个进入 T5。",
+        "研究方案数量",
+        "选择“一条”时，系统为排名最高的研究方向写一份完整 Proposal。选择“两个”时，系统为前两个方向分别写 Proposal；完成后你再选择其中一份进入实验与论文阶段。",
         "“一条 Proposal”\n“两个 Proposal”",
     )
     note = Text(
-        "输入“1”或“确认”接受当前显示的设置。提出修改后，系统会先展示未保存预览，必须再次确认才会生效。",
+        "输入“1”或“确认”采用当前设置。也可以直接描述你的偏好，例如“综述均衡覆盖、深入探索、两个 Proposal”。",
         style="dim",
         overflow="fold",
     )
