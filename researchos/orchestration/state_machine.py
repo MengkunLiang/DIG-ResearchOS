@@ -8181,6 +8181,31 @@ class StateMachine:
                     "option_id": str(directive.get("option_id") or ""),
                 }
 
+            # A Runtime Recovery Gate is an explicit researcher decision, not
+            # another autonomous invocation with the old failure context.
+            # Give the one approved repair window its own durable execution
+            # identity.  If that same receipt is resumed repeatedly, its
+            # identity remains stable and the ordinary deadlock guard still
+            # protects against a no-change loop.
+            recovery = state.task_context.get("runtime_recovery")
+            if isinstance(recovery, dict) and str(recovery.get("target_task") or "") == node.task_id:
+                receipt_fingerprint = "state_only"
+                receipt_path = str(recovery.get("path") or "").strip()
+                if workspace_dir is not None and receipt_path:
+                    path = workspace_dir / receipt_path
+                    if path.is_file():
+                        try:
+                            receipt_fingerprint = _sha256_file(path)
+                        except OSError:
+                            receipt_fingerprint = "unreadable_receipt"
+                params["runtime_recovery_directive"] = {
+                    "action": str(recovery.get("action") or ""),
+                    "recovery_kind": str(recovery.get("recovery_kind") or ""),
+                    "requested_at": str(recovery.get("requested_at") or ""),
+                    "receipt_path": receipt_path,
+                    "receipt_fingerprint": receipt_fingerprint,
+                }
+
         if node.task_id == "T4" and state is not None:
             # Source changes to the native controller are a genuine execution
             # change.  Without this marker, a fixed validator or repair path
@@ -8232,6 +8257,31 @@ class StateMachine:
                     decision_fingerprint = _sha256_file(decision_path)
             params["t2_run_mode"] = "user_requested_expansion"
             params["t2_expansion_decision_fingerprint"] = decision_fingerprint
+
+        if node.task_id == "T3.6-ASSEMBLE" and state is not None:
+            # A T3.6 recovery is a distinct, auditable human decision, not an
+            # autonomous retry of the stale assembly context.  Bind the
+            # iteration identity to the durable directive receipt.  The
+            # narrow bypass in `_check_iteration_deadlock` permits the first
+            # recovery to reach the source-aware Survey guard; subsequent
+            # no-progress attempts are still stopped there.
+            recovery = state.task_context.get("t36_assemble_recovery")
+            if isinstance(recovery, dict) and str(recovery.get("action") or "") == "retry_survey_repair":
+                directive_fingerprint = "state_only"
+                directive_path = str(recovery.get("path") or "").strip()
+                if workspace_dir is not None and directive_path:
+                    receipt_path = workspace_dir / directive_path
+                    if receipt_path.is_file():
+                        try:
+                            directive_fingerprint = _sha256_file(receipt_path)
+                        except OSError:
+                            directive_fingerprint = "unreadable_receipt"
+                params["t36_assemble_recovery"] = {
+                    "action": "retry_survey_repair",
+                    "directive_path": directive_path,
+                    "directive_fingerprint": directive_fingerprint,
+                    "requested_at": str(recovery.get("requested_at") or ""),
+                }
 
         return params
 

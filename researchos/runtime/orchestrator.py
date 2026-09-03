@@ -1306,14 +1306,27 @@ class AgentRunner:
             t3_pre_finalized = False
             if not (deterministic_pre_finalized or t2_pre_finalized):
                 t3_pre_finalized = await self._maybe_finalize_t3_before_llm(ctx)
+            if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized):
+                # T3.5 has a costly long-context synthesis call.  On resume,
+                # reuse a complete, current synthesis package rather than
+                # treating an interrupted state transition as authorization to
+                # regenerate the same literature argument.
+                t3_pre_finalized = await self._maybe_finalize_t35_before_llm(ctx)
             t4_pre_finalized = False
             t35_prepared = False
             if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized):
                 t35_prepared = await self._maybe_prepare_t35_before_llm(ctx, policy)
             t36_section_pre_finalized = False
             if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized):
-                self._pause_t36_quality_repair_before_llm(ctx)
-                t36_section_pre_finalized = await self._maybe_finalize_t36_section_before_llm(ctx)
+                # A prior interrupted ASSEMBLE run can already have produced
+                # a complete, current audit.  Check that deterministic fact
+                # before consulting the no-progress ledger: a stale failure
+                # receipt must not force the user to repair an artifact that
+                # now passes its full validator.
+                t36_section_pre_finalized = await self._maybe_finalize_t36_assemble_before_llm(ctx)
+                if not t36_section_pre_finalized:
+                    self._pause_t36_quality_repair_before_llm(ctx)
+                    t36_section_pre_finalized = await self._maybe_finalize_t36_section_before_llm(ctx)
             t36_visuals_pre_finalized = False
             if not (
                 deterministic_pre_finalized
@@ -5169,6 +5182,101 @@ class AgentRunner:
                 ],
             },
             action_type="t3_resume_prefinalize",
+        )
+        return True
+
+    async def _maybe_finalize_t35_before_llm(self, ctx: ExecutionContext) -> bool:
+        """Reuse a fully validated, current T3.5 synthesis after a resume.
+
+        The workbench is only a preparation aid; this fast path requires the
+        final Reader synthesis itself to pass its claim/citation validator and
+        every declared staged output to be newer than the evidence inputs.
+        It therefore avoids an expensive duplicate LLM call without allowing
+        stale literature coverage to leak into T4.
+        """
+
+        if ctx.task_id != "T3.5" or not self._is_resume_run(ctx):
+            return False
+        outputs = [
+            ctx.workspace_dir / "literature" / "synthesis.md",
+            ctx.workspace_dir / "literature" / "synthesis_workbench.json",
+            ctx.workspace_dir / "literature" / "synthesis_outline.md",
+            ctx.workspace_dir / "literature" / "synthesis_draft.md",
+        ]
+        if any(not path.is_file() or path.stat().st_size <= 0 for path in outputs):
+            return False
+        note_files = [
+            ctx.workspace_dir / card.rel_path
+            for card in iter_literature_note_cards(ctx.workspace_dir, include_shallow=False)
+        ]
+        bridge_inputs = [
+            ctx.workspace_dir / "literature" / "bridge_domain_plan.json",
+            ctx.workspace_dir / "literature" / "cross_domain_catalogs" / "index.json",
+        ]
+        for catalog_path in iter_bridge_catalog_paths(ctx.workspace_dir):
+            bridge_inputs.extend([catalog_path, catalog_path.parent / "bridge_context.json"])
+        inputs = [path for path in [*note_files, *bridge_inputs] if path.is_file()]
+        if not self._outputs_newer_than_inputs(
+            ctx,
+            outputs=outputs,
+            inputs=inputs,
+            event="t35_resume_prefinalize_skipped",
+            reason="synthesis_outputs_older_than_evidence_inputs",
+        ):
+            return False
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.info("t35_resume_prefinalize_skipped", reason=err)
+            return False
+        self.progress.emit(
+            "[Synthesizer Agent] T3.5 检测到当前文献综合产物完整且通过校验；恢复时不重复调用模型。",
+            important=True,
+        )
+        self._record_runtime_completion(
+            ctx,
+            "t35_resume_prefinalize",
+            {
+                "outputs": [path.relative_to(ctx.workspace_dir).as_posix() for path in outputs],
+            },
+            action_type="t35_resume_prefinalize",
+        )
+        return True
+
+    async def _maybe_finalize_t36_assemble_before_llm(self, ctx: ExecutionContext) -> bool:
+        """Finish a recovered T3.6 assembly when its current audit already passes.
+
+        The recovery Gate persists the prior diagnosis so that a researcher can
+        authorize a source-level repair.  A later deterministic assemble/audit
+        can nevertheless make the saved package valid before the next resume.
+        In that case replaying the model is both wasteful and dangerous: the
+        stale iteration history or repair ledger used to block a correct
+        survey, even though the strict Survey Writer validator would accept
+        it.  Reuse only a fully current package; an old ``passed`` flag alone
+        is never sufficient because ``validate_outputs`` checks all source
+        fingerprints and required audit checks.
+        """
+
+        if ctx.task_id != "T3.6-ASSEMBLE" or not self._is_resume_run(ctx):
+            return False
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.info("t36_assemble_resume_prefinalize_skipped", reason=err)
+            return False
+        self.progress.emit(
+            "[Survey Writer Agent] T3.6-ASSEMBLE 检测到当前 survey.tex 与审计已完整通过；恢复时不重复拼装或调用模型。",
+            important=True,
+        )
+        self._record_runtime_completion(
+            ctx,
+            "t36_assemble_resume_prefinalize",
+            {
+                "outputs": [
+                    "drafts/survey/survey.tex",
+                    "drafts/survey/survey_audit.md",
+                    "drafts/survey/survey_audit.json",
+                ],
+            },
+            action_type="t36_assemble_resume_prefinalize",
         )
         return True
 
@@ -11361,7 +11469,23 @@ class AgentRunner:
     def _t36_quality_repair_entry(cls, ctx: ExecutionContext) -> tuple[dict[str, object], str, dict[str, object]]:
         ledger = cls._load_t36_quality_repair_ledger(ctx.workspace_dir)
         baseline = cls._t36_quality_repair_baseline(ctx.workspace_dir)
-        key = f"{ctx.task_id}:{baseline}"
+        # A Gate-approved assembly repair is a new source-level work window,
+        # not an automatic continuation of the earlier failed window.  Keep
+        # its ledger distinct so the model can perform the one newly approved
+        # repair.  Later resume calls retain the same receipt key and are
+        # still stopped before another empty loop when the diagnosis and
+        # implicated sources have not changed.
+        recovery_window = ""
+        recovery = ctx.extra.get("t36_assemble_recovery")
+        if ctx.task_id == "T3.6-ASSEMBLE" and isinstance(recovery, dict) and str(recovery.get("action") or "") == "retry_survey_repair":
+            receipt = {
+                "requested_at": str(recovery.get("requested_at") or ""),
+                "path": str(recovery.get("path") or ""),
+                "audit_path": str(recovery.get("audit_path") or ""),
+            }
+            encoded = json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            recovery_window = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+        key = f"{ctx.task_id}:{baseline}" + (f":repair:{recovery_window}" if recovery_window else "")
         entries = ledger["entries"]
         assert isinstance(entries, dict)
         entry = entries.get(key)
@@ -11370,6 +11494,7 @@ class AgentRunner:
                 "task_id": ctx.task_id,
                 "baseline": baseline,
                 "attempt_count": 0,
+                "recovery_window": recovery_window,
             }
             entries[key] = entry
         return ledger, key, entry
@@ -11542,7 +11667,23 @@ class AgentRunner:
     def _t45_quality_repair_entry(cls, ctx: ExecutionContext) -> tuple[dict[str, object], str, dict[str, object]]:
         ledger = cls._load_t45_quality_repair_ledger(ctx.workspace_dir)
         baseline = cls._t45_quality_repair_baseline(ctx.workspace_dir)
-        key = f"{ctx.task_id}:{baseline}"
+        # A generic Runtime Recovery Gate can explicitly authorize one fresh
+        # T4.5 repair.  Keep that window separate from the prior no-progress
+        # ledger entry, otherwise the pre-LLM guard rejects the newly approved
+        # repair before Formalizer receives the diagnostic.  The same receipt
+        # retains its key across resume, so a second unchanged attempt is
+        # still stopped.
+        recovery_window = ""
+        recovery = ctx.extra.get("runtime_recovery")
+        if isinstance(recovery, dict) and str(recovery.get("target_task") or "") == ctx.task_id:
+            receipt = {
+                "action": str(recovery.get("action") or ""),
+                "requested_at": str(recovery.get("requested_at") or ""),
+                "path": str(recovery.get("path") or ""),
+            }
+            encoded = json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            recovery_window = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+        key = f"{ctx.task_id}:{baseline}" + (f":repair:{recovery_window}" if recovery_window else "")
         entries = ledger["entries"]
         assert isinstance(entries, dict)
         entry = entries.get(key)
@@ -11551,6 +11692,7 @@ class AgentRunner:
                 "task_id": ctx.task_id,
                 "baseline": baseline,
                 "attempt_count": 0,
+                "recovery_window": recovery_window,
             }
             entries[key] = entry
         return ledger, key, entry

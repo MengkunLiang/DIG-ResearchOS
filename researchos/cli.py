@@ -973,6 +973,25 @@ def _validate_pipeline_workspace_entry(args: argparse.Namespace, workspace_dir: 
                 border_style="bright_red",
             )
             return 2
+        # Internal artifact folders are never valid roots for a new pipeline.
+        # Treating ``<project>/drafts`` (or ``literature``/``ideation``) as a
+        # fresh workspace silently splits state.yaml from the project's
+        # artifacts.  The resulting resume then appears to have stale outputs
+        # and can trigger expensive, misleading recovery loops.
+        internal_workspace_dirs = {"drafts", "literature", "ideation", "user_seeds", "_runtime", ".researchos"}
+        if workspace_dir.name.casefold() in internal_workspace_dirs:
+            _render_workspace_entry_panel(
+                args,
+                title="workspace 路径像项目内部目录",
+                message=(
+                    "该目录没有 state.yaml，且名称是 ResearchOS 的内部产物目录。"
+                    "请将 --workspace 指向包含 project.yaml 与 state.yaml 的项目根目录；"
+                    "不要直接对 drafts、literature、ideation 或 _runtime 运行 pipeline。"
+                ),
+                workspace=workspace_dir,
+                border_style="bright_red",
+            )
+            return 2
         return None
     if not state_path.is_file():
         _render_workspace_entry_panel(
