@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 from typing import Any, Mapping
 
 from ..latex_templates import available_ccf_template_ids, normalize_ccf_template_id
@@ -410,6 +411,32 @@ def parse_workflow_mode_answer(answer: str) -> tuple[str, str, str | None] | Non
     normalized = " ".join(str(answer or "").strip().casefold().split())
     if not normalized:
         return None
+    # Terminal users often select a row and immediately append their intended
+    # coverage, for example ``4，综述，但总共阅读 40/25/15``.  The leading
+    # menu number is still an unambiguous mode choice; do not send it to an
+    # optional LLM parser or reject it merely because it has a human note.
+    leading_menu = re.match(r"^\s*\[?([1-6])\]?(?:\s|[，,;；:：。、】【、]|$)", normalized)
+    if leading_menu:
+        menu_choice = leading_menu.group(1)
+        numbered = {
+            "1": ("copilot", "research_ccf", None),
+            "2": ("auto", "research_ccf", None),
+            "3": ("auto", "research_utd", None),
+            "4": ("auto", "survey_ccf", None),
+            "5": ("auto", "survey_utd", None),
+            "6": ("auto", "survey_exhaustive_utd", None),
+        }
+        # A researcher may select a research-paper row and immediately add
+        # “also write a survey”.  That is not an opaque LLM-only request: the
+        # public workflow has an exact corresponding survey preset with the
+        # same venue orientation.  Promote this clear suffix locally so the
+        # startup page does not wait on an unnecessary semantic call.
+        suffix = normalized[leading_menu.end() :]
+        if menu_choice == "2" and any(token in suffix for token in ("survey", "综述")):
+            return "auto", "survey_ccf", None
+        if menu_choice == "3" and any(token in suffix for token in ("survey", "综述")):
+            return "auto", "survey_utd", None
+        return numbered[menu_choice]
     if normalized in {"1", "[1]"} or "copilot" in normalized or "协作" in normalized:
         return "copilot", "research_ccf", None
     if normalized in {"2", "[2]"}:
@@ -489,7 +516,37 @@ def parse_auto_execution_setup_answer(
 
     recognized = False
 
-    if any(token in normalized for token in ("exhaustive", "强覆盖", "全面综述")):
+    # The three public presets have stable, displayed count triples.  Accept
+    # them as a convenience expression rather than forcing a researcher to
+    # reverse-engineer an internal preset name.  A survey mode may therefore
+    # intentionally request the lean 40/25/15 coverage profile.
+    numeric_values = [int(value) for value in re.findall(r"(?<!\d)(\d{1,3})(?!\d)", normalized)]
+    numeric_triples = {
+        (40, 25, 15): "standard_research",
+        (80, 40, 40): "survey_balanced",
+        (90, 40, 50): "survey_exhaustive",
+    }
+    numeric_preset = next(
+        (
+            preset
+            for triple, preset in numeric_triples.items()
+            if all(value in numeric_values for value in triple)
+        ),
+        None,
+    )
+    # Researchers often state only the candidate pool and deep-read count.
+    # For the displayed 40/25/15 profile, the remaining shallow-read count is
+    # unambiguous.  Infer it only when the values occur in a literature-reading
+    # context, never from arbitrary numbers in a free-form message.
+    if numeric_preset is None and {40, 25}.issubset(numeric_values) and any(
+        token in normalized for token in ("阅读", "候选", "精读", "浅读", "文献")
+    ):
+        numeric_preset = "standard_research"
+
+    if numeric_preset:
+        literature_preset = numeric_preset
+        recognized = True
+    elif any(token in normalized for token in ("exhaustive", "强覆盖", "全面综述")):
         literature_preset = "survey_exhaustive"
         recognized = True
     elif any(token in normalized for token in ("balanced", "均衡", "survey", "综述")):
@@ -506,11 +563,24 @@ def parse_auto_execution_setup_answer(
     # `standard_research deep top2` faithfully means deep exploration.
     effort = next((item for item in ("deep", "quick", "standard", "auto") if item in normalized), None)
     if effort is None:
+        # ``深入阅读`` / ``深读`` describe literature coverage, not the T4
+        # exploration setting.  Only treat the Chinese deep marker as T4
+        # intent when it is not part of a reading-count expression.
+        reading_depth_phrase = any(token in normalized for token in ("深入阅读", "深度阅读", "深读", "精读"))
         localized_effort = next(
             (
                 mapped
-                for token, mapped in (("快速", "quick"), ("标准", "standard"), ("深入", "deep"), ("深度", "deep"))
-                if token in normalized
+                for token, mapped in (
+                    ("快速探索", "quick"),
+                    ("快速", "quick"),
+                    ("标准探索", "standard"),
+                    ("标准", "standard"),
+                    ("深入探索", "deep"),
+                    ("深度探索", "deep"),
+                    ("深入", "deep"),
+                    ("深度", "deep"),
+                )
+                if token in normalized and not (mapped == "deep" and reading_depth_phrase)
             ),
             None,
         )

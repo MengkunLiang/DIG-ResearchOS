@@ -3702,36 +3702,61 @@ class AgentRunner:
         if tool is None and workflow_mode_needs_confirmation(ctx.workspace_dir):
             raise RecoverableRuntimePause("T1 工作模式选择需要 ask_human 工具，但当前策略没有开放它。")
         if workflow_mode_needs_confirmation(ctx.workspace_dir):
-            question = (
+            base_question = (
                 "<!-- researchos_workflow_mode_selector -->\n"
                 "请选择本项目的运行方式。这个选择只决定已授权常规 Gate 的自动化程度；"
                 "不会替你决定研究问题、文献范围、关键假设、失败恢复或外部执行。"
             )
-            result = await tool.execute(
-                question=question,
-                suggestions=[
-                    "1 · Copilot",
-                    "2 · Auto research_ccf",
-                    "3 · Auto research_utd",
-                    "4 · Auto survey_ccf",
-                    "5 · Auto survey_utd",
-                    "6 · Auto survey_exhaustive_utd",
-                ],
-            )
-            if not result.ok:
-                raise RecoverableRuntimePause(str(result.content or result.error or "未获得工作模式选择"))
-            data = result.data if isinstance(result.data, dict) else {}
-            answer = str(data.get("answer") or "").strip()
-            parsed = parse_workflow_mode_answer(answer)
+            suggestions = [
+                "1 · Copilot",
+                "2 · Auto research_ccf",
+                "3 · Auto research_utd",
+                "4 · Auto survey_ccf",
+                "5 · Auto survey_utd",
+                "6 · Auto survey_exhaustive_utd",
+            ]
+            answer = ""
+            parsed = None
+            clarification = ""
+            # Ambiguous natural language is a normal human interaction, not a
+            # runtime failure.  Keep the researcher on this same decision
+            # page and ask again; never turn an optional semantic-parser miss
+            # into a T1 recovery Gate or a failed project state.
+            for _attempt in range(3):
+                prompt = base_question + ("\n\n" + clarification if clarification else "")
+                result = await tool.execute(question=prompt, suggestions=suggestions)
+                if not result.ok:
+                    raise RecoverableRuntimePause(str(result.content or result.error or "未获得工作模式选择"))
+                data = result.data if isinstance(result.data, dict) else {}
+                answer = str(data.get("answer") or "").strip()
+                parsed = parse_workflow_mode_answer(answer)
+                if parsed is None:
+                    interpreter = getattr(getattr(tool, "human", None), "interpret_workflow_mode", None)
+                    proposal = await interpreter(answer) if callable(interpreter) else {}
+                    parsed = parse_workflow_mode_proposal(proposal)
+                if parsed is not None:
+                    break
+                clarification = (
+                    "我还不能可靠判断你的运行方式，但这不是错误，也尚未保存任何设置。"
+                    "可直接输入 1–6，或说明“每一步都确认”/“自动走综述流程”。"
+                )
             if parsed is None:
-                interpreter = getattr(getattr(tool, "human", None), "interpret_workflow_mode", None)
-                proposal = await interpreter(answer) if callable(interpreter) else {}
-                parsed = parse_workflow_mode_proposal(proposal)
-            if parsed is None:
-                raise RecoverableRuntimePause(
-                    "未识别工作模式。请在恢复后输入 Copilot、Auto research_ccf / Auto research_utd，或用一句话说明希望自动化还是逐步确认。"
+                # This is still an ordinary unresolved human choice rather
+                # than a runtime-recovery incident.  AskHuman will preserve
+                # the prompt/session; a later resume simply returns here.
+                raise HumanInputUnavailable(
+                    "T1 工作模式尚未明确；未保存任何设置。请恢复后在同一选择页输入 1–6 或说明自动/逐步确认。"
                 )
             mode, preset, t4_mode = parsed
+            # Preserve only an actual suffix preference from a compact menu
+            # response (for example ``4，综述，40/25/15``).  A bare ``2`` is
+            # already a complete mode decision and must go straight to the
+            # default-settings confirmation rather than causing a needless
+            # workflow-setup LLM call.
+            if not re.fullmatch(r"\s*\[?[1-6]\]?\s*", answer):
+                ctx.extra["_t1_mode_answer_for_setup_preview"] = answer
+            else:
+                ctx.extra.pop("_t1_mode_answer_for_setup_preview", None)
             profile = configure_workflow_mode(
                 ctx.workspace_dir,
                 mode=mode,
@@ -3777,6 +3802,57 @@ class AgentRunner:
         parsed_setup: tuple[str, str, str] | None = None
         feedback = ""
         awaiting_change_confirmation = False
+        carried_setup_answer = str(ctx.extra.pop("_t1_mode_answer_for_setup_preview", "") or "").strip()
+        setup_interpreter = getattr(getattr(tool, "human", None), "interpret_workflow_setup", None)
+        if carried_setup_answer:
+            # The menu number establishes the mode deterministically, while
+            # the text after it remains a natural-language request.  When the
+            # public settings parser already understands that request, do not
+            # spend time on an unnecessary LLM round-trip.  The bounded LLM
+            # interpreter remains available for genuinely ambiguous prose.
+            carried_local = parse_auto_execution_setup_answer(
+                carried_setup_answer,
+                current_preset=current_preset,
+                current_t4_mode=current_t4_mode,
+                current_proposal_tracks=current_proposal_tracks,
+            )
+            carried_proposal = await setup_interpreter(carried_setup_answer) if carried_local is None and callable(setup_interpreter) else {}
+            carried = carried_local or parse_execution_setup_proposal(
+                carried_proposal,
+                current_preset=current_preset,
+                current_t4_mode=current_t4_mode,
+                current_proposal_tracks=current_proposal_tracks,
+            )
+            if carried is not None:
+                proposed_preset, proposed_t4_mode, proposed_tracks = carried
+                prior_values = (current_preset, current_t4_mode, current_proposal_tracks)
+                current_preset, current_t4_mode, current_proposal_tracks = carried
+                preview_settings = dict(settings)
+                preview_settings.update(
+                    {
+                        "literature_preset": current_preset,
+                        "t4_mode": current_t4_mode,
+                        "proposal_tracks": current_proposal_tracks,
+                    }
+                )
+                profile = {**profile, "settings": preview_settings}
+                settings = preview_settings
+                changed = [
+                    label
+                    for label, before, after in (
+                        ("文献覆盖", prior_values[0], proposed_preset),
+                        ("T4 探索", prior_values[1], proposed_t4_mode),
+                        ("Proposal 数量", prior_values[2], proposed_tracks),
+                    )
+                    if before != after
+                ]
+                if changed:
+                    awaiting_change_confirmation = True
+                    feedback = (
+                        "已从上一页的附加说明生成未保存预览："
+                        + "、".join(changed)
+                        + " 已更新。请检查后输入“1”或“确认”保存；也可继续调整。"
+                    )
         for _attempt in range(4):
             setup_question = (
                 "<!-- researchos_workflow_settings:"
@@ -3818,21 +3894,31 @@ class AgentRunner:
                 for marker in ("我选", "当前", "是不是", "为什么", "咋", "怎么")
             )
             if not status_question:
-                parsed_setup = parse_auto_execution_setup_answer(
+                local_setup = parse_auto_execution_setup_answer(
                     raw_setup_answer,
                     current_preset=current_preset,
                     current_t4_mode=current_t4_mode,
                     current_proposal_tracks=current_proposal_tracks,
                 )
-            interpreter = getattr(getattr(tool, "human", None), "interpret_workflow_setup", None)
-            proposal = await interpreter(raw_setup_answer) if parsed_setup is None and callable(interpreter) else {}
-            if parsed_setup is None and not status_question:
-                parsed_setup = parse_execution_setup_proposal(
+            else:
+                local_setup = None
+            proposal = await setup_interpreter(raw_setup_answer) if local_setup is None and not status_question and callable(setup_interpreter) else {}
+            semantic_setup = (
+                parse_execution_setup_proposal(
                     proposal,
                     current_preset=current_preset,
                     current_t4_mode=current_t4_mode,
                     current_proposal_tracks=current_proposal_tracks,
                 )
+                if not status_question
+                else None
+            )
+            if not status_question:
+                # The local parser handles unambiguous public choices without
+                # a network wait. The LLM proposal is reserved for prose that
+                # cannot be safely resolved that way, and is still bounded to
+                # the same finite public enum.
+                parsed_setup = local_setup or semantic_setup
             if parsed_setup is not None:
                 proposed_preset, proposed_t4_mode, proposed_proposal_tracks = parsed_setup
                 previous_values = (current_preset, current_t4_mode, current_proposal_tracks)
@@ -9004,9 +9090,12 @@ class AgentRunner:
         normalized = content.lower()
 
         # Plain status narration such as "我来检查已有材料" must not open an
-        # input box. This safety net only catches explicit user-facing
-        # requests to choose, confirm, answer, or provide missing information.
-        strong_markers = (
+        # input box.  In particular, a model may say “先展示草案请你确认，
+        # 我先读取 state.yaml” while narrating its own next action.  Looking
+        # for a marker anywhere in that paragraph used to turn such internal
+        # narration into a spurious human Gate.  Require a sentence that is
+        # itself addressed to the researcher instead.
+        strong_prefixes = (
             "请选择",
             "请输入",
             "请回答",
@@ -9031,8 +9120,14 @@ class AgentRunner:
             "do you want me to",
             "waiting for user",
         )
-        if any(marker in normalized for marker in strong_markers):
-            return True
+        sentences = [part.strip().lower() for part in re.split(r"[。！？!?\n]+", content) if part.strip()]
+        for sentence in sentences:
+            if sentence.startswith(strong_prefixes):
+                return True
+            # These are direct requests even when a short label or bullet
+            # precedes them, unlike prose that merely describes a later Gate.
+            if re.match(r"^(?:[^:：]{0,32}[:：]\s*)?(?:请选择|请输入|请回答|请确认|请补充|请提供|请明确)", sentence):
+                return True
 
         question_lines = [
             line.strip()

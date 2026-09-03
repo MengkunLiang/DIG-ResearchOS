@@ -87,9 +87,9 @@ def _looks_like_t1_scope_confirmation(question: str) -> bool:
     """
 
     normalized = str(question or "")
-    has_t1_scope_context = "T1" in normalized and "文献范围" in normalized and "跨域" in normalized
-    has_core = "核心研究线" in normalized or "核心线" in normalized
-    has_adjacent = "邻接" in normalized and "线" in normalized
+    has_t1_scope_context = ("T1" in normalized or "文献范围" in normalized) and ("跨域" in normalized or "Bridge" in normalized)
+    has_core = "核心研究线" in normalized or "核心线" in normalized or "拟写入的核心线" in normalized
+    has_adjacent = "邻接" in normalized and ("线" in normalized or "方法" in normalized or "理论" in normalized)
     has_bridge = "Bridge" in normalized or "跨领域" in normalized
     return has_t1_scope_context and has_core and has_adjacent and has_bridge
 
@@ -693,7 +693,12 @@ User input:
             temperature=0.0,
             tier="light",
             profile=None,
-            timeout=25,
+            # This is an optional semantic interpretation call, but 25s was
+            # shorter than the configured healthy provider window and caused
+            # ordinary first-run prose to fall back unnecessarily.  A modest
+            # 60s window keeps it lightweight without treating it as a full
+            # research-agent request.
+            timeout=60,
             max_retries_per_model=1,
             retry_base_delay=0.0,
         )
@@ -728,7 +733,9 @@ User input:
             temperature=0.0,
             tier="light",
             profile=None,
-            timeout=25,
+            # Failure remains a non-blocking fallback condition, never a
+            # reason to reject a clear user choice.
+            timeout=60,
             max_retries_per_model=1,
             retry_base_delay=0.0,
         )
@@ -1277,13 +1284,21 @@ class CLIHumanInterface(HumanInterface):
             # provider shortened the canonical wording.
             if ":" in heading or "：" in heading:
                 continue
-            if heading.startswith("核心研究线") or heading.startswith("核心线"):
+            if (
+                heading.startswith("核心研究线")
+                or heading.startswith("核心线")
+                or heading.startswith("拟写入的核心研究线")
+                or heading.startswith("拟写入的核心线")
+            ):
                 recognized.append((match, "core"))
-            elif heading.startswith("邻接") and ("线" in heading or "理论" in heading):
+            elif (
+                heading.startswith("邻接")
+                or heading.startswith("拟写入的邻接")
+            ) and ("线" in heading or "理论" in heading or "方法" in heading):
                 recognized.append((match, "adjacent"))
             elif (
                 heading.startswith("真正") and ("Bridge" in heading or "跨领域" in heading)
-            ) or heading.startswith("Bridge"):
+            ) or heading.startswith("Bridge") or heading.startswith("拟写入的 Bridge") or heading.startswith("拟写入的跨领域"):
                 recognized.append((match, "bridge"))
         if len(recognized) != 3 or {kind for _, kind in recognized} != {"core", "adjacent", "bridge"}:
             return None
@@ -1332,10 +1347,9 @@ class CLIHumanInterface(HumanInterface):
             box=box.SIMPLE_HEAVY,
             padding=(0, 1),
         )
-        table.add_column("条目", width=24, overflow="fold")
-        table.add_column("为什么纳入", ratio=2, overflow="fold")
-        table.add_column("检索提示", ratio=2, overflow="fold")
-        table.add_column("边界 / 迁移判断", ratio=2, overflow="fold")
+        table.add_column("条目", width=26, overflow="fold")
+        table.add_column("纳入理由", ratio=2, overflow="fold")
+        table.add_column("检索与边界", ratio=3, overflow="fold")
         if not lines:
             table.add_row("—", "（本组暂无候选）", "—", "—")
             return table
@@ -1347,10 +1361,13 @@ class CLIHumanInterface(HumanInterface):
 
         for record in records:
             table.add_row(
-                Text(record["title"], overflow="fold"),
+                Text(record["title"] + (f"\n{record['role']}" if record["role"] != "—" else ""), overflow="fold"),
                 Text(record["rationale"], overflow="fold"),
-                Text(record["queries"], overflow="fold"),
-                Text(record["boundaries"], overflow="fold"),
+                Text(
+                    (f"检索：{record['queries']}\n" if record["queries"] != "—" else "")
+                    + (f"边界：{record['boundaries']}" if record["boundaries"] != "—" else "—"),
+                    overflow="fold",
+                ),
             )
         if not table.rows:
             table.add_row("—", "（本组暂无候选）", "—", "—")
@@ -1555,8 +1572,8 @@ class CLIHumanInterface(HumanInterface):
         }
         for kind, section in sections:
             label, style = styles[kind]
-            detail = self._scope_candidate_detail_view(section, border_style=style)
-            console.print(Panel(detail, title=label, border_style=style, expand=True))
+            table = self._scope_candidate_table(section, border_style=style)
+            console.print(Panel(table, title=label, border_style=style, expand=True))
 
         answer_parts: list[Any] = []
         if answer_help:
