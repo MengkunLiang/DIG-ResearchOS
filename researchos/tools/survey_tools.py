@@ -2363,9 +2363,15 @@ class AuditSurveyCoverageTool(Tool):
         rendered_cited = _cited_keys(tex)
         source_bibtex = _bibtex_optional(self.policy, params.related_work_bib_path)
         canonical_keys = set(extract_bib_keys_from_text(source_bibtex))
-        citation_key_projection = _survey_citation_key_projection(canonical_keys)
-        rendered_to_canonical = citation_key_projection["rendered_to_canonical"]
+        # Use the broad source-key projection only to reverse the aliases
+        # already present in survey.tex.  Assembly intentionally rewrites
+        # only *cited* keys: projecting every entry here made the audit expect
+        # aliases for uncited bibliography records and falsely report the
+        # freshly rendered references.bib as stale.
+        source_key_projection = _survey_citation_key_projection(canonical_keys)
+        rendered_to_canonical = source_key_projection["rendered_to_canonical"]
         cited = {rendered_to_canonical.get(key, key) for key in rendered_cited}
+        citation_key_projection = _survey_citation_key_projection(cited)
         effective_bibtex, expected_reconciliation = _reconcile_survey_bibliography_authors(
             self.policy.workspace_dir,
             source_bibtex,
