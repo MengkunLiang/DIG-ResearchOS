@@ -1088,6 +1088,73 @@ def activate_next_track(workspace_dir: Path, manifest: dict[str, Any]) -> str | 
     return None
 
 
+def defer_active_track_after_novelty_review(
+    workspace_dir: Path,
+    manifest: dict[str, Any],
+    *,
+    verdict: str,
+    reason: str,
+) -> tuple[dict[str, Any], str, str | None]:
+    """Archive a non-passing active track and activate the next queued one.
+
+    A novelty collision is a research decision, not an I/O failure.  Preserve
+    the candidate-bound audit package under that track before the canonical
+    active projection is cleared for the next independently selected Proposal.
+    This makes it possible to continue a multi-Proposal portfolio without
+    losing the rejected track or mixing it into the next one.
+    """
+
+    workspace = Path(workspace_dir)
+    candidate_id = active_candidate_id(manifest)
+    if candidate_id is None:
+        raise ValueError("proposal portfolio has no active Candidate to defer")
+    candidate_id = _validate_candidate_id(candidate_id)
+    track = next(
+        (
+            item
+            for item in manifest.get("tracks", [])
+            if isinstance(item, dict) and str(item.get("candidate_id") or "") == candidate_id
+        ),
+        None,
+    )
+    if track is None:
+        raise ValueError(f"proposal portfolio has no manifest track for active Candidate {candidate_id}")
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    archive_root = workspace / TRACKS_REL_DIR / candidate_id / "novelty_review" / timestamp
+    copied: list[str] = []
+    for relative in TRACK_ARTIFACTS:
+        source = workspace / relative
+        if not source.exists():
+            continue
+        destination = archive_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, destination)
+        else:
+            shutil.copy2(source, destination)
+        copied.append(relative)
+
+    track.update(
+        {
+            "status": "deferred_after_novelty_review",
+            "completed_at": now_iso(),
+            "novelty_review": {
+                "verdict": str(verdict or "unparsed"),
+                "reason": str(reason or "non-passing novelty review"),
+                "archived_at": now_iso(),
+                "artifact_root": str(archive_root.relative_to(workspace)),
+                "copied_artifacts": copied,
+            },
+        }
+    )
+    manifest["active_candidate_id"] = None
+    (workspace / ACTIVE_TRACK_CONTEXT_REL_PATH).unlink(missing_ok=True)
+    write_manifest(workspace, manifest)
+    next_candidate_id = activate_next_track(workspace, manifest)
+    return manifest, candidate_id, next_candidate_id
+
+
 def clear_active_track_artifacts(workspace_dir: Path) -> None:
     """Clear only the candidate-bound T4.5 projection before a new track.
 

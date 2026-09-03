@@ -663,13 +663,11 @@ gates:
         max_chars: 1200
     options: []
 
-  # T4.5 非通过 verdict 的人工确认门：
-  # Novelty Auditor 可以建议 reframe/drop，但最终是否回 T4、请求外部实验链或停止由用户决定。
-  # "继续"只表达研究者意图；若统一 formalization 质量契约尚未通过，状态机会先回到
-  # T4.5-FORMALIZE 定向修复，绝不会把缺少 blueprint/claims/plan/review 的包送入 T5。
+  # T4.5 相似工作提醒 Gate：不是运行时错误。它把审计发现交给研究者选择
+  # 重构当前方向，或在多 Proposal Portfolio 中推进下一条独立方向。
   t45_human_review_gate:
-    title: "T4.5 相似工作审计人工决策"
-    description: "T4.5 第一阶段的 Final Gate Verdict 未直接通过。请查看审计报告和候选池后决定下一步；系统不会自动拒绝或自动回退，也不会伪装为已完成正式化。"
+    title: "T4.5 相似工作提醒与研究决策"
+    description: "审计发现当前主张与已有工作存在实质重合。这不是系统报错：请决定是让模型重构当前方向，还是在已选的多个独立 Proposal 中推进下一条。"
     presentation:
       final_gate_verdict:
         from_file_regex:
@@ -693,12 +691,17 @@ gates:
         from_file: ideation/rejected_ideas.md
         max_chars: 3000
     options:
-      - id: continue_to_t5
-        label: "继续进入外部实验链"
-        description: "仅当 blueprint、claim registry、实验计划和 orientation review 均通过 T4.5 质量 Gate 时进入 T5；否则保留本选择并先定向补齐正式化材料。"
-        next: T5-REBOOST-GATE
+      - id: reframe_current
+        label: "让模型按审计重构当前方向"
+        description: "回到 T4，保留审计证据，但将被覆盖的机制主张收窄或替换后再审计。"
+        next: T4
+      - id: advance_next_proposal
+        label: "推进下一条已选 Proposal"
+        description: "仅在 T4 选择了多个独立 Proposal 时可用；当前审计包会归档，不会覆盖或混入下一条。"
+        next: T4.5
       - id: return_to_t4
-        label: "回到 T4 重构"
+        label: "自行回到 T4 重构"
+        description: "保留当前审计结论后回到 T4，再自行选择新的重构方向。"
         next: T4
       - id: stop_project
         label: "结束当前项目"

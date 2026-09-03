@@ -109,6 +109,7 @@ from ..ideation.proposal_portfolio import (
     candidate_anchor,
     candidate_relationships,
     create_manifest as create_proposal_portfolio_manifest,
+    defer_active_track_after_novelty_review,
     load_manifest as load_proposal_portfolio_manifest,
     materialize_selected_track,
     overview as proposal_portfolio_overview,
@@ -5399,6 +5400,48 @@ class StateMachine:
                 )
                 return self.pause_for_immediate_gate(state, workspace_dir=workspace_dir)
 
+        if node.task_id == "T4.5-HUMAN-REVIEW" and workspace_dir is not None:
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "").strip()
+            if option_id == "reframe_current":
+                audit_path = workspace_dir / "ideation" / "novelty_audit.md"
+                try:
+                    verdict = extract_final_gate_verdict(audit_path.read_text(encoding="utf-8", errors="replace"))
+                except OSError:
+                    verdict = ""
+                state.task_context["runtime_recovery"] = {
+                    "semantics": "t45_novelty_reframe_directive",
+                    "target_task": "T4",
+                    "action": "reframe_after_novelty_reminder",
+                    "requested_at": _now_iso(),
+                    "error_summary": (
+                        "T4.5 similarity-work reminder: the current Candidate cannot retain its original "
+                        f"mechanism-invention claim (verdict={verdict or 'unparsed'})."
+                    ),
+                    "existing_outputs": ["ideation/novelty_audit.md", "ideation/collision_cases.md"],
+                    "scope": (
+                        "Read the novelty audit and preserve valid evidence. Use the model to replace or narrow only the "
+                        "preempted contribution; do not relabel an in-domain transfer/validation as a new mechanism."
+                    ),
+                }
+            if option_id == "advance_next_proposal":
+                advanced = self._advance_next_t45_proposal_after_novelty_review(
+                    state,
+                    workspace_dir,
+                    gate_result=gate_result,
+                )
+                if advanced is not None:
+                    self._persist_immediate_gate_result(node, gate_result, "T4.5", workspace_dir)
+                    return advanced
+                presentation = dict(state.pending_gate.presentation or {}) if state.pending_gate else {}
+                presentation["portfolio_transition_notice"] = (
+                    "当前没有另一条排队的独立 Proposal 可推进；请选择“让模型按审计重构当前方向”或“自行回到 T4 重构”。"
+                )
+                if state.pending_gate is not None:
+                    state.pending_gate.presentation = presentation
+                state.status = "WAITING_HUMAN"
+                state.paused_at = _now_iso()
+                state.last_error = None
+                return state
         next_task = self._resolve_branch(node, gate_result, state, workspace_dir=workspace_dir)
         if (
             node.task_id == "T4.5-HUMAN-REVIEW"
@@ -6340,6 +6383,67 @@ class StateMachine:
             confirmation_required=False,
         )
         directive_path = persist_idea_directive(workspace_dir, directive=directive, population=population)
+        return self._select_native_t4_candidate(state, workspace_dir, directive, directive_path)
+
+    def _advance_next_t45_proposal_after_novelty_review(
+        self,
+        state: StateYaml,
+        workspace_dir: Path,
+        *,
+        gate_result: dict[str, Any],
+    ) -> StateYaml | None:
+        """Move a collision-blocked track aside and formalize the next one."""
+
+        manifest = load_proposal_portfolio_manifest(workspace_dir)
+        if manifest is None or str(manifest.get("status") or "") != "running":
+            return None
+        if not any(
+            isinstance(track, dict) and str(track.get("status") or "") == "queued"
+            for track in manifest.get("tracks", [])
+        ):
+            return None
+        audit_path = workspace_dir / "ideation" / "novelty_audit.md"
+        try:
+            verdict = extract_final_gate_verdict(audit_path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            verdict = ""
+        try:
+            manifest, deferred_id, next_id = defer_active_track_after_novelty_review(
+                workspace_dir,
+                manifest,
+                verdict=verdict,
+                reason="researcher chose the next independently selected Proposal after a T4.5 novelty reminder",
+            )
+        except (OSError, ValueError) as exc:
+            state.last_error = f"proposal portfolio novelty deferral failed: {exc}"
+            state.status = "PAUSED"
+            state.paused_at = _now_iso()
+            return state
+        if next_id is None:
+            # This action is only meaningful when a queued independent track
+            # exists. Retain the reminder Gate rather than claiming that a
+            # non-passing Proposal can enter T5 by itself.
+            state.task_context["t45_portfolio_next_track_unavailable"] = {
+                "deferred_candidate_id": deferred_id,
+                "reason": "no queued independent Proposal remains",
+                "recorded_at": _now_iso(),
+            }
+            return None
+        population, _dossiers = current_population_context(workspace_dir)
+        directive = IdeaDirective(
+            directive_id=f"PORT-NOVELTY-{uuid.uuid4().hex[:12]}",
+            action="select_candidate",
+            target_candidate_ids=[next_id],
+            raw_user_input=f"[Proposal portfolio] 当前方向因相似工作提醒暂缓，推进 {next_id}",
+            confirmation_required=False,
+        )
+        directive_path = persist_idea_directive(workspace_dir, directive=directive, population=population)
+        state.task_context["t45_portfolio_novelty_transition"] = {
+            "deferred_candidate_id": deferred_id,
+            "next_candidate_id": next_id,
+            "verdict": verdict or "unparsed",
+            "transitioned_at": _now_iso(),
+        }
         return self._select_native_t4_candidate(state, workspace_dir, directive, directive_path)
 
     def _t45_proposal_portfolio_summary(self, workspace_dir: Path) -> dict[str, Any]:

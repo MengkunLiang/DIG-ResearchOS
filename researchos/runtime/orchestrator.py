@@ -10658,6 +10658,9 @@ class AgentRunner:
             lines.append(f"- 上次可恢复问题：{error}")
         if existing_outputs:
             lines.append("- 已有输出：`" + "`, `".join(existing_outputs) + "`")
+        scope = " ".join(str(recovery.get("scope") or "").split())
+        if scope:
+            lines.append(f"- 本轮范围：{scope}")
         return "\n".join(lines)
 
     def _build_result(
