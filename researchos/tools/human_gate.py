@@ -2373,16 +2373,16 @@ class CLIHumanInterface(HumanInterface):
         if headline:
             facts.add_row("审计摘要", headline)
         if next_available:
-            facts.add_row("可推进的下一条", f"{next_id}" + (f" · {next_title}" if next_title else "") + "（独立 Proposal，不与当前方案混合）")
+            facts.add_row("可推进的下一条", f"{next_id}" + (f" · {next_title}" if next_title else "") + "（以独立 Proposal 继续）")
         else:
-            facts.add_row("可推进的下一条", "没有。当前只剩重构或结束；系统不会把未通过审计的 Proposal 送入 T5。")
+            facts.add_row("可推进的下一条", "当前没有。可选择重构当前方向、暂停，或结束本次项目。")
         paths = Text(
             f"完整审计：{data.get('audit_path') or 'ideation/novelty_audit.md'}\n"
             f"Proposal 队列：{data.get('portfolio_path') or 'ideation/proposal_portfolio/manifest.json'}",
             style="dim",
             overflow="fold",
         )
-        console.print(Panel(Group(Text("这是研究判断，不是运行错误。请根据下方选项决定下一步。", overflow="fold"), facts, paths), title="T4.5 · 相似工作提醒", border_style="bright_yellow", expand=True))
+        console.print(Panel(Group(Text("审计已完成。请根据下方选项决定下一步。", overflow="fold"), facts, paths), title="T4.5 · 相似工作提醒", border_style="bright_yellow", expand=True))
         rendered = buffer.getvalue().rstrip()
         if rendered:
             print(rendered)

@@ -663,11 +663,10 @@ gates:
         max_chars: 1200
     options: []
 
-  # T4.5 相似工作提醒 Gate：不是运行时错误。它把审计发现交给研究者选择
-  # 重构当前方向，或在多 Proposal Portfolio 中推进下一条独立方向。
+  # T4.5 相似工作提醒 Gate：将审计发现转成清晰的研究决策。
   t45_human_review_gate:
     title: "T4.5 相似工作提醒与研究决策"
-    description: "审计发现当前主张与已有工作存在实质重合。这不是系统报错：请决定是让模型重构当前方向，还是在已选的多个独立 Proposal 中推进下一条。"
+    description: "审计发现当前主张与已有工作存在实质重合。请选择：按审计重构当前方向，或推进下一条已选的独立 Proposal。"
     presentation:
       # The runtime injects ``t45_novelty_decision`` from the current audit
       # and Proposal portfolio.  Keep source files on disk for auditability;
@@ -679,7 +678,7 @@ gates:
         next: T4
       - id: advance_next_proposal
         label: "推进下一条已选 Proposal"
-        description: "仅在 T4 选择了多个独立 Proposal 时可用；当前审计包会归档，不会覆盖或混入下一条。"
+        description: "适用于已选多个独立 Proposal 的情况。当前审计会归档，下一条将以自己的材料继续。"
         next: T4.5
       - id: return_to_t4
         label: "自行回到 T4 重构"
@@ -687,7 +686,7 @@ gates:
         next: T4
       - id: pause_decision
         label: "暂不决定，保留并暂停"
-        description: "不结束项目、不改写 Proposal；下次 resume 会回到这张决策卡。"
+        description: "保留当前材料和审计结论；下次 resume 回到这张决策卡。"
         next: T4.5-HUMAN-REVIEW
       - id: stop_project
         label: "结束当前项目"

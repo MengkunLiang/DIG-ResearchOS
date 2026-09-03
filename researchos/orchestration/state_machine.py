@@ -6529,7 +6529,7 @@ class StateMachine:
             "current_candidate_id": active_id or candidate_from_audit or "未识别",
             "current_title": str(active_track.get("title") or "").strip(),
             "headline": headline,
-            "impact": "当前 Proposal 不能以原先的“机制首创”表述进入 T5；审计并不否定已保存的证据或领域迁移价值。",
+            "impact": "进入 T5 前，请将原先的“机制首创”主张改为经审计支持的贡献范围，例如领域迁移、验证设计或新的边界条件。",
             "next_available": bool(next_id),
             "next_candidate_id": next_id,
             "next_title": str(next_track.get("title") or "").strip(),
