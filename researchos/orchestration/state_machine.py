@@ -705,7 +705,7 @@ def _literature_param_explained_preview_lines(summary: dict[str, Any]) -> list[s
         f"读满目标门槛：{require_text}（require_target={require}；可选：true/false）",
         f"摘要轻读：目标 {summary.get('abstract_sweep_target')} 篇。仅记录题目、摘要和元数据层面的证据，不能单独支持强结论。",
         f"稿件语言：{summary.get('manuscript_language')}（language={summary.get('manuscript_language')}；可选：auto/en/zh/mixed）",
-        f"中文文献：{summary.get('include_chinese_literature')}（include_zh={summary.get('include_chinese_literature')}；可选：auto/true/false）",
+        f"中文文献：{'检索中文与英文文献' if str(summary.get('include_chinese_literature')).casefold() in {'true', 'yes', '1'} else '按稿件语言自动决定'}。",
     ]
 
 
@@ -761,7 +761,7 @@ def build_literature_param_gate_preview(workspace_dir: Path | None = None) -> di
             "abstract_sweep_target": "例如 15、rough=15、粗读15 或 all_readable；表示 T3 后 LLM 摘要轻读多少篇；all_readable 只覆盖保留候选，不全读 backlog",
             "require_deep_read_target": "true/false；true 表示未读满 deep_read_target 不放行到 T3.5",
             "manuscript_language": "en/zh/mixed/auto；英文稿默认不检索也不引用中文非 seed 论文",
-            "include_chinese_literature": "auto/false/true；false 表示不要中文论文，true 表示允许中文候选并标记权威性复核状态",
+            "include_chinese_literature": "auto/false/true；true 表示检索中文与英文文献，false 表示只检索英文文献",
         },
     }
 
@@ -1759,8 +1759,8 @@ def build_literature_param_payload(
                 "abstract_sweep.lite_paper_num": "摘要轻读数量：T3 后对保留候选中未精读但有摘要的论文做 LLM 摘要级轻读。它与精读目标共同构成阅读覆盖；all_readable 表示覆盖全部剩余可读候选。",
                 "metadata_replacement_policy": "metadata-only 只做批量 triage，并尽量用 backlog 中有摘要/PDF 的候选补足可读覆盖。",
                 "literature_quality.manuscript_language": "写作语言：auto/en/zh/mixed；英文稿默认不搜索、不主动引用中文非 seed 论文。",
-                "literature_quality.include_chinese_literature": "是否允许中文论文进入候选池：auto/false/true；允许时不再因缺少权威标签硬过滤，但会标记 authority_review_needed。",
-                "literature_quality.chinese_literature_policy": "中文论文来源策略：默认 review_flag_only，只做权威性复核标记；英文稿且明确排除中文时仍不纳入非 seed 中文文献。",
+                "literature_quality.include_chinese_literature": "是否检索中文论文：auto/false/true；中文模式默认检索中文与英文文献。",
+                "literature_quality.chinese_literature_policy": "中文论文来源策略：用于后台一致性与出处检查；英文稿且明确排除中文时仍不纳入非 seed 中文文献。",
                 "literature_quality.effective_non_seed_chinese_action": "生效的非 seed 中文文献动作：英文稿固定为 exclude；中文、双语或自动稿件按中文文献设置决定准入与复核。",
             },
         }
@@ -1787,8 +1787,8 @@ def _apply_literature_quality_overrides(
         captured.get("manuscript_language")
         or captured.get("language")
         or captured.get("writing_language")
-        or literature_quality.get("manuscript_language")
         or inferred_language
+        or literature_quality.get("manuscript_language")
         or "en"
     ).strip().lower()
     manuscript_language = {
@@ -3441,6 +3441,34 @@ class StateMachine:
             ):
                 artifacts[relative_path] = (workspace_dir / relative_path).is_file()
         direct_retry_supported = self._t36_compile_direct_retry_supported(workspace_dir, error)
+        workflow_mode = load_workflow_mode(workspace_dir) if workspace_dir is not None else {}
+        # A source-level compiler failure needs a prose/bibliography repair,
+        # not a human decision about whether to rerun identical TeX.  In Auto
+        # mode, the researcher has already authorized ordinary stage repairs:
+        # route straight to the bounded T3.6-REVIEW directive.  Explicitly
+        # environment-shaped failures retain the Gate above through
+        # ``direct_retry_supported`` because an LLM cannot install a missing
+        # TeX engine or package safely.
+        if not direct_retry_supported and workflow_mode.get("mode") == "auto":
+            directive = {
+                "semantics": "t36_compile_recovery_directive",
+                "action": "return_to_review",
+                "requested_at": _now_iso(),
+                "compile_report_path": "drafts/survey/survey_compile_report.json",
+                "error_summary": " ".join(str(error or "").split())[:1200],
+                "source": "auto_source_repair",
+                "scope": (
+                    "Read the compile report first. Patch only the implicated source section, bibliography, template input, or review action; "
+                    "then reassemble, audit, and compile. Do not hand-edit the derived survey.tex."
+                ),
+            }
+            state.pending_gate = None
+            state.task_context["t36_compile_recovery"] = directive
+            state.current_task = "T3.6-REVIEW"
+            state.status = "RUNNING"
+            state.paused_at = None
+            state.last_error = None
+            return state
         if direct_retry_supported:
             description = (
                 "编译阶段未改写任何综述正文，已保留 TeX、section、审计和 compile report。"

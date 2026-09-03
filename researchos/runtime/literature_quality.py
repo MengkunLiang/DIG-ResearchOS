@@ -101,6 +101,20 @@ def infer_manuscript_language(workspace_dir: Path | str | None, configured: str 
                 explicit = _normalize_manuscript_language(project.get(key))
                 if explicit:
                     return explicit
+    # A fresh Auto Chinese workspace reaches T2 before any writer-generated
+    # language file exists. Read the durable workflow choice here so retrieval
+    # starts bilingual instead of accidentally inheriting the English default.
+    workflow_path = workspace / "_runtime" / "workflow_mode.json"
+    if workflow_path.exists():
+        try:
+            workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+        except Exception:
+            workflow = {}
+        settings = workflow.get("settings") if isinstance(workflow, dict) else {}
+        if isinstance(settings, dict):
+            explicit = _normalize_manuscript_language(settings.get("writing_language"))
+            if explicit:
+                return explicit
     profile_path = workspace / "user_seeds" / "seed_outline_profile.json"
     if profile_path.exists():
         try:

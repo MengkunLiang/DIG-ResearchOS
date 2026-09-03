@@ -3715,6 +3715,8 @@ class AgentRunner:
                 "4 · Auto survey_ccf",
                 "5 · Auto survey_utd",
                 "6 · Auto survey_exhaustive_utd",
+                "7 · Auto research_zh",
+                "8 · Auto survey_zh",
             ]
             answer = ""
             parsed = None
@@ -3739,14 +3741,14 @@ class AgentRunner:
                     break
                 clarification = (
                     "我还不能可靠判断你的运行方式，但这不是错误，也尚未保存任何设置。"
-                    "可直接输入 1–6，或说明“每一步都确认”/“自动走综述流程”。"
+                    "可直接输入 1–8，或说明“每一步都确认”/“自动走中文综述流程”。"
                 )
             if parsed is None:
                 # This is still an ordinary unresolved human choice rather
                 # than a runtime-recovery incident.  AskHuman will preserve
                 # the prompt/session; a later resume simply returns here.
                 raise HumanInputUnavailable(
-                    "T1 工作模式尚未明确；未保存任何设置。请恢复后在同一选择页输入 1–6 或说明自动/逐步确认。"
+                    "T1 工作模式尚未明确；未保存任何设置。请恢复后在同一选择页输入 1–8 或说明自动/逐步确认。"
                 )
             mode, preset, t4_mode = parsed
             # Preserve only an actual suffix preference from a compact menu
@@ -3754,7 +3756,7 @@ class AgentRunner:
             # already a complete mode decision and must go straight to the
             # default-settings confirmation rather than causing a needless
             # workflow-setup LLM call.
-            if not re.fullmatch(r"\s*\[?[1-6]\]?\s*", answer):
+            if not re.fullmatch(r"\s*\[?[1-8]\]?\s*", answer):
                 ctx.extra["_t1_mode_answer_for_setup_preview"] = answer
             else:
                 ctx.extra.pop("_t1_mode_answer_for_setup_preview", None)
@@ -3967,7 +3969,11 @@ class AgentRunner:
                 else "综述支线将在后续单独确认"
             )
             orientation = str(settings.get("publication_orientation") or "")
-            orientation_label = "CCF/CS" if orientation == "ccf_cs" else "UTD/IS" if orientation == "utd_is" else "T4 前由你确认"
+            orientation_label = (
+                "CCF/CS" if orientation == "ccf_cs" else "UTD/IS" if orientation == "utd_is"
+                else "中文通用研究稿" if str(settings.get("writing_language") or "").casefold() == "zh"
+                else "T4 前由你确认"
+            )
             llm_feedback = str(proposal.get("clarification") or "").strip() if isinstance(proposal, dict) else ""
             feedback = (
                 f"当前已选择：{'Auto' if is_auto else 'Copilot'} · {survey_label} · {orientation_label}。"

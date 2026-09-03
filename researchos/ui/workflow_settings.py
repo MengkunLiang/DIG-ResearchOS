@@ -237,8 +237,10 @@ def workflow_mode_selector_panel() -> Panel:
     table.add_row("4", "Auto · 综述 · CCF/CS", "默认综述均衡覆盖，并进入 Survey 支线。")
     table.add_row("5", "Auto · 综述 · UTD/IS", "默认综述均衡覆盖，并进入 Survey 支线。")
     table.add_row("6", "Auto · 强覆盖综述 · UTD/IS", "默认综述强覆盖，并进入 Survey 支线。")
+    table.add_row("7", "Auto · 中文研究论文", "默认中文论文、中文模板，并检索中文与英文文献。")
+    table.add_row("8", "Auto · 中文综述", "默认中文综述、中文模板，并检索中文与英文文献。")
     note = Text(
-        "输入编号即可；也兼容 Auto survey_ccf 等命令和自然语言。选择后还会确认文献覆盖、T4 探索力度和 Proposal 数量。CCF/CS 会随即选择具体会议模板，供 Survey 与 T8 复用。",
+        "输入编号即可；也兼容 Auto survey_ccf、Auto research_zh 等命令和自然语言。选择后还会确认文献覆盖、T4 探索力度和 Proposal 数量。CCF/CS 会随即选择具体会议模板，供 Survey 与 T8 复用。",
         style="dim",
         overflow="fold",
     )

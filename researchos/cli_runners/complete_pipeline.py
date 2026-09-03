@@ -952,6 +952,13 @@ class CompletePipelineRunner:
                 input_transport="preauthorized_auto_profile",
                 preset=(gate_result.get("automation") or {}).get("preset"),
             )
+            render_auto_summary = getattr(self.human, "render_automatic_gate_summary", None)
+            if callable(render_auto_summary) and not self.runtime_settings.ui.quiet:
+                render_auto_summary(
+                    gate_id=gate_id,
+                    presentation=state.pending_gate.presentation,
+                    result=gate_result,
+                )
             self.progress.emit(
                 f"[Auto] 已按项目预设处理 {gate_id}：{gate_result.get('option_id')}。",
                 important=True,

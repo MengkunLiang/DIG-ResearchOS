@@ -678,7 +678,7 @@ def build_workflow_mode_llm_interpreter(
         prompt = """Parse one user's ResearchOS workflow-mode preference. Return exactly one JSON object and no Markdown.
 Allowed keys: mode, preset, t4_mode.
 Allowed mode values: auto, copilot.
-Allowed preset values: research_ccf, research_utd, survey_ccf, survey_utd, survey_exhaustive_utd.
+Allowed preset values: research_ccf, research_utd, survey_ccf, survey_utd, survey_exhaustive_utd, research_zh, survey_zh.
 Allowed t4_mode values: auto, quick, standard, deep.
 Use copilot when the user wants to approve normal research Gates personally. Use auto when the user asks for routine automatic progression.
 Only include settings that the user states or that are unambiguous from a named profile. Do not invent a research question, scope, venue, or external action.
@@ -1222,6 +1222,44 @@ class CLIHumanInterface(HumanInterface):
         self._workflow_mode_interpreter = workflow_mode_interpreter
         self._workflow_setup_interpreter = workflow_setup_interpreter
         self._no_color = bool(no_color)
+
+    def render_automatic_gate_summary(
+        self,
+        *,
+        gate_id: str,
+        presentation: dict[str, Any],
+        result: dict[str, Any],
+    ) -> None:
+        """Show an Auto decision surface without turning it into a prompt.
+
+        Auto pre-authorizes the action; it must not hide the competing T4
+        directions that motivated it.  Keep this deliberately display-only:
+        no input is read and no state is changed here.
+        """
+
+        if gate_id != "t4_gate1_selection_gate":
+            return
+        overview = presentation.get("candidate_overview")
+        if not isinstance(overview, dict):
+            return
+        self._render_panel(
+            title="Auto · T4 候选比较结果",
+            border_style="bright_cyan",
+            lines=[
+                "以下展示 Portfolio 中排名靠前的候选，供回看比较；Auto 将按预设继续推进，不等待输入。",
+                "完整卡片和比较记录已保存在 ideation/_gate1_candidate_cards.md 与 ideation/portfolio.json。",
+            ],
+        )
+        self._render_t4_candidate_overview(overview)
+        captured = result.get("captured") if isinstance(result.get("captured"), dict) else {}
+        directive = captured.get("parsed_directive") if isinstance(captured.get("parsed_directive"), dict) else {}
+        selected = directive.get("target_candidate_ids") if isinstance(directive.get("target_candidate_ids"), list) else []
+        selected_text = "、".join(str(item) for item in selected if str(item).strip()) or "Portfolio 首选方向"
+        self._render_panel(
+            title="Auto · 下一步",
+            border_style="green",
+            lines=[f"将分别正式化：{selected_text}。", "其他展示的候选会保留在 Portfolio 与归档中，可随时回看。"],
+        )
 
     def _render_panel(self, *, title: str, lines: list[str], border_style: str) -> None:
         """Render gate context without turning interactive input into a TUI.

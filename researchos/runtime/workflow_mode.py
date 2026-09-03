@@ -44,6 +44,19 @@ AUTO_PRESETS: dict[str, dict[str, str]] = {
         "writing_language": "en",
         "template_selection_source": "preset_default",
     },
+    "research_zh": {
+        "literature_preset": "standard_research",
+        "t4_mode": "auto",
+        "publication_orientation": "hybrid",
+        "survey_policy": "skip",
+        "writing_style": "zh_research",
+        "proposal_tracks": "one",
+        "template_family": "basic_zh",
+        "template_id": "basic_zh",
+        "writing_language": "zh",
+        "include_chinese_literature": "true",
+        "template_selection_source": "preset_default",
+    },
     "survey_ccf": {
         "literature_preset": "survey_balanced",
         "t4_mode": "auto",
@@ -78,6 +91,19 @@ AUTO_PRESETS: dict[str, dict[str, str]] = {
         "template_family": "utd",
         "template_id": "informs",
         "writing_language": "en",
+        "template_selection_source": "preset_default",
+    },
+    "survey_zh": {
+        "literature_preset": "survey_balanced",
+        "t4_mode": "auto",
+        "publication_orientation": "hybrid",
+        "survey_policy": "write_with_supplement",
+        "writing_style": "zh_research",
+        "proposal_tracks": "one",
+        "template_family": "basic_zh",
+        "template_id": "basic_zh",
+        "writing_language": "zh",
+        "include_chinese_literature": "true",
         "template_selection_source": "preset_default",
     },
 }
@@ -173,6 +199,20 @@ def _apply_template_settings(
                 "template_id": requested,
                 "writing_language": "en",
                 "template_selection_source": "explicit_configuration" if template_id is not None else "preserved" if requested else "pending_t1",
+            }
+        )
+        return
+
+    if str(settings.get("writing_language") or "").casefold() == "zh":
+        if template_id is not None and str(template_id).strip().casefold() not in {"basic_zh", "zh", "chinese", "中文"}:
+            raise ValueError("中文 Auto 模式使用 basic_zh 模板；请改用中文预设或在 Copilot 中自行选择模板。")
+        settings.update(
+            {
+                "template_family": "basic_zh",
+                "template_id": "basic_zh",
+                "writing_language": "zh",
+                "include_chinese_literature": "true",
+                "template_selection_source": "preset_default",
             }
         )
         return
@@ -415,7 +455,7 @@ def parse_workflow_mode_answer(answer: str) -> tuple[str, str, str | None] | Non
     # coverage, for example ``4，综述，但总共阅读 40/25/15``.  The leading
     # menu number is still an unambiguous mode choice; do not send it to an
     # optional LLM parser or reject it merely because it has a human note.
-    leading_menu = re.match(r"^\s*\[?([1-6])\]?(?:\s|[，,;；:：。、】【、]|$)", normalized)
+    leading_menu = re.match(r"^\s*\[?([1-8])\]?(?:\s|[，,;；:：。、】【、]|$)", normalized)
     if leading_menu:
         menu_choice = leading_menu.group(1)
         numbered = {
@@ -425,6 +465,8 @@ def parse_workflow_mode_answer(answer: str) -> tuple[str, str, str | None] | Non
             "4": ("auto", "survey_ccf", None),
             "5": ("auto", "survey_utd", None),
             "6": ("auto", "survey_exhaustive_utd", None),
+            "7": ("auto", "research_zh", None),
+            "8": ("auto", "survey_zh", None),
         }
         # A researcher may select a research-paper row and immediately add
         # “also write a survey”.  That is not an opaque LLM-only request: the
@@ -449,12 +491,19 @@ def parse_workflow_mode_answer(answer: str) -> tuple[str, str, str | None] | Non
         return "auto", "survey_utd", None
     if normalized in {"6", "[6]"}:
         return "auto", "survey_exhaustive_utd", None
+    if normalized in {"7", "[7]"}:
+        return "auto", "research_zh", None
+    if normalized in {"8", "[8]"}:
+        return "auto", "survey_zh", None
     if normalized in AUTO_PRESETS:
         return "auto", normalized, None
-    if "auto" not in normalized and "自动" not in normalized:
+    chinese_auto_request = any(token in normalized for token in ("中文研究", "中文论文", "中文综述", "中文稿"))
+    if "auto" not in normalized and "自动" not in normalized and not chinese_auto_request:
         return None
 
-    if "exhaustive" in normalized or "全面综述" in normalized:
+    if any(token in normalized for token in ("中文", "chinese", "zh")):
+        preset = "survey_zh" if any(token in normalized for token in ("survey", "综述")) else "research_zh"
+    elif "exhaustive" in normalized or "全面综述" in normalized:
         preset = "survey_exhaustive_utd"
     elif "survey" in normalized or "综述" in normalized:
         preset = "survey_utd" if any(token in normalized for token in ("utd", "is", "管理")) else "survey_ccf"
@@ -650,11 +699,13 @@ def auto_execution_setup_summary(profile: dict[str, Any]) -> str:
 
     settings = profile.get("settings") if isinstance(profile.get("settings"), dict) else {}
     literature = str(settings.get("literature_preset") or "standard_research")
+    writing_language = str(settings.get("writing_language") or "en").casefold()
+    writing = "中文论文（中文模板；中英文文献检索）" if writing_language == "zh" else str(settings.get("writing_style") or "pending_user")
     return (
         f"文献覆盖：{_LITERATURE_PRESET_SUMMARIES.get(literature, literature)}；"
         f"T4 探索：{settings.get('t4_mode') or 'auto'}；"
         f"Proposal：{'前两条独立 Proposal' if settings.get('proposal_tracks') == 'top2' else '一条 Proposal'}；"
-        f"写作取向：{settings.get('writing_style') or 'pending_user'}。"
+        f"写作：{writing}。"
     )
 
 
@@ -745,6 +796,7 @@ def automatic_gate_result(
     orientation = str(settings.get("publication_orientation") or "ccf_cs")
     survey_policy = str(settings.get("survey_policy") or "skip")
     style = str(settings.get("writing_style") or "ccf_a")
+    template_family = str(settings.get("template_family") or "")
     template_id = normalize_ccf_template_id(str(settings.get("template_id") or ""))
     confirmation = (
         presentation.get("t4_directive_confirmation")
@@ -787,7 +839,18 @@ def automatic_gate_result(
         },
         "t36_post_survey_gate": {"option_id": "continue_to_t4", "captured": {}},
     }
-    if style == "is":
+    if style == "zh_research" or template_family == "basic_zh":
+        decisions["t36_template_gate"] = {"option_id": "basic_zh", "captured": {}}
+        decisions["t8_style_template_gate"] = {
+            "option_id": "basic_zh",
+            "captured": {
+                "venue_style": "is",
+                "template_family": "basic_zh",
+                "template_id": "basic_zh",
+                "writing_language": "zh",
+            },
+        }
+    elif style == "is":
         # UTD/IS has a single supported default: the bundled INFORMS package.
         decisions["t36_template_gate"] = {"option_id": "utd_informs", "captured": {}}
         decisions["t8_style_template_gate"] = {"option_id": "is_informs", "captured": {}}
