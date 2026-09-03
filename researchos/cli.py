@@ -1023,6 +1023,14 @@ def _validate_pipeline_workspace_entry(args: argparse.Namespace, workspace_dir: 
         )
         return 2
     if state.status == "COMPLETED":
+        explicit_reentry = str(getattr(args, "from_task", "") or "").strip()
+        if explicit_reentry:
+            # `resume --from-task <node>` is a deliberate, prerequisite-
+            # checked re-entry, not a blind restart.  Let the later helper
+            # validate the requested node and reset only that execution state.
+            # A bare resume remains blocked below, preserving the completed
+            # workspace safeguard.
+            return None
         upgrade_reason = legacy_t45_upgrade_reason(workspace_dir)
         if upgrade_reason:
             # This is a contract migration, not a reset: retain every old
@@ -1057,7 +1065,7 @@ def _validate_pipeline_workspace_entry(args: argparse.Namespace, workspace_dir: 
         _render_workspace_entry_panel(
             args,
             title="项目已经完成",
-            message="该项目状态为 COMPLETED，不能通过 `resume` 重启。请新建 workspace，或显式从其他项目复制前置产物开始。",
+            message="该项目状态为 COMPLETED，不能通过无参数的 `resume` 重启。若要复查某个阶段，可显式使用 `resume --from-task <节点>`；系统会先校验该节点的前置产物。",
             workspace=workspace_dir,
             state=state,
         )
@@ -5307,7 +5315,7 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser.add_argument(
         "--from-task",
         default=None,
-        help="在当前 workspace 中受校验地从指定任务重入，例如 T4；T2 会先确认/重选阅读参数，T3 会先复查检索覆盖",
+        help="在当前 workspace 中受校验地从指定任务重入（包括已完成项目），例如 T4、T4.5-HUMAN-REVIEW；T2 会先确认/重选阅读参数，T3 会先复查检索覆盖",
     )
     resume_parser.add_argument(
         "--from",
