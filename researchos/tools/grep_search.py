@@ -1,7 +1,8 @@
-"""Policy-aware text search tool for locating evidence within allowed files.
+"""Bounded, workspace-scoped text search for locating artifacts and evidence.
 
-Search results expose bounded excerpts and paths while respecting workspace
-prefixes, so models cannot use broad recursive search to escape task scope.
+The tool may search any relative path inside the active workspace, while
+returning only bounded excerpts.  It never grants ``read_file`` access or
+write access outside an Agent's ordinary policy.
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ class GrepSearchTool(Tool):
 
     async def execute(self, **kwargs) -> ToolResult:
         path = kwargs.get("path", ".")
-        root = self.policy.workspace_dir if path in ("", ".") else self.policy.resolve_read(path)
+        root = self.policy.workspace_dir if path in ("", ".") else self.policy.resolve_search(path)
         if not root.exists():
             return ToolResult(ok=False, content=f"Path not found: {path}", error="not_found")
 

@@ -369,8 +369,9 @@ class AgentRunner:
         ``grep_search`` is a read-only workspace navigation primitive.  It is
         intentionally available to every Agent that can read workspace files,
         including legacy mode overrides whose static tool list predates the
-        capability.  The workspace policy remains authoritative, so this does
-        not broaden a task's readable paths or grant write/execute access.
+        capability.  Its search root is intentionally any relative path in
+        the current workspace; ordinary ``read_file`` and write policies stay
+        authoritative for opening or changing a located file.
         """
 
         tool_names = list(eff.tool_names)

@@ -43,6 +43,21 @@ class WorkspaceAccessPolicy:
             )
         return abs_path
 
+    def resolve_search(self, rel_path: str) -> Path:
+        """Resolve a read-only search root anywhere inside this workspace.
+
+        ``grep_search`` is a navigation primitive: its bounded excerpts help
+        an Agent find the *permitted* artifact it should subsequently open
+        with ``read_file``.  Reusing a task's narrow ``read_file`` prefixes
+        for the search root made operational diagnosis fail on sibling
+        runtime directories (for example ``_runtime/events/``), even though
+        the same search from ``.`` already covered the entire workspace.
+        Keep this exception explicit and confined to the workspace; it grants
+        neither file reads through ``read_file`` nor any write capability.
+        """
+
+        return self._resolve_within_workspace(rel_path)
+
     def resolve_write(self, rel_path: str) -> Path:
         abs_path = self._resolve_within_workspace(rel_path)
         rel = abs_path.relative_to(self.workspace_dir).as_posix()

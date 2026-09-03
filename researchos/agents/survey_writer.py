@@ -414,6 +414,8 @@ class SurveyWriterAgent(Agent):
                 "section/bib/plan/state 输入。未修改相关输入前严禁再次 assemble 或 audit。若失败原因无法从 "
                 "当前可读证据安全修复，写 drafts/survey/survey_assemble_repair_plan.md，说明失败检查、受影响文件、"
                 "所需证据和下一步，然后 finish_task；不要反复重写无关 section 或循环调用 assemble。"
+                "若需要解释本轮 assemble/audit 的运行时差异，可定向搜索 `_runtime/events/`；它只用于操作诊断，"
+                "绝不能作为文献、引用或学术论断的证据。"
                 "citation_diversity 会区分可用证据、范围内候选和正文实际使用，并检查是否过度集中；它不设置固定覆盖百分比。"
                 "读取 repair_guidance.citation_diversity，只在当前论断确有证据缺口或某个来源被机械重复时处理。"
                 "unrepresented_candidates 与 section_review_queue 只是待核查清单，不是可直接粘贴的引用：先读取其 source_file，"
