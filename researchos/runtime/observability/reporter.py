@@ -566,6 +566,28 @@ class StageReporter:
         if self.quiet:
             self._plain(f"[步骤] {task_id} {'完成' if ok else '暂停'} · 事件：{relative_path(self.workspace, event_path)}")
             return
+        # Choosing an external material-preparation tool deliberately hands
+        # work to a second terminal.  It is an expected handoff state, not a
+        # failed stage; rendering the generic yellow "interrupted" panel here
+        # made a successful tool selection look like a crash.
+        if (
+            task_id == "T5-RESOURCE-PREP-WAIT"
+            and not ok
+            and str(error or "").startswith("WAITING_RESOURCE_PREPARATION:")
+        ):
+            self._render(
+                Panel(
+                    Text(
+                        "已保存材料准备工具的选择。请按下一页的命令在另一个终端启动工具；"
+                        "工具写入材料准备结果后，再运行 resume。",
+                        overflow="fold",
+                    ),
+                    title="等待你启动材料准备",
+                    border_style="bright_cyan",
+                    expand=False,
+                )
+            )
+            return
         if task_id.startswith("T3.6") and ok and not self.detailed:
             # Survey section, assembly, and feed receipts are intentionally
             # small. Rendering them through the generic completion Panel used
