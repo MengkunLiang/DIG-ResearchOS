@@ -827,13 +827,13 @@ gates:
   # 这是可选的已有材料入口。缺少公开资源时应转到受限自动资源准备，而不是要求用户手工下载。
   # 只有已经可直接运行的部署资产才放入 external_executor/expr/。
   t5_expr_material_gate:
-    title: "T5 已有实验材料盘点（可选）"
-    description: "这里只盘点你已经拥有的数据集、baseline、benchmark、外部代码、权重和材料说明，不要求手工补齐公开资源。已有源材料放入 resources/；仅将已整理为可直接运行的部署资产放入 external_executor/expr/。没有材料时返回协议页选择“让外部执行器自动准备资源”。"
+    title: "登记已有实验材料"
+    description: "把你已经拥有的数据、代码、模型权重或说明文件放到下方对应位置。没有现成材料时，可直接选择自动准备。"
     presentation:
       resources_path:
-        literal: "resources/"
+        literal: "resources/byhand/"
       resources_files:
-        from_dir: resources
+        from_dir: resources/byhand
         glob: "*"
         max_items: 50
       expr_path:
@@ -845,19 +845,17 @@ gates:
       handoff_summary:
         from_file: external_executor/handoff_pack.json
         max_chars: 4000
-      launch_after_gate:
-        literal: |
-          `resources/` 是 Phase B 的源资源根，也是已有材料的可选入口。外部执行器会在其中将人工提供、远程获取和复现资源分别整理为 byhand、Remote_acquisition 和 reproduction；没有材料时不必停在这里，返回协议页启动自动资源准备即可。`external_executor/expr/` 仅用于已部署、可运行的 baseline 和方法资产。
-          材料就绪后，若实验协议已完整，将进入外部执行器选择 Gate；若 handoff 仍记录未决协议，将返回 T5 协议确认 Gate。
-          如果选择 Codex CLI，系统会提示你在 workspace 根目录启动 Codex CLI，让它读取 external_executor/AGENTS.md 并执行 external_executor/skills/research-execution/SKILL.md。
-          Codex 完成后应写回并通过 Writer Handoff 核验 external_executor/executor_research_report.md、external_executor/result_pack.json、external_executor/executor_status.json 和 external_executor/report/run_manifest.json；总控 Skill 随后直接执行 python -m researchos.cli run-task T8 --workspace <workspace>，无需退出执行器再手工 resume。
     options:
       - id: materials_ready
-        label: "已盘点，继续"
+        label: "我已放好材料，继续"
         aliases: ["ready", "continue", "done"]
         next: T5-EXECUTOR-GATE
+      - id: auto_prepare_resources
+        label: "我没有现成材料，自动准备"
+        aliases: ["auto", "prepare", "automatic"]
+        next: T5-RESOURCE-PREP-EXECUTOR-GATE
       - id: pause_for_materials
-        label: "暂停，稍后再盘点"
+        label: "稍后再登记"
         aliases: ["pause", "wait"]
         next: T5-EXPR-MATERIAL-GATE
       - id: back_to_t4

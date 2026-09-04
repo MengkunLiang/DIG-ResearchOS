@@ -5521,6 +5521,8 @@ class StateMachine:
         # executor choice that is not authorized by the protocol.
         if node.task_id == "T5-EXPR-MATERIAL-GATE" and workspace_dir is not None:
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "").strip().lower()
+            if option_id in {"auto_prepare_resources", "auto", "prepare", "automatic"}:
+                next_task = "T5-RESOURCE-PREP-EXECUTOR-GATE"
             if option_id in {"materials_ready", "ready", "continue", "done"}:
                 readiness = self._t5_execution_readiness(workspace_dir)
                 if readiness.get("status") != "ready":
@@ -7582,8 +7584,10 @@ class StateMachine:
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "pause_for_materials")
             captured = gate_result.get("captured") or {}
             resources_dir = workspace_dir / "resources"
+            byhand_dir = resources_dir / "byhand"
             expr_dir = workspace_dir / "external_executor" / "expr"
             resources_dir.mkdir(parents=True, exist_ok=True)
+            byhand_dir.mkdir(parents=True, exist_ok=True)
             expr_dir.mkdir(parents=True, exist_ok=True)
 
             def snapshot_files(root: Path, *, with_sha256: bool) -> list[dict[str, object]]:
@@ -7615,6 +7619,7 @@ class StateMachine:
                 "captured": captured if isinstance(captured, dict) else {},
                 "next_task": next_task,
                 "resource_material_root": "resources",
+                "user_material_root": "resources/byhand",
                 "resource_snapshot": resource_files,
                 "resource_snapshot_hash_policy": "deferred_to_phase_b",
                 "deployment_asset_root": "external_executor/expr",
@@ -7994,6 +7999,8 @@ class StateMachine:
         if data is None:
             return "T5-EXPR-MATERIAL-GATE"
         selected = str(data.get("selected_option") or "").strip().lower()
+        if selected in {"auto_prepare_resources", "auto", "prepare", "automatic"}:
+            return "T5-RESOURCE-PREP-EXECUTOR-GATE"
         if data.get("materials_ready") is True or selected in {"materials_ready", "ready", "continue", "done"}:
             readiness = self._t5_execution_readiness(workspace_dir)
             if readiness.get("status") != "ready":

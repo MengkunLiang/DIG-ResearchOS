@@ -1896,6 +1896,9 @@ class CLIHumanInterface(HumanInterface):
         elif gate_id == "t45_human_review_gate":
             self._render_t45_novelty_decision(presentation.get("t45_novelty_decision"))
             rendered_compact_gate = True
+        elif gate_id == "t5_expr_material_gate":
+            self._render_t5_material_registration(presentation)
+            rendered_compact_gate = True
         for key, value in presentation.items():
             if key.startswith("_"):
                 continue
@@ -2224,7 +2227,7 @@ class CLIHumanInterface(HumanInterface):
         )
         purpose = {
             "t5_protocol_gate": "请选择怎样准备实验所需的数据、代码、基线和评测工具。",
-            "t5_expr_material_gate": "这里登记你已经有的材料；其余材料可以稍后补齐。",
+            "t5_expr_material_gate": "先把已有材料放到对应目录；没有材料可直接启动自动准备。",
             "t5_executor_gate": "研究方案和实验约束已经固定。请选择由谁执行后续实验；真实执行会消耗时间和算力。",
             "t5_resource_executor_gate": "请选择谁来准备材料。准备完成后，再确认是否进入实验执行。",
         }.get(gate_id, "请选择下一步。")
@@ -2254,8 +2257,8 @@ class CLIHumanInterface(HumanInterface):
                 "根据更新后的方案重新整理实验材料清单。",
             ),
             "pause_protocol": ("我现在先停一下", "暂时不继续。", "保存全部状态；下次 resume 回到这里。"),
-            "pause_for_materials": ("我以后再登记材料", "材料还没准备好或暂时不想盘点。", "保存状态；下次仍从材料页继续。"),
-            "materials_ready": ("材料已登记，继续", "你已把现有材料放好，或确认无需再盘点。", "进入执行方式选择，不会自动运行实验。"),
+            "pause_for_materials": ("稍后再登记", "材料还没准备好或暂时不想盘点。", "保存状态；下次仍从材料页继续。"),
+            "materials_ready": ("我已放好材料，继续", "已有文件已经放到下方目录。", "进入执行方式选择。"),
             "codex_cli": ("用 Codex", "希望由 Codex 查找并准备公开材料。", "生成启动说明与材料准备任务。"),
             "claude_code_window": ("用 Claude Code", "希望由 Claude Code 查找并准备公开材料。", "生成启动说明与材料准备任务。"),
             "manual": ("我自己或用其它工具", "希望自行准备材料。", "保存材料清单和回传要求。"),
@@ -2272,8 +2275,61 @@ class CLIHumanInterface(HumanInterface):
                 (str(option.get("label") or option_id), str(option.get("description") or "按当前研究方案继续。"), "保存选择并进入下一步。"),
             )
             table.add_row(str(index), situation, when, next_step)
-        note = Text("直接输入编号即可。若不确定且没有现成材料，通常选择“我还没有现成材料”。", style="dim", overflow="fold")
+        note = Text("直接输入编号即可。", style="dim", overflow="fold")
         console.print(Panel(Group(Text(purpose, overflow="fold"), table, note), title="下一步怎么选", border_style="bright_yellow", expand=True))
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            print(rendered)
+
+    def _render_t5_material_registration(self, value: Any) -> None:
+        """Show an actionable, file-oriented material-registration page."""
+
+        resources = value.get("resources_files") if isinstance(value, dict) else []
+        runnable = value.get("expr_files") if isinstance(value, dict) else []
+        resources = resources if isinstance(resources, list) else []
+        runnable = runnable if isinstance(runnable, list) else []
+        width = max(88, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        buffer = io.StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=not self._no_color,
+            color_system=None if self._no_color else "truecolor",
+            no_color=self._no_color,
+            width=width,
+            highlight=False,
+            _environ={"COLUMNS": str(width), "LINES": "42"},
+        )
+        table = lightweight_ruled_table(expand=True, header_style="bold bright_cyan", border_style="bright_cyan")
+        table.add_column("你已有的内容", width=24, overflow="fold")
+        table.add_column("放到这里", width=32, style="cyan", overflow="fold")
+        table.add_column("可以放什么", ratio=2, overflow="fold")
+        table.add_row(
+            "数据、Benchmark、论文附带文件",
+            "resources/byhand/",
+            "数据集压缩包、CSV/Parquet、基准说明、划分文件、许可证、下载说明。",
+        )
+        table.add_row(
+            "代码、baseline、模型权重",
+            "resources/byhand/",
+            "仓库压缩包、源码、环境文件、预训练权重、运行说明；无需先整理成可执行状态。",
+        )
+        table.add_row(
+            "已经可以直接运行的项目",
+            "external_executor/expr/",
+            "已有脚本、容器配置或完整代码目录。只有已经能运行的内容放这里。",
+        )
+        current = Table.grid(expand=True, padding=(0, 1))
+        current.add_column(style="bold", width=18, no_wrap=True)
+        current.add_column(ratio=1, overflow="fold")
+        current.add_row("已找到的普通材料", str(len(resources)))
+        current.add_row("已找到的可运行项目", str(len(runnable)))
+        note = Text(
+            "所有路径都相对当前 workspace 根目录。放好文件后选择“我已放好材料，继续”；"
+            "如果手头没有材料，选择“我没有现成材料，自动准备”。",
+            style="dim",
+            overflow="fold",
+        )
+        console.print(Panel(Group(table, current, note), title="已有材料放在哪里", border_style="bright_cyan", expand=True))
         rendered = buffer.getvalue().rstrip()
         if rendered:
             print(rendered)

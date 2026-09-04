@@ -44,6 +44,7 @@ STANDARD_WORKSPACE_DIRS = [
     "literature/cross_domain_catalogs",
     "literature/evidence_queries",
     "resources",
+    "resources/byhand",
     "resources/repos",
     "resources/datasets",
     "resources/benchmarks",
@@ -1340,7 +1341,9 @@ def _default_dir_guide(rel_dir: str, *, runtime_dir_name: str) -> dict[str, str]
             "do_not_put": "ResearchOS runtime logs.",
             "validation": "Logs must be traceable to external_executor/logs or run_manifest entries.",
         }
-    if normalized.startswith("resources/repos"):
+    if normalized.startswith("resources/byhand"):
+        purpose = "Files supplied by the researcher for this project: datasets, code archives, weights, benchmark files, licences, and notes."
+    elif normalized.startswith("resources/repos"):
         purpose = "Curated references to baseline or support repositories, not arbitrary clones."
     elif normalized.startswith("resources/datasets"):
         purpose = "Curated dataset references, access notes, licenses, and small metadata records."
