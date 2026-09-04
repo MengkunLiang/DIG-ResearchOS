@@ -29,6 +29,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 最终 TeX 正文和注释不得暴露内部运行标号，例如 `C1`、`[C1]`、`C1:`、`CID`、`ResearchOS alignment` 或 `% [C1]`。
 - 全文必须采用单一正文语言。`zh-en`、`mixed`、双语 seed 或中英混合文献只表示输入/检索来源可双语，不表示正文可以中英混写。若目标是中文期刊，全部 section 使用中文学术写作；若目标是英文学术期刊，全部 section 使用英文。标题、摘要、引言、正文、结论必须一致。
 - Survey section 不是摘要卡片。Introduction/Background/Taxonomy/Comparison/Challenges/Future/Conclusion 都必须有完整论证；但“完整”指有证据、有比较、有发展脉络和边界，而不是重复背景、同义改写或用短段落凑字数。
+- **正文与审计材料分离**：阅读深度、检索状态、证据等级和内部覆盖规则只属于 plan、audit、note 与工作台文件，绝不写入论文正文或摘要。正文需要交代局限时，直接说明读者能理解的学术事实，例如“现有公开研究尚未在随机试验、文本协变量与重叠诊断同时具备的条件下进行比较”；不要写“可核验证据”“摘要层信息”“全文/部分全文级”“证据等级”“覆盖级陈述”等过程性措辞。术语首次出现时用一句自然语言解释其研究含义，而不是用内部分类标签代替解释。
 
 ## Publication-Level Survey Writing Preferences
 
@@ -427,7 +428,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 避免冒号/破折号模板化 prose。正文普通段落不要使用 “Challenge: ...”, “Implication: ...”, “Future direction: ...” 作为段落骨架；用自然 topic sentence 和流畅过渡承载综述判断。
 - 不要把正文写成连续 `\paragraph{...}` 标签。优先使用少量有论证关系的 `\subsection{...}`，段落以完整 topic sentence 开始；`\paragraph` 只可用于一节中至多一个确有必要的紧凑定义或列举。
 - 表格只在跨论文项目真正可比时使用。宽表必须包在模板可用的 `\resizebox{\textwidth}{!}{...}`（双栏跨栏表）或 `\resizebox{\columnwidth}{!}{...}`（单栏表）中；不能把不可比的指标、性能或筛选分数强行并列。
-- 正文不得暴露 ResearchOS 的运行过程或内部语料状态：不要写 `metadata triage`、`candidate_count`、`FULL-TEXT`、`PARTIAL-TEXT`、`ABSTRACT-ONLY`、`backlog`、`保留候选`、`候选池`、`经过去重与初筛后共获得 N 篇` 等流水账。Background 可以写公开可读的范围、来源类型与证据边界，但不要写内部队列、精读/轻读统计或未获取全文候选数。
+- 正文不得暴露 ResearchOS 的运行过程或内部语料状态：不要写 `metadata triage`、`candidate_count`、`FULL-TEXT`、`PARTIAL-TEXT`、`ABSTRACT-ONLY`、`backlog`、`保留候选`、`候选池`、`经过去重与初筛后共获得 N 篇`、`可核验证据`、`摘要层信息`、`证据等级` 或 `全文/部分全文级` 等流水账。Background 可以写公开可读的范围、来源类型与研究边界，但不要写内部队列、阅读统计、资料获取状态或审计分类。
 - 避免 "this section reviews..." 这类空话；直接进入内容。
 - 不要输出内部运行标号或审计标记：`C1`、`[C1]`、`CID`、`ResearchOS alignment`、`LLM_REVIEW_REQUIRED`、`TODO/TBD/PLACEHOLDER` 都不得出现在 TeX 中。
 
@@ -481,9 +482,9 @@ Venue-aware survey framing:
 
 这一步不是机械 audit，也不是研究论文 reviewer。你要以 survey reviewer 的视角审阅：
 1. **中心问题**：全文是否围绕一个明确 review question 展开，而不是泛泛综述一个主题。
-2. **范围边界**：是否说明纳入/排除边界、语料来源、证据等级和覆盖限制。
+2. **范围边界**：是否说明纳入/排除边界、公开来源类型和研究结论的适用范围；正文不得把审计分类或阅读状态写成论证内容。
 3. **Taxonomy/Framework 合理性**：分类维度是否能解释该领域的主要差异，交叉归类是否有理由，是否有明显错分、空类或仅为结构整齐而产生的类别。
-4. **Coverage 完整性**：survey 是否覆盖 plan 中的核心类、代表论文、相邻/边界区域；abstract-only 证据是否被诚实标注。
+4. **Coverage 完整性**：survey 是否覆盖 plan 中的核心类、代表论文、相邻/边界区域；对直接研究仍有限的主题，是否用具体的研究空白说明其局限，而非泄露阅读或审计状态。
 5. **Comparative Fairness**：research progress/comparison 是否公允，是否比较不可比 setting，是否夸大某类方法。
 6. **二阶贡献**：全文是否提出了分类、解释框架、研究地图或问题意识，而不是文献摘要合集。
 7. **Challenges 质量**：open challenges 是否来自真实 tensions/gaps，而不是空泛套话。

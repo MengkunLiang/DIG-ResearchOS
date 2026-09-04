@@ -47,6 +47,7 @@
 14. 正文语言要凝练连贯。正文普通段落不要依赖冒号、破折号、标签化小句和 slogan 式转折；不要把段落写成 “Problem: ... Method: ... Evidence: ...” 的清单式 prose。需要列贡献或定义时可以少量使用冒号，普通论证句优先写完整句。
 15. 写作时必须回查相关 paper note card。`drafts/section_outlines/<section>.md` 中的 Note Card Retrieval Plan 指明应读哪些 note section；不能只依赖 synthesis preview 中少数代表论文。
 16. 若当前段落需要更多材料，先用 `query_research_evidence` 按本章真正的问题检索已有 note section；需要确定性章节计划时再调用 `build_section_evidence_supplement(section_id="<当前section>")`。若缺少的是会改变正式 citation、related-work 定位或关键外部事实的材料，可自主调用一次有界 `targeted_literature_supplement`，读取新增 notes 后继续。不要为了普通解释、自然推导或引用数量机械补检，也不要为了一个 claim 分页读取整批 paper notes；仍找不到直接证据时应弱化、删除或写成 limitation。
+17. 正文不描述系统如何核验或分级资料。`evidence_level`、`FULL_TEXT`、`PARTIAL_TEXT`、`ABSTRACT_ONLY`、可核验证据、摘要层信息、候选池、审计状态和文件路径都只属于内部材料。需要说明局限时，直接交代研究事实、适用条件和尚未被比较或检验的问题，并用完整句解释其含义。
 
 ## 项目信息
 
