@@ -359,12 +359,28 @@ class IdeaEvolutionController:
         """
 
         state = self.store.read_state()
-        valid, error = self.store.validate_state_inputs(state)
-        if not valid:
-            raise ValueError(error or "active T4 population is no longer current")
+        # A Final Card is an LLM-authored *presentation* of the immutable
+        # Population snapshot.  Upstream literature/Survey files may be
+        # updated after that snapshot was produced (for example by completing
+        # an optional T3.6 branch).  That is meaningful provenance for a
+        # subsequent evolution round, but it does not make the saved
+        # Candidate, score, Portfolio, or its readable Card source disappear.
+        #
+        # Do not apply ``validate_state_inputs`` here: it is the right guard
+        # before generating/evolving science, but made a card-only resume
+        # falsely report missing source data and permanently hide a completed
+        # Portfolio.  Still require that the saved Population and run config
+        # agree internally; those are the canonical inputs to a Card.
+        run_config = self.store.read_run_config()
+        if state.run_config_fingerprint != run_config_fingerprint(run_config):
+            raise ValueError("T4 state and run configuration disagree during Final Card repair")
         population = self.store.read_population(state.current_population_id)
         if population.population_id != state.current_population_id:
             raise ValueError("T4 state and active Population identifiers disagree")
+        if population.input_fingerprint != state.input_fingerprint:
+            raise ValueError("T4 state and active Population input snapshots disagree")
+        if population.run_config_fingerprint != state.run_config_fingerprint:
+            raise ValueError("T4 state and active Population run configurations disagree")
         dossiers = self._load_dossiers(population.active_candidate_ids)
         if {dossier.candidate_id for dossier in dossiers} != set(population.active_candidate_ids):
             raise ValueError("active T4 Population and Candidate dossiers disagree")

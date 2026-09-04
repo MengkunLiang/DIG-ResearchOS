@@ -5855,6 +5855,38 @@ class AgentRunner:
                     )
             card_only_recovery = repair_checkpoint is not None
             if card_only_recovery:
+                # Capture (but do not block on) any upstream evidence drift.
+                # The Card below is compiled from the saved Population and
+                # dossiers, whose snapshot fingerprints remain the scientific
+                # provenance.  A later explicit T4 evolution will use the
+                # current evidence; this recovery must only finish the
+                # interrupted display layer.
+                try:
+                    active_state = store.read_state()
+                    inputs_current, input_drift_reason = store.validate_state_inputs(active_state)
+                    if not inputs_current:
+                        store.write_json(
+                            "ideation/evolution/diagnostics/final_card_source_snapshot.json",
+                            {
+                                "schema_version": "1.0.0",
+                                "semantics": "t4_final_card_source_snapshot",
+                                "population_id": active_state.current_population_id,
+                                "population_input_fingerprint": active_state.input_fingerprint,
+                                "status": "upstream_inputs_changed_after_population",
+                                "detail": str(input_drift_reason or "upstream T4 inputs changed after Population creation"),
+                                "card_compilation_source": "saved_population_snapshot",
+                                "next_scientific_action": "run a new T4 evolution only when the updated upstream evidence should change Candidate generation",
+                            },
+                        )
+                        self.progress.emit(
+                            "T4 · 上游材料在 Population 完成后有更新；本次先依据已保存的 Population 补齐决策卡。",
+                            important=True,
+                        )
+                except (OSError, TypeError, ValueError):
+                    # The canonical source checks below remain authoritative.
+                    # A diagnostic receipt is helpful, never a prerequisite
+                    # for rendering a recoverable saved Population.
+                    pass
                 try:
                     result = controller.load_active_result_for_final_card_repair()
                 except Exception as exc:

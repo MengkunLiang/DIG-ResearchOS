@@ -416,6 +416,10 @@ def _looks_like_stale_state(text: str) -> bool:
             "projected final card is stale",
             "final card is stale",
             "state and active population identifiers disagree",
+            "state and active population input snapshots disagree",
+            "state and run configuration disagree",
+            "对应输入已变化",
+            "input fingerprint is stale",
         )
     )
 
