@@ -1476,7 +1476,11 @@ def _tool_disposition(
         return "AUTO_REPAIR"
     if str(payload.get("display_disposition") or "").casefold() in {"auto_fallback", "fallback"} and payload.get("fallback_available", True):
         return "AUTO_FALLBACK"
-    if failure in {"note_incomplete", "schema_validation_failed"}:
+    if failure in {"note_incomplete", "schema_validation_failed"} or (
+        str(tool_name or "") == "write_structured_file"
+        and failure == "parameter_validation"
+        and payload.get("repairable", True)
+    ):
         return "AUTO_REPAIR"
     if failure in {"rate_limited", "network_unavailable", "timeout", "http_5xx", "transient_http"} and payload.get("fallback_available", True):
         return "DEGRADED"

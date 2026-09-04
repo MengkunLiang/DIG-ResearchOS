@@ -2167,7 +2167,12 @@ class AgentRunner:
                             # malformed calls have made no structural progress.
                             # This is a circuit breaker for a broken endpoint,
                             # not a substitute for model-authored repair.
-                            pause_threshold = 4 if failure_kind == "parameter_validation" else 2
+                            # Native tool JSON that exceeds an endpoint's
+                            # response room almost never becomes valid after
+                            # several identical reissues. Give one compact
+                            # rewrite attempt, then stop before repeated
+                            # provider calls consume the budget.
+                            pause_threshold = 2
                             if repeated_count >= pause_threshold:
                                 failure_label = (
                                     "Schema 错误"
@@ -8683,7 +8688,7 @@ class AgentRunner:
                         "不要改用 write_file，也不要因此重写其它已通过来源。"
                     )
                     if raw_arguments and tool_arguments.get("__parse_error__"):
-                        compact_limit = 5_500
+                        compact_limit = 4_800
                         parameter_content += (
                             " "
                             + parse_detail

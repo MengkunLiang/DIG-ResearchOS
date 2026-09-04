@@ -163,7 +163,11 @@ def classify_tool_outcome(
     # These two error codes are emitted after the Agent has received a
     # precise repair contract for the same turn. Older tools do not always
     # carry the newer display metadata, so retain a narrow compatibility path.
-    if failure_class in {"note_incomplete", "schema_validation_failed"}:
+    if failure_class in {"note_incomplete", "schema_validation_failed"} or (
+        str(tool_name or "") == "write_structured_file"
+        and failure_class == "parameter_validation"
+        and payload.get("repairable", True)
+    ):
         return ToolOutcome("AUTO_REPAIR", "cyan", False)
     if failure_class in {"rate_limited", "network_unavailable", "timeout", "http_5xx", "transient_http"} and payload.get("fallback_available", True):
         return ToolOutcome("DEGRADED", "yellow", False)
@@ -1482,7 +1486,7 @@ def summarize_tool_result(
                     size = f"，约 {raw_length} 字符" if raw_length else ""
                     return (
                         "模型提交的结构化工具 JSON 不完整，文件尚未写入"
-                        f"{size}{imbalance}。系统会让模型仅重发同一份完整对象，不会把它当成研究内容错误。"
+                        f"{size}{imbalance}。系统正在要求模型用更紧凑的完整对象重写；这不是研究内容错误。"
                         f"目标文件：{required_path}（{required_schema}）。",
                         str(required_path),
                     )
