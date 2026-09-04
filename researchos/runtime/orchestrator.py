@@ -2167,13 +2167,14 @@ class AgentRunner:
                             # malformed calls have made no structural progress.
                             # This is a circuit breaker for a broken endpoint,
                             # not a substitute for model-authored repair.
-                            # Native tool JSON that exceeds an endpoint's
-                            # response room almost never becomes valid after
-                            # several identical reissues. Give one compact
-                            # rewrite attempt, then stop before repeated
-                            # provider calls consume the budget.
-                            pause_threshold = 2
-                            if repeated_count >= pause_threshold:
+                            # A malformed native tool payload is a transport
+                            # repair path, not a human decision. Keep the
+                            # model in the same turn with the compact repair
+                            # instruction; only semantic schema errors can
+                            # establish a stable content failure worth
+                            # pausing for review.
+                            pause_threshold = None if failure_kind == "parameter_validation" else 2
+                            if pause_threshold is not None and repeated_count >= pause_threshold:
                                 failure_label = (
                                     "Schema 错误"
                                     if failure_kind == "schema_validation_failed"

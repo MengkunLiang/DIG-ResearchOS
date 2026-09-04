@@ -342,6 +342,16 @@ def normalize_research_blueprint_payload(payload: dict[str, Any]) -> tuple[dict[
     if not isinstance(approach, dict):
         return normalized, changes
 
+    # Some providers serialize a complete blueprint but accidentally place
+    # these four sibling sections inside ``proposed_approach``. Their names
+    # and values are intact, so moving them back to their canonical top-level
+    # positions is lossless and avoids asking the model to regenerate a large
+    # contract merely for an object-boundary mistake.
+    for key in ("research_claims", "evaluation", "contributions", "risks"):
+        if key not in normalized and key in approach:
+            normalized[key] = approach.pop(key)
+            changes.append(f"proposed_approach.{key} -> {key}")
+
     raw_rationales = approach.get("design_rationales")
     rationales = raw_rationales if isinstance(raw_rationales, list) else []
     canonical_rationales: list[dict[str, Any]] = []
