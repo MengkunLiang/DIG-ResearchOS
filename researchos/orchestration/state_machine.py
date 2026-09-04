@@ -3773,19 +3773,29 @@ class StateMachine:
         ]
         command_lines: list[str] = []
         if selected_executor == "codex_cli":
-            command_lines = [f"cd {shlex.quote(root)}", "codex"]
+            command_lines = [f"cd {shlex.quote(root)} && codex"]
         elif selected_executor == "claude_code_window":
             command_lines = [f"cd {shlex.quote(root)}", "claude"]
         if selected_executor == "claude_code_window":
-            launch_summary = "在当前 workspace 根目录启动 Claude Code，并发送下方执行指令。"
+            launch_summary = "在新终端启动 Claude Code，然后输入下方任务。"
         elif selected_executor == "manual":
-            launch_summary = "将下方执行指令交给获授权的人工或其它外部执行器，并限制其在当前 workspace 内工作。"
+            launch_summary = "将下方任务交给负责准备材料的人或工具。"
         elif selected_executor == "codex_cli":
-            launch_summary = "在一个单独终端的当前 workspace 根目录启动 Codex CLI。"
+            launch_summary = "在新终端启动 Codex，然后输入下方任务。"
         else:
             launch_summary = "未读取到有效执行器选择记录；先检查 external_executor/report/executor_selection.json。"
 
         is_resource_preparation = execution_scope == "resource_preparation"
+        display_prompt = prompt
+        if is_resource_preparation:
+            # The full task contract is already on disk.  Showing it again
+            # turns a simple handoff into a screenful of implementation
+            # jargon; the executor receives the same contract by reading the
+            # two named files.
+            display_prompt = (
+                "执行 ResearchOS 材料准备任务：先读取 external_executor/AGENTS.md，"
+                "再执行 external_executor/skills/research-execution/SKILL.md。"
+            )
         return {
             "selected_executor": selected_executor,
             "execution_scope": execution_scope,
@@ -3795,15 +3805,12 @@ class StateMachine:
             "command_lines": command_lines,
             "root_skill": str(selection.get("root_skill") or ROOT_EXECUTOR_SKILL_PATH),
             "root_skill_name": ROOT_EXECUTOR_SKILL_NAME,
-            "executor_prompt": prompt,
+            "executor_prompt": display_prompt,
             "required_artifacts": artifacts,
-            "concurrency_boundary": (
-                "外部执行期间不要在另一个终端对同一 workspace 运行 researchos resume、run-task T5 或 run-task T8。"
-                "这些命令可能读取到外部执行器尚未原子写完的 result pack、状态或运行清单。"
-            ),
+            "concurrency_boundary": "材料准备期间，等待执行器完成后再回到 ResearchOS。",
             "completion_boundary": (
-                "受限资源准备完成后，停止外部执行器并运行 "
-                f"python -m researchos.cli resume --workspace {shlex.quote(root)}；ResearchOS 会接收 Phase B 报告并重新编译 T5。"
+                "材料准备完成后，运行 "
+                f"python -m researchos.cli resume --workspace {shlex.quote(root)}；ResearchOS 会读取材料结果并更新实验交接。"
                 if is_resource_preparation
                 else (
                     "外部执行根 Skill 在 Writer Handoff 校验通过后会执行其 route 返回的 T8 交接命令。"
@@ -3963,26 +3970,34 @@ class StateMachine:
                 },
             ]
         elif is_resource_preparation_wait:
-            title = "外部执行器正在自动准备资源"
+            report_root = (workspace_dir / "external_executor" / "report" / "phase_B") if workspace_dir else None
+            reports_ready = bool(
+                report_root
+                and all((report_root / name).is_file() for name in (
+                    "resource_preparation_report.json", "validation_report.json", "resource_source_report.json",
+                ))
+            )
+            title = "材料准备" if reports_ready else "正在准备实验材料"
             description = (
-                "当前外部执行器只允许进行上下文核对和 Phase B 资源准备：检查本地材料、检索公开资源、固定版本下载、"
-                "许可证/安全审查和资源记录。它不会实现方法、运行实验或写入 T8。"
+                "材料准备已完成，请读取结果并更新实验交接。"
+                if reports_ready
+                else "执行器正在查找数据、基线代码和评测工具，并记录版本、许可证和运行条件。"
             )
             options = [
                 {
                     "id": "retry_targeted_repair",
-                    "label": "检查资源准备报告",
-                    "description": "只检查 Phase B 报告和验证记录；通过后重新编译 T5，不会把资源准备当作实验结果。",
+                    "label": "读取材料准备结果" if reports_ready else "查看当前进度",
+                    "description": "读取材料清单和检查结果，并在材料齐备后更新实验交接。" if reports_ready else "检查是否已生成材料准备结果。",
                 },
                 {
                     "id": "inspect_then_pause",
-                    "label": "暂不检查，保持等待",
-                    "description": "保留当前资源准备执行器与全部来源记录；下次 resume 仍展示启动说明与完成条件。",
+                    "label": "稍后再看",
+                    "description": "保存当前进度；下次 resume 回到这里。",
                 },
                 {
                     "id": "exit",
-                    "label": "结束本次 ResearchOS 会话",
-                    "description": "不删除外部资源准备任务或任何 artifact；执行器完成后可显式 resume 回到此处检查。",
+                    "label": "结束本次会话",
+                    "description": "材料准备任务会保留；完成后运行 resume 查看结果。",
                 },
             ]
         elif is_external_wait:

@@ -520,7 +520,7 @@ def _t5_insights(workspace: Path, *, task_id: str) -> list[dict[str, Any]]:
             rows.append(("Project-specific skills", str(len(skills))))
     if isinstance(status, dict):
         rows.append(("Executor status", str(status.get("status") or status.get("state") or "recorded")))
-    return [_insight("External Execution Contract", "T5 重新组织研究意图和执行边界；外部 executor 仍必须回传可审计的原始结果。", rows)]
+    return [_insight("实验准备摘要", "研究方案已整理为实验任务和材料清单。", rows)]
 
 
 def _t7_insights(workspace: Path, *, task_id: str) -> list[dict[str, Any]]:

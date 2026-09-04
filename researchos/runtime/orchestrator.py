@@ -7644,11 +7644,11 @@ class AgentRunner:
             selection = json.loads(selection_path.read_text(encoding="utf-8"))
         except Exception as exc:
             raise RecoverableRuntimePause(
-                "WAITING_RESOURCE_PREPARATION: external executor selection is unavailable; choose a resource-preparation executor again."
+                "WAITING_RESOURCE_PREPARATION: 尚未读取到材料准备方式，请重新选择由谁准备材料。"
             ) from exc
         if not isinstance(selection, dict) or selection.get("execution_scope") != "resource_preparation":
             raise RecoverableRuntimePause(
-                "WAITING_RESOURCE_PREPARATION: the current executor selection is not limited to resource preparation."
+                "WAITING_RESOURCE_PREPARATION: 当前任务不是材料准备任务，请返回上一步重新选择。"
             )
         try:
             report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -7656,8 +7656,7 @@ class AgentRunner:
             source_report = json.loads(source_report_path.read_text(encoding="utf-8"))
         except Exception as exc:
             raise RecoverableRuntimePause(
-                "WAITING_RESOURCE_PREPARATION: Phase B is still running. Complete resource discovery, acquisition, static review, "
-                "and validation before resuming ResearchOS."
+                "WAITING_RESOURCE_PREPARATION: 材料准备仍在进行。请完成数据、代码、基线和评测工具的查找与检查后，再运行 resume。"
             ) from exc
         readiness = report.get("resource_readiness") if isinstance(report.get("resource_readiness"), dict) else {}
         readiness_status = str(readiness.get("status") or "").strip()
@@ -7684,7 +7683,7 @@ class AgentRunner:
             or not source_report_ok
         ):
             raise RecoverableRuntimePause(
-                "WAITING_RESOURCE_PREPARATION: the Phase B report, source record, or overall validation receipt is incomplete."
+                "WAITING_RESOURCE_PREPARATION: 材料准备结果尚未完整生成。请检查材料清单、来源记录和检查结果。"
             )
 
         acceptance = {
@@ -7706,7 +7705,7 @@ class AgentRunner:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(acceptance, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         self.progress.emit(
-            "[Experimenter Agent] T5 已接收外部 Phase B 资源准备记录；将重新编译交接，不把资源准备当作实验结果。",
+            "[Experimenter Agent] T5 已读取材料准备结果；正在更新实验交接。",
             important=True,
         )
         self._record_runtime_completion(

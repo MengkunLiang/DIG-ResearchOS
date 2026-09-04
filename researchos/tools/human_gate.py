@@ -2171,10 +2171,13 @@ class CLIHumanInterface(HumanInterface):
         )
         table.add_column("项目", width=16, style="bold cyan")
         table.add_column("当前值", ratio=1, overflow="fold")
-        table.add_row("执行器", str(value.get("selected_executor") or "unknown"))
-        table.add_row("执行范围", str(value.get("execution_scope") or "full_execution"))
-        table.add_row("唯一总控 Skill", str(value.get("root_skill") or "external_executor/skills/research-execution/SKILL.md"))
-        table.add_row("为什么只启动它", "它会按持久化状态调度、校验和恢复子 Skill；不要手动逐个启动子 Skill。")
+        executor = {"codex_cli": "Codex", "claude_code_window": "Claude Code", "manual": "人工/其它工具"}.get(
+            str(value.get("selected_executor") or ""), str(value.get("selected_executor") or "未选择")
+        )
+        scope = "准备数据、代码、基线和评测工具" if value.get("execution_scope") == "resource_preparation" else "实现方法并执行实验"
+        table.add_row("准备方式", executor)
+        table.add_row("本次任务", scope)
+        table.add_row("完成后得到", "材料清单、来源与许可证记录、可用性检查结果")
 
         items: list[Any] = [table]
         launch_summary = " ".join(str(value.get("launch_summary") or "").split())
@@ -2184,7 +2187,7 @@ class CLIHumanInterface(HumanInterface):
         if commands:
             items.extend(
                 [
-                    Text("在单独终端启动", style="bold yellow"),
+                    Text("在新终端启动", style="bold yellow"),
                     Text("\n".join(commands), style="bold green", overflow="fold"),
                 ]
             )
@@ -2192,18 +2195,18 @@ class CLIHumanInterface(HumanInterface):
         if prompt:
             items.extend(
                 [
-                    Text("向执行器发送", style="bold yellow"),
+                    Text("启动后输入", style="bold yellow"),
                     Text(prompt, overflow="fold"),
                 ]
             )
         required = value.get("required_artifacts") if isinstance(value.get("required_artifacts"), list) else []
         pending = [str(item.get("path") or "") for item in required if isinstance(item, dict) and item.get("status") != "已回传"]
         if pending:
-            items.append(Text("回传后由 ResearchOS 接收：" + "、".join(pending), style="dim", overflow="fold"))
+            items.append(Text("完成时需生成：" + "、".join(pending), style="dim", overflow="fold"))
         completion = " ".join(str(value.get("completion_boundary") or "").split())
         if completion:
             items.append(Text(completion, style="dim", overflow="fold"))
-        self._render_rich_panel(Group(*items), title="外部执行器启动", border_style="bright_cyan")
+        self._render_rich_panel(Group(*items), title="启动材料准备", border_style="bright_cyan")
 
     def _render_t5_action_options(self, gate_id: str, options: list[dict]) -> None:
         """Render T5 choices as an ordinary next-step decision, not jargon."""
@@ -2220,10 +2223,10 @@ class CLIHumanInterface(HumanInterface):
             _environ={"COLUMNS": str(width), "LINES": "42"},
         )
         purpose = {
-            "t5_protocol_gate": "你现在要决定怎样准备实验所需的资源，而不是授权系统立即运行实验。",
-            "t5_expr_material_gate": "这里只登记你已经有的材料；没有材料也可以返回上一页让系统准备公开资源。",
+            "t5_protocol_gate": "请选择怎样准备实验所需的数据、代码、基线和评测工具。",
+            "t5_expr_material_gate": "这里登记你已经有的材料；其余材料可以稍后补齐。",
             "t5_executor_gate": "研究方案和实验约束已经固定。请选择由谁执行后续实验；真实执行会消耗时间和算力。",
-            "t5_resource_executor_gate": "这一轮只允许准备和审查资源，不会实现方法、训练模型或生成实验结论。",
+            "t5_resource_executor_gate": "请选择谁来准备材料。准备完成后，再确认是否进入实验执行。",
         }.get(gate_id, "请选择下一步。")
         table = lightweight_ruled_table(
             expand=True,
@@ -2236,26 +2239,26 @@ class CLIHumanInterface(HumanInterface):
         table.add_column("系统接下来会做什么", ratio=2, overflow="fold")
         copy = {
             "auto_prepare_resources": (
-                "我还没有现成材料",
-                "推荐。也适合希望先核验公开数据、代码、许可或版本的情况。",
-                "受限执行器只检索、下载、审查和留痕资源，不运行实验。",
+                "开始准备材料",
+                "还没有数据、代码或基线，或希望先确认公开来源。",
+                "进入材料准备方式选择。",
             ),
             "prepare_materials": (
-                "我已有部分材料",
+                "登记已有材料",
                 "你手头已有数据、代码、权重或 benchmark，想先登记它们。",
                 "系统只盘点已有材料，之后再选择执行方式。",
             ),
             "protocol_ready": (
-                "我已改研究方案",
+                "更新实验方案",
                 "仅当任务、机制、必需 baseline、benchmark 范围或主张边界已实际改变。",
-                "重新编译实验交接，不会丢失现有 Proposal。",
+                "根据更新后的方案重新整理实验材料清单。",
             ),
             "pause_protocol": ("我现在先停一下", "暂时不继续。", "保存全部状态；下次 resume 回到这里。"),
             "pause_for_materials": ("我以后再登记材料", "材料还没准备好或暂时不想盘点。", "保存状态；下次仍从材料页继续。"),
             "materials_ready": ("材料已登记，继续", "你已把现有材料放好，或确认无需再盘点。", "进入执行方式选择，不会自动运行实验。"),
-            "codex_cli": ("用 Codex CLI", "希望由 Codex 在受限协议下处理资源或执行实验。", "保存选择；真实实验前仍会明确二次确认。"),
-            "claude_code_window": ("用 Claude Code", "你将在 Claude Code 窗口中按交接协议继续。", "保存选择并生成对应执行说明。"),
-            "manual": ("我自己或用其它工具", "你希望在系统外按交接文件执行。", "保存人工执行记录和所需文件位置。"),
+            "codex_cli": ("用 Codex", "希望由 Codex 查找并准备公开材料。", "生成启动说明与材料准备任务。"),
+            "claude_code_window": ("用 Claude Code", "希望由 Claude Code 查找并准备公开材料。", "生成启动说明与材料准备任务。"),
+            "manual": ("我自己或用其它工具", "希望自行准备材料。", "保存材料清单和回传要求。"),
             "mock_dry_run": ("只做流程联调", "你只想检查协议与文件链路，不把结果当作论文证据。", "运行 mock；结束后仍需选择真实执行方式。"),
             "return_to_protocol": ("返回上一步", "想重新决定怎样准备资源。", "回到协议确认页，不删除任何材料。"),
             "back_to_t4": ("回到研究设计", "研究问题或方法本身需要改变。", "返回 T4，并保留当前版本供对照。"),
@@ -2808,18 +2811,18 @@ class CLIHumanInterface(HumanInterface):
         status = str(value.get("status") or "blocked").strip().lower()
         status_copy = {
             "ready": (
-                "协议已完整，可进入材料确认",
-                "T5 已获得足以约束真实实验的研究设置。下一步只需确认数据、代码、benchmark 或权重等材料。",
+                "实验方案已完成",
+                "下一步准备数据、代码、基线和评测工具。",
                 "green",
             ),
             "protocol_decision_required": (
-                "研究方案已整理，可先自动准备资源",
-                "这不是运行错误，也不要求你手工寻找数据、代码或权重。系统会先让受限执行器获取、审查并记录公开资源；完整实验只在研究边界保持一致时才会启动。",
+                "可以先准备实验材料",
+                "已有方案足以开始查找数据、代码、基线和评测工具。",
                 "bright_yellow",
             ),
             "blocked": (
-                "尚缺最小实验定义",
-                "T5 已保留现有研究材料，但数据/benchmark、指标、baseline 或主张验证关系中至少有一项尚未被正式定义。",
+                "实验方案还需补充",
+                "数据、指标、对照方案或主张验证关系中至少有一项需要补充。",
                 "red",
             ),
         }
@@ -2871,10 +2874,10 @@ class CLIHumanInterface(HumanInterface):
         overview.add_column(ratio=1, overflow="fold")
         overview.add_row("当前状态", Text(status_label, style="bold"))
         overview.add_row("这意味着", Text(summary, overflow="fold"))
-        overview.add_row("已确定的数据/设置", Text(compact(datasets), overflow="fold"))
-        overview.add_row("已确定的指标", Text(compact(metrics), overflow="fold"))
-        overview.add_row("已确定的 baseline", Text(compact(baselines), overflow="fold"))
-        overview.add_row("已绑定的主张", Text(f"{claim_count if claim_count not in (None, '') else 0} 条主张已有验证关系", overflow="fold"))
+        overview.add_row("计划使用的数据", Text(compact(datasets), overflow="fold"))
+        overview.add_row("计划采用的指标", Text(compact(metrics), overflow="fold"))
+        overview.add_row("计划比较的方法", Text(compact(baselines), overflow="fold"))
+        overview.add_row("待检验的问题", Text(f"{claim_count if claim_count not in (None, '') else 0} 项", overflow="fold"))
         renderables: list[Any] = [overview]
 
         decisions = value.get("required_decisions") if isinstance(value.get("required_decisions"), list) else []
@@ -2900,8 +2903,8 @@ class CLIHumanInterface(HumanInterface):
             detail = Table.grid(expand=True, padding=(0, 1))
             detail.add_column(style="bold", width=18, no_wrap=True)
             detail.add_column(ratio=1, overflow="fold")
-            detail.add_row("Phase B 状态", Text(f"{preparation_status}（资源准备：{preparation.get('phase_b_status') or 'reported'}）", overflow="fold"))
-            detail.add_row("最小实验环", Text("可行" if preparation.get("minimum_loop_feasible") is True else "尚不可行或仍有限制", overflow="fold"))
+            detail.add_row("准备状态", Text(preparation_status, overflow="fold"))
+            detail.add_row("能否开始实验", Text("可以开始" if preparation.get("minimum_loop_feasible") is True else "还需处理部分材料", overflow="fold"))
             detail.add_row("资源来源", Text(source_text, overflow="fold"))
             blockers = preparation.get("blockers") if isinstance(preparation.get("blockers"), list) else []
             constraints = preparation.get("constraints") if isinstance(preparation.get("constraints"), list) else []
@@ -2910,10 +2913,10 @@ class CLIHumanInterface(HumanInterface):
             elif constraints:
                 detail.add_row("仍有限制", Text("；".join(str(item) for item in constraints), overflow="fold"))
             else:
-                detail.add_row("接收状态", Text("已被 T5 接收并作为下一次交接编译的来源上下文。" if preparation.get("accepted") else "Phase B 已有报告；恢复时将重新检查接收记录。", overflow="fold"))
+                detail.add_row("下一步", Text("材料结果已整理，可以继续更新实验准备。" if preparation.get("accepted") else "材料结果已生成，返回后将自动读取。", overflow="fold"))
             report_path = str(preparation.get("report_path") or "external_executor/report/phase_B/resource_preparation_report.json")
             source_path = str(preparation.get("source_report_path") or "external_executor/report/phase_B/resource_source_report.json")
-            renderables.append(Panel(Group(detail, Text(f"详情：{report_path}  |  来源：{source_path}", style="dim", overflow="fold")), title="自动资源准备记录", border_style="cyan", expand=True))
+            renderables.append(Panel(Group(detail, Text(f"详情：{report_path}  |  来源：{source_path}", style="dim", overflow="fold")), title="材料准备结果", border_style="cyan", expand=True))
         elif status == "blocked":
             fields: list[Any] = []
             for record in requirements:
@@ -2935,13 +2938,13 @@ class CLIHumanInterface(HumanInterface):
         next_steps.add_column("应选择", width=20, overflow="fold")
         next_steps.add_column("系统接下来会做什么", ratio=2, overflow="fold")
         if status == "ready":
-            next_steps.add_row("协议已经完整", "先准备实验材料", "进入资源确认页；核对数据、代码、benchmark 和权重，再选择外部执行器。")
-            next_steps.add_row("手头没有资源", "让外部执行器自动准备资源", "启动受限的 Phase B；它只检索、下载、审查和记录公开资源，不运行实验。")
+            next_steps.add_row("还没有现成材料", "开始准备实验材料", "选择 Codex、Claude 或自行准备，并生成清晰的启动说明。")
+            next_steps.add_row("已有部分材料", "登记我已有的材料", "先记录已有内容，再补齐缺少的数据、代码或基线。")
         elif status == "protocol_decision_required":
-            next_steps.add_row("没有本地材料，或想先核验公开来源", "让外部执行器自动准备资源", "推荐路径：启动受限 Phase B；它会按公开来源、许可、安全和协议规则获取并记录资源，不实现或运行方法。")
-            next_steps.add_row("已有数据、代码或权重", "先准备实验材料", "可选：只盘点已有材料；正式运行仍会在 T5 中核对研究边界。")
-            next_steps.add_row("你有意改变研究边界", "协议已补充，重新编译", "仅在任务、机制、必需 baseline、benchmark 范围或 claim/贡献边界确实变化时使用；不会重做 T4/T4.5。")
-            next_steps.add_row("暂时不继续", "暂停协议确认", "保存全部材料；下次 resume 仍从这里开始。")
+            next_steps.add_row("需要寻找公开材料", "开始准备实验材料", "选择 Codex、Claude 或自行准备；系统会整理来源、版本和使用条件。")
+            next_steps.add_row("已有数据、代码或权重", "登记我已有的材料", "先记录已有内容，再补齐缺少材料。")
+            next_steps.add_row("方案已经改变", "更新实验方案", "重新整理实验材料清单。")
+            next_steps.add_row("暂时不继续", "暂时停止", "保存当前进度；下次 resume 从这里开始。")
         else:
             next_steps.add_row("实验计划缺少必要字段", "协议已补充，重新编译", "补充实验计划后重新编译 T5；不会丢失 proposal 或文献材料。")
             next_steps.add_row("研究问题、机制或贡献本身需要改变", "回到 T4 重构", "返回研究方向阶段，保留现有版本供对照。")
@@ -2955,7 +2958,7 @@ class CLIHumanInterface(HumanInterface):
                 overflow="fold",
             )
         )
-        console.print(Panel(Group(*renderables), title="T5 研究方案状态", border_style=border_style, expand=True))
+        console.print(Panel(Group(*renderables), title="实验材料准备", border_style=border_style, expand=True))
         rendered = buffer.getvalue().rstrip()
         if rendered:
             print(rendered)
