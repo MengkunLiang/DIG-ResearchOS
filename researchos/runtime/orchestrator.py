@@ -7656,7 +7656,7 @@ class AgentRunner:
             source_report = json.loads(source_report_path.read_text(encoding="utf-8"))
         except Exception as exc:
             raise RecoverableRuntimePause(
-                "WAITING_RESOURCE_PREPARATION: 材料准备仍在进行。请完成数据、代码、基线和评测工具的查找与检查后，再运行 resume。"
+                "WAITING_RESOURCE_PREPARATION: 尚未找到材料准备结果。请在另一个终端按启动卡运行所选工具，完成数据、代码、基线和评测工具的查找与检查后，再运行 resume。"
             ) from exc
         readiness = report.get("resource_readiness") if isinstance(report.get("resource_readiness"), dict) else {}
         readiness_status = str(readiness.get("status") or "").strip()

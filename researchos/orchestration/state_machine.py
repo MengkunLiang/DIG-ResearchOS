@@ -3977,22 +3977,22 @@ class StateMachine:
                     "resource_preparation_report.json", "validation_report.json", "resource_source_report.json",
                 ))
             )
-            title = "材料准备" if reports_ready else "正在准备实验材料"
+            title = "材料准备结果" if reports_ready else "等待你启动材料准备"
             description = (
                 "材料准备已完成，请读取结果并更新实验交接。"
                 if reports_ready
-                else "执行器正在查找数据、基线代码和评测工具，并记录版本、许可证和运行条件。"
+                else "ResearchOS 已保存你的工具选择。请按下方启动卡在另一个终端运行该工具；完成后再回到这里读取结果。"
             )
             options = [
                 {
                     "id": "retry_targeted_repair",
-                    "label": "读取材料准备结果" if reports_ready else "查看当前进度",
-                    "description": "读取材料清单和检查结果，并在材料齐备后更新实验交接。" if reports_ready else "检查是否已生成材料准备结果。",
+                    "label": "读取材料准备结果" if reports_ready else "我已完成材料准备，检查结果",
+                    "description": "读取材料清单和检查结果，并在材料齐备后更新实验交接。" if reports_ready else "检查工具是否已写入材料清单、来源记录和可用性检查结果。",
                 },
                 {
                     "id": "inspect_then_pause",
-                    "label": "稍后再看",
-                    "description": "保存当前进度；下次 resume 回到这里。",
+                    "label": "稍后再启动",
+                    "description": "保存当前进度；下次 resume 仍显示启动说明。",
                 },
                 {
                     "id": "exit",

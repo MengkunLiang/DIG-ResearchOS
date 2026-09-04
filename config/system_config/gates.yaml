@@ -796,8 +796,8 @@ gates:
         next: T4.5-PORTFOLIO-GATE
 
   t5_resource_executor_gate:
-    title: "选择材料准备方式"
-    description: "请选择由谁准备数据、代码、基线和评测工具。准备完成后，ResearchOS 会汇总结果并请你确认下一步。"
+    title: "选择材料准备工具"
+    description: "选择后，ResearchOS 会显示启动该工具的命令。请在另一个终端完成材料准备，再回到这里读取结果。"
     presentation:
       scope:
         literal: |
@@ -805,11 +805,11 @@ gates:
           准备完成后回到 ResearchOS 运行 resume；系统会读取结果并更新实验交接。
     options:
       - id: codex_cli
-        label: "用 Codex 准备材料"
+        label: "获取 Codex 启动命令"
         aliases: ["codex"]
         next: T5-RESOURCE-PREP-WAIT
       - id: claude_code_window
-        label: "用 Claude Code 准备材料"
+        label: "获取 Claude Code 启动说明"
         aliases: ["claude", "cc"]
         next: T5-RESOURCE-PREP-WAIT
       - id: manual

@@ -2178,7 +2178,8 @@ class CLIHumanInterface(HumanInterface):
             str(value.get("selected_executor") or ""), str(value.get("selected_executor") or "未选择")
         )
         scope = "准备数据、代码、基线和评测工具" if value.get("execution_scope") == "resource_preparation" else "实现方法并执行实验"
-        table.add_row("准备方式", executor)
+        table.add_row("准备工具", executor)
+        table.add_row("当前状态", "等待你在另一个终端启动工具")
         table.add_row("本次任务", scope)
         table.add_row("完成后得到", "材料清单、来源与许可证记录、可用性检查结果")
 
@@ -2209,7 +2210,7 @@ class CLIHumanInterface(HumanInterface):
         completion = " ".join(str(value.get("completion_boundary") or "").split())
         if completion:
             items.append(Text(completion, style="dim", overflow="fold"))
-        self._render_rich_panel(Group(*items), title="启动材料准备", border_style="bright_cyan")
+        self._render_rich_panel(Group(*items), title="下一步：启动材料准备", border_style="bright_cyan")
 
     def _render_t5_action_options(self, gate_id: str, options: list[dict]) -> None:
         """Render T5 choices as an ordinary next-step decision, not jargon."""
@@ -2229,7 +2230,7 @@ class CLIHumanInterface(HumanInterface):
             "t5_protocol_gate": "请选择怎样准备实验所需的数据、代码、基线和评测工具。",
             "t5_expr_material_gate": "先把已有材料放到对应目录；没有材料可直接启动自动准备。",
             "t5_executor_gate": "研究方案和实验约束已经固定。请选择由谁执行后续实验；真实执行会消耗时间和算力。",
-            "t5_resource_executor_gate": "请选择谁来准备材料。准备完成后，再确认是否进入实验执行。",
+            "t5_resource_executor_gate": "这一步只生成启动说明，不会在当前命令里自动启动 Codex 或 Claude Code。",
         }.get(gate_id, "请选择下一步。")
         table = lightweight_ruled_table(
             expand=True,
@@ -2259,8 +2260,8 @@ class CLIHumanInterface(HumanInterface):
             "pause_protocol": ("我现在先停一下", "暂时不继续。", "保存全部状态；下次 resume 回到这里。"),
             "pause_for_materials": ("稍后再登记", "材料还没准备好或暂时不想盘点。", "保存状态；下次仍从材料页继续。"),
             "materials_ready": ("我已放好材料，继续", "已有文件已经放到下方目录。", "进入执行方式选择。"),
-            "codex_cli": ("用 Codex", "希望由 Codex 查找并准备公开材料。", "生成启动说明与材料准备任务。"),
-            "claude_code_window": ("用 Claude Code", "希望由 Claude Code 查找并准备公开材料。", "生成启动说明与材料准备任务。"),
+            "codex_cli": ("获取 Codex 启动命令", "希望由 Codex 查找并准备公开材料。", "保存选择，并显示需在新终端执行的命令。"),
+            "claude_code_window": ("获取 Claude Code 启动说明", "希望由 Claude Code 查找并准备公开材料。", "保存选择，并显示需在新终端执行的命令。"),
             "manual": ("我自己或用其它工具", "希望自行准备材料。", "保存材料清单和回传要求。"),
             "mock_dry_run": ("只做流程联调", "你只想检查协议与文件链路，不把结果当作论文证据。", "运行 mock；结束后仍需选择真实执行方式。"),
             "return_to_protocol": ("返回上一步", "想重新决定怎样准备资源。", "回到协议确认页，不删除任何材料。"),
