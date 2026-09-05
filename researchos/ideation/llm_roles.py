@@ -534,10 +534,19 @@ class LLMIdeaScorer(IdeaScoringPort):
         repair_reason: str = "",
     ) -> list[ScoreReport]:
         payload = {
-            "prompt_version": "2.0.0",
-            "rubric_version": "2.0.0",
+            "prompt_version": "2.1.0",
+            "rubric_version": "2.1.0",
             "scoring_batch_id": scoring_batch_id,
             "blind": blind,
+            # Publication orientation may inform the optional qualitative
+            # profile-fit diagnostic.  The three formal assessments remain
+            # population-scientific scores, while profile weighting is derived
+            # deterministically after validation.
+            "target_profile": (
+                model_dump(self.invoker.config.target_profile, mode="json")
+                if self.invoker.config.target_profile
+                else None
+            ),
             "shared_scale_anchors": {
                 "1.0": "The proposal is presently too weak or incoherent on this dimension to justify further investment without a fundamental reframing.",
                 "3.0": "The proposal is substantively plausible on this dimension but has a clear, repairable limitation or unresolved alternative.",

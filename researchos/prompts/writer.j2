@@ -48,6 +48,9 @@
 15. 写作时必须回查相关 paper note card。`drafts/section_outlines/<section>.md` 中的 Note Card Retrieval Plan 指明应读哪些 note section；不能只依赖 synthesis preview 中少数代表论文。
 16. 若当前段落需要更多材料，先用 `query_research_evidence` 按本章真正的问题检索已有 note section；需要确定性章节计划时再调用 `build_section_evidence_supplement(section_id="<当前section>")`。若缺少的是会改变正式 citation、related-work 定位或关键外部事实的材料，可自主调用一次有界 `targeted_literature_supplement`，读取新增 notes 后继续。不要为了普通解释、自然推导或引用数量机械补检，也不要为了一个 claim 分页读取整批 paper notes；仍找不到直接证据时应弱化、删除或写成 limitation。
 17. 正文不描述系统如何核验或分级资料。`evidence_level`、`FULL_TEXT`、`PARTIAL_TEXT`、`ABSTRACT_ONLY`、可核验证据、摘要层信息、候选池、审计状态和文件路径都只属于内部材料。需要说明局限时，直接交代研究事实、适用条件和尚未被比较或检验的问题，并用完整句解释其含义。
+18. 论证要让设计从问题中自然长出。IS 稿遵循“真实信息与决策问题 → 现有建模为何遇到计算或解释困难 → 尚未解决的关键问题 → 技术/设计回应 → 对理论和决策的意义”。CCF/CS 稿采用更紧凑的“任务与部署场景 → technical bottleneck → core insight → method → 区分性实证”链条。两者都不能先抛出方法，再倒推动机。
+19. 将“发布会原则”理解为叙事聚焦：优先组织最强、最有证据支持的优势，并主动解释它解决了什么问题、为何优于相关口径以及每项实验承担何种论证职责。评价维度必须服务核心 scientific 或 decision objective，不能为了凑比赛加入无关指标；一旦某项比较被纳入或对有效性必需，就必须如实呈现。它不允许隐藏必需 baseline、关键结果、适用范围或局限性。边界用平实的研究语言说明，不使用“遗憾的是”“仅”“效果有限”等预先削弱自身的修辞。
+20. 新术语、构念、机制和数学符号必须先解释其必要性，再给出名称、定义或公式；术语和符号全文保持一致。抽象机制可用简短的 `such as` 场景帮助读者理解，但例子只解释概念，不能伪装成事实或结果。TeX 源码以完整段落写作，段落之间仅保留必要空行，不制造单句段、异常换行或视觉碎片。
 
 ## 项目信息
 
@@ -378,7 +381,7 @@ The full state ledger and note corpus are intentionally not duplicated here. The
 {% if section_id == "methodology" %}
 - Required Inputs：`paper_state.json`、`section_outlines/methodology.md`、`alignment_matrix.json` 的 design_choice、`hypotheses.md`、`exp_plan.yaml`、已接受的 T4/T4.5 research package、`novelty_audit.md`、CDR/design-rationale tuples、configs/code artifacts。旧 `idea_scorecard.yaml` 若存在可补充，但不是必需来源。
 - 使命：定义 artifact，解释为什么这样设计，再讲怎么实现；这是全文技术核心。
-- 段落范式：总览 artifact 与 design rationale；architecture 概览；每个组件一段写 how / why / alternative justification；notation/algorithm 集中定义。
+- 段落范式：先从前文困难引出 artifact 的整体设计，再解释各组件如何分别承担不可替代的作用，最后集中定义符号、算法与实现流程。读者应先知道每个对象为何需要，才看到它的名称或公式。
 - 约束：不使用实验结果证明方法有效；每个 design_choice 都有自然语言解释和证据来源；`ccf_a` 紧凑，`is` 可展开 design principles 与理论联系。
 - Venue adaptation：`ccf_a` 必须突出 algorithm/system mechanics、complexity 或 implementation path；`is` 必须把 design principle 映射到 construct、organizational mechanism 或 decision process。
 - Failure checklist：无 architecture 概览、只讲 how 不讲 why、notation 散落、符号复用冲突，都必须修。
@@ -406,20 +409,20 @@ The full state ledger and note corpus are intentionally not duplicated here. The
 {% elif section_id == "introduction" %}
 - Required Inputs：`paper_state.json`、`section_outlines/introduction.md`、`alignment_matrix.json` 的 motivation/contribution、CDR ledger、synthesis、hypotheses、results、已写 Method/Experiments/Related。
 - 使命：回答“如果本文成立，领域会怎样不同”，把 contribution_type 写成后文可兑现承诺。
-- 段落范式：M1 直接 problem，不用宏大背景；M2 列 ≤3 个 gap/motivation；M3 design rationale + artifact；M4 numbered Contributions 3-4 条，用自然语言表达，不带内部编号；M5 按 venue 收束。
-- 约束：gap 与 contribution 应逻辑对应，不要求机械一一等数；贡献动词开头、可验证、强度匹配 contribution_type；`ccf_a` 有量化 headline，`is` 有 theory/reference anchor。
+- 段落范式：先承认现实场景中一个合理的默认认识，再用可追溯现象说明它遗漏了什么信息、机制或条件；由此解释现有建模方式为何自然遇到困难，并把尚未解决的问题引向本文的设计。随后用连续 prose 说明本文贡献及其最强证据。只有在读者检索确实受益时才使用一组简短、完整的贡献句，不能用标签化短语或机械编号代替论证。
+- 约束：gap 与 contribution 应逻辑对应，不要求机械一一等数；贡献必须可验证、强度匹配 contribution_type，并主动说明它在何种比较口径下创造价值；`ccf_a` 有量化 headline，`is` 有 theory/reference anchor。
 - Venue adaptation：`ccf_a` 的前两段必须让读者看到 task/method gap 和结果承诺；`is` 的前两段必须让读者看到 phenomenon、theory/practice gap 和 design knowledge 承诺。
 - Failure checklist：背景过长、贡献散文、overclaim、缺少 alignment 对应关系、把 planned/跳过实验写成已发生，都必须修。
 {% elif section_id == "conclusion" %}
 - Required Inputs：`paper_state.json`、`section_outlines/conclusion.md`、`alignment_matrix.json`、Introduction、Experiments、`risks.md`、`novelty_audit.md`、`external_executor/executor_research_report.md`、`experiment_evidence_pack.json`、`result_to_claim.json`、`iteration_log.md`。
 - 使命：收束 problem -> method -> evidence -> contribution，给出可迁移 design knowledge，并诚实陈述限制。
-- 段落范式：先收束本文证明了什么；再写 `\subsection{Limitations}` 覆盖 external-executor boundary、mock/dry-run、baseline/data/compute/seed/reproducibility；最后 design knowledge + future work。
-- 约束：不引入新 claim、新数字、新引用；每条 limitation 尽量配 future direction。
-- Failure checklist：复制 abstract、假谦虚、不触及效度威胁、引入正文未出现的新主张，都必须修。
+- 段落范式：先让读者记住本文解决的问题、设计和最硬的证据，再用 `\subsection{Limitations}` 清楚界定 external-executor boundary、dry-run、baseline、数据、计算、seed 与可复现性条件，最后收束可迁移的 design knowledge 和下一步研究。
+- 约束：不引入新 claim、新数字、新引用；每项范围条件尽量说明它未来可以如何被检验或扩展。
+- Failure checklist：复制 abstract、用自我贬低替代实质边界、不触及效度威胁、引入正文未出现的新主张，都必须修。
 {% elif section_id == "abstract" %}
 - Required Inputs：`paper_state.json`、`section_outlines/abstract.md`、`alignment_matrix.json`、已写 Introduction/Methodology/Experiments/Analysis/Conclusion。
 - 使命：把全文压成 5 句骨架，不引入正文外内容。
-- 段落范式：S1 Problem；S2 Gap；S3 Approach；S4 Key result；S5 Contribution type。
+- 段落范式：在一个自然、连贯的段落中完成问题、关键缺口、由缺口推出的设计、最有说服力的结果和贡献含义。句数服务于逻辑与目标模板，不要把摘要写成五个彼此断开的句块。
 - 约束：`ccf_a` 通常 140-260 词，`is` 180-280 词；不写任何正式引用，包括 `\cite{}` / `\citep{}` / `\citet{}` / `\parencite{}` 等 LaTeX citation command、作者-年份括号引用和数字引用；禁止正文未支撑的新数字、claim、术语。
 - 写法：如果必须提到先前工作，只写方法族或问题类别，例如 "prior contrastive recommenders"；具体作者、年份和 BibTeX key 放到 Introduction 或 Related Work。
 - Failure checklist：无量化 key result、出现正式引用、贡献描述过度泛化或引入新术语，都必须修。

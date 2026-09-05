@@ -888,7 +888,7 @@ class ScoreReport(_StrictModel):
     schema_version: str = SCHEMA_VERSION
     candidate_id: str
     scoring_batch_id: str
-    rubric_version: str = "2.0.0"
+    rubric_version: str = "2.1.0"
     blind: bool = True
     scores: ScoreDimensions
     # This historical field name is retained for existing artifacts and CLI

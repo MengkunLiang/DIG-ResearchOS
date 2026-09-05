@@ -13,6 +13,12 @@ Write the paper as a staged research argument, not as one long generation. Tools
 
 For UTD, Management Science, and Information Systems Research style work, make the main argument follow `real-world information problem → computational problem → technical solution`. Establish the phenomenon and its decision consequence first. Explain why the information structure or existing modeling choice naturally creates a computational difficulty. Only then introduce the technical design as a reasoned response. Carry design rationale, management relevance, and decision value through Method and Analysis instead of adding them as an isolated final paragraph.
 
+For CCF/AI/CS work, preserve the same causal logic in a more compact technical form: define the task or deployment setting, expose the technical bottleneck that current method families leave unresolved, derive the central insight, and then demonstrate it through the method and discriminating experiments. Technical concision must never turn into a list of modules, unexplained notation, or an unmotivated result table.
+
+An effective Introduction changes the reader's understanding of the problem. It begins with a default view that is reasonable in the real setting, presents the observation that makes this view incomplete, identifies the missing variable, assumption, or information structure, and lets the proposed design emerge as the response. Do not announce a method and then retrofit a motivation around it.
+
+Use the release-event principle as an editorial discipline. Organize the Abstract, Introduction, results narrative, and Conclusion around the strongest claim that the available evidence supports, and make its value visible rather than leaving it implicit in a table. Choose evaluation dimensions because they test the stated scientific or decision objective, not because they create an arbitrary contest. This is a principle of focus, not concealment: retain required baselines, material results, scope conditions, and limitations. State those boundaries calmly and concretely, without performative self-criticism or pre-emptively writing a reviewer’s rejection.
+
 ## Publication Prose and Citation Preferences
 
 Treat these as editorial standards for writing and review. When they conflict with factual accuracy, verified evidence, or a target-venue template, preserve the fact and express it naturally.
@@ -23,6 +29,7 @@ Treat these as editorial standards for writing and review. When they conflict wi
 - Do not construct an argument as a sequence of parallel short sentences. Let each paragraph develop one claim through a readable order such as definition, mechanism, evidence, boundary, and implication. Move to a new term, paper, result, or practical consequence only after explaining why the preceding discussion leads there.
 - Avoid semicolons and fragmented parallel clauses in ordinary prose. Prefer a complete causal, contrastive, or qualifying sentence. Define every term, construct, mechanism, and symbol at first use and keep the same wording and notation throughout the paper.
 - Keep the section hierarchy compact. Do not create a subsection or `\paragraph{}` for every artifact, claim, or paper. Use a heading only when the argument changes function in a way that helps the reader navigate the paper.
+- Let a paragraph complete one piece of reasoning before beginning the next. Its final sentence should create the question answered by the following paragraph whenever the argument moves forward. Do not use `First`, `Second`, `Challenge One`, or a succession of short labelled claims as a substitute for transitions.
 - Explain a technical or theoretical term when it first matters to the argument. When useful, use a real or conditional `such as` scenario to make an abstract mechanism legible. An illustrative example must not be presented as data, a result, or a fact that has not been verified.
 - Every citation must be real, available in the bibliography, and semantically matched to the precise claim it supports. Verify the paper's subject, method, setting, and evidence level in its note card, citation pool, or source record before citing it.
   Prefer genuinely relevant work from UTD/FT50/CCF-A venues, leading marketing, economics, management science, information systems, and computer-science outlets, together with foundational, highly cited, influential, and important recent work.
@@ -48,12 +55,12 @@ Treat these as editorial standards for writing and review. When they conflict wi
 
 ## Section Responsibilities
 
-- Introduction: motivation funnel, precise gap, why existing approaches are insufficient, proposed insight, contribution bullets, headline evidence. Do not oversell.
+- Introduction: lead the reader from a concrete problem to the missing explanatory or computational link, then to the proposed insight and its strongest supported evidence. Use a compact contribution passage or list only when it improves retrieval; it must read as complete claims rather than fragments.
 - Related Work: taxonomy and contrastive positioning from synthesis and bibliography. Every citation must map to a real BibTeX key.
 - Methodology: describe the proposed mechanism, algorithm/protocol, implementation choices, and how it differs from baselines.
 - Experiments: datasets/settings, baselines, metrics, main results, ablations, seed ensemble, compute budget, and quality controls.
 - Analysis: connect ablations and failures back to hypotheses and alternative explanations.
-- Conclusion limitations subsection: external-executor evidence boundaries, mock/dry-run status, result-to-claim limitations, external validity, cost, and failure cases.
+- Conclusion limitations subsection: state the scope conditions that determine where the result transfers, including external-executor evidence boundaries, dry-run status where applicable, external validity, cost, and failure cases. The prose should be factual and constructive rather than apologetic.
 - Abstract and Conclusion: write after main sections; no new claims. Abstract should not contain formal citations.
 
 ## Section Depth
