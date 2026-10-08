@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 440" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-labelledby="title desc">
+<title id="title">03 / EXECUTION COMPILATION</title><desc id="desc">execution capability workflow in ResearchOS.</desc>
+<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1 L7 4 L1 7" fill="none" stroke="#168779" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker><pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".65" fill="#dce4ef"/></pattern></defs>
+<rect width="360" height="440" fill="#fbfcfe"/><rect width="360" height="440" fill="url(#grid)"/>
+<text x="24" y="31" fill="#168779" font-size="12" font-weight="700" text-anchor="start">03 / EXECUTION COMPILATION</text>
+<rect x="24" y="56" width="312" height="70" rx="10" fill="#fff" stroke="#d6e0ec"/>
+<text x="40" y="84" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Research blueprint</text>
+<text x="40" y="107" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">Task · baselines · experiment plan</text>
+<path d="M180 127 V143" fill="none" stroke="#168779" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="24" y="150" width="312" height="70" rx="10" fill="#eaf7f3" stroke="#168779"/>
+<text x="40" y="178" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Execution contract</text>
+<text x="40" y="201" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">Project Skills · protocol · resources</text>
+<path d="M180 221 V237" fill="none" stroke="#168779" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="24" y="244" width="312" height="70" rx="10" fill="#15253f" stroke="#d6e0ec"/>
+<text x="40" y="272" fill="#fff" font-size="16" font-weight="600" text-anchor="start">External executor</text>
+<text x="40" y="295" fill="#c7d6e9" font-size="14" font-weight="400" text-anchor="start">Codex · Claude Code · Human</text>
+<path d="M180 315 V331" fill="none" stroke="#168779" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="24" y="338" width="312" height="70" rx="10" fill="#eaf7f3" stroke="#168779"/>
+<text x="40" y="366" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Validated results</text>
+<text x="40" y="389" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">Report · manifest · writer handoff</text>
+</svg>

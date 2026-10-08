@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 440" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-labelledby="title desc">
+<title id="title">01 / RESEARCH EVIDENCE</title><desc id="desc">evidence capability workflow in ResearchOS.</desc>
+<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1 L7 4 L1 7" fill="none" stroke="#365fde" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker><pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".65" fill="#dce4ef"/></pattern></defs>
+<rect width="360" height="440" fill="#fbfcfe"/><rect width="360" height="440" fill="url(#grid)"/>
+<text x="24" y="31" fill="#365fde" font-size="12" font-weight="700" text-anchor="start">01 / RESEARCH EVIDENCE</text>
+<rect x="24" y="56" width="312" height="66" rx="10" fill="#fff" stroke="#d6e0ec"/>
+<text x="40" y="84" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Verified paper pool</text>
+<text x="40" y="107" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">Source identity · structured reading</text>
+<path d="M180 123 V147" fill="none" stroke="#365fde" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="24" y="154" width="312" height="112" rx="10" fill="#edf3ff" stroke="#365fde"/>
+<text x="40" y="182" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Typed paper cards</text>
+<text x="40" y="205" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">Mechanisms · claims · evidence</text>
+<text x="40" y="239" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">Reading coverage &amp; provenance</text>
+<path d="M180 267 V292" fill="none" stroke="#365fde" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="24" y="317" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Research space</text>
+<rect x="24" y="332" width="150" height="34" rx="10" fill="#fff" stroke="#d6e0ec"/>
+<text x="36" y="355" fill="#17263e" font-size="14" font-weight="600" text-anchor="start">Mechanisms</text>
+<rect x="186" y="332" width="150" height="34" rx="10" fill="#fff" stroke="#d6e0ec"/>
+<text x="198" y="355" fill="#17263e" font-size="14" font-weight="600" text-anchor="start">Tensions</text>
+<rect x="24" y="376" width="150" height="34" rx="10" fill="#fff" stroke="#d6e0ec"/>
+<text x="36" y="399" fill="#17263e" font-size="14" font-weight="600" text-anchor="start">Synthesis</text>
+<rect x="186" y="376" width="150" height="34" rx="10" fill="#fff" stroke="#d6e0ec"/>
+<text x="198" y="399" fill="#17263e" font-size="14" font-weight="600" text-anchor="start">Opportunities</text>
+</svg>

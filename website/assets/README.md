@@ -1,6 +1,6 @@
 # ResearchOS demo media
 
-The project page uses the real 36-second ResearchOS workflow recording directly after the hero.
+The project page uses the real ResearchOS workflow demo directly after the hero.
 
 ```text
 website/assets/
