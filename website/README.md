@@ -1,37 +1,33 @@
 # ResearchOS Project Website
 
-This directory contains the public-facing project website for ResearchOS.
+The public project page presents ResearchOS as a **Research Compilation Runtime** for persistent, auditable AI-assisted research.
 
 ## Local preview
-
-From the repository root:
 
 ```bash
 python -m http.server 8000 -d website
 ```
 
-Then open `http://localhost:8000`.
+## Demo media
+
+The real workflow demo lives under `website/assets/`:
+
+```text
+researchos-main-flow.webm
+researchos-main-flow.mp4
+researchos-demo-poster.webp
+```
+
+The page prefers WebM and uses MP4 as a browser fallback.
 
 ## GitHub Pages
 
-The included workflow at `.github/workflows/pages.yml` publishes this directory to GitHub Pages after changes reach `main`.
-
-In the GitHub repository, make sure **Settings → Pages → Build and deployment → Source** is set to **GitHub Actions**.
-
-Expected URL:
+`.github/workflows/pages.yml` publishes `website/` after changes reach `main`.
 
 ```text
 https://mengkunliang.github.io/DIG-ResearchOS/
 ```
 
-## Adding a real demo video later
+## Related project
 
-Put the recording under `website/assets/`, for example:
-
-```text
-website/assets/researchos-demo.mp4
-website/assets/researchos-demo.webm
-website/assets/researchos-demo-poster.webp
-```
-
-The current page intentionally ships with a built-in animated terminal simulation so the site is still complete without external media.
+The page also links to **DIG Research Hub**, a task-oriented repository for public research resources, including Skills, MCPs, research agents, prompts, benchmarks, tools, templates, and workflow references.
