@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="ResearchOS is a state-machine-driven, artifact-first research compilation runtime for literature evidence, idea evolution, external execution, and evidence-aligned scientific writing." />
-  <meta name="theme-color" content="#071225" />
+  <meta name="description" content="ResearchOS is a research compilation runtime for persistent, auditable AI-assisted research." />
+  <meta name="theme-color" content="#0b1220" />
   <meta property="og:title" content="ResearchOS — Research Compilation Runtime" />
-  <meta property="og:description" content="Compile research rigor into the system — not into a prompt." />
+  <meta property="og:description" content="A persistent, auditable runtime from research intent to defensible paper." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://mengkunliang.github.io/DIG-ResearchOS/" />
   <meta property="og:image" content="https://mengkunliang.github.io/DIG-ResearchOS/assets/researchos-demo-poster.webp" />
@@ -17,150 +17,116 @@
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
 
-  <header class="site-header" id="site-header">
+  <header class="site-header">
     <div class="nav-shell">
       <a class="brand" href="#top" aria-label="ResearchOS home">
         <span class="brand-mark" aria-hidden="true">R</span>
-        <span class="brand-word">ResearchOS</span>
+        <span>ResearchOS</span>
       </a>
-
       <nav class="nav-links" aria-label="Primary navigation">
         <a href="#demo">Demo</a>
         <a href="#capabilities">Capabilities</a>
         <a href="#runtime">Runtime</a>
         <a href="#workflow">Workflow</a>
       </nav>
-
       <div class="nav-actions">
-        <a class="nav-text-link" href="https://github.com/MengkunLiang/DIG-Research-Hub" target="_blank" rel="noreferrer">Research Hub ↗</a>
-        <a class="nav-button" href="https://github.com/MengkunLiang/DIG-ResearchOS" target="_blank" rel="noreferrer" aria-label="View ResearchOS source code on GitHub">GitHub ↗</a>
+        <a class="nav-link" href="https://github.com/MengkunLiang/DIG-Research-Hub" target="_blank" rel="noreferrer">Research Hub ↗</a>
+        <a class="nav-button" href="https://github.com/MengkunLiang/DIG-ResearchOS" target="_blank" rel="noreferrer">GitHub ↗</a>
       </div>
     </div>
   </header>
 
   <main id="main">
     <section class="hero" id="top">
-      <div class="hero-noise" aria-hidden="true"></div>
-      <div class="hero-glow hero-glow-a" aria-hidden="true"></div>
-      <div class="hero-glow hero-glow-b" aria-hidden="true"></div>
-
+      <div class="hero-grid" aria-hidden="true"></div>
       <div class="container hero-inner">
-        <div class="hero-copy reveal">
-          <div class="hero-kicker">
-            <span class="status-dot"></span>
-            Open source · Research compilation runtime
-          </div>
-          <h1>Compile research rigor into the system — <span>not into a prompt.</span></h1>
-          <p class="hero-lede">
-            ResearchOS is a state-machine-driven, artifact-first runtime that turns literature,
-            evidence, research decisions, external execution, and scientific writing into one
-            persistent, auditable research process.
-          </p>
-
-          <div class="hero-actions">
-            <a class="button button-light" href="#demo">Watch the 36s demo</a>
-            <a class="button button-outline" href="https://github.com/MengkunLiang/DIG-ResearchOS" target="_blank" rel="noreferrer">View source ↗</a>
-            <a class="button button-quiet" href="https://github.com/MengkunLiang/DIG-ResearchOS/blob/main/docs/en/QUICKSTART.md" target="_blank" rel="noreferrer">Documentation</a>
-          </div>
+        <div class="hero-eyebrow">DIG · Open-source research infrastructure</div>
+        <h1>ResearchOS</h1>
+        <div class="hero-subtitle">Research Compilation Runtime</div>
+        <p class="hero-statement">Compile research rigor into the system.</p>
+        <p class="hero-lede">
+          ResearchOS turns long-horizon research into a persistent, auditable workflow. Literature evidence,
+          research directions, experiment handoffs, and manuscript claims remain connected through durable artifacts,
+          explicit contracts, and recoverable state.
+        </p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#demo">Watch the 36s demo</a>
+          <a class="button button-secondary" href="https://github.com/MengkunLiang/DIG-ResearchOS" target="_blank" rel="noreferrer">View source ↗</a>
+          <a class="button button-text" href="https://github.com/MengkunLiang/DIG-ResearchOS/blob/main/docs/en/README.md" target="_blank" rel="noreferrer">Documentation</a>
         </div>
 
-        <div class="compiler-map reveal" aria-label="ResearchOS high-level compilation flow">
-          <div class="compiler-rail" aria-hidden="true"><span></span></div>
-
-          <div class="compiler-stage is-active">
-            <span class="stage-code">T1</span>
-            <strong>Research Intent</strong>
-            <small>scope · seeds · constraints</small>
-          </div>
-          <div class="compiler-stage">
-            <span class="stage-code">T2–T3.5</span>
-            <strong>Research Space</strong>
-            <small>evidence · synthesis · tensions</small>
-          </div>
-          <div class="compiler-stage">
-            <span class="stage-code">T4–T4.5</span>
-            <strong>Evolved Hypothesis</strong>
-            <small>portfolio · audit · formalization</small>
-          </div>
-          <div class="compiler-stage">
-            <span class="stage-code">T5</span>
-            <strong>External Execution</strong>
-            <small>skills · contract · handoff</small>
-          </div>
-          <div class="compiler-stage">
-            <span class="stage-code">T8–T9</span>
-            <strong>Defensible Paper</strong>
-            <small>writing · review · claim audit</small>
-          </div>
+        <div class="hero-flow" aria-label="ResearchOS research flow">
+          <div class="flow-stage"><span>01</span><strong>Research intent</strong><small>scope · seeds · constraints</small></div>
+          <div class="flow-connector" aria-hidden="true">→</div>
+          <div class="flow-stage"><span>02</span><strong>Research space</strong><small>evidence · synthesis · tensions</small></div>
+          <div class="flow-connector" aria-hidden="true">→</div>
+          <div class="flow-stage"><span>03</span><strong>Evolved direction</strong><small>portfolio · selection · formalization</small></div>
+          <div class="flow-connector" aria-hidden="true">→</div>
+          <div class="flow-stage"><span>04</span><strong>External execution</strong><small>skills · protocol · results</small></div>
+          <div class="flow-connector" aria-hidden="true">→</div>
+          <div class="flow-stage"><span>05</span><strong>Defensible paper</strong><small>writing · review · claim audit</small></div>
         </div>
 
-        <div class="hero-principles reveal" aria-label="ResearchOS design principles">
-          <div><span>01</span><strong>Evidence-driven</strong></div>
-          <div><span>02</span><strong>Contract-driven</strong></div>
-          <div><span>03</span><strong>Recoverable</strong></div>
-          <div><span>04</span><strong>Bounded</strong></div>
-          <div><span>05</span><strong>Executor-agnostic</strong></div>
+        <div class="hero-principles" aria-label="Core design principles">
+          <span>Typed evidence</span>
+          <span>Explicit contracts</span>
+          <span>Resume & rollback</span>
+          <span>Human-gated authority</span>
+          <span>Executor-agnostic</span>
         </div>
       </div>
     </section>
 
     <section class="section demo-section" id="demo">
       <div class="container">
-        <div class="section-heading section-heading-centered reveal">
-          <div class="eyebrow">Real system · 36 seconds</div>
-          <h2>Watch ResearchOS move from papers toward a research direction.</h2>
-          <p>
-            A real screen recording of the system — paper intake, guided reading, structured evidence,
-            research-space formation, and candidate direction generation. No mock terminal.
-          </p>
+        <div class="section-intro centered">
+          <span class="section-label">Real system · 36 seconds</span>
+          <h2>From papers to a research direction.</h2>
+          <p>A real CLI run showing paper intake, structured reading, cross-paper synthesis, and candidate direction generation.</p>
         </div>
 
-        <div class="video-frame reveal" data-video-frame>
-          <div class="video-chrome" aria-hidden="true">
-            <div class="video-dots"><i></i><i></i><i></i></div>
-            <span>ResearchOS · main workflow excerpt</span>
+        <div class="video-shell">
+          <div class="video-topbar" aria-hidden="true">
+            <div class="window-dots"><i></i><i></i><i></i></div>
+            <span>ResearchOS · main workflow</span>
             <span>36.3s</span>
           </div>
-          <div class="video-wrap">
+          <div class="video-stage">
             <video id="researchos-video" controls playsinline preload="metadata" poster="./assets/researchos-demo-poster.webp">
               <source src="./assets/researchos-main-flow.webm" type="video/webm" />
-              Your browser does not support the video tag.
+              <source src="./assets/researchos-main-flow.mp4" type="video/mp4" />
             </video>
-            <button class="video-play" id="video-play" type="button" aria-label="Play ResearchOS demo video">
-              <span aria-hidden="true">▶</span>
-              <strong>Play real system demo</strong>
-              <small>36 seconds</small>
+            <button class="play-overlay" id="video-play" type="button" aria-label="Play ResearchOS demo">
+              <span class="play-icon" aria-hidden="true">▶</span>
+              <span class="play-copy"><strong>Play demo</strong><small>36 seconds · real system run</small></span>
             </button>
           </div>
         </div>
 
-        <div class="demo-steps reveal" aria-label="What the demo shows">
-          <div><span>01</span><strong>Paper intake</strong><small>seed material enters the workspace</small></div>
-          <div><span>02</span><strong>Structured reading</strong><small>mechanism, design, evidence, boundaries</small></div>
-          <div><span>03</span><strong>Research space</strong><small>cross-paper synthesis and opportunities</small></div>
-          <div><span>04</span><strong>Candidate directions</strong><small>portfolio before researcher selection</small></div>
+        <div class="demo-path" aria-label="Demo stages">
+          <div><span>01</span><strong>Paper intake</strong></div>
+          <div><span>02</span><strong>Structured reading</strong></div>
+          <div><span>03</span><strong>Research-space synthesis</strong></div>
+          <div><span>04</span><strong>Candidate directions</strong></div>
         </div>
-        <p class="demo-disclaimer reveal">This excerpt focuses on the literature-to-idea path. External execution and manuscript production are separate governed stages in the full runtime.</p>
       </div>
     </section>
 
-    <section class="section why-section">
-      <div class="container why-grid">
-        <div class="why-copy reveal">
-          <div class="eyebrow">Why a runtime?</div>
-          <h2>A research project outlives a chat window.</h2>
-          <p>
-            Long-running research needs durable state, typed evidence, explicit decision boundaries,
-            and recovery after interruption. ResearchOS treats those requirements as runtime contracts,
-            not as instructions hidden inside a long prompt.
+    <section class="section foundation-intro">
+      <div class="container two-column">
+        <div>
+          <span class="section-label">A durable research runtime</span>
+          <h2>A research project outlives any model call.</h2>
+          <p class="body-large">
+            Long-running work needs persistent state, evidence boundaries, explicit decision authority, and safe recovery.
+            ResearchOS makes those requirements part of the runtime so every major research transition leaves an inspectable record.
           </p>
         </div>
-        <div class="source-of-truth reveal">
-          <span class="quote-mark">“</span>
-          <blockquote>The workspace, not the conversation, is the source of truth.</blockquote>
+        <div class="truth-panel">
+          <div class="truth-quote">The workspace is the source of truth.</div>
           <div class="truth-grid">
             <div><strong>Durable artifacts</strong><small>notes, plans, lineage, results, drafts</small></div>
-            <div><strong>Typed evidence</strong><small>what each source is allowed to support</small></div>
+            <div><strong>Typed evidence</strong><small>support levels and claim boundaries</small></div>
             <div><strong>Explicit gates</strong><small>research decisions remain visible</small></div>
             <div><strong>Recoverable state</strong><small>resume, rollback, partial re-run</small></div>
           </div>
@@ -170,321 +136,208 @@
 
     <section class="section capability-section" id="capabilities">
       <div class="container">
-        <div class="section-heading reveal">
-          <div class="eyebrow">Four core research capabilities</div>
-          <h2>ResearchOS compiles the transitions where research usually becomes fragile.</h2>
-          <p>
-            Instead of asking one agent to do everything, each transition produces inspectable artifacts,
-            bounded authority, and a clear handoff to the next stage.
-          </p>
+        <div class="section-intro">
+          <span class="section-label">Four core capabilities</span>
+          <h2>Four research transitions, each with a clear contract.</h2>
+          <p>Reading, ideation, experimentation, and writing remain distinct stages with explicit inputs, outputs, authority, and validation.</p>
         </div>
 
-        <article class="capability capability-evidence reveal">
+        <article class="capability-row">
           <div class="capability-copy">
-            <span class="capability-index">01 · Research Evidence</span>
+            <span class="capability-number">01 · Research Evidence</span>
             <h3>Compile literature into a research space.</h3>
-            <p>
-              ResearchOS verifies and prioritizes papers, records reading coverage, turns each retained work
-              into structured evidence, then compares mechanisms, designs, results, tensions, and boundary conditions across papers.
-            </p>
-            <ul class="bullet-list">
-              <li>Paper cards preserve mechanism, design rationale, evidence level, and support boundaries.</li>
-              <li>Cross-paper synthesis surfaces contribution spaces, conflicts, bridge transfers, and open questions.</li>
-              <li>An optional survey branch can turn the evidence base into a taxonomy-driven, audited survey manuscript.</li>
-            </ul>
-            <div class="output-tags"><span>Taxonomy</span><span>Survey</span><span>Idea fuel</span></div>
+            <p>Verified papers become structured evidence records, then cross-paper synthesis surfaces mechanisms, tensions, boundary conditions, and transfer opportunities.</p>
+            <div class="capability-points">
+              <span>Paper identity & reading coverage</span>
+              <span>Mechanism and design rationale</span>
+              <span>Claim-support boundaries</span>
+              <span>Cross-paper synthesis</span>
+            </div>
           </div>
-
-          <div class="capability-visual evidence-visual" aria-label="Literature compilation diagram">
-            <div class="mini-column">
-              <span class="mini-kicker">Discover & collect</span>
-              <div class="mini-item">Verified paper pool</div>
-              <div class="mini-item">Citation graph hints</div>
-              <div class="mini-item">Reading queue</div>
-              <div class="mini-item">Bridge search</div>
+          <div class="diagram evidence-diagram" aria-label="Research evidence compilation diagram">
+            <div class="diagram-col">
+              <em>Collect</em>
+              <div>Verified paper pool</div>
+              <div>Reading queue</div>
+              <div>Bridge retrieval</div>
             </div>
-            <div class="mini-arrow" aria-hidden="true">→</div>
-            <div class="mini-column highlighted">
-              <span class="mini-kicker">Typed reading</span>
-              <div class="mini-item">Paper Card</div>
-              <div class="mini-item">Evidence Type</div>
-              <div class="mini-item">Claims ↔ Evidence</div>
-              <div class="mini-item">Reading Coverage</div>
+            <span class="diagram-arrow">→</span>
+            <div class="diagram-col accent">
+              <em>Read</em>
+              <div>Paper Card</div>
+              <div>Evidence Type</div>
+              <div>Claims ↔ Evidence</div>
+              <div>Coverage</div>
             </div>
-            <div class="mini-arrow" aria-hidden="true">→</div>
-            <div class="mini-column">
-              <span class="mini-kicker">Cross-paper synthesis</span>
-              <div class="mini-item">Mechanism clusters</div>
-              <div class="mini-item">Research tensions</div>
-              <div class="mini-item">Boundary conditions</div>
-              <div class="mini-item">Transfer opportunities</div>
+            <span class="diagram-arrow">→</span>
+            <div class="diagram-col">
+              <em>Synthesize</em>
+              <div>Mechanism clusters</div>
+              <div>Research tensions</div>
+              <div>Boundary conditions</div>
+              <div>Opportunity space</div>
             </div>
           </div>
         </article>
 
-        <article class="capability capability-ideas reveal">
+        <article class="capability-row reverse">
           <div class="capability-copy">
-            <span class="capability-index">02 · Idea Evolution</span>
-            <h3>Evolve a portfolio before selecting a direction.</h3>
-            <p>
-              T4 starts from evidence routing and research opportunities, creates a population of candidates through multiple routes,
-              separates generation from scoring, and evolves directions through bounded mutation and compatibility-gated crossover.
-            </p>
-            <ul class="bullet-list">
-              <li>Generators propose; blinded scorers evaluate; evolvers create bounded children.</li>
-              <li>Parent and child candidates are independently re-evaluated before survival.</li>
-              <li>The researcher selects at Gate1; novelty/collision audit happens before formal research-plan authority.</li>
-            </ul>
-            <div class="output-tags"><span>Idea Card</span><span>Draft hypotheses</span><span>Validation start</span></div>
+            <span class="capability-number">02 · Idea Evolution</span>
+            <h3>Evolve a portfolio before choosing a direction.</h3>
+            <p>Evidence routing opens several research routes. Separate generation, scoring, and evolution roles build and compare a candidate population before researcher selection.</p>
+            <div class="capability-points">
+              <span>Multi-route generation</span>
+              <span>Independent scoring</span>
+              <span>Mutation & crossover</span>
+              <span>Portfolio selection</span>
+            </div>
           </div>
-
-          <div class="capability-visual evolution-visual" aria-label="Idea evolution diagram">
-            <div class="evolution-seed">
-              <span>Evidence routing</span>
-              <small>problems · tensions · transfers · constraints</small>
+          <div class="diagram idea-diagram" aria-label="Idea evolution diagram">
+            <div class="idea-source"><small>Evidence routing</small><strong>Opportunity map</strong></div>
+            <div class="candidate-grid">
+              <div><b>A</b><span>Candidate</span><small>thesis · mechanism · test</small></div>
+              <div><b>B</b><span>Candidate</span><small>thesis · mechanism · test</small></div>
+              <div><b>C</b><span>Candidate</span><small>thesis · mechanism · test</small></div>
             </div>
-            <div class="candidate-row">
-              <div class="candidate-card"><span>A</span><strong>Candidate</strong><small>thesis · mechanism · test</small></div>
-              <div class="candidate-card"><span>B</span><strong>Candidate</strong><small>thesis · mechanism · test</small></div>
-              <div class="candidate-card"><span>C</span><strong>Candidate</strong><small>thesis · mechanism · test</small></div>
-            </div>
-            <div class="evolution-actions">
-              <span>Mutation</span><span>Crossover</span><span>Blinded re-score</span><span>Population survival</span>
-            </div>
-            <div class="portfolio-box">
-              <div><span>Portfolio</span><strong>1–3 ready directions</strong></div>
-              <div class="portfolio-gate">Human Gate</div>
-            </div>
-            <div class="score-dimensions">
-              <span>Research value</span><span>Mechanism integrity</span><span>Contribution distinctiveness</span><span>Evidence calibration</span><span>Validation tractability</span>
-            </div>
+            <div class="evolution-band"><span>Mutation</span><span>Crossover</span><span>Re-score</span><span>Survival</span></div>
+            <div class="portfolio-result"><div><small>Portfolio</small><strong>1–3 ready directions</strong></div><span>Human Gate</span></div>
           </div>
         </article>
 
-        <article class="capability capability-execution reveal">
+        <article class="capability-row">
           <div class="capability-copy">
-            <span class="capability-index">03 · Execution Compilation</span>
-            <h3>Compile an accepted research plan into an execution contract.</h3>
-            <p>
-              ResearchOS does not silently become the experiment runner. It compiles the accepted T4.5 package into a constrained handoff,
-              specializes a project-specific Skill suite, and delegates implementation and experimentation to an external executor.
-            </p>
-            <ul class="bullet-list">
-              <li>Task, mechanism, required baselines, evaluation protocol, resource limits, and claim boundaries are carried forward.</li>
-              <li>Codex CLI, Claude Code, or a human executor can implement and iterate inside the accepted contract.</li>
-              <li>Results return through a validated Writer Handoff rather than an informal summary.</li>
-            </ul>
-            <div class="output-tags"><span>Project Skills</span><span>Execution contract</span><span>Validated handoff</span></div>
+            <span class="capability-number">03 · Execution Compilation</span>
+            <h3>Turn an accepted plan into an executable research contract.</h3>
+            <p>The accepted research package is compiled into project-specific Skills, protocol constraints, resource requirements, and a structured handoff for Codex, Claude Code, or a human executor.</p>
+            <div class="capability-points">
+              <span>Research blueprint</span>
+              <span>Project-specific Skills</span>
+              <span>Protocol & resource contract</span>
+              <span>Writer Handoff</span>
+            </div>
           </div>
-
-          <div class="capability-visual executor-visual" aria-label="External executor handoff diagram">
-            <div class="executor-input">
-              <span class="mini-kicker">Accepted plan</span>
-              <div>Research direction</div><div>Mechanism constraints</div><div>Required baselines</div><div>Evaluation protocol</div><div>Claim boundary</div>
-            </div>
-            <div class="executor-compile">
-              <span class="compile-badge">T5</span>
-              <strong>Reboost → specialize Skills → compile contract</strong>
-              <code>external_executor/</code>
-            </div>
-            <div class="executor-loop">
-              <span class="mini-kicker">External executor</span>
-              <div class="loop-ring"><span>Understand</span><span>Build</span><span>Run</span><span>Diagnose</span><span>Fix</span><span>Analyze</span></div>
-              <small>Codex CLI · Claude Code · Human</small>
-            </div>
-            <div class="executor-return">
-              <span class="mini-kicker">Standard handoff</span>
-              <div>Research Report</div><div>Result Pack</div><div>Execution Status</div><div>Run Manifest</div>
-            </div>
+          <div class="diagram execution-diagram" aria-label="External execution compilation diagram">
+            <div class="execution-block input"><small>Accepted plan</small><span>Task</span><span>Mechanism</span><span>Baselines</span><span>Metrics</span><span>Claim boundary</span></div>
+            <span class="diagram-arrow">→</span>
+            <div class="execution-block compiler"><small>T5</small><strong>Compile execution contract</strong><code>Skills · protocol · resources</code></div>
+            <span class="diagram-arrow">→</span>
+            <div class="execution-block executor"><small>External executor</small><strong>Build · Run · Diagnose · Analyze</strong><span>Codex · Claude Code · Human</span></div>
+            <span class="diagram-arrow">→</span>
+            <div class="execution-block output"><small>Validated handoff</small><span>Report</span><span>Results</span><span>Manifest</span><span>Facts</span></div>
           </div>
         </article>
 
-        <article class="capability capability-writing reveal">
+        <article class="capability-row reverse">
           <div class="capability-copy">
-            <span class="capability-index">04 · Evidence-to-Manuscript</span>
-            <h3>Route evidence into a defensible paper.</h3>
-            <p>
-              T8 builds resource and alignment indexes before drafting. Evidence is routed by section, then the manuscript passes review,
-              revision, and claim audit before T9 assembles and compiles the submission bundle.
-            </p>
-            <ul class="bullet-list">
-              <li>Literature evidence, accepted experiment facts, figures, tables, and claim boundaries remain distinguishable inputs.</li>
-              <li>Each section gets the evidence it needs rather than a flat context dump.</li>
-              <li>The writer organizes the narrative; it cannot manufacture evidence or expand claim authority.</li>
-            </ul>
-            <div class="output-tags"><span>Paper draft</span><span>Claim audit</span><span>Submission bundle</span></div>
+            <span class="capability-number">04 · Evidence-to-Manuscript</span>
+            <h3>Route accepted evidence into a defensible paper.</h3>
+            <p>Literature evidence, experimental facts, figures, tables, and claim boundaries are indexed before drafting, then routed into the sections that need them.</p>
+            <div class="capability-points">
+              <span>Evidence & resource indexes</span>
+              <span>Section-level routing</span>
+              <span>Review & revision</span>
+              <span>Claim audit & submission bundle</span>
+            </div>
           </div>
-
-          <div class="capability-visual writing-visual" aria-label="Evidence-to-manuscript diagram">
-            <div class="writing-sources">
-              <span class="mini-kicker">Accepted evidence</span>
-              <span>Paper cards</span><span>Synthesis</span><span>Experiment report</span><span>Result pack</span><span>Figures & tables</span><span>Claim boundary</span>
-            </div>
-            <div class="router-box">
-              <span class="mini-kicker">Section evidence router</span>
-              <div><b>Introduction</b><small>motivation · gap · problem</small></div>
-              <div><b>Related Work</b><small>prior work · positioning</small></div>
-              <div><b>Method</b><small>mechanism · design · rationale</small></div>
-              <div><b>Experiments</b><small>baselines · metrics · results</small></div>
-              <div><b>Analysis</b><small>mechanism · explanation · limitations</small></div>
-            </div>
-            <div class="writing-finish">
-              <div>Review</div><div>Revision</div><div class="audit-chip">Claim Audit</div><div>Compile</div>
-            </div>
+          <div class="diagram writing-diagram" aria-label="Evidence to manuscript diagram">
+            <div class="writing-inputs"><small>Accepted evidence</small><span>Paper cards</span><span>Synthesis</span><span>Experiment report</span><span>Figures & tables</span></div>
+            <span class="diagram-arrow">→</span>
+            <div class="section-router"><small>Section router</small><div><b>Intro</b><span>motivation · gap</span></div><div><b>Method</b><span>mechanism · design</span></div><div><b>Experiments</b><span>baselines · metrics · results</span></div><div><b>Analysis</b><span>explanation · limits</span></div></div>
+            <span class="diagram-arrow">→</span>
+            <div class="writing-output"><small>Paper pipeline</small><span>Draft</span><span>Review</span><span>Revision</span><span class="audit">Claim audit</span><span>Compile</span></div>
           </div>
         </article>
       </div>
     </section>
 
     <section class="runtime-section" id="runtime">
-      <div class="runtime-grid-bg" aria-hidden="true"></div>
       <div class="container">
-        <div class="section-heading section-heading-light reveal">
-          <div class="eyebrow">Three-layer architecture</div>
-          <h2>The runtime underneath is what makes the workflow trustworthy.</h2>
-          <p>
-            ResearchOS separates the research information flow, the research capabilities that transform it,
-            and the runtime foundation that governs state, evidence, authority, and recovery.
-          </p>
+        <div class="section-intro light">
+          <span class="section-label">Runtime architecture</span>
+          <h2>The runtime governs state, evidence, authority, and recovery.</h2>
+          <p>Research information, research capabilities, and runtime controls are separated into three layers so each stage has a visible contract.</p>
         </div>
 
-        <div class="architecture-stack reveal">
-          <div class="architecture-row flow-row">
-            <div class="architecture-label"><span>01</span><strong>Research information flow</strong></div>
-            <div class="architecture-track five">
-              <div>Literature</div><i>→</i><div>Research Space</div><i>→</i><div>Research Direction</div><i>→</i><div>External Execution</div><i>→</i><div>Manuscript</div>
-            </div>
+        <div class="architecture-stack">
+          <div class="architecture-row">
+            <div class="architecture-name"><span>01</span><strong>Research information flow</strong></div>
+            <div class="architecture-items flow-items"><div>Literature</div><i>→</i><div>Research Space</div><i>→</i><div>Research Direction</div><i>→</i><div>External Execution</div><i>→</i><div>Manuscript</div></div>
           </div>
-
-          <div class="architecture-row capability-row">
-            <div class="architecture-label"><span>02</span><strong>Core research capabilities</strong></div>
-            <div class="architecture-track four">
-              <div><b>Research Evidence</b><small>typed evidence & synthesis</small></div>
-              <div><b>Idea Evolution</b><small>population & selection</small></div>
-              <div><b>Execution Compilation</b><small>skills & handoff</small></div>
-              <div><b>Evidence-to-Manuscript</b><small>routing & audit</small></div>
-            </div>
+          <div class="architecture-row">
+            <div class="architecture-name"><span>02</span><strong>Core capabilities</strong></div>
+            <div class="architecture-items capability-items"><div><b>Research Evidence</b><small>typed evidence & synthesis</small></div><div><b>Idea Evolution</b><small>population & selection</small></div><div><b>Execution Compilation</b><small>skills & handoff</small></div><div><b>Evidence-to-Manuscript</b><small>routing & audit</small></div></div>
           </div>
-
-          <div class="architecture-row foundation-row">
-            <div class="architecture-label"><span>03</span><strong>Runtime foundation</strong></div>
-            <div class="architecture-track five foundation">
-              <div>Artifact Store</div><div>Validator</div><div>State Machine</div><div>Human Gate</div><div>Authority Boundary</div>
-            </div>
+          <div class="architecture-row">
+            <div class="architecture-name"><span>03</span><strong>Runtime foundation</strong></div>
+            <div class="architecture-items foundation-items"><div>Artifact Store</div><div>Validator</div><div>State Machine</div><div>Human Gate</div><div>Authority Boundary</div></div>
           </div>
         </div>
 
-        <div class="runtime-resilience reveal">
-          <span>Resume</span><span>Rollback</span><span>Partial re-run</span><span>Failure isolation</span><span>Traceability</span>
-        </div>
+        <div class="runtime-resilience"><span>Resume</span><span>Rollback</span><span>Partial re-run</span><span>Failure isolation</span><span>Traceability</span></div>
 
-        <div class="governance reveal">
-          <div class="governance-copy">
-            <span class="eyebrow">Scientific authority is separated</span>
-            <h3>No single agent owns all research judgment.</h3>
-            <p>Execution, reasoning, auditing, writing, and human decisions have different permissions and different responsibilities.</p>
-          </div>
-          <div class="governance-roles">
-            <div><strong>Tool / Runtime</strong><small>executes tools; does not make scientific judgments</small></div>
-            <div><strong>LLM</strong><small>proposes and reasons; does not self-approve</small></div>
-            <div><strong>Human Gate</strong><small>decides scope, direction, and research-boundary changes</small></div>
-            <div><strong>External Executor</strong><small>runs experiments within the accepted contract</small></div>
-            <div><strong>Auditor</strong><small>checks evidence, protocol, and claim consistency</small></div>
-            <div><strong>Writer</strong><small>organizes narrative; cannot invent evidence</small></div>
-          </div>
+        <div class="authority-grid">
+          <div class="authority-copy"><span class="section-label">Scientific authority</span><h3>Research judgment is distributed across explicit roles.</h3><p>Each role has a narrow responsibility, which keeps proposal, execution, validation, and writing decisions legible throughout the project.</p></div>
+          <div class="authority-roles"><div><strong>LLM</strong><small>propose · reason · compare</small></div><div><strong>Human Gate</strong><small>scope · direction · boundary decisions</small></div><div><strong>External Executor</strong><small>implement · run · analyze</small></div><div><strong>Auditor</strong><small>evidence · protocol · claim consistency</small></div><div><strong>Writer</strong><small>structure · narrative · citation alignment</small></div><div><strong>Runtime</strong><small>state · tools · validation · recovery</small></div></div>
         </div>
       </div>
     </section>
 
     <section class="section workflow-section" id="workflow">
       <div class="container">
-        <div class="section-heading reveal">
-          <div class="eyebrow">Full governed workflow</div>
+        <div class="section-intro">
+          <span class="section-label">Full workflow</span>
           <h2>One durable research record from scope to submission.</h2>
-          <p>The public view stays simple; internal stage codes remain available for reproducibility and debugging.</p>
+          <p>Automation advances the routine transitions; gates appear where a decision changes research meaning or authority.</p>
         </div>
-
-        <div class="workflow-rail reveal" role="list" aria-label="ResearchOS stages">
-          <div class="workflow-node" role="listitem"><span>T1</span><strong>Scope</strong><small>intent, seeds, constraints</small></div>
-          <div class="workflow-arrow" aria-hidden="true">→</div>
-          <div class="workflow-node" role="listitem"><span>T2–T3</span><strong>Discover & Read</strong><small>verify, prioritize, deep-read</small></div>
-          <div class="workflow-arrow" aria-hidden="true">→</div>
-          <div class="workflow-node" role="listitem"><span>T3.5–T3.6</span><strong>Synthesize</strong><small>research space, optional survey</small></div>
-          <div class="workflow-arrow" aria-hidden="true">→</div>
-          <div class="workflow-node" role="listitem"><span>T4</span><strong>Evolve Ideas</strong><small>population, scoring, Gate1</small></div>
-          <div class="workflow-arrow" aria-hidden="true">→</div>
-          <div class="workflow-node" role="listitem"><span>T4.5</span><strong>Formalize</strong><small>novelty audit, blueprint, experiment plan</small></div>
-          <div class="workflow-arrow" aria-hidden="true">→</div>
-          <div class="workflow-node" role="listitem"><span>T5</span><strong>Execute</strong><small>skills, contract, external handoff</small></div>
-          <div class="workflow-arrow" aria-hidden="true">→</div>
-          <div class="workflow-node" role="listitem"><span>T8</span><strong>Write & Review</strong><small>evidence routing, revisions, claim audit</small></div>
-          <div class="workflow-arrow" aria-hidden="true">→</div>
-          <div class="workflow-node" role="listitem"><span>T9</span><strong>Submit</strong><small>bundle, compile, fingerprints</small></div>
-        </div>
-
-        <div class="workflow-note reveal">
-          <strong>Human decisions are first-class states.</strong>
-          <span>ResearchOS pauses when a choice changes research meaning, not for every internal transition.</span>
+        <div class="workflow-list">
+          <div><span>T1</span><strong>Scope</strong><small>intent · seeds · constraints</small></div>
+          <div><span>T2–T3</span><strong>Discover & read</strong><small>verify · prioritize · deep-read</small></div>
+          <div><span>T3.5–T3.6</span><strong>Synthesize</strong><small>research space · optional survey</small></div>
+          <div><span>T4</span><strong>Evolve ideas</strong><small>population · scoring · Gate1</small></div>
+          <div><span>T4.5</span><strong>Formalize</strong><small>novelty audit · blueprint · experiment plan</small></div>
+          <div><span>T5</span><strong>Execute</strong><small>skills · contract · external handoff</small></div>
+          <div><span>T8</span><strong>Write & review</strong><small>evidence routing · revision · claim audit</small></div>
+          <div><span>T9</span><strong>Submit</strong><small>bundle · compile · fingerprints</small></div>
         </div>
       </div>
     </section>
 
-    <section class="section related-section" id="related">
-      <div class="container">
-        <div class="related-card reveal">
-          <div class="related-copy">
-            <span class="related-label">Independent related project · More from DIG</span>
-            <h2>DIG Research Hub</h2>
-            <p>
-              A curated public resource repository for AI-assisted research — including Skills, MCPs,
-              research agents, prompts, benchmarks, tools, templates, and workflow references.
-              It is maintained alongside ResearchOS, but is not a runtime dependency of ResearchOS.
-            </p>
-            <div class="hub-tags"><span>Skills</span><span>MCP</span><span>Agents</span><span>Prompts</span><span>Benchmarks</span><span>Tools</span><span>Templates</span></div>
-            <a class="button button-dark" href="https://github.com/MengkunLiang/DIG-Research-Hub" target="_blank" rel="noreferrer">Explore DIG Research Hub ↗</a>
-          </div>
-          <div class="related-visual" aria-hidden="true">
-            <div class="hub-orbit hub-orbit-a"></div>
-            <div class="hub-orbit hub-orbit-b"></div>
-            <div class="hub-core"><span>DIG</span><strong>Research Hub</strong></div>
-            <span class="hub-node node-skills">Skills</span>
-            <span class="hub-node node-agents">Agents</span>
-            <span class="hub-node node-prompts">Prompts</span>
-            <span class="hub-node node-bench">Benchmarks</span>
-          </div>
+    <section class="section related-section">
+      <div class="container related-card">
+        <div class="related-copy">
+          <span class="section-label purple">More from DIG</span>
+          <h2>DIG Research Hub</h2>
+          <p>A task-oriented public resource repository for AI-assisted research, covering Skills, MCPs, research agents, prompts, benchmarks, tools, templates, and workflow references.</p>
+          <div class="hub-tags"><span>Skills</span><span>MCP</span><span>Agents</span><span>Prompts</span><span>Benchmarks</span><span>Tools</span><span>Templates</span></div>
+          <a class="button button-dark" href="https://github.com/MengkunLiang/DIG-Research-Hub" target="_blank" rel="noreferrer">Explore DIG Research Hub ↗</a>
+        </div>
+        <div class="hub-links">
+          <div class="hub-group"><small>Browse by research task</small><a href="https://github.com/MengkunLiang/DIG-Research-Hub/tree/main/01-%E8%AF%BE%E9%A2%98%E6%89%AB%E6%8F%8F%E4%B8%8E%E9%80%89%E9%A2%98" target="_blank" rel="noreferrer">Topic & direction scanning <b>↗</b></a><a href="https://github.com/MengkunLiang/DIG-Research-Hub/tree/main/02-%E6%96%87%E7%8C%AE%E6%A3%80%E7%B4%A2%E4%B8%8E%E5%8D%95%E7%AF%87%E7%B2%BE%E8%AF%BB" target="_blank" rel="noreferrer">Literature search & reading <b>↗</b></a><a href="https://github.com/MengkunLiang/DIG-Research-Hub/tree/main/05-%E5%AE%9E%E9%AA%8C%E6%89%A7%E8%A1%8C%E3%80%81%E5%A4%8D%E7%8E%B0%E4%B8%8E%E8%AF%84%E6%B5%8B" target="_blank" rel="noreferrer">Experiments & evaluation <b>↗</b></a><a href="https://github.com/MengkunLiang/DIG-Research-Hub/tree/main/06-%E5%86%99%E4%BD%9C%E3%80%81%E5%AE%A1%E7%A8%BF%E4%B8%8E%E6%8A%95%E7%A8%BF" target="_blank" rel="noreferrer">Writing, review & submission <b>↗</b></a></div>
+          <div class="hub-group"><small>Browse by resource type</small><a href="https://github.com/MengkunLiang/DIG-Research-Hub/tree/main/91-Skills" target="_blank" rel="noreferrer">Skills <b>↗</b></a><a href="https://github.com/MengkunLiang/DIG-Research-Hub/tree/main/92-MCP" target="_blank" rel="noreferrer">MCP <b>↗</b></a><a href="https://github.com/MengkunLiang/DIG-Research-Hub/tree/main/93-%E7%A7%91%E7%A0%94%E5%B7%A5%E4%BD%9C%E6%B5%81%E4%B8%8EAgent" target="_blank" rel="noreferrer">Research agents & workflows <b>↗</b></a><a href="https://github.com/MengkunLiang/DIG-Research-Hub/tree/main/94-Prompt%E4%B8%8E%E5%86%99%E4%BD%9C" target="_blank" rel="noreferrer">Prompts & writing <b>↗</b></a></div>
         </div>
       </div>
     </section>
 
-    <section class="section start-section" id="start">
-      <div class="container start-grid">
-        <div class="start-copy reveal">
-          <div class="eyebrow">Quick start</div>
-          <h2>Start with a workspace, not a chat.</h2>
-          <p>Configure the model connection, create one project workspace, then let the state machine advance the governed pipeline.</p>
-          <div class="start-links">
-            <a href="https://github.com/MengkunLiang/DIG-ResearchOS/blob/main/docs/en/QUICKSTART.md" target="_blank" rel="noreferrer">Quick Start ↗</a>
-            <a href="https://github.com/MengkunLiang/DIG-ResearchOS/blob/main/docs/en/agent_pipeline.md" target="_blank" rel="noreferrer">Pipeline ↗</a>
-            <a href="https://github.com/MengkunLiang/DIG-ResearchOS/blob/main/docs/en/t5_external_executor.md" target="_blank" rel="noreferrer">External Executor ↗</a>
-            <a href="https://github.com/MengkunLiang/DIG-ResearchOS/blob/main/README.zh-CN.md" target="_blank" rel="noreferrer">中文文档 ↗</a>
-          </div>
+    <section class="section quickstart-section">
+      <div class="container quickstart-grid">
+        <div>
+          <span class="section-label">Quick start</span>
+          <h2>Start with a workspace.</h2>
+          <p class="body-large">Configure the model connection, create one project workspace, then run the governed pipeline.</p>
+          <div class="doc-links"><a href="https://github.com/MengkunLiang/DIG-ResearchOS/blob/main/docs/en/QUICKSTART.md" target="_blank" rel="noreferrer">Quick Start ↗</a><a href="https://github.com/MengkunLiang/DIG-ResearchOS/blob/main/docs/en/agent_pipeline.md" target="_blank" rel="noreferrer">Pipeline ↗</a><a href="https://github.com/MengkunLiang/DIG-ResearchOS/blob/main/docs/en/t5_external_executor.md" target="_blank" rel="noreferrer">External Executor ↗</a><a href="https://github.com/MengkunLiang/DIG-ResearchOS/blob/main/README.zh-CN.md" target="_blank" rel="noreferrer">中文文档 ↗</a></div>
         </div>
-
-        <div class="code-card reveal">
-          <div class="code-head">
-            <span>Terminal</span>
-            <button type="button" id="copy-quickstart" aria-label="Copy quick start commands">Copy</button>
-          </div>
-          <pre id="quickstart"><code><span class="code-comment"># Configure the model connection</span>
+        <div class="code-card">
+          <div class="code-head"><span>Terminal</span><button id="copy-quickstart" type="button">Copy</button></div>
+          <pre id="quickstart"><code><span class="comment"># Configure the model connection</span>
 python -m researchos.cli configure-llm
 
-<span class="code-comment"># Create one durable project workspace</span>
+<span class="comment"># Create a project workspace</span>
 python -m researchos.cli init-workspace \
   --workspace ./workspace/project-a \
   --project-id project-a \
   --topic "your research topic"
 
-<span class="code-comment"># Start the governed pipeline</span>
+<span class="comment"># Run the pipeline</span>
 python -m researchos.cli run \
   --workspace ./workspace/project-a</code></pre>
         </div>
@@ -492,29 +345,18 @@ python -m researchos.cli run \
     </section>
 
     <section class="closing-section">
-      <div class="container closing-inner reveal">
-        <span class="eyebrow">ResearchOS</span>
-        <h2>From research intent to a defensible paper — with the evidence, decisions, and execution trail still attached.</h2>
-        <div class="closing-actions">
-          <a class="button button-light" href="https://github.com/MengkunLiang/DIG-ResearchOS" target="_blank" rel="noreferrer">Explore the source ↗</a>
-          <a class="button button-outline" href="https://github.com/MengkunLiang/DIG-ResearchOS/blob/main/docs/en/README.md" target="_blank" rel="noreferrer">Read the docs</a>
-        </div>
+      <div class="container closing-inner">
+        <span>ResearchOS</span>
+        <h2>Move faster while keeping the research record intact.</h2>
+        <div class="closing-actions"><a class="button button-primary" href="https://github.com/MengkunLiang/DIG-ResearchOS" target="_blank" rel="noreferrer">Explore the source ↗</a><a class="button button-secondary" href="https://github.com/MengkunLiang/DIG-ResearchOS/blob/main/docs/en/README.md" target="_blank" rel="noreferrer">Read the docs</a></div>
       </div>
     </section>
   </main>
 
   <footer class="site-footer">
     <div class="container footer-inner">
-      <div>
-        <a class="brand footer-brand" href="#top"><span class="brand-mark" aria-hidden="true">R</span><span class="brand-word">ResearchOS</span></a>
-        <p>State-machine-driven · artifact-first · evidence-bounded research runtime.</p>
-      </div>
-      <div class="footer-links">
-        <a href="https://github.com/MengkunLiang/DIG-ResearchOS" target="_blank" rel="noreferrer">GitHub ↗</a>
-        <a href="https://github.com/MengkunLiang/DIG-ResearchOS/blob/main/docs/en/README.md" target="_blank" rel="noreferrer">Docs ↗</a>
-        <a href="https://github.com/MengkunLiang/DIG-Research-Hub" target="_blank" rel="noreferrer">Research Hub ↗</a>
-        <a href="https://github.com/MengkunLiang/DIG-ResearchOS/issues" target="_blank" rel="noreferrer">Issues ↗</a>
-      </div>
+      <div><a class="brand footer-brand" href="#top"><span class="brand-mark" aria-hidden="true">R</span><span>ResearchOS</span></a><p>Persistent · auditable · evidence-bounded research runtime.</p></div>
+      <div class="footer-links"><a href="https://github.com/MengkunLiang/DIG-ResearchOS" target="_blank" rel="noreferrer">GitHub ↗</a><a href="https://github.com/MengkunLiang/DIG-ResearchOS/blob/main/docs/en/README.md" target="_blank" rel="noreferrer">Docs ↗</a><a href="https://github.com/MengkunLiang/DIG-Research-Hub" target="_blank" rel="noreferrer">Research Hub ↗</a><a href="https://github.com/MengkunLiang/DIG-ResearchOS/issues" target="_blank" rel="noreferrer">Issues ↗</a></div>
     </div>
   </footer>
 
