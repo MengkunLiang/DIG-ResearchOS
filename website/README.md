@@ -9,7 +9,7 @@ The website is organized around the current ResearchOS positioning as a **Resear
 ```text
 Research Intent
   -> Research Space
-  -> Evolved Hypothesis
+  -> Evolved Direction
   -> External Execution
   -> Defensible Paper
 ```
@@ -22,6 +22,17 @@ The four substantive capability sections are:
 4. Evidence-to-Manuscript
 
 The runtime section separately explains the Artifact Store, Validator, State Machine, Human Gate, Authority Boundary, recovery, and traceability foundation.
+
+## Interaction policy
+
+The project page intentionally avoids continuous decorative animation. Interaction is limited to functional behavior:
+
+- sticky navigation with the current section highlighted;
+- native video playback from a real system recording;
+- subtle hover/focus states;
+- copyable Quick Start commands.
+
+The high-level compilation flow and system diagrams remain readable as static technical figures.
 
 ## Local preview
 
@@ -37,14 +48,15 @@ Then open `http://localhost:8000`.
 
 The redesigned page uses the real ResearchOS main-flow recording immediately after the hero.
 
-Required files:
+Recommended files:
 
 ```text
 website/assets/researchos-main-flow.webm
+website/assets/researchos-main-flow.mp4
 website/assets/researchos-demo-poster.webp
 ```
 
-See `website/assets/README.md` for recommended encoding settings.
+The browser tries WebM first and MP4 as a compatibility fallback. See `website/assets/README.md` for recommended encoding settings.
 
 ## GitHub Pages
 
@@ -60,4 +72,6 @@ https://mengkunliang.github.io/DIG-ResearchOS/
 
 ## Related project
 
-The page includes **DIG Research Hub** as an independent related project maintained by DIG. The Hub is a curated public resource repository and is **not** presented as a runtime dependency or embedded capability source of ResearchOS.
+The page includes **DIG Research Hub** as an independent related project maintained alongside ResearchOS. The Hub is a task-oriented public resource repository that covers Skills, MCPs, research agents, prompts, benchmarks, tools, templates, and workflow references.
+
+The website links both to the Hub homepage and to selected task/resource entry points. The Hub is **not** presented as a runtime dependency or embedded capability source of ResearchOS.
