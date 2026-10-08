@@ -10,7 +10,7 @@ python -m http.server 8000 -d website
 
 ## Demo media
 
-Place these files under `website/assets/`:
+The real workflow demo lives under `website/assets/`:
 
 ```text
 researchos-main-flow.webm
@@ -18,13 +18,11 @@ researchos-main-flow.mp4
 researchos-demo-poster.webp
 ```
 
-The page prefers WebM and keeps MP4 as a browser fallback.
+The page prefers WebM and uses MP4 as a browser fallback.
 
 ## GitHub Pages
 
 `.github/workflows/pages.yml` publishes `website/` after changes reach `main`.
-
-Expected URL:
 
 ```text
 https://mengkunliang.github.io/DIG-ResearchOS/
@@ -32,4 +30,4 @@ https://mengkunliang.github.io/DIG-ResearchOS/
 
 ## Related project
 
-The page links to **DIG Research Hub**, a separate task-oriented repository for public research resources, including Skills, MCPs, research agents, prompts, benchmarks, tools, templates, and workflow references.
+The page also links to **DIG Research Hub**, a task-oriented repository for public research resources, including Skills, MCPs, research agents, prompts, benchmarks, tools, templates, and workflow references.
