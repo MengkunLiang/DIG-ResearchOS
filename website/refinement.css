@@ -1,0 +1,80 @@
+/* Final editorial refinement: calmer hierarchy, stronger diagrams, larger technical text. */
+:root{--max:1200px}
+
+.hero{padding:94px 0 62px;background:linear-gradient(145deg,#0a1120 0%,#111b31 60%,#142747 100%)}
+.hero h1{font-size:clamp(70px,9vw,122px)}
+.hero-statement{font-size:clamp(30px,3.9vw,50px);max-width:860px}
+.hero-lede{max-width:900px;color:#b6c4d8;line-height:1.68}
+.hero-flow{margin-top:58px;border-radius:0;border-left:0;border-right:0;background:rgba(3,8,18,.16);border-top-color:rgba(255,255,255,.16);border-bottom-color:rgba(255,255,255,.11)}
+.flow-stage{padding:18px 20px 20px;min-height:108px}
+.flow-stage strong{margin-top:18px;font-size:15px;letter-spacing:-.015em}
+.flow-stage small{font-size:10.5px;color:#91a2ba}
+.hero-principles{margin-top:14px}
+.hero-principles span{padding-top:9px;letter-spacing:.085em}
+
+.section{padding:112px 0}
+.section-intro{margin-bottom:58px}
+.section-intro p,.body-large{font-size:17.5px;line-height:1.72}
+.section-label{letter-spacing:.16em}
+
+.video-shell{max-width:1180px;border-color:#cfd6e1;box-shadow:0 28px 72px rgba(16,24,40,.13)}
+.video-stage{background:#050910}
+.play-overlay{box-shadow:0 14px 36px rgba(0,0,0,.26)}
+.demo-path{margin-top:24px}
+
+.truth-panel{box-shadow:0 12px 34px rgba(16,24,40,.045)}
+.truth-grid small{font-size:10.5px}
+
+.capability-row{gap:64px;padding:70px 0}
+.capability-copy p{font-size:16.5px}
+.capability-points{gap:7px;margin-top:24px}
+.capability-points span{font-size:10.5px;padding:7px 11px}
+.diagram{min-height:400px;padding:26px;box-shadow:0 10px 28px rgba(16,24,40,.05);background:linear-gradient(180deg,#fff 0%,#fbfcfe 100%)}
+.capability-row:nth-of-type(1) .diagram{border-top:3px solid #315cf6}
+.capability-row:nth-of-type(2) .diagram{border-top:3px solid #6b5bd2}
+.capability-row:nth-of-type(3) .diagram{border-top:3px solid #1a9c8b}
+.capability-row:nth-of-type(4) .diagram{border-top:3px solid #b7791f}
+.diagram-col em,.idea-source small,.execution-block small,.writing-inputs small,.section-router small,.writing-output small{font-size:10px}
+.diagram-col div{font-size:11px;padding:11px}
+.candidate-card small,.section-router span{font-size:9.5px}
+.execution-block span,.writing-inputs span,.writing-output span{font-size:10.5px}
+.execution-block.compiler strong,.execution-block.executor strong{font-size:13px}
+.section-router b{font-size:10px}
+
+.runtime-section{padding:116px 0;background:linear-gradient(145deg,#0a1120,#111d36 62%,#15315e)}
+.architecture-row{min-height:132px}
+.architecture-name strong{font-size:13.5px}
+.architecture-items b{font-size:11.5px}
+.architecture-items small{font-size:9.5px;line-height:1.4;margin-top:4px;color:#91a3bd}
+.foundation-items div{font-size:11px;color:#d9e2ef}
+.runtime-resilience span{font-size:10.5px}
+.authority-roles strong{font-size:12px}
+.authority-roles small{font-size:10px;color:#a2b0c3;margin-top:6px}
+
+.workflow-list{gap:12px}
+.workflow-list div{padding:18px}
+.workflow-list strong{font-size:13px}
+.workflow-list small{font-size:10px}
+
+.related-card{padding:46px;box-shadow:0 14px 34px rgba(16,24,40,.055)}
+.hub-group{padding:18px}
+.hub-group a{padding:11px 0;font-size:11px}
+.hub-tags span{font-size:9.5px}
+
+.quickstart-grid{gap:70px}
+.code-card pre{font-size:11.5px}
+.closing-section{padding:100px 0}
+
+.button,.nav-button{letter-spacing:-.01em}
+
+@media(max-width:1050px){
+  .capability-row{gap:34px;padding:56px 0}
+  .diagram{min-height:auto}
+}
+@media(max-width:720px){
+  .hero{padding:76px 0 52px}
+  .hero-flow{margin-top:46px}
+  .section{padding:82px 0}
+  .capability-row{padding:48px 0}
+  .related-card{padding:28px}
+}
