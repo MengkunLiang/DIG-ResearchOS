@@ -1,10 +1,3 @@
-(() => {
-  const polish = document.createElement('link');
-  polish.rel = 'stylesheet';
-  polish.href = './polish.css';
-  document.head.appendChild(polish);
-})();
-
 const header = document.getElementById('site-header');
 const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
