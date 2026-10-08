@@ -24,10 +24,8 @@ jobs:
           set -euo pipefail
           mkdir -p website/assets
           cat .media-upload/mp4/part-* | tr -d '\n' | base64 --decode > website/assets/researchos-main-flow.mp4
-          cat .media-upload/webm/part-* | tr -d '\n' | base64 --decode > website/assets/researchos-main-flow.webm
           cat .media-upload/poster/part-* | tr -d '\n' | base64 --decode > website/assets/researchos-demo-poster.webp
           test -s website/assets/researchos-main-flow.mp4
-          test -s website/assets/researchos-main-flow.webm
           test -s website/assets/researchos-demo-poster.webp
           rm -rf .media-upload
           rm -f .github/workflows/materialize-website-media.yml
