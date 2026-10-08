@@ -1,6 +1,12 @@
 const video = document.getElementById('researchos-video');
 const playButton = document.getElementById('video-play');
 
+if (video) {
+  const posterProbe = new Image();
+  posterProbe.onerror = () => video.setAttribute('poster', './assets/researchos-demo-poster.svg');
+  posterProbe.src = './assets/researchos-demo-poster.webp';
+}
+
 if (video && playButton) {
   const hideOverlay = () => playButton.classList.add('is-hidden');
 
