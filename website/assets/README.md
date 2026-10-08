@@ -1,18 +1,19 @@
-# Website media assets
+# Website demo assets
 
-The redesigned ResearchOS project page expects the real main-flow recording in this directory.
-
-Required media files:
+The project page expects the real ResearchOS workflow recording here.
 
 ```text
-website/assets/researchos-main-flow.webm
-website/assets/researchos-demo-poster.webp
+website/assets/
+├── researchos-main-flow.webm
+├── researchos-main-flow.mp4
+└── researchos-demo-poster.webp
 ```
 
-Recommended production settings for the current 36-second recording:
+Recommended web encoding:
 
-- video: WebM / VP9, 960 px wide, 15–20 fps, no audio required
-- poster: WebP, 1600×850 or similar aspect ratio
-- keep the original terminal/UI legible; do not crop away the workspace tree or main CLI panel
+- video: 16:9-ish screen recording, 720p–1080p, no audio required
+- WebM: preferred source for size efficiency
+- MP4: H.264 browser fallback
+- poster: WebP still frame from the most representative part of the demo
 
-The website intentionally places the real demo immediately after the hero. The former simulated terminal demo has been removed.
+The current page places the demo directly after the hero and uses the poster as the initial frame.
