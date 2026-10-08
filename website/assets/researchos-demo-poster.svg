@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="850" viewBox="0 0 1600 850">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#07101f"/><stop offset="1" stop-color="#122a50"/></linearGradient>
+    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#315cf6"/><stop offset="1" stop-color="#69c7ff"/></linearGradient>
+  </defs>
+  <rect width="1600" height="850" fill="url(#bg)"/>
+  <g opacity=".13" stroke="#a8b8d2" stroke-width="1"><path d="M0 85H1600M0 170H1600M0 255H1600M0 340H1600M0 425H1600M0 510H1600M0 595H1600M0 680H1600M0 765H1600"/><path d="M100 0V850M200 0V850M300 0V850M400 0V850M500 0V850M600 0V850M700 0V850M800 0V850M900 0V850M1000 0V850M1100 0V850M1200 0V850M1300 0V850M1400 0V850M1500 0V850"/></g>
+  <rect x="170" y="120" width="1260" height="610" rx="24" fill="#070d17" stroke="#30415c" stroke-width="2"/>
+  <rect x="170" y="120" width="1260" height="58" rx="24" fill="#0d1727"/>
+  <circle cx="208" cy="149" r="7" fill="#ff6b6b"/><circle cx="232" cy="149" r="7" fill="#ffd166"/><circle cx="256" cy="149" r="7" fill="#65c58c"/>
+  <text x="800" y="155" text-anchor="middle" fill="#8192aa" font-family="Arial, sans-serif" font-size="18">ResearchOS · main workflow</text>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace"><text x="235" y="246" fill="#86e2d2" font-size="22">researchos run --workspace ./workspace/project-a</text><text x="235" y="302" fill="#d5deeb" font-size="20">✓ verified literature pool initialized</text><text x="235" y="346" fill="#d5deeb" font-size="20">✓ structured paper reading completed</text><text x="235" y="390" fill="#d5deeb" font-size="20">✓ cross-paper research space synthesized</text><text x="235" y="434" fill="#8ca8ff" font-size="20">→ evolving candidate research directions</text></g>
+  <g transform="translate(235 505)"><rect width="330" height="116" rx="14" fill="#101d34" stroke="#315cf6"/><text x="24" y="35" fill="#7fa1ff" font-family="Arial, sans-serif" font-size="15" font-weight="700">CANDIDATE A</text><text x="24" y="70" fill="#ffffff" font-family="Arial, sans-serif" font-size="22" font-weight="700">Research direction</text><text x="24" y="94" fill="#91a2ba" font-family="Arial, sans-serif" font-size="14">thesis · mechanism · validation</text></g>
+  <g transform="translate(585 505)"><rect width="330" height="116" rx="14" fill="#101d34" stroke="#315cf6"/><text x="24" y="35" fill="#7fa1ff" font-family="Arial, sans-serif" font-size="15" font-weight="700">CANDIDATE B</text><text x="24" y="70" fill="#ffffff" font-family="Arial, sans-serif" font-size="22" font-weight="700">Research direction</text><text x="24" y="94" fill="#91a2ba" font-family="Arial, sans-serif" font-size="14">thesis · mechanism · validation</text></g>
+  <g transform="translate(935 505)"><rect width="330" height="116" rx="14" fill="#101d34" stroke="#315cf6"/><text x="24" y="35" fill="#7fa1ff" font-family="Arial, sans-serif" font-size="15" font-weight="700">CANDIDATE C</text><text x="24" y="70" fill="#ffffff" font-family="Arial, sans-serif" font-size="22" font-weight="700">Research direction</text><text x="24" y="94" fill="#91a2ba" font-family="Arial, sans-serif" font-size="14">thesis · mechanism · validation</text></g>
+  <rect x="650" y="662" width="300" height="4" rx="2" fill="url(#line)"/><text x="800" y="708" text-anchor="middle" fill="#b4c2d8" font-family="Arial, sans-serif" font-size="16" letter-spacing="2">REAL SYSTEM · 36 SECONDS</text>
+</svg>
