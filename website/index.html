@@ -13,6 +13,7 @@
   <title>ResearchOS — Research Compilation Runtime</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="./styles.css?v=20261017-1" />
+  <link rel="stylesheet" href="./optical.css?v=20261017-2" />
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -23,14 +24,45 @@
         <span class="brand-mark" aria-hidden="true">R</span>
         <span>ResearchOS</span>
       </a>
-      <nav class="nav-links" aria-label="Primary navigation">
+
+      <button class="nav-menu-toggle" id="nav-menu-toggle" type="button" aria-controls="primary-nav" aria-expanded="false" aria-label="Open navigation">
+        <span></span><span></span>
+      </button>
+
+      <nav class="nav-links" id="primary-nav" aria-label="Primary navigation">
         <a href="#demo">Demo</a>
-        <a href="#capabilities">Capabilities</a>
+
+        <div class="nav-dropdown" data-nav-dropdown>
+          <button class="nav-trigger" type="button" aria-expanded="false" aria-controls="capability-menu">
+            <span>Capabilities</span><span class="nav-chevron" aria-hidden="true">⌄</span>
+          </button>
+          <div class="nav-dropdown-menu" id="capability-menu">
+            <a href="#capability-evidence">
+              <span class="nav-index">01</span>
+              <span><strong>Research Evidence</strong><small>Literature → research space</small></span>
+            </a>
+            <a href="#capability-ideas">
+              <span class="nav-index">02</span>
+              <span><strong>Idea Evolution</strong><small>Research space → selected direction</small></span>
+            </a>
+            <a href="#capability-execution">
+              <span class="nav-index">03</span>
+              <span><strong>Execution Compilation</strong><small>Research plan → executable handoff</small></span>
+            </a>
+            <a href="#capability-writing">
+              <span class="nav-index">04</span>
+              <span><strong>Evidence-to-Manuscript</strong><small>Accepted evidence → audited paper</small></span>
+            </a>
+          </div>
+        </div>
+
         <a href="#runtime">Architecture</a>
         <a href="#workflow">Workflow</a>
+        <a href="#more-from-dig">Research Hub</a>
+        <a href="#quickstart">Quick Start</a>
       </nav>
+
       <div class="nav-actions">
-        <a class="nav-link" href="https://github.com/MengkunLiang/DIG-Research-Hub" target="_blank" rel="noreferrer">Research Hub ↗</a>
         <a class="nav-button" href="https://github.com/MengkunLiang/DIG-ResearchOS" target="_blank" rel="noreferrer">GitHub ↗</a>
       </div>
     </div>
@@ -45,7 +77,7 @@
           <span class="hero-eyebrow">DIG · Open-source research infrastructure</span>
           <h1>ResearchOS</h1>
           <div class="hero-subtitle">Research Compilation Runtime</div>
-          <p class="hero-statement">Carry the research record from first paper to final claim.</p>
+          <p class="hero-statement">Carry the research record<br class="desktop-break" /> from first paper to final claim.</p>
           <p class="hero-lede">ResearchOS connects literature, research directions, experiments, and manuscript evidence in one persistent workspace—so each transition starts from an auditable research record.</p>
           <div class="hero-actions">
             <a class="button button-primary" href="#demo">Watch the demo</a>
@@ -83,15 +115,25 @@
         </div>
 
         <div class="video-shell">
-          <div class="video-stage">
+          <div class="video-stage" id="video-stage">
             <video id="researchos-video" controls playsinline preload="metadata" poster="./assets/researchos-demo-poster.webp">
               <source src="./assets/researchos-main-flow.webm" type="video/webm" />
               <source src="./assets/researchos-main-flow.mp4" type="video/mp4" />
             </video>
-            <button class="play-overlay" id="video-play" type="button" aria-label="Play ResearchOS demo">
-              <span class="play-icon" aria-hidden="true">▶</span>
-              <span class="play-copy"><strong>Play demo</strong><small>36 seconds</small></span>
-            </button>
+
+            <div class="video-poster" id="video-poster">
+              <img src="./assets/researchos-demo-poster.webp" alt="ResearchOS real system demo preview" width="1120" height="595" />
+              <div class="video-poster-shade" aria-hidden="true"></div>
+              <div class="video-poster-copy">
+                <span>REAL SYSTEM DEMO</span>
+                <strong>ResearchOS<br />in practice.</strong>
+                <small>Literature → Research space → Candidate directions</small>
+              </div>
+              <button class="play-overlay" id="video-play" type="button" aria-label="Play ResearchOS demo">
+                <span class="play-icon" aria-hidden="true">▶</span>
+                <span class="play-copy"><strong>Watch the workflow</strong><small>36 seconds</small></span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -112,7 +154,7 @@
           <p>Each stage produces a durable output that becomes the next stage’s input.</p>
         </div>
 
-        <article class="capability-row capability-evidence">
+        <article class="capability-row capability-evidence" id="capability-evidence">
           <div class="capability-copy">
             <span class="capability-number">01 · Research Evidence</span>
             <h3>Turn literature into a research space.</h3>
@@ -129,7 +171,7 @@
           </div>
         </article>
 
-        <article class="capability-row reverse capability-ideas">
+        <article class="capability-row reverse capability-ideas" id="capability-ideas">
           <div class="capability-copy">
             <span class="capability-number">02 · Idea Evolution</span>
             <h3>Evolve a portfolio before selecting a direction.</h3>
@@ -146,7 +188,7 @@
           </div>
         </article>
 
-        <article class="capability-row capability-execution">
+        <article class="capability-row capability-execution" id="capability-execution">
           <div class="capability-copy">
             <span class="capability-number">03 · Execution Compilation</span>
             <h3>Compile a research plan into executable work.</h3>
@@ -163,7 +205,7 @@
           </div>
         </article>
 
-        <article class="capability-row reverse capability-writing">
+        <article class="capability-row reverse capability-writing" id="capability-writing">
           <div class="capability-copy">
             <span class="capability-number">04 · Evidence-to-Manuscript</span>
             <h3>Build the manuscript from accepted evidence.</h3>
@@ -230,7 +272,7 @@
         <div class="section-intro workflow-intro">
           <span class="section-label">Full workflow</span>
           <h2>From scope to submission, with the record intact.</h2>
-          <p>The stage codes expose the full pipeline without turning the homepage into a manual.</p>
+          <p>A compact view of the complete ResearchOS pipeline.</p>
         </div>
         <div class="workflow-list">
           <div><span>T1</span><strong>Scope</strong><small>intent · seeds · constraints</small></div>
@@ -265,7 +307,7 @@
       </div>
     </section>
 
-    <section class="section quickstart-section">
+    <section class="section quickstart-section" id="quickstart">
       <div class="container quickstart-grid">
         <div>
           <span class="section-label">Quick start</span>
@@ -280,7 +322,7 @@
         </div>
         <div class="code-card">
           <div class="code-head"><span>Terminal</span><button id="copy-quickstart" type="button" aria-live="polite">Copy</button></div>
-          <pre id="quickstart"><code><span class="comment"># Configure the model connection</span>
+          <pre id="quickstart-code"><code><span class="comment"># Configure the model connection</span>
 python -m researchos.cli configure-llm
 
 <span class="comment"># Create a project workspace</span>
@@ -323,6 +365,6 @@ python -m researchos.cli run \
     </div>
   </footer>
 
-  <script src="./script.js?v=20261017-1"></script>
+  <script src="./script.js?v=20261017-2"></script>
 </body>
 </html>
