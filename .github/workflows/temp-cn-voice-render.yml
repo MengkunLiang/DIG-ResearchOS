@@ -1,0 +1,42 @@
+name: Temporary Chinese voice render
+
+on:
+  push:
+    branches: ["temp-cn-voice-render"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthesize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Edge TTS
+        run: pip install edge-tts
+
+      - name: Generate Mandarin narration
+        shell: bash
+        run: |
+          mkdir -p tts-out
+          edge-tts --voice zh-CN-XiaoxiaoNeural --rate=-4% --pitch=-1Hz --text 'ResearchOS 从明确目标和约束开始，并把整个项目保存在持续可追踪的工作区中。' --write-media tts-out/01.mp3
+          edge-tts --voice zh-CN-XiaoxiaoNeural --rate=-4% --pitch=-1Hz --text '论文进入系统后，会被逐篇阅读并整理成结构化证据，保留机制、结论和来源边界。' --write-media tts-out/02.mp3
+          edge-tts --voice zh-CN-XiaoxiaoNeural --rate=-4% --pitch=-1Hz --text '跨论文综合进一步提炼共识、矛盾和开放问题，形成可继续推演的研究空间。' --write-media tts-out/03.mp3
+          edge-tts --voice zh-CN-XiaoxiaoNeural --rate=-4% --pitch=-1Hz --text '系统据此生成多个候选方向，独立评分，并通过受约束的演化持续优化。' --write-media tts-out/04.mp3
+          edge-tts --voice zh-CN-XiaoxiaoNeural --rate=-4% --pitch=-1Hz --text '最终由研究者选择方向，研究记录继续进入方案、实验和论文写作。' --write-media tts-out/05.mp3
+          ls -lh tts-out
+
+      - name: Upload narration clips
+        uses: actions/upload-artifact@v4
+        with:
+          name: researchos-cn-narration
+          path: tts-out/*.mp3
+          retention-days: 1
