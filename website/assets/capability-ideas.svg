@@ -1,31 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-labelledby="title desc">
-<title id="title">02 / IDEA EVOLUTION</title><desc id="desc">ideas capability workflow in ResearchOS.</desc>
-<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1 L7 4 L1 7" fill="none" stroke="#7860c4" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker><pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".65" fill="#dce4ef"/></pattern></defs>
-<rect width="640" height="400" fill="#fbfcfe"/><rect width="640" height="400" fill="url(#grid)"/>
-<text x="24" y="31" fill="#7860c4" font-size="12" font-weight="700" text-anchor="start">02 / IDEA EVOLUTION</text>
-<rect x="190" y="54" width="260" height="65" rx="10" fill="#f3effc" stroke="#7860c4"/>
-<text x="206" y="82" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Opportunity map</text>
-<text x="206" y="105" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">Evidence-led research routes</text>
-<path d="M320 120 V140 H112 V161" fill="none" stroke="#7860c4" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<rect x="24" y="167" width="176" height="76" rx="10" fill="#fff" stroke="#d6e0ec"/>
-<text x="40" y="195" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Candidate A</text>
-<text x="40" y="218" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">Mechanism · test</text>
-<path d="M112 244 V264 H320" fill="none" stroke="#7860c4" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round"/>
-<path d="M320 120 V140 H320 V161" fill="none" stroke="#7860c4" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<rect x="232" y="167" width="176" height="76" rx="10" fill="#fff" stroke="#d6e0ec"/>
-<text x="248" y="195" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Candidate B</text>
-<text x="248" y="218" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">Mechanism · test</text>
-<path d="M320 244 V264 H320" fill="none" stroke="#7860c4" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round"/>
-<path d="M320 120 V140 H528 V161" fill="none" stroke="#7860c4" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<rect x="440" y="167" width="176" height="76" rx="10" fill="#fff" stroke="#d6e0ec"/>
-<text x="456" y="195" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Candidate C</text>
-<text x="456" y="218" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">Mechanism · test</text>
-<path d="M528 244 V264 H320" fill="none" stroke="#7860c4" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round"/>
-<path d="M320 264 V280" fill="none" stroke="#7860c4" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<rect x="128" y="286" width="384" height="44" rx="10" fill="#f3effc" stroke="#7860c4"/>
-<text x="144" y="314" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Score · mutate · cross over · select</text>
-<path d="M512 308 H627 V140 H540" fill="none" stroke="#7860c4" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" stroke-dasharray="4 5" marker-end="url(#arrow)"/>
-<path d="M320 330 V346" fill="none" stroke="#7860c4" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<rect x="128" y="351" width="384" height="33" rx="7" fill="#15253f" stroke="#15253f"/>
-<text x="146" y="373" fill="#fff" font-size="15" font-weight="600" text-anchor="start">Researcher-selected directions</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 440" font-family="system-ui,-apple-system,Segoe UI,sans-serif" role="img" aria-labelledby="title desc">
+<title id="title">Idea evolution</title><desc id="desc">Evidence-led opportunities generate multiple candidates that are scored, evolved, and selected.</desc>
+<defs><marker id="a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1L7 4L1 7" fill="none" stroke="#7860c4" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker><pattern id="g" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".65" fill="#dce4ef"/></pattern></defs>
+<rect width="720" height="440" fill="#fbfcfe"/><rect width="720" height="440" fill="url(#g)"/>
+<rect x="206" y="34" width="308" height="70" rx="14" fill="#f2effb" stroke="#7860c4"/>
+<text x="230" y="64" fill="#17263e" font-size="19" font-weight="660">Opportunity map</text><text x="230" y="88" fill="#66778d" font-size="14">evidence-led research routes</text>
+<path d="M360 104V132H122V156" fill="none" stroke="#7860c4" stroke-width="1.9" marker-end="url(#a)"/>
+<path d="M360 104V156" fill="none" stroke="#7860c4" stroke-width="1.9" marker-end="url(#a)"/>
+<path d="M360 104V132H598V156" fill="none" stroke="#7860c4" stroke-width="1.9" marker-end="url(#a)"/>
+<rect x="44" y="166" width="156" height="88" rx="13" fill="#fff" stroke="#d8e0eb"/><text x="62" y="198" fill="#17263e" font-size="18" font-weight="650">Candidate A</text><text x="62" y="226" fill="#66778d" font-size="14">mechanism · test</text>
+<rect x="282" y="166" width="156" height="88" rx="13" fill="#fff" stroke="#d8e0eb"/><text x="300" y="198" fill="#17263e" font-size="18" font-weight="650">Candidate B</text><text x="300" y="226" fill="#66778d" font-size="14">mechanism · test</text>
+<rect x="520" y="166" width="156" height="88" rx="13" fill="#fff" stroke="#d8e0eb"/><text x="538" y="198" fill="#17263e" font-size="18" font-weight="650">Candidate C</text><text x="538" y="226" fill="#66778d" font-size="14">mechanism · test</text>
+<path d="M122 254V282H360" fill="none" stroke="#7860c4" stroke-width="1.9"/><path d="M360 254V282" fill="none" stroke="#7860c4" stroke-width="1.9"/><path d="M598 254V282H360" fill="none" stroke="#7860c4" stroke-width="1.9"/>
+<rect x="160" y="290" width="400" height="56" rx="12" fill="#f2effb" stroke="#7860c4"/>
+<text x="360" y="324" fill="#17263e" font-size="17" font-weight="660" text-anchor="middle">Score · mutate · cross over · survive</text>
+<path d="M560 318H688V132H612" fill="none" stroke="#7860c4" stroke-width="1.8" stroke-dasharray="5 6" marker-end="url(#a)" opacity=".7"/>
+<path d="M360 346V372" fill="none" stroke="#7860c4" stroke-width="1.9" marker-end="url(#a)"/>
+<rect x="198" y="382" width="324" height="42" rx="10" fill="#17263e"/><text x="360" y="408" fill="#fff" font-size="17" font-weight="650" text-anchor="middle">Researcher-selected direction</text>
 </svg>
