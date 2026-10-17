@@ -1,41 +1,31 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-labelledby="title desc">
-<title id="title">01 / RESEARCH EVIDENCE</title><desc id="desc">evidence capability workflow in ResearchOS.</desc>
-<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1 L7 4 L1 7" fill="none" stroke="#365fde" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker><pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".65" fill="#dce4ef"/></pattern></defs>
-<rect width="640" height="400" fill="#fbfcfe"/><rect width="640" height="400" fill="url(#grid)"/>
-<text x="24" y="31" fill="#365fde" font-size="12" font-weight="700" text-anchor="start">01 / RESEARCH EVIDENCE</text>
-<rect x="26" y="122" width="136" height="158" rx="10" fill="#fff" stroke="#d6e0ec"/>
-<rect x="32" y="116" width="136" height="158" rx="10" fill="#fff" stroke="#d6e0ec"/>
-<rect x="38" y="110" width="136" height="158" rx="10" fill="#fff" stroke="#d6e0ec"/>
-<text x="54" y="138" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Paper pool</text>
-<rect x="54" y="159" width="82" height="3" rx="1" fill="#d3ddeb" stroke="none"/>
-<rect x="54" y="175" width="64" height="3" rx="1" fill="#d3ddeb" stroke="none"/>
-<rect x="54" y="191" width="82" height="3" rx="1" fill="#d3ddeb" stroke="none"/>
-<rect x="54" y="229" width="56" height="3" rx="1" fill="#d3ddeb" stroke="none"/>
-<rect x="54" y="245" width="76" height="3" rx="1" fill="#d3ddeb" stroke="none"/>
-<path d="M182 190 H207" fill="none" stroke="#365fde" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<rect x="216" y="91" width="202" height="212" rx="10" fill="#edf3ff" stroke="#365fde"/>
-<text x="232" y="119" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Typed paper card</text>
-<text x="232" y="142" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">Evidence &amp; provenance</text>
-<rect x="232" y="158" width="170" height="34" rx="10" fill="#fff" stroke="#d6e0ec"/>
-<text x="244" y="181" fill="#17263e" font-size="14" font-weight="600" text-anchor="start">Mechanism</text>
-<rect x="232" y="201" width="170" height="34" rx="10" fill="#fff" stroke="#d6e0ec"/>
-<text x="244" y="224" fill="#17263e" font-size="14" font-weight="600" text-anchor="start">Claims ↔ evidence</text>
-<rect x="232" y="244" width="170" height="34" rx="10" fill="#fff" stroke="#d6e0ec"/>
-<text x="244" y="267" fill="#17263e" font-size="14" font-weight="600" text-anchor="start">Reading coverage</text>
-<path d="M418 190 H439" fill="none" stroke="#365fde" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round"/>
-<text x="460" y="92" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Research space</text>
-<path d="M439 190 V131 H456" fill="none" stroke="#365fde" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<rect x="460" y="112" width="156" height="38" rx="10" fill="#fff" stroke="#d6e0ec"/>
-<text x="474" y="137" fill="#17263e" font-size="15" font-weight="600" text-anchor="start">Mechanisms</text>
-<path d="M439 190 V180 H456" fill="none" stroke="#365fde" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<rect x="460" y="161" width="156" height="38" rx="10" fill="#fff" stroke="#d6e0ec"/>
-<text x="474" y="186" fill="#17263e" font-size="15" font-weight="600" text-anchor="start">Tensions</text>
-<path d="M439 190 V229 H456" fill="none" stroke="#365fde" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<rect x="460" y="210" width="156" height="38" rx="10" fill="#fff" stroke="#d6e0ec"/>
-<text x="474" y="235" fill="#17263e" font-size="15" font-weight="600" text-anchor="start">Synthesis</text>
-<path d="M439 190 V278 H456" fill="none" stroke="#365fde" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<rect x="460" y="259" width="156" height="38" rx="10" fill="#fff" stroke="#d6e0ec"/>
-<text x="474" y="284" fill="#17263e" font-size="15" font-weight="600" text-anchor="start">Opportunities</text>
-<path d="M106 287 V335 H538 V311" fill="none" stroke="#365fde" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" stroke-dasharray="4 5" marker-end="url(#arrow)"/>
-<text x="320" y="363" fill="#55657b" font-size="14" font-weight="400" text-anchor="middle">Every insight links back to its source</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 440" font-family="system-ui,-apple-system,Segoe UI,sans-serif" role="img" aria-labelledby="title desc">
+<title id="title">Research evidence compilation</title><desc id="desc">Verified papers become typed evidence records and a synthesized research space.</desc>
+<defs><marker id="a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1L7 4L1 7" fill="none" stroke="#365fde" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker><pattern id="g" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".65" fill="#dce4ef"/></pattern></defs>
+<rect width="720" height="440" fill="#fbfcfe"/><rect width="720" height="440" fill="url(#g)"/>
+<text x="42" y="64" fill="#6b7c92" font-size="14" font-weight="650">VERIFIED LITERATURE</text>
+<rect x="42" y="94" width="160" height="236" rx="14" fill="#fff" stroke="#d5e0ec"/>
+<rect x="32" y="106" width="160" height="236" rx="14" fill="#fff" stroke="#e2e8f0"/>
+<text x="60" y="130" fill="#17263e" font-size="19" font-weight="650">Paper pool</text>
+<text x="60" y="157" fill="#66778d" font-size="14">identity · access · coverage</text>
+<line x1="60" y1="190" x2="164" y2="190" stroke="#d4deea" stroke-width="4" stroke-linecap="round"/>
+<line x1="60" y1="216" x2="144" y2="216" stroke="#d4deea" stroke-width="4" stroke-linecap="round"/>
+<line x1="60" y1="242" x2="170" y2="242" stroke="#d4deea" stroke-width="4" stroke-linecap="round"/>
+<path d="M212 218H260" stroke="#365fde" stroke-width="2" marker-end="url(#a)"/>
+<rect x="274" y="70" width="216" height="294" rx="16" fill="#eef3ff" stroke="#365fde"/>
+<text x="296" y="111" fill="#17263e" font-size="20" font-weight="680">Typed paper card</text>
+<text x="296" y="139" fill="#66778d" font-size="14">what the source can support</text>
+<rect x="296" y="166" width="172" height="44" rx="10" fill="#fff" stroke="#d7e1ef"/>
+<text x="312" y="194" fill="#17263e" font-size="16" font-weight="620">Mechanism</text>
+<rect x="296" y="221" width="172" height="44" rx="10" fill="#fff" stroke="#d7e1ef"/>
+<text x="312" y="249" fill="#17263e" font-size="16" font-weight="620">Claims ↔ evidence</text>
+<rect x="296" y="276" width="172" height="44" rx="10" fill="#fff" stroke="#d7e1ef"/>
+<text x="312" y="304" fill="#17263e" font-size="16" font-weight="620">Reading coverage</text>
+<path d="M500 218H536" stroke="#365fde" stroke-width="2" marker-end="url(#a)"/>
+<text x="556" y="72" fill="#6b7c92" font-size="14" font-weight="650">RESEARCH SPACE</text>
+<rect x="548" y="94" width="136" height="54" rx="11" fill="#fff" stroke="#d5e0ec"/><text x="566" y="127" fill="#17263e" font-size="16" font-weight="620">Mechanisms</text>
+<rect x="548" y="160" width="136" height="54" rx="11" fill="#fff" stroke="#d5e0ec"/><text x="566" y="193" fill="#17263e" font-size="16" font-weight="620">Tensions</text>
+<rect x="548" y="226" width="136" height="54" rx="11" fill="#fff" stroke="#d5e0ec"/><text x="566" y="259" fill="#17263e" font-size="16" font-weight="620">Synthesis</text>
+<rect x="548" y="292" width="136" height="54" rx="11" fill="#fff" stroke="#d5e0ec"/><text x="566" y="325" fill="#17263e" font-size="16" font-weight="620">Opportunities</text>
+<path d="M112 352V394H616V360" fill="none" stroke="#365fde" stroke-width="1.8" stroke-dasharray="5 6" marker-end="url(#a)" opacity=".72"/>
+<text x="364" y="418" fill="#66778d" font-size="14" text-anchor="middle">Source traceability survives every synthesis step</text>
 </svg>
