@@ -1,0 +1,45 @@
+name: Switch project page to Chinese narrated demo
+
+on:
+  push:
+    branches: ["feat/chinese-demo-video"]
+    paths:
+      - ".github/workflows/switch-cn-demo.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: feat/chinese-demo-video
+
+      - name: Patch project page
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('website/index.html')
+          s = p.read_text()
+          old = '''              <source src="./assets/researchos-main-flow.webm" type="video/webm" />\n              <source src="./assets/researchos-main-flow.mp4" type="video/mp4" />'''
+          new = '''              <source src="./assets/researchos-main-flow-cn.mp4" type="video/mp4" />'''
+          if old not in s:
+              raise SystemExit('video source block not found')
+          s = s.replace(old, new, 1)
+          s = s.replace('<span class="play-copy"><strong>Watch the workflow</strong><small>36 seconds</small></span>', '<span class="play-copy"><strong>Watch the workflow</strong><small>Mandarin voiceover · Chinese subtitles</small></span>', 1)
+          p.write_text(s)
+          PY
+
+      - name: Commit page switch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add website/index.html
+          git rm .github/workflows/switch-cn-demo.yml
+          git commit -m "feat: use Chinese narrated demo on project page"
+          git push origin HEAD:feat/chinese-demo-video
