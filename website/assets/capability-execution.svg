@@ -1,27 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-labelledby="title desc">
-<title id="title">03 / EXECUTION COMPILATION</title><desc id="desc">execution capability workflow in ResearchOS.</desc>
-<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1 L7 4 L1 7" fill="none" stroke="#168779" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker><pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".65" fill="#dce4ef"/></pattern></defs>
-<rect width="640" height="400" fill="#fbfcfe"/><rect width="640" height="400" fill="url(#grid)"/>
-<text x="24" y="31" fill="#168779" font-size="12" font-weight="700" text-anchor="start">03 / EXECUTION COMPILATION</text>
-<rect x="24" y="70" width="266" height="110" rx="10" fill="#fff" stroke="#d6e0ec"/>
-<text x="40" y="98" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Research blueprint</text>
-<text x="40" y="121" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">Task · mechanism · baselines</text>
-<text x="40" y="155" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">Metrics &amp; experiment plan</text>
-<path d="M291 125 H342" fill="none" stroke="#168779" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<rect x="350" y="70" width="266" height="110" rx="10" fill="#eaf7f3" stroke="#168779"/>
-<text x="366" y="98" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Execution contract</text>
-<text x="366" y="121" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">Project-specific Skills</text>
-<text x="366" y="155" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">Protocol &amp; resources</text>
-<path d="M483 181 V238" fill="none" stroke="#168779" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<text x="500" y="214" fill="#55657b" font-size="13" font-weight="500" text-anchor="start">Handoff</text>
-<rect x="350" y="246" width="266" height="108" rx="10" fill="#15253f" stroke="#d6e0ec"/>
-<text x="366" y="274" fill="#fff" font-size="16" font-weight="600" text-anchor="start">External executor</text>
-<text x="366" y="297" fill="#c7d6e9" font-size="14" font-weight="400" text-anchor="start">Codex · Claude Code · Human</text>
-<text x="366" y="329" fill="#c7d6e9" font-size="15" font-weight="500" text-anchor="start">Build → run → analyze</text>
-<path d="M349 300 H298" fill="none" stroke="#168779" stroke-opacity=".65" stroke-width="1.7" stroke-linejoin="round" marker-end="url(#arrow)"/>
-<rect x="24" y="246" width="266" height="108" rx="10" fill="#eaf7f3" stroke="#168779"/>
-<text x="40" y="274" fill="#17263e" font-size="16" font-weight="600" text-anchor="start">Validated results</text>
-<text x="40" y="297" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">Report · results · manifest</text>
-<text x="40" y="329" fill="#168779" font-size="15" font-weight="600" text-anchor="start">Writer handoff</text>
-<text x="24" y="382" fill="#55657b" font-size="14" font-weight="400" text-anchor="start">One plan. Your choice of executor.</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 440" font-family="system-ui,-apple-system,Segoe UI,sans-serif" role="img" aria-labelledby="title desc">
+<title id="title">Execution compilation</title><desc id="desc">An accepted research plan becomes a project-specific execution handoff and returns structured results.</desc>
+<defs><marker id="a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M1 1L7 4L1 7" fill="none" stroke="#168779" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker><pattern id="g" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".65" fill="#dce4ef"/></pattern></defs>
+<rect width="720" height="440" fill="#fbfcfe"/><rect width="720" height="440" fill="url(#g)"/>
+<text x="48" y="64" fill="#6b7c92" font-size="14" font-weight="650">ACCEPTED RESEARCH PLAN</text>
+<rect x="42" y="88" width="176" height="252" rx="14" fill="#fff" stroke="#d5e0ec"/>
+<text x="60" y="124" fill="#17263e" font-size="18" font-weight="650">Blueprint</text>
+<text x="60" y="154" fill="#66778d" font-size="14">mechanism</text><text x="60" y="184" fill="#66778d" font-size="14">baselines</text><text x="60" y="214" fill="#66778d" font-size="14">evaluation</text><text x="60" y="244" fill="#66778d" font-size="14">claim boundary</text><text x="60" y="274" fill="#66778d" font-size="14">resources</text>
+<path d="M226 214H270" stroke="#168779" stroke-width="2" marker-end="url(#a)"/>
+<rect x="284" y="62" width="176" height="304" rx="16" fill="#edf8f5" stroke="#168779"/>
+<text x="306" y="103" fill="#17263e" font-size="19" font-weight="670">Compile handoff</text>
+<rect x="306" y="132" width="132" height="46" rx="10" fill="#fff" stroke="#d2e8e2"/><text x="322" y="160" fill="#17263e" font-size="15" font-weight="620">Project Skills</text>
+<rect x="306" y="190" width="132" height="46" rx="10" fill="#fff" stroke="#d2e8e2"/><text x="322" y="218" fill="#17263e" font-size="15" font-weight="620">Protocol</text>
+<rect x="306" y="248" width="132" height="46" rx="10" fill="#fff" stroke="#d2e8e2"/><text x="322" y="276" fill="#17263e" font-size="15" font-weight="620">Resource contract</text>
+<text x="372" y="334" fill="#52796f" font-size="13" text-anchor="middle">ResearchOS / T5</text>
+<path d="M468 214H510" stroke="#168779" stroke-width="2" marker-end="url(#a)"/>
+<rect x="524" y="88" width="154" height="122" rx="14" fill="#17263e"/>
+<text x="601" y="123" fill="#fff" font-size="18" font-weight="650" text-anchor="middle">Executor</text><text x="601" y="151" fill="#aebdd1" font-size="13" text-anchor="middle">Codex · Claude Code</text><text x="601" y="174" fill="#aebdd1" font-size="13" text-anchor="middle">or human</text>
+<rect x="524" y="232" width="154" height="108" rx="14" fill="#fff" stroke="#d5e0ec"/>
+<text x="542" y="266" fill="#17263e" font-size="17" font-weight="650">Result handoff</text><text x="542" y="294" fill="#66778d" font-size="13">report · manifest</text><text x="542" y="318" fill="#66778d" font-size="13">facts · figures</text>
+<path d="M601 210V226" stroke="#168779" stroke-width="2" marker-end="url(#a)"/>
+<path d="M524 322H488V386H372V372" fill="none" stroke="#168779" stroke-width="1.7" stroke-dasharray="5 6" marker-end="url(#a)" opacity=".72"/>
+<text x="360" y="414" fill="#66778d" font-size="14" text-anchor="middle">Execution returns through a structured writer handoff</text>
 </svg>
