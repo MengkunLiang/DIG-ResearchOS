@@ -13,7 +13,7 @@ T1 研究范围 -> T2 文献 -> T3 阅读 -> T3.5 综合
 ## 论文与引用
 
 **ResearchOS: Research Compilation for Multi-Agent Scientific Discovery**  
-Mengkun Liang, Chenhao Xu, Tianyu Zhu, Guannan Liu, and Junjie Wu. *Preprints.org*, Technical Note, 2026。**预印本，尚未经过同行评审。**
+Mengkun Liang, Chenhao Xu, Tianyu Zhu, Guannan Liu, and Junjie Wu. *Preprints.org*, Technical Note, 2026。
 
 **[阅读论文](https://doi.org/10.20944/preprints202610.2216.v1)** · **[下载 PDF（GitHub Pages）](https://mengkunliang.github.io/DIG-ResearchOS/papers/ResearchOS.pdf)** · [Preprints.org PDF](https://www.preprints.org/manuscript/202610.2216/v1/download) · [BibTeX 引用](paper/researchos.bib) · [项目主页](https://mengkunliang.github.io/DIG-ResearchOS/#paper)
 
@@ -27,7 +27,6 @@ Mengkun Liang, Chenhao Xu, Tianyu Zhu, Guannan Liu, and Junjie Wu. *Preprints.or
   howpublished = {Preprints.org (Technical Note, preprint)},
   doi          = {10.20944/preprints202610.2216.v1},
   url          = {https://doi.org/10.20944/preprints202610.2216.v1},
-  note         = {Not peer-reviewed}
 }
 ```
 
