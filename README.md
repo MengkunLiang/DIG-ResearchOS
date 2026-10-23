@@ -15,7 +15,7 @@ T1 scope -> T2 discover -> T3 read -> T3.5 synthesize
 **ResearchOS: Research Compilation for Multi-Agent Scientific Discovery**  
 Mengkun Liang, Chenhao Xu, Tianyu Zhu, Guannan Liu, and Junjie Wu. *Preprints.org*, Technical Note, 2026. **Preprint; not peer-reviewed.**
 
-**[Read paper](https://doi.org/10.20944/preprints202610.2216.v1)** · **[Download PDF](https://www.preprints.org/manuscript/202610.2216/v1/download)** · [BibTeX](paper/researchos.bib) · [Project website](https://mengkunliang.github.io/DIG-ResearchOS/#paper)
+**[Paper (PDF)](website/papers/ResearchOS.pdf)** · [Preprint & DOI](https://doi.org/10.20944/preprints202610.2216.v1) · [BibTeX](paper/researchos.bib) · [Project website](https://mengkunliang.github.io/DIG-ResearchOS/#paper)
 
 If you use ResearchOS or build on its research-compilation architecture or multi-agent evolutionary search, please cite the preprint:
 
