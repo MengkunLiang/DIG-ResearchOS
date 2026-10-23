@@ -1,0 +1,29 @@
+name: Verify canonical ResearchOS PDF
+
+on:
+  pull_request:
+    paths:
+      - "website/papers/**"
+      - ".github/workflows/paper-integrity.yml"
+  push:
+    branches: [main]
+    paths:
+      - "website/papers/**"
+      - ".github/workflows/paper-integrity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-paper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify uploaded PDF is the authorized version
+        shell: bash
+        run: |
+          test -f website/papers/ResearchOS.pdf
+          printf '%s  %s\n' \
+            'a645fdfad398374e6dec29e9ead1dd8d60b5449395a17b204b2db40ca8b21a0b' \
+            'website/papers/ResearchOS.pdf' | sha256sum --check
