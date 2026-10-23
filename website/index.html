@@ -12,7 +12,7 @@
   <meta property="og:image" content="https://mengkunliang.github.io/DIG-ResearchOS/assets/researchos-demo-poster.webp" />
   <title>ResearchOS — Research Compilation Runtime</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="./styles.css?v=20261017-1" />
+  <link rel="stylesheet" href="./styles.css?v=20261022-paper" />
   <link rel="stylesheet" href="./optical.css?v=20261017-2" />
 </head>
 <body>
@@ -31,6 +31,7 @@
 
       <nav class="nav-links" id="primary-nav" aria-label="Primary navigation">
         <a href="#demo">Demo</a>
+        <a href="#paper">Paper</a>
 
         <div class="nav-dropdown" data-nav-dropdown>
           <button class="nav-trigger" type="button" aria-expanded="false" aria-controls="capability-menu">
@@ -81,7 +82,8 @@
           <p class="hero-lede">ResearchOS connects literature, research directions, experiments, and manuscript evidence in one persistent workspace—so each transition starts from an auditable research record.</p>
           <div class="hero-actions">
             <a class="button button-primary" href="#demo">Watch the demo</a>
-            <a class="button button-secondary" href="https://github.com/MengkunLiang/DIG-ResearchOS" target="_blank" rel="noreferrer">View source ↗</a>
+            <a class="button button-secondary" href="https://doi.org/10.20944/preprints202610.2216.v1" target="_blank" rel="noopener noreferrer">Read the paper ↗</a>
+            <a class="button button-text" href="https://github.com/MengkunLiang/DIG-ResearchOS" target="_blank" rel="noopener noreferrer">Source code ↗</a>
             <a class="button button-text" href="https://github.com/MengkunLiang/DIG-ResearchOS/blob/main/docs/en/README.md" target="_blank" rel="noreferrer">Documentation</a>
           </div>
         </div>
@@ -141,6 +143,40 @@
           <div><span>02</span><strong>Structured reading</strong></div>
           <div><span>03</span><strong>Research-space synthesis</strong></div>
           <div><span>04</span><strong>Candidate directions</strong></div>
+        </div>
+      </div>
+    </section>
+
+
+    <section class="section paper-section" id="paper" aria-labelledby="paper-title">
+      <div class="container paper-layout">
+        <div class="paper-copy">
+          <span class="section-label">Publication · 2026</span>
+          <div class="paper-status">Preprint · Technical Note · Not peer-reviewed</div>
+          <h2 id="paper-title">ResearchOS: Research Compilation for Multi-Agent Scientific Discovery</h2>
+          <p class="paper-authors">Mengkun Liang · Chenhao Xu · Tianyu Zhu · Guannan Liu · Junjie Wu</p>
+          <p class="paper-summary">We introduce a multi-agent research system that connects source-linked evidence, evolving research directions, execution contracts, and evidence-supported scientific reporting through persistent research artifacts.</p>
+          <div class="paper-actions">
+            <a class="button paper-primary-button" href="https://doi.org/10.20944/preprints202610.2216.v1" target="_blank" rel="noopener noreferrer">Read the preprint ↗</a>
+            <a class="button paper-outline-button" href="https://www.preprints.org/manuscript/202610.2216/v1/download" target="_blank" rel="noopener noreferrer">Download PDF ↗</a>
+          </div>
+          <p class="paper-doi">DOI: <a href="https://doi.org/10.20944/preprints202610.2216.v1" target="_blank" rel="noopener noreferrer">10.20944/preprints202610.2216.v1</a></p>
+        </div>
+        <div class="paper-citation">
+          <div class="paper-citation-head">
+            <div><span class="paper-citation-eyebrow">Reference</span><h3>Cite ResearchOS</h3></div>
+            <button class="paper-copy-button" id="copy-bibtex" type="button" aria-live="polite">Copy BibTeX</button>
+          </div>
+          <pre id="paper-bibtex"><code>@misc{Liang2026ResearchOS,
+  title        = {ResearchOS: Research Compilation for Multi-Agent Scientific Discovery},
+  author       = {Liang, Mengkun and Xu, Chenhao and Zhu, Tianyu and Liu, Guannan and Wu, Junjie},
+  year         = {2026},
+  howpublished = {Preprints.org (Technical Note, preprint)},
+  doi          = {10.20944/preprints202610.2216.v1},
+  url          = {https://doi.org/10.20944/preprints202610.2216.v1},
+  note         = {Not peer-reviewed}
+}</code></pre>
+          <p>This is an open preprint, not a peer-reviewed publication. The citation refers to the published version on Preprints.org.</p>
         </div>
       </div>
     </section>
@@ -356,6 +392,7 @@ python -m researchos.cli run \
         <p>Persistent research records for evidence-driven AI-assisted research.</p>
       </div>
       <div class="footer-links">
+        <a href="#paper">Paper &amp; citation</a>
         <a href="https://github.com/MengkunLiang/DIG-ResearchOS" target="_blank" rel="noreferrer">GitHub ↗</a>
         <a href="https://github.com/MengkunLiang/DIG-ResearchOS/blob/main/docs/en/README.md" target="_blank" rel="noreferrer">Docs ↗</a>
         <a href="https://github.com/MengkunLiang/DIG-Research-Hub" target="_blank" rel="noreferrer">Research Hub ↗</a>
@@ -364,6 +401,6 @@ python -m researchos.cli run \
     </div>
   </footer>
 
-  <script src="./script.js?v=20261017-2"></script>
+  <script src="./script.js?v=20261022-paper"></script>
 </body>
 </html>

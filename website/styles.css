@@ -258,3 +258,26 @@ p{text-wrap:pretty}
   html{scroll-behavior:auto}
   *,*:before,*:after{transition:none!important}
 }
+
+/* Publication and citation */
+.paper-section{background:#fff;padding:90px 0 96px}
+.paper-layout{display:grid;grid-template-columns:1fr .94fr;gap:64px;align-items:center}
+.paper-status{display:inline-block;margin-top:17px;padding:5px 11px;border:1px solid #dce4ed;border-radius:5px;background:#f6f8fb;color:#586a7f;font-size:12px;font-weight:650}
+.paper-copy h2{margin:18px 0 16px;font-size:clamp(31px,3.25vw,47px);line-height:1.16;letter-spacing:-.045em;font-weight:650}
+.paper-authors{margin-bottom:20px;font-size:14px;font-weight:610;color:#53667c}
+.paper-summary{max-width:690px;font-size:17px;line-height:1.78;color:var(--muted)}
+.paper-actions{display:flex;gap:10px;flex-wrap:wrap;margin:22px 0 14px}
+.paper-primary-button{background:var(--navy);color:#fff}
+.paper-outline-button{background:#fff;color:var(--navy);border-color:#c6d1e0}
+.paper-doi{font-size:13px;word-break:break-word;color:#64748b}
+.paper-doi a{color:var(--blue);text-decoration:underline;text-underline-offset:3px}
+.paper-citation{min-width:0;padding:28px;border:1px solid #dbe4ef;border-radius:14px;background:#f7f9fc;box-shadow:0 16px 38px rgba(25,43,68,.05)}
+.paper-citation-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:17px}
+.paper-citation-eyebrow{font-size:11px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;color:#647c9e}
+.paper-citation h3{margin:3px 0 0;font-size:22px;font-weight:680}
+.paper-copy-button{border:1px solid #c6d4e5;border-radius:7px;background:#fff;color:#253855;font-size:12px;font-weight:700;padding:9px 13px;cursor:pointer}
+.paper-copy-button:hover{border-color:#6f93da}
+.paper-citation pre{max-width:100%;overflow:auto;margin:0;padding:18px;border:1px solid #e1e8f1;border-radius:9px;background:#fff;color:#23334b;font-size:11px;line-height:1.65;white-space:pre}
+.paper-citation>p{margin:14px 0 0;color:#718095;font-size:12px;line-height:1.55}
+@media(max-width:920px){.paper-layout{grid-template-columns:1fr;gap:34px}}
+@media(max-width:600px){.paper-section{padding:70px 0}.paper-citation{padding:18px}.paper-actions .button{width:100%}}

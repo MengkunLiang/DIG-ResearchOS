@@ -10,6 +10,29 @@ T1 scope -> T2 discover -> T3 read -> T3.5 synthesize
   -> T5 external execution -> T8 manuscript -> T9 submission bundle
 ```
 
+## Paper & Citation
+
+**ResearchOS: Research Compilation for Multi-Agent Scientific Discovery**  
+Mengkun Liang, Chenhao Xu, Tianyu Zhu, Guannan Liu, and Junjie Wu. *Preprints.org*, Technical Note, 2026. **Preprint; not peer-reviewed.**
+
+**[Read paper](https://doi.org/10.20944/preprints202610.2216.v1)** · **[Download PDF](https://www.preprints.org/manuscript/202610.2216/v1/download)** · [BibTeX](paper/researchos.bib) · [Project website](https://mengkunliang.github.io/DIG-ResearchOS/#paper)
+
+If you use ResearchOS or build on its research-compilation architecture or multi-agent evolutionary search, please cite the preprint:
+
+```bibtex
+@misc{Liang2026ResearchOS,
+  title        = {ResearchOS: Research Compilation for Multi-Agent Scientific Discovery},
+  author       = {Liang, Mengkun and Xu, Chenhao and Zhu, Tianyu and Liu, Guannan and Wu, Junjie},
+  year         = {2026},
+  howpublished = {Preprints.org (Technical Note, preprint)},
+  doi          = {10.20944/preprints202610.2216.v1},
+  url          = {https://doi.org/10.20944/preprints202610.2216.v1},
+  note         = {Not peer-reviewed}
+}
+```
+
+> The DOI points to the published preprint. The software implementation and preprint are distinct research outputs; this repository provides the source code and project documentation.
+
 ## Start In Three Steps
 
 If the environment is already installed, you do not need to learn the stage names before starting. Configure the model once, create one workspace, and run it. The terminal will stop only when it needs a meaningful research decision. Installing for the first time? Go to [Native Setup](#native-setup) or [Docker Compose Setup](#docker-compose-setup), then return here.

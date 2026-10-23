@@ -235,3 +235,17 @@ if (copyButton && quickstart) {
     window.setTimeout(() => { copyButton.textContent = original; }, 1200);
   });
 }
+
+const bibtexCopyButton = document.getElementById('copy-bibtex');
+const bibtexBlock = document.getElementById('paper-bibtex');
+if (bibtexCopyButton && bibtexBlock) {
+  bibtexCopyButton.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(bibtexBlock.textContent.trim());
+      bibtexCopyButton.textContent = 'Copied';
+    } catch {
+      bibtexCopyButton.textContent = 'Select & copy';
+    }
+    window.setTimeout(() => { bibtexCopyButton.textContent = 'Copy BibTeX'; }, 1800);
+  });
+}
